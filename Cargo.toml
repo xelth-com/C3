@@ -1,24 +1,27 @@
-[package]
-name = "c3"
+[workspace]
+resolver = "2"
+members = ["crates/c3-core", "crates/c3", "crates/c3-cli"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
-description = "C3 — claude-codex-consult in Rust: a coordinator asks a roster of read-only reviewers from different labs, records every consultation as files, tracks findings by id, runs a panel."
 authors = ["xelth-com"]
 license = "MIT"
 repository = "https://github.com/xelth-com/C3"
 homepage = "https://xelth.com/C3/"
-readme = "README.md"
-keywords = ["codex", "code-review", "consultation", "second-opinion", "claude-code"]
-categories = ["command-line-utilities", "development-tools"]
 
-[[bin]]
-name = "c3"
-path = "src/main.rs"
+[workspace.dependencies]
+c3-core = { path = "crates/c3-core" }
+c3 = { path = "crates/c3" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+clap = { version = "4", features = ["derive"] }
 
-[dependencies]
-# Deliberately none yet. The port adds a dependency only when a ported piece
-# needs it (serde/serde_json for the ledger and findings, sha2/hex for the
-# telemetry instance id, ureq for the intake) — see README "Plan".
+# The port adds a dependency only when a ported piece needs it. surrealdb and tokio
+# are deliberately absent until milestone 8 (index) and the http engine (milestone 7).
 
 [profile.release]
 strip = true

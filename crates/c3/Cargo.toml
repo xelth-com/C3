@@ -1,0 +1,16 @@
+[package]
+name = "c3"
+description = "C3 runtime library: engines, panel, router, index, pack, telemetry, and the providers/preflight logic."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+c3-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+chrono.workspace = true

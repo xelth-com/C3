@@ -1,6 +1,8 @@
 # C3 — claude-codex-consult in Rust
 
-**Status: early port, not functional yet.** The working implementation today is the
+**Status: early port.** Milestone 1 is done: `c3 providers` reproduces `codex-providers.ps1`
+(table, `--short`, `--json`, exit codes) byte for byte on the same machine; every other
+subcommand is a stub that says which milestone brings it. The working bridge today is the
 PowerShell plugin [`codex-consult`](https://github.com/xelth-com/claude-codex-consult)
 (install in Claude Code: `/plugin marketplace add xelth-com/claude-codex-consult`, then
 `/plugin install codex-consult@claude-codex-consult`). C3 is that bridge rewritten in Rust
@@ -89,9 +91,16 @@ Client rules and a 30-line Rust reference client:
 ```sh
 cargo build --release          # target/release/c3
 ./target/release/c3 --version
+./target/release/c3 providers --short   # the reviewer availability line
+cargo test && cargo clippy --all-targets -- -D warnings
 ```
 
-No dependencies yet; each ported piece brings its own when it needs one.
+A cargo workspace of three crates: `crates/c3-core` (contracts and file formats),
+`crates/c3` (runtime modules), `crates/c3-cli` (the binary). Each ported piece brings its
+own dependencies when it needs them; SurrealDB arrives with milestone 8 behind a feature.
+The plugin's harnesses can drive the binary through `tests/shim/` (see
+`docs/port/harness-shim.md`); `docs/port/m1-acceptance.md` lists the assertions milestone 1
+answers to.
 
 ## License
 

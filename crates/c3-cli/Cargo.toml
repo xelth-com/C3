@@ -1,0 +1,18 @@
+[package]
+name = "c3-cli"
+description = "The c3 binary: CLI commands and (later) the stdio MCP server."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[[bin]]
+name = "c3"
+path = "src/main.rs"
+
+[dependencies]
+c3.workspace = true
+c3-core.workspace = true
+clap.workspace = true
