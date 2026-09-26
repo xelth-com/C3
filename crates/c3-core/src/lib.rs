@@ -16,11 +16,17 @@ pub mod availability;
 pub mod config;
 pub mod credential;
 pub mod effort;
+pub mod engine;
+pub mod findings;
+pub mod handoff;
 pub mod health;
+pub mod ledger;
 pub mod lineage;
 pub mod paths;
+pub mod ps_json;
 pub mod purpose;
 pub mod roster;
+pub mod store;
 pub mod verdict;
 
 use sha2::{Digest, Sha256};
