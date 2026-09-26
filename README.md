@@ -14,10 +14,15 @@ reviewers from different labs** to look at a one-page brief. Reviewers are read-
 nothing is edited by them. Every consultation is recorded as files next to the code (the
 brief, the reviewer's reply verbatim, a JSON ledger, **findings tracked by id** that you
 verify and move yourself), and a **panel** runs several reviewers in parallel and
-reconciles them. Reviewers are subscriptions the user already has, never API keys the
-bridge handles: the ChatGPT plan through the Codex CLI, z.ai GLM, Xiaomi MiMo or any
-Responses-API provider through a `[model_providers.<name>]` table, Gemini through Google's
-Antigravity CLI `agy`, Meta Muse through the Muse Code CLI.
+reconciles them. Reviewers are subscriptions the user already has: the ChatGPT plan through
+the Codex CLI, z.ai GLM, Xiaomi MiMo or any Responses-API provider through a
+`[model_providers.<name>]` table, Gemini through Google's Antigravity CLI `agy`, Meta Muse
+through the Muse Code CLI. The bridge never creates, prints, stores or commits a key. C3 adds
+one API path for people who will not juggle subscriptions - OpenRouter (or any
+OpenAI-compatible endpoint) through a native `http` engine that reads its key from the
+environment and sends the reviewer a prepared pack instead of tools - and, on top of the
+same files, packs for chat models, a local SurrealDB index and telemetry-driven panel
+routing. The design is in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Why a Rust rewrite
 
@@ -38,6 +43,17 @@ to run a panel non-blocking (R12).
 5. **Telemetry and complaints** (plugin ROADMAP R17) — the terms below, the spool, `--complain`,
    `--forget-me`.
 6. Claude Code packaging (skill, hook, evals) as a thin layer over the binary.
+
+Steps 1-6 are the parity port. The heavy subsystems are explicit milestones after it
+(see [docs/DESIGN.md](docs/DESIGN.md), section 10):
+
+7. **Packs and the `http` engine** — snapshots and reviewer/explainer packs from one
+   sanitizing builder; OpenRouter reviewers get a pack, never tools.
+8. **Index** — embedded SurrealDB (per project, or one server per user across projects),
+   rebuildable from files + repo, never required for a consultation.
+9. **Router** — panel thickness (`shadow` / `council` / `consilium`) and a versioned,
+   auditable draw from the scoreboard with priors distributed by the maintainer's server.
+10. **MCP server** — read-and-record tools for Claude Code without the plugin.
 
 ## Telemetry (on by default, off with one line)
 

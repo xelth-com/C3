@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a0de73-5c34-7613-8fe7-59afd59fa3e9"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `dola-seed-2.0-pro` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"error","message":"exceeded retry limit, last status: 429 Too Many Requests, request id: 0217904385017706097278e78ff109d0bf5de77146291ace0ab2b"}
+{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests, request id: 0217904385017706097278e78ff109d0bf5de77146291ace0ab2b"}}

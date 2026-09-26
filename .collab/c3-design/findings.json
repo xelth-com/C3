@@ -1,0 +1,2260 @@
+{
+    "task_id":  "c3-design",
+    "findings":  [
+                     {
+                         "id":  "F02-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "README.md",
+                                               "line":  17
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "The vision\u0027s mandatory API path contradicts C3\u0027s own published contract that the bridge never handles API keys, and the brief treats this as settled without recording the divergence.",
+                         "trigger":  "Any run of the proposed `http` engine reads `OPENROUTER_API_KEY` from the environment, which the current spec forbids the bridge from touching.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "README.md:17-18",
+                                              "observation":  "\"Reviewers are subscriptions the user already has, never API keys the bridge handles.\""
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md, Providers/engines section",
+                                              "observation":  "Plugin README line 17: \"Never create, print or paste an API key.\" — never in config.toml, roster, brief, state.md or a commit; Muse even refuses when META_API_KEY/MODEL_API_KEY are set."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md, Vision",
+                                              "observation":  "\"Subscriptions stay the primary path, but an API path must exist: OpenRouter as the concentrator.\""
+                                          }
+                                      ],
+                         "verification":  "Diff the plugin README\u0027s key-handling rule against C3\u0027s README and the handoff vision; confirm no maintainer decision record authorizes the divergence.",
+                         "remedy":  "Record an explicit R-numbered divergence decision amending the README contract before the `Engine` trait freezes; require env-only keys, `redact()` on all error paths, and a Muse-style guard/warning when a subscription seat covers the same lineage.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-merge-framing-zai.md",
+                                        "thread":  "01a0de66-2e10-72a2-8e92-4b5dd42abc16",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:53+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated: README.md:17-18 excludes bridge-handled credentials, while the brief mandates native HTTP. The fixed vision authorizes an API path but does not reconcile the published invariant; an adapter is another option.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F02-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "README.md",
+                                               "line":  44
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/context/codex-consult.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "Telemetry opt-in vs on-by-default is an open contradiction between the plugin\u0027s decided R17 and C3\u0027s README, and it lands in port-order step 5 where reversal after installs is expensive.",
+                         "trigger":  "First C3 release with telemetry compiled in defaults to sending events while the plugin spec says opt-in.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "README.md:44-47",
+                                              "observation":  "\"Installing C3 means accepting these terms. C3 reports one anonymous event per consultation...\" — on by default."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md, Maintainer decisions / Telemetry",
+                                              "observation":  "\"R17 telemetry: decided opt-in on 2026-09-26 in the plugin ROADMAP — while C3\u0027s README says ON by default. This contradiction is open.\""
+                                          }
+                                      ],
+                         "verification":  "Compare the plugin ROADMAP\u0027s R17 entry with C3\u0027s README telemetry section on the same date.",
+                         "remedy":  "Decide once as a maintainer decision, align both documents, and implement the off switch plus first-run notice before any release.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-merge-framing-zai.md",
+                                        "thread":  "01a0de66-2e10-72a2-8e92-4b5dd42abc16",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:53+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated by README.md:42-58 and codex-consult digest:46. No unified consent decision appears in the supplied framing.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F02-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "The proposed long-lived `c3-mcp` server plus CLI commands plus detached panels cannot all open one embedded SurrealKV database concurrently; the shape has no DB concurrency model.",
+                         "trigger":  "An MCP server session holds the DB open while a detached panel (R12) or a CLI reindex tries to open it on the same repo.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/xelth-rs.md, Key dependencies",
+                                              "observation":  "surrealdb 3.0.5 with feature kv-surrealkv, embedded, no server."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "Embedded KV-store nature of surrealkv",
+                                              "observation":  "Embedded KV stores are single-process; cross-process open of the same files is unsupported or exclusive (not tested here — see RC1)."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Get-Content .collab/c3-design/.consult.lock, .consult.pending-02.json",
+                                              "observation":  "The repo\u0027s live bridge already coordinates via lock and pending files across multiple processes for one task."
+                                          }
+                                      ],
+                         "verification":  "Run RC1 to inspect how xelth.rs scopes DB connections, and attempt two concurrent opens of one surrealkv path.",
+                         "remedy":  "Open the DB only in short-lived commands; compute panel draws/priors before detaching and freeze them into the status/pending payload; the MCP server should delegate to short-lived invocations or own a single exclusive path.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-merge-framing-zai.md",
+                                        "thread":  "01a0de66-2e10-72a2-8e92-4b5dd42abc16",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:53+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated as a missing process-ownership model. Exact SurrealKV concurrent-open behavior was not tested; corruption is not established. See RC1.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F02-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "With the PowerShell plugin and C3 (and plain git) all mutating `.collab/` and repo files, the SurrealDB index has no stated invalidation story and will serve stale priors and a stale code graph.",
+                         "trigger":  "The plugin appends to sessions.json/findings.json (or git switches branches) after C3 built its index; the next draw or context pack uses outdated data.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Directory listing of .collab/c3-design",
+                                              "observation":  "sessions.json, findings.json, pending and lock files are actively written by the plugin in this very repo while C3 is designed."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/xelth-rs.md, SurrealDB usage",
+                                              "observation":  "xelth.rs already needs a file_hash table with hash-skip incremental indexing for exactly this freshness problem."
+                                          }
+                                      ],
+                         "verification":  "Mutate sessions.json externally after indexing and check whether any proposed pipeline detects it (currently none is specified).",
+                         "remedy":  "Treat the DB strictly as a cache keyed by content hashes; lazily reindex changed files on every command; never read priors without validating the underlying file hashes.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-merge-framing-zai.md",
+                                        "thread":  "01a0de66-2e10-72a2-8e92-4b5dd42abc16",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:53+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated: rebuildability is asserted without external-change detection or generation checks. There is no implemented C3 pipeline in which stale reads could yet be observed.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F02-5",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  ".eck/anchor",
+                                               "line":  null
+                                           },
+                                           {
+                                               "path":  ".eck/update_seq",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "C3\u0027s snapshot/explainer writing into `.eck/` would collide with eckSnapshot, which actively owns `anchor` and `update_seq` in this repository and bases its delta chain on them.",
+                         "trigger":  "Running `c3 snapshot`/`c3 explain` output into `.eck/` in a repo where eckSnapshot also runs, corrupting or competing with its anchor/update_seq.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Repository file listing",
+                                              "observation":  "`.eck/anchor`, `.eck/update_seq`, `.eck/lastsnapshot/` exist and were written today by eckSnapshot."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/eckSnapshot.md, Full vs delta",
+                                              "observation":  "Delta snapshots are derived from the anchor commit and `.eck/update_seq` sequence."
+                                          }
+                                      ],
+                         "verification":  "Run an eckSnapshot update after a hypothetical C3 write into `.eck/` and check the delta chain.",
+                         "remedy":  "C3 should read `.eck/` manifests as input but write its own artifacts under `.collab/` or a c3-prefixed directory.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-merge-framing-zai.md",
+                                        "thread":  "01a0de66-2e10-72a2-8e92-4b5dd42abc16",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:53+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Existing .eck/anchor and update_seq were observed, and the digest establishes eckSnapshot ownership. Collision is conditional: emitting an independent file under .eck does not itself corrupt either marker.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F02-6",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "The participation policy\u0027s reward function is undefined (no aggregate usefulness formula exists; R15 has zero code), so the Store/ledger data shape it must \"slot into\" cannot actually be fixed in step 1.",
+                         "trigger":  "Attempting to freeze the `Store` trait and ledger schema before deciding how Y/P/N marks and verified/rejected counts combine into Beta pseudo-counts and how decay applies.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md, Panel today",
+                                              "observation":  "\"No aggregate usefulness formula exists yet — that is R15\u0027s router\"; R15 is planned with zero code."
+                                          }
+                                      ],
+                         "verification":  "Ask for the maintainer\u0027s intended reward mapping; none exists in any read document.",
+                         "remedy":  "Specify the reward mapping (Y/P/N to pseudo-counts, a verified/rejected channel, decay semantics) before freezing the Store trait and ledger fields.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-merge-framing-zai.md",
+                                        "thread":  "01a0de66-2e10-72a2-8e92-4b5dd42abc16",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:53+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated: codex-consult digest:48 explicitly says no aggregate usefulness formula exists. Raw evidence storage can be specified now; derived reward policy should remain versioned and separate.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F02-7",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "README.md",
+                                               "line":  29
+                                           }
+                                       ],
+                         "claim":  "The README\u0027s six-step port order does not contain the panel policy, SurrealDB store, context assembly, explainer or MCP work the proposed shape includes, so \"port order stays as in README\" is internally inconsistent with the shape.",
+                         "trigger":  "Planning milestones from the README while the shape fixes traits for subsystems absent from that order.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "README.md:29-42",
+                                              "observation":  "Steps 1-6 cover providers/preflight, one consultation, ledger/findings, roster/panel vocabularies, telemetry, packaging — no surreal/http-policy/explainer/MCP-store steps."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md, Proposed shape point 6",
+                                              "observation":  "\"Port order stays as in README, but Store and Engine traits are fixed in step 1... the MCP server lands after step 4.\""
+                                          }
+                                      ],
+                         "verification":  "Map each proposed crate to a README port-order step; several have none.",
+                         "remedy":  "Publish an amended port order that inserts the heavy subsystems as explicit steps with the plugin evals as oracle plus new tests.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-merge-framing-zai.md",
+                                        "thread":  "01a0de66-2e10-72a2-8e92-4b5dd42abc16",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:53+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated by README.md:29-40 versus the proposed shape. The roadmap needs explicit new-subsystem milestones and acceptance criteria.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F09-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "README.md",
+                                               "line":  42
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/context/codex-consult.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "Telemetry default is contradictory across the two sources of truth: the plugin ROADMAP decided R17 as opt-in on 2026-09-26, while C3\u0027s README ships \u0027on by default, off with one line\u0027. The brief itself flags this as open but does not resolve it, and the proposed shape (point on telemetry/T-hub) inherits the ambiguity.",
+                         "trigger":  "First C3 release with telemetry code: whichever default ships, one of the two documented commitments is violated.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "README.md:42",
+                                              "observation":  "Heading \u0027Telemetry (on by default, off with one line)\u0027 with CODEX_CONSULT_TELEMETRY=off as the opt-out."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "R17 entry: \u0027decided opt-in on 2026-09-26 in the plugin ROADMAP - while C3\u0027s README says ON by default... This contradiction is open.\u0027"
+                                          }
+                                      ],
+                         "verification":  "Diff the plugin repo ROADMAP R17 entry against README.md:42-60 and record the maintainer\u0027s single decision in both places before step 5 of the port order starts.",
+                         "remedy":  "Pick one default explicitly (recommend: keep C3\u0027s on-by-default only if the plugin is amended to match, with the disclosed-once notice; otherwise opt-in in both), and note the divergence rule the digest already states: C3 should not diverge from plugin decisions without saying so.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/09-codex-merge-framing-kimi.md",
+                                        "thread":  "01a0de66-2d23-7880-a2e3-4ed63847f8df",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:49+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated; same unresolved consent contradiction as F02-2.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F09-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "The \u0027SurrealDB is rebuildable from files + repo; losing it loses no evidence\u0027 guarantee has no defined rebuild command, no provenance/staleness mechanism, and no write-order rule; once participation priors are drawn from the DB, silent file/DB drift corrupts reviewer selection without any error surfacing.",
+                         "trigger":  "A crash or concurrent write between the files append and the DB index update, or any manual edit of findings.json, leaves the DB stale; subsequent Thompson draws use wrong posteriors.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md (proposed shape point 2)",
+                                              "observation":  "States the rebuildable property as an assertion; no rebuild tool, hash check, or write order is specified anywhere in the brief or digests."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md (R15, ledger)",
+                                              "observation":  "R15 requires the draw to be recorded and the scoreboard to feed selection, so stale priors directly alter behavior."
+                                          }
+                                      ],
+                         "verification":  "After Store is implemented, kill c3 between the files write and the DB write, run the rebuild command, and assert the posteriors match a from-scratch index.",
+                         "remedy":  "Specify: files written and fsync\u0027d first (plugin atomic write order), DB updated second, every DB row stores the source file hash; ship `c3 doctor --rebuild` before any DB-derived decision (participation, retrieval) goes live, and run rebuild-verification in CI.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/09-codex-merge-framing-kimi.md",
+                                        "thread":  "01a0de66-2d23-7880-a2e3-4ed63847f8df",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:49+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated as a missing recovery/provenance contract. Files-first writes, generation checks and rebuild verification can satisfy the invariant; actual drift has not been demonstrated in C3.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F09-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  null
+                                           },
+                                           {
+                                               "path":  "README.md",
+                                               "line":  20
+                                           }
+                                       ],
+                         "claim":  "Deriving Beta-prior pseudo-counts from BM25/HNSW similarity over stored briefs is statistically empty at the stated scale (tens of consultations), and the README\u0027s \u0027plugin evals as the oracle\u0027 strategy has no oracle for R15 routing because the plugin implements none of it - this is the first port step with zero specification-by-implementation.",
+                         "trigger":  "Early consultations where similarity-weighted pseudo-counts outnumber real Y/P/N marks, producing reviewer selections that look data-driven but reflect embedding noise.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "\u0027R15 ... zero code\u0027 and scoreboard \u0027feeds NOTHING back into selection\u0027; HIT% is null when verified+rejected = 0."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "README.md:20",
+                                              "observation":  "Port order preamble: \u0027each step lands with tests and the plugin\u0027s evals as the oracle\u0027."
+                                          }
+                                      ],
+                         "verification":  "Simulate 30 consultations with a fixed reviewer quality ordering under both (a) plain per-(reviewer,purpose) Beta posteriors and (b) similarity-smoothed posteriors; compare panel selection regret.",
+                         "remedy":  "Ship R15 exactly as decided (per-(reviewer,purpose) posterior + -Topic override + epsilon + neutral prior); gate similarity smoothing behind a corpus-size threshold; write golden tests from the R15 decision text in place of plugin evals.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/09-codex-merge-framing-kimi.md",
+                                        "thread":  "01a0de66-2d23-7880-a2e3-4ed63847f8df",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:49+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate the absence of a plugin routing oracle and the need for evaluation. Contradict the categorical \u0027statistically empty\u0027 conclusion: small samples imply uncertainty, not automatic invalidity. Similarity smoothing might help or hurt; RC2 should measure it.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F09-4",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "The lock model with an embedded DB is unspecified: R12\u0027s .consult.lock serializes consultations per task, but SurrealKV enforces its own single-writer file lock per database, so detached parallel panels (R12) writing index updates to one shared DB will fail or serialize unpredictably.",
+                         "trigger":  "Two detached consultations on different tasks in the same repo both finishing and attempting DB index writes concurrently.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md (R12 decisions)",
+                                              "observation":  "Background process holds .consult.lock per task; nothing arbitrates a repo-level resource like an embedded DB."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/xelth-rs.md",
+                                              "observation":  "Embedded SurrealKV, no server - implies process-local single-writer storage."
+                                          }
+                                      ],
+                         "verification":  "Run two `c3 consult -Detach` on different tasks of one repo against a shared DB and observe the second writer\u0027s behavior.",
+                         "remedy":  "Decide now: one DB-writer model (index updates queued to whichever process holds a repo-level DB lock, else skipped and caught by next rebuild) or per-task DB shards merged on read; record the choice next to R12\u0027s D1-D12.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/09-codex-merge-framing-kimi.md",
+                                        "thread":  "01a0de66-2d23-7880-a2e3-4ed63847f8df",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:49+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated as an unspecified lock domain. No two-process SurrealKV test was run; deterministic serialization is a possible design, not inherently a failure.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F09-5",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/context/eckSnapshot.md",
+                                               "line":  null
+                                           }
+                                       ],
+                         "claim":  "Redaction in eckSnapshot exists only in createSnapshot\u0027s output path, not the shared builder; if C3 ports that shape, `http` reviewer context packs and explainer packs - the two outputs that leave the machine - can carry secrets that snapshot creation alone would have stripped.",
+                         "trigger":  "A secret matching the scanner\u0027s patterns in a file selected by graph retrieval for an http context pack.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/eckSnapshot.md",
+                                              "observation":  "Rough edges: \u0027secret redaction only in createSnapshot\u0027s output path, not in the shared builder\u0027."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/xelth-rs.md",
+                                              "observation":  "scanner.rs ported from eckSnapshot; redact() only covers API keys in error strings, not file bodies."
+                                          }
+                                      ],
+                         "verification":  "Unit test: a fixture file containing an sk-... token must be redacted identically in snapshot, explainer pack, and http pack outputs.",
+                         "remedy":  "Put secret scanning/redaction in c3-snapshot\u0027s shared render pipeline (the equivalent of renderFileAtDepth), so every output path inherits it; keep redact() on error strings as a separate layer.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/09-codex-merge-framing-kimi.md",
+                                        "thread":  "01a0de66-2d23-7880-a2e3-4ed63847f8df",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:49+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated from eckSnapshot digest:61-63 as a porting hazard. Shared export sanitization is required; a C3 secret leak has not been observed.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F09-6",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+
+                                       ],
+                         "claim":  "The plugin\u0027s continuation/timeout semantics assume stateful CLI threads (\u0027one continuation turn on the same thread; never fork/resume across lineages\u0027); http reviewers are stateless single calls, so lineage, resume, and the ledger\u0027s lineage field have no defined meaning for the http engine class.",
+                         "trigger":  "A timeout or format-repair on an http reviewer: there is no thread to continue, and a naive retry silently becomes a new consultation with a fresh draw.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "Timeout and format-repair rules are defined per-thread; lineage = provider+model+endpoint with no forking across lineages."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "brief proposed shape point 4",
+                                              "observation":  "\u0027one call, same reply schema\u0027 - no continuation semantics mentioned."
+                                          }
+                                      ],
+                         "verification":  "Decide and document the http retry rule, then check that a retried http consultation produces ledger entries that replay deterministically.",
+                         "remedy":  "Define http consultations as single-shot: timeout/format-repair resends the full pack as a new ledger entry linked by supersedes-style reference; record the context-pack content hash in lineage so the exact input is auditable.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/09-codex-merge-framing-kimi.md",
+                                        "thread":  "01a0de66-2d23-7880-a2e3-4ed63847f8df",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:51:49+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate missing HTTP retry/conversation semantics. Qualify the claim: stateless transport does not prevent client-managed conversations or lineage; those identities must be specified separately.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-1",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  56
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  63
+                                           }
+                                       ],
+                         "claim":  "The proposal makes embedded SurrealKV a `Store` implementation but defines no process-ownership or lock model, while R12 detach, a long-lived `c3-mcp` server and a foreground CLI can all touch one repository\u0027s DB at the same time; embedded SurrealKV is opened as a single-process on-disk engine, so concurrent C3 processes on one repo have undefined behaviour (open failure, blocking, or corruption of the index).",
+                         "trigger":  "A detached panel (R12) running while the MCP server holds the DB open, or two `c3` shells in the same repo.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/xelth.rs/src/main.rs:154",
+                                              "observation":  "`let db = Surreal::new::\u003cSurrealKv\u003e(\".eck/db\").await?;` — a per-process embedded on-disk engine, no lock negotiation."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/xelth.rs/Cargo.toml",
+                                              "observation":  "`surrealdb = { version = \"3.0.5\", features = [\"kv-surrealkv\"] }` — embedded KV, not a client/server connection."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "R12: foreground writes `starting` and takes no lock while the background process holds `.consult.lock` — i.e. two live processes per task by design."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/C3/.gitignore",
+                                              "observation":  "C3 already ignores `.collab/**/.consult.lock` and `.consult.write.lock`, so the file-lock namespace is shared with the plugin, but nothing covers the DB."
+                                          }
+                                      ],
+                         "verification":  "Run RC1: hold `.eck/db` open with `xelth mcp` and open the same directory from a second process; observe error, block, or corruption.",
+                         "remedy":  "Declare the DB a derived cache with a single writer: only the `.consult.lock` holder opens it read-write; every other process opens read-only or skips indexing. Add `Index: none` so a lock failure degrades to \u0027no index this run\u0027 and never fails a consultation. Rebuild = reindex from files + repo.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated as missing DB ownership. Open failure, blocking and corruption are alternative hypotheses, not observed outcomes; RC1 distinguishes them.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-2",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  74
+                                           }
+                                       ],
+                         "claim":  "The explainer pack is a publication artifact that embeds source into a file a human pastes into a third-party chat, but the redaction precedent C3 is porting only redacts in one command\u0027s output path, and the OpenRouter key-loading precedent falls back to a repo `.env` — so a secret can be embedded and shipped off-machine, with no consent or license gate.",
+                         "trigger":  "`c3 explain --focus .` (or a snapshot) in a repo containing `.env`, a key file, or a hardcoded token, then pasting the pack into ChatGPT/Gemini.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Select-String \u0027redact|SecretScanner\u0027 over eckSnapshot/src/core/snapshotBuilder.js, src/cli/commands/createSnapshot.js, src/cli/commands/updateSnapshot.js",
+                                              "observation":  "Hits only in createSnapshot.js (`SecretScanner.redact(outputBody, ...)` at :446, stats at :297/:1060); none in snapshotBuilder.js or updateSnapshot.js — the shared builder and the delta path are unredacted."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/xelth.rs/src/consilium.rs:57",
+                                              "observation":  "`load_openrouter_key()` reads the process env **else `.env` in the repo** — a repo-resident key file is normal in the sibling project."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/eckSnapshot.md",
+                                              "observation":  "Digest \u0027Rough roughges\u0027: \"secret redaction only in createSnapshot\u0027s output path, not in the shared builder\"."
+                                          }
+                                      ],
+                         "verification":  "Run RC4 (grep `SecretScanner` across eckSnapshot/src) and then generate one C3 pack over a fixture repo containing a `.env` with a fake key; confirm the key appears in the output.",
+                         "remedy":  "Redact in the shared builder (single choke point) for snapshots, packs and delta updates; hard-ignore `.env*`, key files and `.eck/db` regardless of `.gitignore`; never port the repo `.env` key fallback; require an explicit \u0027this leaves the machine\u0027 confirmation and record the pack\u0027s redaction count in its header.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate export filtering/redaction risk. The brief does not adopt xelth.rs\u0027s repo .env fallback, so that behavior is conditional. A universal extra consent or license gate is not established by these sources.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  56
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  63
+                                           }
+                                       ],
+                         "claim":  "A `Store` trait with interchangeable `files` and `surreal` implementations logically asserts the DB can be the record, which contradicts the stated invariant that the DB is rebuildable and files are the committable evidence; the abstraction will either leak SurrealQL semantics into every call site or force a lowest-common-denominator query API.",
+                         "trigger":  "Implementing the second query against the trait (e.g. \u0027reviewers similar to this brief\u0027), which only the surreal impl can answer efficiently.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:56",
+                                              "observation":  "`c3-store` (trait `Store`: `files` = byte-compatible `.collab/\u003ctask\u003e/...`; `surreal` = embedded SurrealKV) — presented as two impls of one trait."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:63",
+                                              "observation":  "Point 2: \u0027Files stay the record … SurrealDB is the index and the memory … losing it loses no evidence\u0027 — a different relationship than substitutability."
+                                          }
+                                      ],
+                         "verification":  "Write the trait signature on paper and try to express BM25/HNSW similarity search plus byte-compatible `sessions.json` append through it; count the methods that only one impl can honour.",
+                         "remedy":  "Split into `RecordStore` (one impl: files, byte-compatible, atomic write order + `.consult.write.lock`) and `Index` (impls `surreal`, `none`, later `memory`). Commit a third tier — the Recipe (claim, focus, budget, anchor, router config) — so derived artifacts are reproducible.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate the abstraction mismatch. Contradict the logical necessity asserted: a Store trait does not automatically make the DB authoritative. Separate evidence storage and index queries to make the intended roles explicit.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  70
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  69
+                                           }
+                                       ],
+                         "claim":  "C3 and the PowerShell plugin share the roster file and the `.collab` lock/record namespace, but the plugin validates rosters strictly and today\u0027s schema has no `lab` field, so R14-style diversity and R15 routing metadata added by C3 will be rejected by the plugin — a cross-tool compatibility break that is expensive to undo after rosters are in the wild.",
+                         "trigger":  "C3 writes or accepts a roster containing `lab`, `weight`, or router hints, and the user then runs the plugin in the same repo.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Get-Content C:/Users/Dmytro/claude-codex-consult/examples/codex-consult-roster.json",
+                                              "observation":  "`roster_version: 1`, entries carry only provider/model/engine/codex_config/panel; no `lab` field, and two entries share `provider: gemini` (different models) — provider is not a lab key."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Select-String \u0027panel must be\u0027 codex-consult-common.ps1",
+                                              "observation":  "Line 4947: strict validation — `panel must be \"always\" or \"weighty\"`, i.e. the roster parser rejects values outside a closed vocabulary."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "R14\u0027s `lab` field and R15\u0027s routing weights are \u0027planned\u0027, zero code — C3 would be first to write them."
+                                          }
+                                      ],
+                         "verification":  "Run RC2: copy the example roster, add `\"lab\": \"openai\"`, and run the plugin\u0027s roster validation; observe accept vs reject.",
+                         "remedy":  "Bump to `roster_version: 2` with additive-only fields, derive `lab` from a provider→lab map when absent, and agree a tolerance rule (both tools ignore unknown keys) before C3 writes any roster. Record the resolved `lab` in the ledger rather than requiring it in the roster.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Directly corroborated: sibling codex-consult-common.ps1:4994-4995 rejects member properties outside provider/model/codex_config/auth/panel/engine, including lab and weight. A coordinated version change or sidecar is needed.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  69
+                                           }
+                                       ],
+                         "claim":  "Thompson sampling over Beta posteriors is not identifiable at the data volume C3 will have: labels are sparse and delayed, `HIT%` is null when verified+rejected is zero, and because the draw itself decides who sees which brief, observed hit-rate is confounded by brief difficulty — so the router will mostly amplify its prior plus noise, and the recorded draw is not reproducible unless the pre-filter availability set is stored alongside the post-filter probabilities.",
+                         "trigger":  "The first ~50 consultations on a repo, or any period where a reviewer is repeatedly drawn onto hard briefs.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "Scoreboard: `HIT% = verified / (verified + rejected)` (null when both zero); usefulness marks Y/P/N come from an explicit `-Rate` the user may never run; \u0027It feeds NOTHING back into selection\u0027."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "R15: \u0027availability is filtered BEFORE the draw\u0027 — so the probability vector is conditional on a set that changes between runs."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "Beta-Bernoulli posterior variance at n\u003c30 with delayed labels",
+                                              "observation":  "Posterior width exceeds the between-reviewer gap, so Thompson\u0027s exploration is indistinguishable from noise while still being recorded as a routing decision."
+                                          }
+                                      ],
+                         "verification":  "Run RC3 over the plugin\u0027s existing `.collab/*/findings.json` + `sessions.json` and print n per (reviewer, purpose); if median n \u003c 20 the sampling claim is settled.",
+                         "remedy":  "Ship shrunk-hit-rate softmax + epsilon-exploration with an explicit `router_version`, `policy`, seed, post-filter probabilities AND the pre-filter availability set in the ledger. Keep Thompson behind the same `Router` interface (probability vector in, draw out) so switching later is a policy change, not a schema change. Similarity from BM25 over stored briefs, `-Topic` as override — no HNSW dependency in the router.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate sparse/delayed labels and incomplete replay inputs. Contradict median n\u003c20 as a proof of unsoundness or non-identifiability; no universal threshold follows. Selection constraints and reward definitions require evaluation.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-6",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  71
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  72
+                                           }
+                                       ],
+                         "claim":  "The reply schema is closed (`additionalProperties:false`, `schema_version` enum `[\"1\"]`, `evidence.kind` enum of four values), so a pack-only `http` reviewer has no honest way to say \u0027this file was in my slice\u0027: it must either claim `read-code` (which today implies it read the repo) or downgrade to `inferred`, and any C3-side addition (pack hash, routing, needs[]) requires a coordinated schema bump with the plugin that still validates \"1\".",
+                         "trigger":  "The first `http` consultation returning findings whose evidence came from the assembled pack rather than from tools.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Get-Content C:/Users/Dmytro/claude-codex-consult/plugins/codex-consult/schemas/consult-reply.schema.json | Select-String \u0027additionalProperties|enum|required\u0027",
+                                              "observation":  "`\"schema_version\": { \"type\": \"string\", \"enum\": [\"1\"] }`; top level and every nested object `additionalProperties: false`; `\"kind\": { \"enum\": [\"read-code\",\"ran-command\",\"inferred\",\"assumed\"] }`."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:72",
+                                              "observation":  "\u0027same reply schema\u0027 is promised for `http` reviewers that get no tools."
+                                          }
+                                      ],
+                         "verification":  "Draft a pack-only reply with a `read-code` evidence entry and run it through the plugin\u0027s schema validation plus a human read: check whether \u0027read-code\u0027 is auditable without knowing the pack contents.",
+                         "remedy":  "Decide the schema policy now: either bump to `schema_version: \"2\"` together with the plugin (adding `context_pack` / `evidence.kind: in-pack`), or keep \"1\" and record the pack hash + served paths in the ledger entry so a `read-code` claim is auditable out-of-band. Also reserve `needs[]` for the bounded retrieve-on-demand turn rather than a tool loop.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+                                               "F15-2"
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corrected and superseded by finding #2. The actual schema allows an honest pack-specific reference under read-code; it does not assert direct repository access. The unresolved issue is retained provenance, not an unavoidable reply-schema bump.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-7",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  59
+                                           }
+                                       ],
+                         "claim":  "Porting the xelth.rs retriever shape drags in the embedding stack (candle, hf-hub, tokenizers, a 768-dim model download on first run) and its silent failure mode, which contradicts \u0027one static binary\u0027, offline use, and instant context assembly; the retrieval floor that actually needs no vectors is BM25 plus the three-layer graph.",
+                         "trigger":  "`c3` on a machine with no network or no embedder configured, or a first run that must fetch a model from Hugging Face.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/xelth.rs/src/retriever.rs:45",
+                                              "observation":  "`let query_vec = embedder.embed(query_text).await.unwrap_or_else(|_| vec![0.1; 768]);` — a failed embedder silently produces a garbage query vector that is still fused into RRF."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/xelth.rs/src/retriever.rs:35-40",
+                                              "observation":  "Comment: name/path BM25 signals are \u0027critical for `--no-embed` projects where HNSW is unavailable\u0027 — i.e. a vector-free retrieval path already exists."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/xelth.rs/Cargo.toml",
+                                              "observation":  "candle-core/nn/transformers 0.10, hf-hub, tokenizers, plus `[profile.dev.package.\"*\"].opt-level=3` because debug Candle inference is 20-100x slower."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/C3/Cargo.toml",
+                                              "observation":  "`[dependencies] # Deliberately none yet` and `[profile.release] lto=true, strip=true` — the current binary-size discipline the ML stack would end."
+                                          }
+                                      ],
+                         "verification":  "Build a spike with `surrealdb` `kv-surrealkv` + BM25 only (no candle) and time index-then-retrieve on this repo; compare against adding candle + a local model.",
+                         "remedy":  "Make embeddings an optional capability behind a `Retriever` trait with a BM25+graph default; if vectors are wanted, use xelth\u0027s loopback `embed_http` pattern (external embedder process) instead of linking candle. Never copy the `vec![0.1; 768]` fallback — fail loud or label the pack \u0027BM25-only\u0027 in its header.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+                                               "F15-3"
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corrected and superseded by finding #3. Dependency/model-asset costs remain relevant, but external assets do not inherently contradict a static binary. Direct source inspection found mock-vector fallbacks and rate-limited warnings, rather than a wholly silent path.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-8",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  71
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  109
+                                           }
+                                       ],
+                         "claim":  "`http` engines are stateless, so the plugin\u0027s timeout recovery (\u0027one continuation turn on the same thread\u0027) and the \u0027never fork/resume across lineages\u0027 rule have no substrate; without deciding thread identity, sent-context identity and lineage naming for OpenRouter now, continuation, resume commands and dedup across waves will be retrofitted against a ledger that already stored the wrong keys.",
+                         "trigger":  "An `http` reviewer times out mid-answer, or the same reviewer is consulted twice on related briefs and C3 tries to continue rather than restart.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "\u0027Timeout → one continuation turn on the same thread; else `.partial.md` + a printed resume command\u0027 and \u0027Lineage = provider + model + endpoint; never fork/resume across lineages. Thread ids per repo\u0027."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/xelth.rs/src/consilium.rs:32",
+                                              "observation":  "`const API_BASE: \u0026str = \"https://openrouter.ai/api/v1\"` with `chat/completions` — a stateless one-shot call, no thread/session id."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:72",
+                                              "observation":  "\u0027one call, same reply schema\u0027 — no continuation or resume story for the http path."
+                                          }
+                                      ],
+                         "verification":  "Grep the plugin for how it stores and reuses the thread id on continuation (`codex-consult-common.ps1`), then check which of those fields an OpenRouter call can populate.",
+                         "remedy":  "Define `lineage = provider::model::endpoint` with `endpoint = openrouter/\u003cmodel\u003e`; treat `http` threads as C3-owned: persist the sent pack (hash + served paths) and the reply, so a continuation re-sends the recorded pack plus the partial answer instead of resuming a server-side thread. Mark `resume_supported: false` in the ledger so the CLI prints a re-run command rather than a resume command.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate the identity and retry specification gap. HTTP can use client-owned transcript identity; retries must preserve consultation and pack identity independently of provider thread support.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-9",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  45
+                                           }
+                                       ],
+                         "claim":  "R17 is left contradictory (opt-in decided in the plugin, ON-by-default in C3\u0027s README) and the new probabilistic router makes it load-bearing: if routing quality is ever argued from telemetry rather than from the local index, the privacy terms and the participation policy become coupled and both get harder to change.",
+                         "trigger":  "Shipping C3 0.x with the README\u0027s ON-by-default text while the plugin documents opt-in, or proposing to seed new-installation priors from T-hub aggregates.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md",
+                                              "observation":  "R17 \u0027decided opt-in on 2026-09-26 in the plugin ROADMAP — while C3\u0027s README says ON by default … This contradiction is open.\u0027"
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/C3/README.md",
+                                              "observation":  "\u0027## Telemetry (on by default, off with one line)\u0027 with `CODEX_CONSULT_TELEMETRY=off`, `--complain`, `--forget-me`."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/xelth-rs.md",
+                                              "observation":  "T-hub rules: payload never includes task names, prompts, briefs, paths, thread ids or finding text — so topic tags for routing cannot be sent."
+                                          }
+                                      ],
+                         "verification":  "Diff the plugin ROADMAP R17 wording against C3 README\u0027s telemetry section and check whether any routing input could only come from the server side.",
+                         "remedy":  "Resolve R17 explicitly in the framing document, and state the invariant that keeps it cheap: all learning inputs (briefs, findings, marks, priors) stay local in the index; telemetry carries only aggregate counters. Then ON-by-default is defensible and independent of the router.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated consent contradiction. Server-derived routing priors are only hypothetical: the brief does not require them. Keep local learning independent of outbound telemetry.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-10",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  60
+                                           },
+                                           {
+                                               "path":  "AGENTS.md",
+                                               "line":  1
+                                           }
+                                       ],
+                         "claim":  "Putting `finish_task` into `c3-mcp` imports eckSnapshot\u0027s writer behaviour (`git add .` + commit + delta snapshot) into a bridge whose entire trust posture is read-only reviewers and files-as-evidence, and C3\u0027s own AGENTS.md currently grants `\"*\": allow` with `model: GLM-4.7`, so the boundary is undocumented as well as unenforced.",
+                         "trigger":  "An agent calls the C3 MCP `finish_task` tool during or right after a consultation, committing review artifacts together with unrelated working-tree changes.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/eckSnapshot.md",
+                                              "observation":  "Finish loop: \u0027write `.eck/lastsnapshot/AnswerToSA.md` → `git add .` + commit → `eck_update_auto` delta snapshot … prepends to JOURNAL.md\u0027."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:60",
+                                              "observation":  "`c3-mcp` (stdio MCP: consult, panel, findings, snapshot, explain, finish_task) — finish_task listed alongside read/record tools."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/C3/AGENTS.md",
+                                              "observation":  "Frontmatter: `model: GLM-4.7`, `permission: read/edit/bash/\"*\": allow` — no read-only posture for this repo."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/C3/.mcp.json",
+                                              "observation":  "`eck-core` MCP server points at `C:\\Users\\Dmytro\\eckSnapshot\\scripts\\mcp-eck-core.js` — an absolute, machine-specific path, contrary to R13 host invariance."
+                                          }
+                                      ],
+                         "verification":  "List the MCP tools C3 intends to expose and classify each as read / record / writer; check whether any writer can be invoked without a separate permission gate.",
+                         "remedy":  "Keep `c3-mcp` to read + record tools (consult, panel status, findings, snapshot, explain). If `finish_task` is wanted, expose it as an explicitly-writer tool that never runs `git add .` (stage only the paths it wrote), and record the commit sha in the ledger. Replace the absolute `.mcp.json` path with a resolvable one per R13.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated as a writer-capability boundary requiring a decision: the eckSnapshot digest describes git add . and commit. Read-only reviewers do not require the entire coordinator to be read-only, and AGENTS.md text alone is not runtime enforcement.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-11",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  56
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  106
+                                           }
+                                       ],
+                         "claim":  "Ten crates is premature for a binary that today has no dependencies and only `--version`/`--help`; crate boundaries drawn before the second implementation exists tend to freeze the wrong seams, and a `heavy` feature that gates individual call sites will leak `cfg` branches everywhere.",
+                         "trigger":  "Steps 1-3 of the port order (providers, one consultation, ledger/findings) needing cross-crate changes for a single behaviour fix.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/C3/src/main.rs",
+                                              "observation":  "Entire current implementation: `--version`, `--help`, unknown-arg exit 2."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "C:/Users/Dmytro/C3/Cargo.toml",
+                                              "observation":  "Single package, single `[[bin]]`, `[dependencies] # Deliberately none yet`."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:56",
+                                              "observation":  "Proposed workspace: c3-core, c3-store, c3-engines, c3-snapshot, c3-context, c3-panel, c3-telemetry, c3-mcp, c3-cli."
+                                          }
+                                      ],
+                         "verification":  "Sketch steps 1-3 of the port order against both layouts and count how many crate boundaries a single ledger-format change crosses.",
+                         "remedy":  "Start with `c3-core`, `c3-engines`, `c3-cli` as modules in one crate if needed; promote to crates when a second impl or a compile-time reason appears. Drop `c3-store` per finding #3. Put `surrealdb` behind a default-on `heavy` feature that gates whole modules (`Index: none` when off), never individual call sites.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/10-codex-merge-framing-alibaba.md",
+                                        "thread":  "01a0de66-329d-7593-a94b-ba54e85b4737",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:59:56+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate premature boundary freezing from Cargo.toml and src/main.rs. The proposal actually names nine crates, not ten; cross-crate churn and cfg proliferation are risks, not observed defects.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-1",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "README.md",
+                                               "line":  42
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/context/codex-consult.md",
+                                               "line":  46
+                                           }
+                                       ],
+                         "claim":  "R17 telemetry consent is contradictory: plugin decided opt-in on 2026-09-26 while C3 README states ON-by-default. Shipping either without an explicit decision breaks trust and blocks acceptance.",
+                         "trigger":  "First run with default env (no CODEX_CONSULT_TELEMETRY set) sends or withholds the per-consultation event.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "README.md:42-60",
+                                              "observation":  "C3 README declares telemetry ON by default with one-line off switch and first-run notice."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md:34-46",
+                                              "observation":  "Digest records plugin R17 as decided opt-in on 2026-09-26 and flags the contradiction with C3 README as open."
+                                          }
+                                      ],
+                         "verification":  "Read README telemetry section against plugin ROADMAP R17 note and observe first-run/dry-run notice behavior.",
+                         "remedy":  "Decide once, in writing, before Store/Engine traits freeze: either reconcile to opt-in everywhere or document why C3 diverges; gate first telemetry send on that decision.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  10,
+                                        "reply":  "handoffs/11-muse-merge-framing-meta.md",
+                                        "thread":  "01a0de66-3f8a-7101-afa8-5381033f3a36",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:49:00+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated; same unresolved R17 contradiction. This framing can receive advice, but implementation needs one documented default.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  63
+                                           }
+                                       ],
+                         "claim":  "\"DB rebuildable, losing it loses no evidence\" is false for the proposed memory: participation priors, reviewer history and graph edges derived from past briefs live only in SurrealDB and are not reconstructible from files+repo alone.",
+                         "trigger":  "Delete SurrealKV directory and re-run selection or retrieval on an existing task.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:63-65",
+                                              "observation":  "Proposed shape point 2 says DB is index+memory (scoreboard, priors, code graph, cross-project history) yet rebuildable from files+repo."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md:27-44",
+                                              "observation":  "Plugin scoreboard today feeds nothing back; R15 plans weighted draw from usefulness+topic, i.e. new state with no file format defined."
+                                          }
+                                      ],
+                         "verification":  "Delete the DB dir on a fixture task, rebuild, and diff subsequent panel draw and retrieve_context output vs pre-delete.",
+                         "remedy":  "Define the rebuild contract explicitly: either persist routing state (marks, probabilities, seed, brief embeddings) as files and treat DB as pure cache, or admit DB holds durable memory and specify backup/export/corruption recovery.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  10,
+                                        "reply":  "handoffs/11-muse-merge-framing-meta.md",
+                                        "thread":  "01a0de66-3f8a-7101-afa8-5381033f3a36",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:49:00+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Contradict the categorical claim that these values necessarily live only in the DB: the brief declares them rebuildable, and the plugin retains briefs, ratings and outcomes. The real open requirement is preserving all source evidence, historical versions and routing inputs, particularly across projects.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  66
+                                           }
+                                       ],
+                         "claim":  "Thompson sampling over per-(member,purpose,topic) Beta posteriors is unsound at tens of consultations: posteriors stay prior-dominated, similarity-weighted slicing makes samples thinner, and the draw will look arbitrary while claiming to be telemetry-driven.",
+                         "trigger":  "Early life (fewer than ~50 rated consultations) or a novel topic with no similar stored briefs.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:66-70",
+                                              "observation":  "Brief proposes Beta posterior + Thompson sampling with epsilon floor and neutral prior, similarity via BM25/HNSW over stored briefs."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md:27-48",
+                                              "observation":  "Scoreboard has only CONSULTS/USABLE/HIT%=verified/(verified+rejected) with no aggregate usefulness formula; R15 has zero code."
+                                          }
+                                      ],
+                         "verification":  "Simulate draws on a tens-of-rows scoreboard fixture; check selection entropy and sensitivity to one Y/P/N mark.",
+                         "remedy":  "Start with epsilon-greedy/softmax over a pooled hierarchical prior (global -\u003e purpose -\u003e topic override), log full posteriors; promote to Thompson only after a stated sample-size gate.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  10,
+                                        "reply":  "handoffs/11-muse-merge-framing-meta.md",
+                                        "thread":  "01a0de66-3f8a-7101-afa8-5381033f3a36",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:49:00+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborate uncertainty and sparse topic slices. Contradict the claim that prior-dominated Thompson sampling is inherently unsound; strong priors can be appropriate. Predictive usefulness and sensitivity remain untested.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  71
+                                           }
+                                       ],
+                         "claim":  "Adding the OpenRouter http engine breaks the bridge\u0027s core invariant \u0027never handles a key\u0027: an env-var key plus error strings, spool, ledger and judge inputs become new exfiltration surfaces, and redact() coverage is load-bearing.",
+                         "trigger":  "Any failed http consultation (401/timeout/retry) that surfaces provider errors, usage payloads, or spooled events.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:71-73",
+                                              "observation":  "Proposed API path keeps key as env var, never prints/stores it, redact() on every error string."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/xelth-rs.md:56-61",
+                                              "observation":  "Plugin invariant: bridge never creates/prints/pastes a key; Muse refuses when META/MODEL_API_KEY set; xelth redact() strips key and sk-or-shaped tokens (unit-tested)."
+                                          }
+                                      ],
+                         "verification":  "Fail an http seat with a poisoned error string containing a fake sk-or key; inspect reply file, ledger, spool and stderr for leaks.",
+                         "remedy":  "Treat http as a trust boundary: key only via env/process inheritance, deny-list key-shaped strings in ledger/spool/errors with tests, document subscription-vs-API billing guard parity.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  10,
+                                        "reply":  "handoffs/11-muse-merge-framing-meta.md",
+                                        "thread":  "01a0de66-3f8a-7101-afa8-5381033f3a36",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:49:00+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated credential-contract divergence and the need for error/output redaction. An actual failed-request leak has not been demonstrated.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  55
+                                           }
+                                       ],
+                         "claim":  "Porting the eckSnapshot shape verbatim ports its redaction gap: redaction exists only in createSnapshot\u0027s output path, not the shared builder, and telemetry posts AnswerToSA-derived content to a hardcoded endpoint.",
+                         "trigger":  "Delta snapshot or explainer pack over a tree where a secret appears only in a changed file.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/eckSnapshot.md:60-63",
+                                              "observation":  "Digest notes redaction only in createSnapshot output path, skeletonizer depth-6 JSDoc bug, hardcoded telemetry endpoint with leak risk."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:55-59",
+                                              "observation":  "Proposed c3-snapshot lists discovery/filters/redaction/depth but does not say redaction is centralized and tested on every output path including delta and explainer pack."
+                                          }
+                                      ],
+                         "verification":  "Add a secret to one file after the anchor, render delta and explainer outputs, and grep for the raw secret.",
+                         "remedy":  "Put redaction as a mandatory last pass in the shared builder used by full, delta, explainer and http context paths, with fixture tests including secrets introduced only in deltas.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  10,
+                                        "reply":  "handoffs/11-muse-merge-framing-meta.md",
+                                        "thread":  "01a0de66-3f8a-7101-afa8-5381033f3a36",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:49:00+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated from the eckSnapshot digest as a conditional porting risk. C3 should share export sanitization and use a typed telemetry allowlist; it has not implemented the inherited leak.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-6",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  77
+                                           }
+                                       ],
+                         "claim":  "Lock model is underspecified once a DB exists: today the task lock plus detached status file serialize consultations, but embedded SurrealKV adds a second lock domain (index writes, concurrent panel members, two tools on one repo) with Windows path behavior unaddressed.",
+                         "trigger":  "Parallel panel members indexing while a second tool (plugin or C3) opens the same task/DB.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/codex-consult.md:40-41",
+                                              "observation":  "R12 decisions: foreground writes starting, background holds .consult.lock, second consult on task blocks; no daemon/queue."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:77-109",
+                                              "observation":  "Q8 names lock model with DB present and Windows/macOS/Linux paths as expensive-to-change but proposal fixes Store/Engine traits in step 1 without fixing it."
+                                          }
+                                      ],
+                         "verification":  "Run two concurrent consultations on one task fixture and kill one mid-index; check lock release, status file state, and DB open after restart.",
+                         "remedy":  "Specify before step 1: single-writer rule for the DB, lock ordering (file lock then DB txn), stale-lock recovery, and path canonicalization per OS.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  10,
+                                        "reply":  "handoffs/11-muse-merge-framing-meta.md",
+                                        "thread":  "01a0de66-3f8a-7101-afa8-5381033f3a36",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T17:49:00+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  14,
+                                                     "when":  "2026-09-26T18:06:28+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated missing lock/recovery design, including process ownership and path identity. Windows-specific failure behavior and kill recovery remain untested.",
+                                                     "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                                     "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F15-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  59
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/context/xelth-rs.md",
+                                               "line":  55
+                                           }
+                                       ],
+                         "claim":  "The proposed retrieval integration omits an embedding egress policy. Reusing xelth.rs\u0027s cloud embedding backend can send source snippets to Gemini during indexing, independently of an OpenRouter consultation or telemetry consent. Secret redaction does not make confidential source public.",
+                         "trigger":  "C3 indexes a private repository through the borrowed Gemini embedding backend before, or without, an HTTP review.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/context/xelth-rs.md:17,55",
+                                              "observation":  "The digest identifies cloud Gemini and local Candle embedding backends."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "../xelth.rs/src/indexer.rs:345-351",
+                                              "observation":  "The indexer redacts a source snippet and passes it to the selected embedder."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "../xelth.rs/src/embedder.rs:83-94",
+                                              "observation":  "GeminiEmbedder sends supplied text through llm::embed_text when a key is present."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:59-72",
+                                              "observation":  "The proposal specifies reviewer HTTP transport but does not specify authorization or destination policy for embedding requests."
+                                          }
+                                      ],
+                         "verification":  "Run a disposable indexer fixture containing a non-secret confidential marker against a recording embedding endpoint and determine whether indexing transmits it when external embeddings are disabled.",
+                         "remedy":  "Default indexing to local lexical/graph processing; configure cloud embedding egress separately, apply export exclusions before embedding, and record the embedding destination and model version.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  14,
+                                        "reply":  "handoffs/15-codex-merge-framing.md",
+                                        "thread":  "01a0de73-fa2d-7983-95ba-56646425f46b",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T18:06:28+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F15-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  71
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/context/codex-consult.md",
+                                               "line":  49
+                                           }
+                                       ],
+                         "claim":  "Pack-only evidence can fit reply schema v1, but the proposal does not require retaining the exact sanitized pack, source mappings and coverage manifest. Without those artifacts, a later reader cannot establish what an HTTP reviewer actually saw or map transformed snippets back to the reviewed revision.",
+                         "trigger":  "A reviewer cites a truncated, skeletonized or redacted snippet, and the repository or index changes before the finding is audited.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "../claude-codex-consult/plugins/codex-consult/schemas/consult-reply.schema.json",
+                                              "observation":  "Evidence reference and observation are unrestricted strings. The schema does not require read-code to mean direct filesystem access."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:71-75",
+                                              "observation":  "The proposal promises deterministic assembly and the same reply schema but does not define retained request artifacts, source maps or coverage metadata."
+                                          }
+                                      ],
+                         "verification":  "Generate a pack from a dirty fixture repository, collect one cited finding, modify the source and rebuild the index; verify that the original citation can still be resolved entirely from retained consultation artifacts.",
+                         "remedy":  "Retain the sanitized pack and a versioned sidecar containing content hash, source revision/dirty hashes, source spans, omissions and transformation versions. Use existing evidence.reference strings to cite it; keep routing metadata outside the strict reply envelope unless a coordinated schema change is needed.",
+                         "supersedes":  [
+                                            "F10-6"
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  14,
+                                        "reply":  "handoffs/15-codex-merge-framing.md",
+                                        "thread":  "01a0de73-fa2d-7983-95ba-56646425f46b",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T18:06:28+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F15-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  59
+                                           },
+                                           {
+                                               "path":  ".collab/c3-design/context/xelth-rs.md",
+                                               "line":  38
+                                           }
+                                       ],
+                         "claim":  "Porting xelth.rs\u0027s embedding failure behavior would admit nonsemantic vectors as successful embeddings, contaminating HNSW retrieval and any similarity-based routing. The defensible concern is invalid-vector fallback, not that a static executable inherently cannot use external model assets.",
+                         "trigger":  "An embedding key is absent, an embedding request fails, or indexing runs with embeddings skipped and subsequently includes those vectors in similarity search.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "../xelth.rs/src/embedder.rs:37-59,83-95",
+                                              "observation":  "Missing credentials and API failures return Ok(generate_mock_embedding(text)); the mock is a normalized pseudorandom vector derived from a text hash."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "../xelth.rs/src/embedder.rs:68-77",
+                                              "observation":  "The implementation emits rate-limited warnings that mock similarity is meaningless, so describing this path as wholly silent is inaccurate."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "../xelth.rs/src/indexer.rs:348-351",
+                                              "observation":  "Skipped embeddings and propagated embedding errors produce a constant 768-dimensional vector."
+                                          }
+                                      ],
+                         "verification":  "Index unrelated snippets with embeddings unavailable and inspect stored embedding status and retrieval results; confirm that fallback vectors are excluded from HNSW and routing.",
+                         "remedy":  "Represent unavailable embeddings explicitly, omit them from vector search, and fall back to BM25/graph retrieval with a recorded degradation reason. Version model, dimensions and preprocessing; evaluate dependency and model-asset costs separately.",
+                         "supersedes":  [
+                                            "F10-7"
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  14,
+                                        "reply":  "handoffs/15-codex-merge-framing.md",
+                                        "thread":  "01a0de73-fa2d-7983-95ba-56646425f46b",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T18:06:28+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F15-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  ".collab/c3-design/handoffs/01-claude-merge-framing.md",
+                                               "line":  69
+                                           }
+                                       ],
+                         "claim":  "An unconditional inclusion-probability floor epsilon per member is not always feasible when selecting exactly k reviewers. With N eligible members, N*epsilon must be at most k; purpose, budget and diversity restrictions can additionally make a member\u0027s inclusion impossible. The proposal does not define whether epsilon is a mixture share, a per-seat probability or a panel inclusion floor.",
+                         "trigger":  "A large roster is used for a one-seat shadow panel, or a member is excluded by purpose or budget while the policy still promises a positive floor.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/c3-design/handoffs/01-claude-merge-framing.md:68-70",
+                                              "observation":  "The policy combines k-or-budget selection, a per-member epsilon floor, purpose gates and lab diversity without defining their precedence."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "Fixed-size panel inclusion identity",
+                                              "observation":  "The sum of member inclusion probabilities equals expected panel size k. Therefore N positive floors require N*epsilon \u003c= k, and an infeasible member has inclusion probability zero."
+                                          }
+                                      ],
+                         "verification":  "Exercise the policy specification with k=1, N=20 and epsilon=0.1, then add a purpose-ineligible member; require either an explicit configuration rejection or a mathematically consistent interpretation.",
+                         "remedy":  "Define epsilon as an exploration mixture over feasible panels after eligibility filtering, distinguish inclusion probabilities from Thompson samples, and record constraint precedence and infeasibility outcomes.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  14,
+                                        "reply":  "handoffs/15-codex-merge-framing.md",
+                                        "thread":  "01a0de73-fa2d-7983-95ba-56646425f46b",
+                                        "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                        "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-26T18:06:28+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
+                                             "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     }
+                 ],
+    "ratings":  [
+                    {
+                        "n":  14,
+                        "consult_id":  "d8c2b550-5b84-4908-8c63-e6d071322dbc",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "purpose":  "framing",
+                        "useful":  "yes",
+                        "note":  "Astra: separated EvidenceStore from ContextIndex, defined reward/replay requirements for routing, caught the embedding egress and mock-vector risks, and corroborated or corrected every prior finding with a reason",
+                        "when":  "2026-09-26T18:08:06+02:00"
+                    },
+                    {
+                        "n":  1,
+                        "consult_id":  "ecd1f921-ee1a-4d78-bcec-a1c5b51d0018",
+                        "lineage":  "ZAI :: glm-5.3",
+                        "provider":  "ZAI",
+                        "model":  "glm-5.3",
+                        "purpose":  "framing",
+                        "useful":  "yes",
+                        "note":  "GLM: tight, on-target; schema byte-compat, .eck collision, reward-gap caveat, two runnable RCs",
+                        "when":  "2026-09-26T18:09:49+02:00"
+                    },
+                    {
+                        "n":  2,
+                        "consult_id":  "56fb7ef7-6f62-474e-b0a7-efe92bdc90af",
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "provider":  "mimo",
+                        "model":  "mimo-v2.6-pro",
+                        "purpose":  "framing",
+                        "useful":  "partly",
+                        "note":  "MiMo: two accurate reframes (cross-project rebuild, key-invariant wording) but invalid JSON, no machine findings, generic prose",
+                        "when":  "2026-09-26T18:09:56+02:00"
+                    },
+                    {
+                        "n":  8,
+                        "consult_id":  "255079da-0d82-4a45-bd6c-2b027a669fda",
+                        "lineage":  "kimi :: k3",
+                        "provider":  "kimi",
+                        "model":  "k3",
+                        "purpose":  "framing",
+                        "useful":  "yes",
+                        "note":  "Kimi k3: cheapest signal per token; surfaced defer-SurrealDB option and no-R15-oracle -\u003e golden tests",
+                        "when":  "2026-09-26T18:10:05+02:00"
+                    },
+                    {
+                        "n":  9,
+                        "consult_id":  "afe8b34a-ad17-4f36-a207-91cb7aaab331",
+                        "lineage":  "alibaba :: qwen3.8-max",
+                        "provider":  "alibaba",
+                        "model":  "qwen3.8-max",
+                        "purpose":  "framing",
+                        "useful":  "yes",
+                        "note":  "Qwen: highest value; RecordStore/Index split, roster lab-field break, closed-schema evidence.kind gap, two grounded blockers, five RCs",
+                        "when":  "2026-09-26T18:10:13+02:00"
+                    },
+                    {
+                        "n":  10,
+                        "consult_id":  "64be0e3e-142e-4bc0-b112-6f4d9283f035",
+                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                        "provider":  "meta",
+                        "model":  "muse-spark-1.3-contributor",
+                        "purpose":  "framing",
+                        "useful":  "partly",
+                        "note":  "Muse: strong framing (three trust models, sidecar/event-sourced) but findings duplicate others, R17 over-rated as blocker, inaccurate claim that priors live only in the DB",
+                        "when":  "2026-09-26T18:10:19+02:00"
+                    }
+                ]
+}

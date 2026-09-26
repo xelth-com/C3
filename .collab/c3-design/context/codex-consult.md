@@ -1,0 +1,49 @@
+# Digest: claude-codex-consult (the PowerShell plugin C3 ports; C:\Users\Dmytro\claude-codex-consult, plugin 0.5.0) — read-only recon, 2026-09-26
+
+## Layout / entry points
+- `plugins/codex-consult/scripts/codex-consult.ps1` — one consultation or a panel.
+- `scripts/codex-consult-common.ps1` (6574 lines) — roster loading/validation, panel member selection, effort caps, peak windows, ledger/findings writers.
+- `scripts/codex-providers.ps1` — reviewer availability (config.toml providers + roster engines). `scripts/codex-findings.ps1` — findings.json (list/status/rate/stats).
+- `scripts/codex-scoreboard.ps1` — read-only report over sessions.json + findings.json per reviewer × purpose.
+- `scripts/codex-consult-hook.ps1` + `hooks/hooks.json` — one SessionStart hook printing a one-line availability summary.
+- `skills/consult-codex/SKILL.md`, `skills/setup-providers/SKILL.md` — the two Claude-facing procedures.
+- `schemas/consult-reply.schema.json` — the structured reply contract. `templates/brief-framing.md`, `brief-review.md`. `evals/`. `examples/codex-consult-roster.json`.
+
+## One consultation
+1. Coordinator writes a one-page brief to `.collab/<task>/handoffs/<NN>-claude-<slug>.md`.
+2. `codex-consult.ps1 -Task <id> -Purpose <p> -Brief <path> -Prompt "<ask>" -ReplyName <slug>`. Engine: `codex exec` (default) or per roster entry `agy` (Gemini via Google Antigravity CLI) / `muse` (Meta Muse Code CLI). Prompt on stdin; exec options before the subcommand; read-only sandbox by default.
+3. Written: `handoffs/<NN>-<engine>-<slug>.md` (header + verbatim reply + rendered findings), `.reply.json` (raw structured reply), `.events.jsonl`, optional `.original.md` (after a format repair), `.partial.md` (after a timeout kill). Task-level `findings.json` and `sessions.json` (append-only ledger; one object per run: reviewer/lineage/preflight/mode/bridge_outcome/verdict/findings/usage/wall time/peak window).
+4. Reply schema (draft-07, additionalProperties:false): `schema_version`, `verdict` (ACCEPT|HOLD|REJECT|ADVISE), `verdict_reason`, `reply_markdown`, `findings[]` (severity, locations[], claim, trigger, evidence[] {kind: read-code|ran-command|inferred|assumed}, verification, remedy, supersedes[]), `prior_findings[]`, `unproven[]`, `first_run_checklist[]`.
+5. `findings.json` entries: id `F<NN>-<k>`, status proposed|implemented|verified|rejected|wontfix|superseded, history[], `ratings[]` (from `-Rate n -Useful yes|partly|no`).
+6. Purposes: framing, decision, checkpoint, core-contract, acceptance, diff-review, stuck, chore — each with default effort (low..xhigh), max words, timeout. Weighty purposes: framing, decision, core-contract, acceptance, stuck. Effort caps per endpoint ("caps-v1"), never inferred from the model. Peak windows: `CODEX_CONSULT_PEAK_<PROVIDER>` schedules; warn or refuse (`-OffPeakOnly`).
+7. Timeout → one continuation turn on the same thread; else `.partial.md` + a printed resume command. Format repair: one recorded turn when prose came back instead of JSON (`format_retry.drift[]`).
+8. Lineage = provider + model + endpoint; never fork/resume across lineages. Thread ids per repo; project isolation via `<repo>/.collab/<task>/`.
+
+## Panel today
+- Roster `{roster_version:1, reviewers:[{provider, model, engine?, codex_config?[], auth?, panel?: "always"|"weighty"}], parallel?: {label:n}}`. No numeric weight field.
+- `Select-PanelMembers`: deterministic, roster order; every entry whose preflight passes runs unless it is `weighty` and the purpose is not weighty (or `-PanelAll`). Single-reviewer selection = first available entry (first-fit).
+- Members run in parallel across endpoints, sequential within one endpoint; each is a full independent consultation with its own lineage, reply file and ledger entry (`panel` field); all see the same pre-panel open-findings snapshot. Panel holds the task lock; a failing member does not stop the rest; exit 0 only when all usable.
+- Reconciliation: none automated — the coordinator merges by hand. Explicit non-goal: no majority voting on verdicts. Cross-wave linking (`-Link` corroborates/contradicts/duplicates, canonical issue id) deferred (R9).
+- Effectiveness: `codex-scoreboard.ps1` reports per (lineage, purpose): consults/usable/failed/raised/verified/rejected/hit%/verdict letters/Y-P-N usefulness marks/median wall time/tokens. It feeds NOTHING back into selection. R15 (telemetry routing: weighted draw by scoreboard usefulness + topic + exploration share, neutral prior for new models) is planned 0.5, depends on R14, zero code.
+
+## Providers / engines
+- `[model_providers.<name>]` tables in `~/.codex/config.toml` with `env_key`; `codex login status` for the builtin openai provider. `agy`/`muse` are roster-declared engines, not config providers. Any Responses-API provider works through the same env_key mechanism; OpenRouter is not special-cased.
+- README line 17: "Never create, print or paste an API key." — the bridge never handles keys (never in config.toml, roster, brief, state.md or a commit). Muse refuses to run when `META_API_KEY`/`MODEL_API_KEY` are set (guards against per-token billing instead of the subscription).
+
+## Telemetry
+Not implemented in the plugin today (R17, planned 0.5): one anonymised event per consultation to `https://xelth.com/T/v2/...`, NDJSON spool under `<codex home>/telemetry-spool/`, background send 3 s, retry, 7-day drop; payload = app_id, version, salted instance id, event_type, severity, details (engine/provider/model/purpose/outcome/wall/tokens/findings counts/panel size/OS); never task names, prompts, briefs, paths, thread ids, finding text, keys. `CODEX_CONSULT_TELEMETRY=off`. `-Complain` previews then sends and prints a public_ref. The roadmap text is inconsistent (opt-in vs on-by-default) — C3's README says ON by default.
+
+## ROADMAP (open)
+R9 partial (linking deferred); R10 `claude` engine open (T7 agy account binding); R11 parallel panel built (doc status inconsistent about a live run); **R12 non-blocking panel** (`-Detach`, `.panel-<id>.status.json`, `-Status`) open; **R13 host invariance** (decouple from `.claude-plugin`/hooks/`${CLAUDE_PLUGIN_ROOT}`; self-review guard: warn when a roster lineage equals the coordinator's own model) open; R14 adaptive companions (panel size/diversity by stakes, `-PanelSize`, `lab` field) planned; **R15 telemetry routing** planned; R16 companion roles idea; **R17 telemetry intake** planned. TECH_DEBT: T5 auth-window reset, T7 agy lineage/account binding, T8 agy write-detection gaps.
+Design docs by the maintainer already exist in the plugin repo: `.collab/nonblocking-2026-09-26/handoffs/01-claude-r12-design.md`, `05-claude-r12-decisions.md`; `.collab/host-2026-09-26/handoffs/01-claude-r13-design.md`.
+
+## Maintainer decisions already taken in the plugin repo (read 2026-09-26; C3 should not diverge without saying so)
+- **R12 non-blocking** (`.collab/nonblocking-2026-09-26/handoffs/05-claude-r12-decisions.md` D1–D12): `-Detach` (solo or with `-Panel`), `-Status [<id8>]`, `-Wait [-WaitTimeoutSec n]`, `-Prune` (7 days). Status file `<task>/.consult.detached-<id8>.status.json` with states starting|running|done. Foreground writes `starting` and takes no lock; the background process holds `.consult.lock` and writes `{state: running, pid, start_time}`. Launch returns in ~5 s; the task lock blocks a second consult on that task until done. Rejected: any daemon, queue or notification channel beyond the status file and hooks.
+- **R13 host invariance** (`.collab/host-2026-09-26/handoffs/01-claude-r13-design.md`): skills resolve `$CODEX_CONSULT_ROOT` (env > `${CLAUDE_PLUGIN_ROOT}` > the skill's own dir); `install-codex-host.ps1` copies skills into `~/.codex/skills/`; README gets Claude Code / Codex CLI / any-shell tabs. Self-review guard: optional `CODEX_CONSULT_COORDINATOR=<provider>::<model>` — a reviewer whose lineage matches it WARNS ("second opinion from the same model"), never blocks; the ledger records `coordinator`. Rejected: a second packaging format; the plugin id stays `codex-consult` until 1.0.0, then renamed to C3.
+- **R14 adaptive companions (0.5)**: panel size by stakes — checkpoint 1, framing/decision 2–3, core-contract/acceptance 3–5, stuck = all available; diversity rule prefers a distinct `lab` before a second model of the same lab; floor of 1 companion on framing/decision; `-PanelSize <n>` overrides.
+- **R15 telemetry routing (0.5, after R14)**: scoreboard hit-rate feeds a weighted draw (usefulness + topic-tag match via `-Topic <tags>`); an exploration share keeps under-used/new models in rotation (new model id = neutral prior; old marks decay); availability is filtered BEFORE the draw; the ledger records the routing weights and the draw.
+- **R16 companion roles** (idea): edge-case hunter, security reviewer, test designer (failing tests as text), docs checker — as brief templates / purpose presets; members stay read-only.
+- **R17 telemetry (0.5)**: decided **opt-in** on 2026-09-26 in the plugin ROADMAP — while C3's README says ON by default with a one-line off switch. This contradiction is open.
+- **R11**: a live 8-member panel ran on 2026-09-26 (≤7 concurrent, 30 min wall vs ~107 min summed).
+- **Scoreboard metrics** per (reviewer, purpose): CONSULTS, USABLE, PROSE, FAILED; RAISED/VERIFIED/REJECTED/WONTFIX/SUPERSEDED/OPEN; verdict counts A/H/R/D; rating marks Y/P/N; MEDIAN_S; input/output tokens; `HIT% = verified / (verified + rejected)` (null when both zero). No aggregate usefulness formula exists yet — that is R15's router.
+- **Reply schema** (`schemas/consult-reply.schema.json`): top level all required — `schema_version` ("1"), `verdict`, `verdict_reason`, `reply_markdown`, `findings[]`, `prior_findings[]`, `unproven[]`, `first_run_checklist[]`; finding: `severity` (blocker|major|minor|note), `locations[{path,line}]`, `claim`, `trigger`, `evidence[{kind, reference, observation}]`, `verification`, `remedy`, `supersedes[]`.

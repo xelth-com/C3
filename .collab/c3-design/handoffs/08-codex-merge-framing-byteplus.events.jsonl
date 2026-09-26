@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a0de66-d6b5-75c1-9f0d-512b55dcdfc1"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `kimi-k2.5` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"error","message":"exceeded retry limit, last status: 429 Too Many Requests, request id: 021790437725865b52b40748efca76dec1583940832f7e4c36e54"}
+{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests, request id: 021790437725865b52b40748efca76dec1583940832f7e4c36e54"}}

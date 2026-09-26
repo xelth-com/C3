@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"01a0de66-2c7c-7863-a164-8e9888ccd5b8"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `deepseek-v4.1-flash` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"error","message":"exceeded retry limit, last status: 429 Too Many Requests, request id: 0217904376429760f20bbdfc8ca54d9bbb0533a8546905ce752db"}
+{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests, request id: 0217904376429760f20bbdfc8ca54d9bbb0533a8546905ce752db"}}
