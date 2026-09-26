@@ -138,7 +138,7 @@
                      },
                      {
                          "id":  "F02-3",
-                         "status":  "proposed",
+                         "status":  "verified",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -189,6 +189,15 @@
                                              "evidence":  "",
                                              "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
                                              "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         },
+                                         {
+                                             "when":  "2026-09-26T18:36:41+02:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "Claim confirmed by RC1: exclusive fail-fast open, no shared reader; adopted as D1/D11 in state.md and DESIGN.md section 7",
+                                             "evidence":  "RC1 harness (scratchpad rc1/skvtest, surrealdb 3.0.5 -\u003e surrealkv 0.21.0, Windows 11, 2026-09-26): second process opening the same surrealkv dir fails at connect in ~10 ms with os error 33 (lock violation), no blocking, no reader mode; clean exit and taskkill /F both release the lock with data intact. Design rule D1/D11: only the task-lock holder opens the embedded index, others run Index: none; multi-process needs the ws:// server.",
+                                             "base_commit":  "c12bb7da214c54194a65f2a88ad084644af1777c",
+                                             "tree_sha256":  "c7f887f4050e3281ba635dbea01781562b7e275f0e4247b0c9ed8e68c4f18e9b"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -638,7 +647,7 @@
                      },
                      {
                          "id":  "F09-4",
-                         "status":  "proposed",
+                         "status":  "verified",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -684,6 +693,15 @@
                                              "evidence":  "",
                                              "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
                                              "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         },
+                                         {
+                                             "when":  "2026-09-26T18:36:43+02:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "Claim confirmed by RC1: exclusive fail-fast open, no shared reader; adopted as D1/D11 in state.md and DESIGN.md section 7",
+                                             "evidence":  "RC1 harness (scratchpad rc1/skvtest, surrealdb 3.0.5 -\u003e surrealkv 0.21.0, Windows 11, 2026-09-26): second process opening the same surrealkv dir fails at connect in ~10 ms with os error 33 (lock violation), no blocking, no reader mode; clean exit and taskkill /F both release the lock with data intact. Design rule D1/D11: only the task-lock holder opens the embedded index, others run Index: none; multi-process needs the ws:// server.",
+                                             "base_commit":  "c12bb7da214c54194a65f2a88ad084644af1777c",
+                                             "tree_sha256":  "c7f887f4050e3281ba635dbea01781562b7e275f0e4247b0c9ed8e68c4f18e9b"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -818,7 +836,7 @@
                      },
                      {
                          "id":  "F10-1",
-                         "status":  "proposed",
+                         "status":  "verified",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -878,6 +896,15 @@
                                              "evidence":  "",
                                              "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
                                              "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         },
+                                         {
+                                             "when":  "2026-09-26T18:36:39+02:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "Claim confirmed by RC1: exclusive fail-fast open, no shared reader; adopted as D1/D11 in state.md and DESIGN.md section 7",
+                                             "evidence":  "RC1 harness (scratchpad rc1/skvtest, surrealdb 3.0.5 -\u003e surrealkv 0.21.0, Windows 11, 2026-09-26): second process opening the same surrealkv dir fails at connect in ~10 ms with os error 33 (lock violation), no blocking, no reader mode; clean exit and taskkill /F both release the lock with data intact. Design rule D1/D11: only the task-lock holder opens the embedded index, others run Index: none; multi-process needs the ws:// server.",
+                                             "base_commit":  "c12bb7da214c54194a65f2a88ad084644af1777c",
+                                             "tree_sha256":  "c7f887f4050e3281ba635dbea01781562b7e275f0e4247b0c9ed8e68c4f18e9b"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1886,7 +1913,7 @@
                      },
                      {
                          "id":  "F11-6",
-                         "status":  "proposed",
+                         "status":  "verified",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1932,6 +1959,15 @@
                                              "evidence":  "",
                                              "base_commit":  "b13aff13385ee8e395a8a9063dc09f1546e747f7",
                                              "tree_sha256":  "29b74d34208216abea9706a5a0cbd6d22095bbe3a1ff463a95924d848319183a"
+                                         },
+                                         {
+                                             "when":  "2026-09-26T18:36:45+02:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "Claim confirmed by RC1: exclusive fail-fast open, no shared reader; adopted as D1/D11 in state.md and DESIGN.md section 7",
+                                             "evidence":  "RC1 harness (scratchpad rc1/skvtest, surrealdb 3.0.5 -\u003e surrealkv 0.21.0, Windows 11, 2026-09-26): second process opening the same surrealkv dir fails at connect in ~10 ms with os error 33 (lock violation), no blocking, no reader mode; clean exit and taskkill /F both release the lock with data intact. Design rule D1/D11: only the task-lock holder opens the embedded index, others run Index: none; multi-process needs the ws:// server.",
+                                             "base_commit":  "c12bb7da214c54194a65f2a88ad084644af1777c",
+                                             "tree_sha256":  "c7f887f4050e3281ba635dbea01781562b7e275f0e4247b0c9ed8e68c4f18e9b"
                                          }
                                      ],
                          "reviewer_checks":  [

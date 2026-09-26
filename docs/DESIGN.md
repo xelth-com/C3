@@ -147,7 +147,16 @@ hash.
 - Embeddings: off by default; local models only unless the user enables a cloud embedder explicitly (destination and model
   version recorded); an unavailable embedder yields no vector, never a mock one, and rows without vectors are excluded
   from HNSW and routing.
-- Single-writer rule in embedded mode; `rebuild` is an acceptance test; the index is never required for a consultation.
+- Embedded surrealkv is strictly single-process (RC1, 2026-09-26, surrealdb 3.0.5 / surrealkv 0.21.0 on Windows): a
+  second process fails at connect within milliseconds with an OS lock violation (os error 33), it does not wait, and
+  there is no read-only or shared open mode at all; a clean exit or a hard kill releases the lock and leaves the data
+  intact (the `LOCK` file with the owner pid persists but does not block). Rules that follow: only the task-lock holder
+  opens the embedded index, for the shortest span it needs (the MCP server closes between operations); any other
+  process runs with `Index: none` the moment the open fails, without retry loops; a detached panel plus a foreground
+  command on one repository is the case that needs the per-user server (`ws://`), and C3 says so in the plan it prints.
+  Build cost: the `surrealdb` dependency adds about 26 minutes to a cold release build, so `--no-default-features`
+  is the documented fast development loop and CI builds both variants.
+- `rebuild` is an acceptance test; the index is never required for a consultation.
 - Federation, opt-in: an index may read from or sync with another SurrealDB instance (another project's index, the
   per-user hub, a sibling tool such as xelixir) only when the user has allowed that connection explicitly, per
   connection, in config; never on by default. The xelth.rs `kb_sync` selective-sync pattern is the template; the
@@ -187,8 +196,8 @@ milestones, not hidden inside it.
 
 ## 11. Open checks
 
-- RC1 two processes on one surrealkv directory (error, block or corruption; recovery after a kill) - decides the severity
-  of the single-writer rule, not its existence.
+- RC1 two processes on one surrealkv directory - done 2026-09-26: fail-fast exclusive open, no reader mode, crash-safe;
+  see section 7. Harness under the session scratchpad (`rc1/`, `skvtest`), not in the repository.
 - RC2 routing simulation under sparse, delayed labels (uniform, regularized Thompson, smoothed softmax).
 - RC3 retrieval spike: cold and warm BM25 plus graph latency and pack coverage on one representative repository, offline.
 - Outbound redaction test with a seeded secret across packs, requests, events and errors.
