@@ -11,8 +11,16 @@ use crate::config::{
 };
 use crate::sha256_hex;
 
-/// The three engines. `codex` is the default.
+/// The subprocess-launcher engines that have a CLI on PATH. `codex` is the default. This is
+/// deliberately the *subprocess* subset: `http` has no launcher, so it is not here (roster
+/// validation and launcher discovery iterate this list), but it does have a lineage row -
+/// see [`ALL_ENGINE_NAMES`] and [`engine_spec`], which know `http` too (F03-8, F08-7).
 pub const ENGINE_NAMES: &[&str] = &["codex", "agy", "muse"];
+
+/// Every engine kind that has an identity/lineage row, including the non-subprocess `http`
+/// engine. The single source that keeps `engine.rs`'s `EngineKind` (four) and the lineage
+/// table (previously three) in agreement (F08-7).
+pub const ALL_ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "http"];
 
 /// A row of the engine table (the fields providers/preflight need).
 #[derive(Debug, Clone)]
@@ -98,6 +106,21 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             default_provider: "meta",
             model_example: "muse-spark-1.3",
             local_sign_in: true,
+        }),
+        // The `http` engine has a lineage row but no launcher: it sends an
+        // OpenAI-compatible request (M7), so `command`/`exe_env` are empty and it never
+        // appears in `ENGINE_NAMES`. Its endpoint is a provider, so its fingerprint folds
+        // the provider into the compat string (see `resolve_engine_identity`) rather than
+        // collapsing every http reviewer to one identity.
+        "http" => Some(EngineSpec {
+            name: "http",
+            command: "",
+            exe_env: "",
+            host_name: "engine:http",
+            compat_string: "cc-engine-v1|http",
+            default_provider: "",
+            model_example: "gpt-5.1",
+            local_sign_in: false,
         }),
         _ => None,
     }
@@ -420,8 +443,16 @@ fn resolve_engine_identity(
     let _ = launcher;
     if id.error.is_empty() {
         id.resolved = true;
-        id.compat_string = spec.compat_string.to_string();
-        id.fingerprint = sha256_hex(spec.compat_string.as_bytes());
+        // The http engine's endpoint is a provider, so its fingerprint must distinguish one
+        // http provider from another; the CLI engines have a single endpoint (the engine
+        // itself), so their compat string is fixed.
+        let compat = if engine == "http" {
+            format!("{}|provider={}", spec.compat_string, id.provider)
+        } else {
+            spec.compat_string.to_string()
+        };
+        id.compat_string = compat.clone();
+        id.fingerprint = sha256_hex(compat.as_bytes());
     }
     id
 }

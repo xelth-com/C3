@@ -343,6 +343,31 @@ fn mk_identity() -> c3_core::lineage::ReviewerIdentity {
     resolve_reviewer_identity(&cfg, "openai", "gpt-5.1", "", "codex", "")
 }
 
+#[test]
+fn http_engine_has_a_lineage_row() {
+    // F08-7/F03-8: an http reviewer resolves to an identity (not "unknown engine"), its
+    // lineage carries [http], and two http providers get distinct fingerprints.
+    let cfg = scan_config_text("", "model = \"gpt-5.1\"\n");
+    let a = resolve_reviewer_identity(&cfg, "openai", "gpt-6", "", "http", "");
+    assert!(a.error.is_empty(), "http resolves: {}", a.error);
+    assert!(a.resolved);
+    assert_eq!(a.lineage, "openai :: gpt-6");
+    // the [http] suffix is added at render time by format_reviewer_lineage (as [agy]/[muse]).
+    assert_eq!(
+        c3_core::lineage::format_reviewer_lineage("openai", "gpt-6", "http"),
+        "openai :: gpt-6 [http]"
+    );
+    assert!(!a.fingerprint.is_empty());
+    let b = resolve_reviewer_identity(&cfg, "zai", "gpt-6", "", "http", "");
+    assert_ne!(
+        a.fingerprint, b.fingerprint,
+        "different http providers are different lineages"
+    );
+    assert!(c3_core::lineage::engine_spec("http").is_some());
+    assert!(c3_core::lineage::ALL_ENGINE_NAMES.contains(&"http"));
+    assert!(!c3_core::lineage::ENGINE_NAMES.contains(&"http"));
+}
+
 // --------------------------------------------------------------------------- --short phrasing
 
 fn rec(pos: i64, provider: &str, state: &str, short: &str, group: usize) -> AvailabilityRecord {

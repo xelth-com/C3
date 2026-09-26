@@ -1,0 +1,84 @@
+# Handoff 09 - Meta Muse (muse): core-contract-meta
+
+Date: 2026-09-26 21:37 local. Author: Meta Muse (muse) (model muse-spark-1.3-contributor, effort xhigh), muse-cli 1.4.0-R4161.1.
+Reviewer: meta :: muse-spark-1.3-contributor [muse] (provider from roster, model from roster; engine muse (C:\Users\Dmytro\AppData\Local\Programs\muse\muse.cmd); provider fingerprint 1c6f62bb040d; harness muse-cli 1.4.0-R4161.1).
+Preflight: ok: signed in (~/.config/muse/auth.json: providers.meta, mechanism oauth).
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - position 10 of 10, panel bf904728 member 8 of 8; skipped gemini :: gemini-3.8-flash-high [agy] (usage limit until 2026-09-28T21:30:50+02:00), gemini :: gemini-3.1-pro-high [agy] (usage limit until 2026-09-28T21:30:50+02:00).
+Effort: xhigh sent (requested xhigh, mapping muse-v1, by caps-v1: engine:muse, muse-spark-1.3-contributor; not confirmed by the provider). Consultation id: af59cd07-d8e8-4670-b8a8-1cdef0c796be.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only (requested; muse --disable-write --disable-shell --disable-web-tools --approval-mode never; checked by evidence for tracked and untracked files and the collab directory, not for gitignored paths, submodules, files outside the repository or what the reviewer reads), purpose: core-contract). Argv: `muse exec --json --prompt-file C:\Users\Dmytro\AppData\Local\Temp\codex-consult-prompt-0f857eb7b1a2462b81c1d6cfb8f3e1d8.txt --output-schema C:\Users\Dmytro\.claude\plugins\cache\claude-codex-consult\codex-consult\0.5.0\schemas\consult-reply.schema.json --model muse-spark-1.3-contributor --reasoning-effort xhigh --no-foreign-personal-context --disable-web-tools --disable-write --disable-shell --approval-mode never` (prompt from a file: --prompt-file).
+Parent thread: (none - new thread). Result thread: `01a0df39-11ee-7f90-b10a-17a1b632f2f7` (source: events).
+Brief: `.collab/c3-core-contract/handoffs/01-claude-core-contract.md` (sha256 edbad56d93b8). Reviewed: e1acae1, base e1acae1d43db4fcdd28f296b1417c857d0361780, tree sha256 4396ed65da5c, 0 changed files.
+Bridge outcome: usable reply. Wall time: 196.7 s. Tokens: not reported by muse.
+Engine turns: 1 (each one a Muse Code subscription prompt); MSP schema_version 1.
+Warnings: muse: warning: rules file at \\?\C:\Users\Dmytro\C3\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules.
+Timeout: 2400 s (the default of purpose core-contract); continuation after a timeout kill: up to 900 s.
+Verdict: ADVISE - Core shapes are sound but commit/lock enforcement, fork argv, handoff ordering, and unexercised-shape pinning must be resolved before M2c/M3 build on them. Findings: 1 blocker, 4 major, 1 minor, 0 note (F09-1..F09-6, tracked in `findings.json`). Structured reply: `handoffs/09-muse-core-contract-meta.reply.json`.
+Raw event stream: `handoffs/09-muse-core-contract-meta.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+# Core-contract review (Q1–Q8)
+
+## Q1 — PS 5.1 vs PS 7 bytes
+Canonicalise to 5.1 on write, read any. Endorsed: `ps_json.rs:1-30`, byte-identity tests `tests/contracts.rs:45-78`. Churn-free coexistence needs one fixed writer; 5.1 is the only evidence-backed choice. Document it as the wire contract and keep the reader permissive (serde parse + PS formatter only on write). What evidence does not show: a PS 7–written file round-trip; assumed reader accepts it (serde does) but no fixture proves it.
+
+## Q2 — Engine trait seam
+`plan -> Argv` + `run` + `continue_turn` is almost right but under-specified. Missing: (a) prompt delivery differs per engine (stdin vs NDJSON line vs `--prompt-file` — see `cli-surface.md` Open questions); `Request.prompt` + `prompt_file: Option` does not say who writes the file or the NDJSON framing. (b) muse per-turn guard re-check has no hook. (c) continuation vs denial-retry vs format-repair are distinct but `continue_turn(conversation, prompt)` collapses them. Minimal change: add `PromptDelivery` to `Capabilities`, add a `TurnKind` enum parameter to `continue_turn`, add a `precheck()` hook (default no-op, muse overrides). Do not redesign. Finding #1 (fork drops thread) must be fixed regardless — `engine.rs:361-363`.
+
+## Q3 — Identity newtypes
+`ConsultationId/AttemptId/ConversationId` (`engine.rs:124-134`) are transparent string wrappers with no constructors or invariants. Retry-as-new-attempt, http-replay continuation, and never-cross-lineage are stated in docs only and unenforceable here. Acceptable if the runtime owns them, but then the layer should enforce what it can: make constructors private, expose `AttemptId::retry()` (new id, same inputs) and `ConversationId` split (CLI thread vs `HttpTranscript`), and put the lineage-equality check on the resume/fork path. Currently `capabilities().resume/fork` plus `Mode` allow cross-lineage resume by construction. State machines covered: none enforced; transitions unguarded.
+
+## Q4 — Handoff regenerability
+Do not widen `LedgerEntry` (asserted order string `ledger.rs:46-48`, `contracts.md:44-62`). Regeneration from `sessions.json` alone is explicitly not the contract: `handoff.rs:10-21` correctly holds reviewer/preflight/roster/thread/brief/timeout/verdict lines as composed prose. Keep derived-once-at-write. But fix the gap finding #4: `extra` appends everything before verdict; plugin order (`codex-consult.ps1:3692-3737`) interleaves. Type the slots now.
+
+## Q5 — Raw pass-through for unexercised shapes
+Accept raw `Value` as the interim contract (finding #5), but only until M2 fills them. Risk is not the `null` case (proven) but first non-null write reordering keys. Pin each literal from `codex-consult.ps1` with one non-null fixture before M2 writes it; keep `total_tokens` optional-last as now (`ledger.rs:217-219`).
+
+## Q6 — http pack provenance
+Confirm: no new ledger column. Order string must not break; `reviewer.provider_config: Value` (`ledger.rs:158`) plus a `.pack.json` sidecar is the right ride, consistent with DESIGN §4. Require M7 to define the sidecar name/hash field and the `read-code` evidence reference format naming pack path+hash, since nothing in `c3-core` pins it today.
+
+## Q7 — EvidenceStore / lock split
+The split as implemented is wrong, not just deferred. `COMMIT_WRITE_ORDER` is advisory (findings #2, #3): `commit()` bypasses the write lock and `take_task_lock()` is non-exclusive, so the order cannot be relied on. Right split: share-mode open + acquisition belong in the trait signature (return a guard + `commit_wait_ms`); backoff durations/policy stay in runtime. As drawn, a correct runtime cannot use this trait without bypass risk.
+
+## Q8 — Expensive-to-change after M2c/M3
+`LedgerEntry` field order; `deny_unknown_fields` on the v1 reply (additive changes become breaking — finding #6); `PendingState` closed enum (`store.rs:46-52`); `PendingRecord`/`LockRecord` shapes; `write_text_atomic` temp-name/collision scheme (`store.rs:212-234`); worktree/thread identity (fork bug, lineage unenforced); cancellation ownership (no owner in `PendingRecord` survivors/kill path); Windows path handling (prompt-file/argv joining untested); R12 status-file shape (decided-not-frozen per brief, absent from `c3-core` — good, keep it out until frozen).
+
+State machines: findings `transition()` (`findings.rs:174-192`) — states proposed/implemented/verified/rejected/wontfix/superseded, any→any with verified-needs-evidence, rejected-needs-note, reopen-needs-note; failure at each gate returns the matching `TransitionError`. Pending `Reserved→Launching→Running→Survivors→Committing` has no transition function — failures unmodeled. Write order has steps but no enforcement — failures unmodeled (see findings #2, #3).
+
+---
+
+### Findings
+
+- **F09-1** [major] `crates/c3-core/src/engine.rs:361` - SubprocessEngine::plan_codex drops the fork thread id: Mode::Fork(t) emits bare `fork` with no thread argument, while Mode::Resume(t) emits `resume <thread>`. Any fork continuation therefore resumes the wrong/no thread or fails at the CLI. Trigger: Any request with mode Fork(thread) planned through Engine::plan for EngineKind::Codex. Evidence: read-code: Match arm is `Mode::Fork(_t) => { a.push("fork".into()); }` — thread binding ignored, no second push; Resume arm pushes both `resume` and `t`. Verify: Run the codex argv test with Mode::Fork("abc") and compare against `codex-consult.ps1` fork synopsis / New-MuseArgv-equivalent codex fork construction. Remedy: Push the thread id after `fork` (or change Mode::Fork to unit if codex fork truly takes no id, and document with plugin line reference). Add a plan test asserting `fork <thread> -` ordering like the existing resume test.
+- **F09-2** [blocker] `crates/c3-core/src/store.rs:358`, `crates/c3-core/src/store.rs:186` - FilesStore::commit implements the write order but not the write-lock acquisition or backoff: it re-reads and writes without holding `.consult.write.lock` and always returns commit_wait_ms=0. Two concurrent committers can interleave re-read/write and lose a delta despite COMMIT_WRITE_ORDER being documented as the safety mechanism. Trigger: Two panel members or consult+findings committing concurrently through FilesStore::commit. Evidence: read-code: commit() body has explicit comment that lock acquisition/backoff is M3 and proceeds directly to read_sessions/add_entry/write files/remove pending, returning Ok(0). Trait docs promise commit runs 'under the write lock' and 'returns the wait'.; read-code: COMMIT_WRITE_ORDER lists TakeWriteLock/ReReadStores/.../ReleaseWriteLock, but nothing enforces a caller follows it; EvidenceStore exposes commit() without a lock handle parameter. Verify: Run two concurrent commit() calls on one task dir and check both entries survive; inspect returned wait ms and whether `.consult.write.lock` is held during the sequence. Remedy: Expose lock acquisition in the trait (e.g. take_write_lock() returning a guard + wait ms, commit taking the guard), or document commit() as lock-unaware internal and add a runtime wrapper that cannot be bypassed. Do not leave a public commit() that silently skips the lock.
+- **F09-3** [major] `crates/c3-core/src/store.rs:330` - FilesStore::take_task_lock is not fail-fast exclusive: it opens with read+write/create/truncate(false) and no share-mode flags, so a second holder succeeds and only overwrites the informational bytes. The plugin contract (FileShare.Read on Windows / None on Unix) is noted as M3 but the current method name promises a taken lock. Trigger: Second run/panel member calling take_task_lock on a task whose `.consult.lock` is already held. Evidence: read-code: OpenOptions read+write+create, no platform share-mode call; comment admits share flags are M3. TaskLock ownership = held File handle, but OS allows a second open. Verify: Open the same task lock twice in one test process and observe whether the second call errors; repeat on Windows and Unix. Remedy: Rename to reflect best-effort or move share-mode open into c3-core via a small platform module (fs2/lock semantics), keeping backoff policy in runtime. At minimum make take_task_lock attempt an exclusive create and fail when already held, with a test for second-taker refusal.
+- **F09-4** [major] `crates/c3-core/src/handoff.rs:185` - HandoffHeader::extra cannot reproduce the plugin header order: it appends all optional records before the verdict line, while the plugin interleaves engine turns/warnings/denial-retry/timeout-continuation/partial-reply/provider-failure/format-repair around the timeout and verdict lines. Handoff 15 (no extras) passes but any run with extras will misplace lines. Trigger: Any consultation with warnings, denial_retry, timeout_continue, partial_reply, provider_failure, format_retry, or multi-turn engine_run rendering a handoff. Evidence: read-code: extra: Vec<String> with render doing timeout_line, extend(extra), verdict_line; module docs admit M2 must place each at its exact point.; read-code: Acceptance test feeds extra: vec![] and prose lines as given, so ordering and prose derivation are both untested. Verify: Render a handoff fixture containing each optional block and diff line order against the plugin output for the same entry. Remedy: Replace extra with typed optional slots (or an ordered enum) matching codex-consult.ps1:3692-3737 order, and pin with a fixture handoff that contains extras. Keep String payloads but fix positions now before M2c hard-codes the wrong order.
+- **F09-5** [major] `crates/c3-core/src/ledger.rs:69`, `crates/c3-core/src/ledger.rs:92`, `crates/c3-core/src/ledger.rs:106` - Byte-identity is proven only for the null/absent shapes of range, peak, denial_retry, timeout_continue, effort_confirmed, format_retry.events, provider_failure.retry_after and the agy-only total_tokens. Non-null shapes are raw Value/Option with no field-order pinning; if serde_json::Value reorders keys (BTreeMap without preserve_order) a future non-null write will silently break the asserted byte-identity contract. Trigger: First real write of a non-null range/peak/denial_retry/timeout_continue/format_retry-with-events entry through SessionsFile::to_bytes. Evidence: read-code: range/peak/denial_retry/timeout_continue kept as Option<Value>/Value with comment 'shape not exercised / kept raw'; Usage.total_tokens optional-last.; read-code: contracts.md states those shapes are all null in the design evidence and kept as raw JSON to preserve byte-identity. Verify: Serialize a hand-built entry with non-null retry/range/peak objects through ps_json and byte-compare against Write-JsonFile output for the same object. Remedy: Accept raw pass-through as the interim contract but add a non-null fixture (from plugin literals in codex-consult.ps1) per field before M2 writes them, or type them now. Verify Value key order preservation under ps_json with a non-null sample.
+- **F09-6** [minor] `crates/c3-core/src/engine.rs:205` - Reply/schema boundary is brittle: StructuredReply and sub-objects use deny_unknown_fields while verdict/severity/evidence-kind/prior-status remain free Strings, and the two usable-bridge_outcome strings live only as a doc note. Any additive schema change hard-fails ingestion, while invalid verdicts pass typing and fail later. Trigger: Reviewer emits a reply with one extra field, or a misspelled/new verdict string, on the http or subprocess path. Evidence: read-code: StructuredReply/ReplyFinding/ReplyLocation/ReplyEvidence/ReplyPriorFinding all deny_unknown_fields; verdict/severity/kind/status are String.; read-code: Verdict vs bridge_outcome distinction and Test-UsableOutcome two-string set carried as a note for M2, not yet a type. Verify: Feed a reply JSON with one unknown field and one bad verdict through StructuredReply parsing and record accept/reject behavior. Remedy: Keep strictness for ingestion if desired but type verdict/status/kind as enums (with unknown-catch variant if forward-compat needed) and promote the two usable-outcome strings to a tested predicate now; decide explicitly whether additive reply fields must be ignored or rejected before M7 depends on it.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Core shapes are sound but commit/lock enforcement, fork argv, handoff ordering, and unexercised-shape pinning must be resolved before M2c/M3 build on them.
+
+### Blockers
+
+- **F09-2** `crates/c3-core/src/store.rs:358`, `crates/c3-core/src/store.rs:186` - FilesStore::commit implements the write order but not the write-lock acquisition or backoff: it re-reads and writes without holding `.consult.write.lock` and always returns commit_wait_ms=0. Two concurrent committers can interleave re-read/write and lose a delta despite COMMIT_WRITE_ORDER being documented as the safety mechanism. Verify: Run two concurrent commit() calls on one task dir and check both entries survive; inspect returned wait ms and whether `.consult.write.lock` is held during the sequence. Remedy: Expose lock acquisition in the trait (e.g. take_write_lock() returning a guard + wait ms, commit taking the guard), or document commit() as lock-unaware internal and add a runtime wrapper that cannot be bypassed. Do not leave a public commit() that silently skips the lock.
+
+### Unproven scenarios
+
+- PS 7–shaped files reading and re-churn behavior on first C3 write.
+- Non-null denial_retry/timeout_continue/range/peak/effort_confirmed byte order through ps_json.
+- Concurrent panel commits preserving every delta under the real write lock.
+- Second-turn paths (continuation vs denial-retry vs format-repair) and muse per-turn guard.
+- http pack sidecar reference format and evidence.reference wording.
+- Windows share-mode fail-fast and write-lock 60 s backoff timing.
+- R12 status-file shape, cancellation ownership, worktree identity across resume/fork.
+
+### First-run checklist (observable)
+
+_(none)_

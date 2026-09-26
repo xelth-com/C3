@@ -15,3 +15,13 @@ sha2.workspace = true
 regex.workspace = true
 fancy-regex = "0.14"
 chrono.workspace = true
+
+# Unix advisory file locks for the write-lock/ownership-lock guards (store.rs). On
+# Windows the store uses the exact FileShare semantics the plugin passes to
+# `[IO.File]::Open` (via std's `OpenOptionsExt::share_mode`); on Unix there is no
+# share-mode, so we take a real `flock` advisory lock. `fs4` is chosen over `fd-lock`
+# because it exposes both `try_lock_exclusive` (fail-fast, for `.consult.lock`) and a
+# blocking/back-off friendly `try_lock_exclusive` we can poll (for `.consult.write.lock`)
+# on a plain `&File`, with no lifetime-bound guard type to thread through the store API.
+[target.'cfg(unix)'.dependencies]
+fs4 = { version = "1", default-features = false, features = ["sync"] }

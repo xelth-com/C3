@@ -4,13 +4,19 @@
 //! builds on: the constrained Codex config scanner ([`config`]), the reviewer
 //! roster ([`roster`]), effort vocabularies ([`effort`]), reviewer lineage and
 //! identity ([`lineage`]), the recorded endpoint health ([`health`]), the preflight
-//! verdict ([`verdict`]), purposes ([`purpose`]) and path normalisation ([`paths`]).
+//! verdict ([`verdict`]), purposes ([`purpose`]), path normalisation ([`paths`]) and
+//! the task-slug newtype ([`task_slug`]).
 //!
-//! Every function here is pure over its inputs: it reads no environment, spawns no
-//! process and touches no file system. The runtime side (launcher discovery, `codex
-//! login status`, `agy models`, muse `auth.json`, reading the ledgers) lives in the
-//! `c3` crate. This mirrors the PowerShell bridge's `codex-consult-common.ps1`, the
-//! reference these formats are ported from byte-for-byte.
+//! Most of this crate is pure over its inputs: it reads no environment, spawns no
+//! process and touches no file system - the config scanner, roster, effort, lineage,
+//! health, verdict, purpose, path and the ledger/findings/handoff/engine *format*
+//! types. The one deliberate exception is [`store`]: [`store::EvidenceStore`] is the
+//! file-and-lock boundary (atomic writes, the ownership/write locks, the commit write
+//! order), so it necessarily touches the file system and takes real OS locks. The rest
+//! of the runtime side (launcher discovery, `codex login status`, `agy models`, muse
+//! `auth.json`, subprocess launch) lives in the `c3` crate. This mirrors the PowerShell
+//! bridge's `codex-consult-common.ps1`, the reference these formats are ported from
+//! byte-for-byte.
 
 pub mod availability;
 pub mod config;
@@ -27,6 +33,7 @@ pub mod ps_json;
 pub mod purpose;
 pub mod roster;
 pub mod store;
+pub mod task_slug;
 pub mod verdict;
 
 use sha2::{Digest, Sha256};
