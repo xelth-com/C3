@@ -1,0 +1,21 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Local agent/tool state (eckSnapshot, codex-consult, editors)
+.eck/
+.mcp.json
+.agents/
+.codex/
+.collab/**/.consult.lock
+.collab/**/.consult.write.lock
+.collab/**/.consult.pending*.json
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Env and secrets
+.env
+.env.*
+!.env.example
