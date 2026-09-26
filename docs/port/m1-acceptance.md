@@ -47,3 +47,24 @@ LISTING` on `harness-engines.ps1`).
 - `c3 providers` itself does not exist yet (being implemented in parallel), so none of
   the above has been run end-to-end against C3; this checklist is unverified against a
   live binary.
+
+## Wave 24b additions (verified against `6b88cc8`, by the c3 port)
+
+The port's base was already at `6b88cc8`'s `codex-providers.ps1` / `codex-consult-common.ps1`
+content, so these three wave-24b facts are implemented and verified with a byte/field
+parity diff of `c3 providers` against the `6b88cc8` script on this machine (clock frozen
+via `CODEX_CONSULT_NOW`).
+
+| harness | section | check id | one-line expectation | exit code |
+|---|---|---|---|---|
+| harness-0.3.ps1 | PREFLIGHT | PREFL (roster_positions) | every `-Json` row carries `roster_positions` — an array of *every* roster position of that `(provider, engine)` label, in roster order, `[]` when none — beside the scalar `roster_position` (the first, or `null`). Verified: `gemini` `[4,5]`, single-entry labels `[6]`, engine rows filtered by their own engine. | n/a |
+| harness-0.3.ps1 | F09-2/4 | F09 (reset-unknown quota, direct -Provider) | a usage limit that names **no** reset time, hit < 60 min ago, refuses a direct `-Provider X` run too (F08-7), not only the roster walk: `-Provider X` -> `unavailable (usage limit hit <iso>, reset unknown; retry after <hit + 60 min iso>)`, exit 2; after 60 min it clears (available again) while still showing as the last failure for 24 h. `-Json` `verdict`/`last_limit`/`last_failure` mirror it. Verified byte-identical (verdict text + exit 2). | 2 |
+| n/a (classification) | — | Test-UsableOutcome (exactly two) | a ledger `bridge_outcome` counts as a usable reply only when it is exactly `usable reply` or `usable reply (after a timeout continuation)`; any other string (a future `usable reply (<x>)` included) is not usable — so it neither clears the endpoint health nor evidences a sign-in. Mirrored in `c3_core::health::is_usable_outcome`. | n/a |
+
+Note on the F08-7 refusal wording: `codex-providers.ps1` builds its rows with
+`Get-PreflightVerdict -RosterWalk`, so the row `verdict` string and exit code for the
+reset-unknown case are the same whether or not the caller is a roster walk; the only
+`-RosterWalk`-dependent field is the `Refusal` message (the direct-run form appends
+`(pass -SkipPreflight to launch anyway)`), which `codex-providers.ps1` never prints. C3
+reproduces both refusal forms (unit-tested) even though the listing output does not emit
+the refusal.

@@ -37,6 +37,17 @@ pub struct Roster {
     pub error: String,
 }
 
+/// Every roster position of a `(provider, engine)` label, in roster order (`[]` when
+/// none). This is the data behind the JSON `roster_positions` (wave 24b) and the
+/// table's ROSTER column.
+pub fn positions_for(entries: &[RosterEntry], provider: &str, engine: &str) -> Vec<i64> {
+    entries
+        .iter()
+        .filter(|e| e.provider == provider && e.engine == engine)
+        .map(|e| e.position as i64)
+        .collect()
+}
+
 fn is_json_integer(v: &Value) -> bool {
     if v.is_i64() || v.is_u64() {
         return true;

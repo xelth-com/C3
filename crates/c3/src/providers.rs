@@ -827,13 +827,7 @@ impl Ctx {
             .as_ref()
             .and_then(|h| h.last_failure.as_ref())
             .map(failure_json);
-        let roster_positions: Vec<i64> = self
-            .roster
-            .entries
-            .iter()
-            .filter(|e| e.provider == *name && e.engine == "codex")
-            .map(|e| e.position as i64)
-            .collect();
+        let roster_positions = c3_core::roster::positions_for(&self.roster.entries, name, "codex");
         let roster_selected = walk
             .as_ref()
             .and_then(|w| w.entry.as_ref())
@@ -932,13 +926,7 @@ impl Ctx {
             .as_ref()
             .and_then(|h| h.last_failure.as_ref())
             .map(failure_json);
-        let roster_positions: Vec<i64> = self
-            .roster
-            .entries
-            .iter()
-            .filter(|e| e.provider == label && e.engine == engine)
-            .map(|e| e.position as i64)
-            .collect();
+        let roster_positions = c3_core::roster::positions_for(&self.roster.entries, label, engine);
         let roster_selected = walk
             .as_ref()
             .and_then(|w| w.entry.as_ref())

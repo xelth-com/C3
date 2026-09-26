@@ -213,6 +213,111 @@ fn health_auth_failure_recent_blocks() {
 }
 
 #[test]
+fn health_reset_unknown_quota_blocks_for_60_min_then_clears() {
+    // A usage limit that names NO reset time blocks for 60 minutes (wave 24b, F08-7).
+    let failure = || {
+        Some(json!({
+            "class": "quota",
+            "code": "429",
+            "message": "429 Too Many Requests",
+            "when": "2026-09-26T13:30:00+02:00" // 11:30 UTC
+        }))
+    };
+    // 30 minutes after the hit: still out, reset unknown.
+    let now: DateTime<Utc> = Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
+    let consults = vec![consult(
+        "2026-09-26T13:30:00+02:00",
+        "provider error",
+        failure(),
+    )];
+    let h = endpoint_health(&consults, FP, now);
+    assert!(
+        h.quota.is_some(),
+        "reset-unknown quota within 60 min blocks"
+    );
+    assert!(!h.quota_known, "no reset time is known");
+    let id = mk_identity();
+    let v = verdict_with_credential(&id, Some(&h), CredentialResult::ok("env KEY set"), true);
+    assert_eq!(v.state, "unavailable");
+    assert_eq!(v.kind, "quota-unknown-reset");
+    assert!(v.reason.starts_with("usage limit hit "), "{}", v.reason);
+    assert!(
+        v.reason.contains("reset unknown; retry after "),
+        "{}",
+        v.reason
+    );
+    // roster-walk refusal omits the -SkipPreflight tail; a direct run keeps it (F08-7).
+    let walk = verdict_with_credential(&id, Some(&h), CredentialResult::ok("env KEY set"), true);
+    let direct = verdict_with_credential(&id, Some(&h), CredentialResult::ok("env KEY set"), false);
+    assert!(
+        !walk
+            .refusal
+            .contains("pass -SkipPreflight to launch anyway"),
+        "{}",
+        walk.refusal
+    );
+    assert!(
+        direct
+            .refusal
+            .contains("pass -SkipPreflight to launch anyway"),
+        "{}",
+        direct.refusal
+    );
+
+    // 90 minutes after the hit: the 60-minute window has passed -> no longer blocking.
+    let later: DateTime<Utc> = Utc.with_ymd_and_hms(2026, 9, 26, 13, 0, 0).unwrap();
+    let h2 = endpoint_health(&consults, FP, later);
+    assert!(
+        h2.quota.is_none(),
+        "after 60 min the reset-unknown quota clears"
+    );
+    let v2 = verdict_with_credential(&id, Some(&h2), CredentialResult::ok("env KEY set"), true);
+    assert_eq!(v2.state, "available");
+    // but it still shows as the last failure (age <= 24 h).
+    assert!(
+        h2.last_limit.is_some(),
+        "the cleared limit still shows as the last failure"
+    );
+}
+
+#[test]
+fn health_usable_outcome_matches_exactly_two_strings() {
+    use c3_core::health::is_usable_outcome;
+    assert!(is_usable_outcome("usable reply"));
+    assert!(is_usable_outcome(
+        "usable reply (after a timeout continuation)"
+    ));
+    assert!(!is_usable_outcome("usable reply (something else)"));
+    assert!(!is_usable_outcome("reply"));
+    assert!(!is_usable_outcome(""));
+}
+
+#[test]
+fn roster_positions_lists_every_position_of_a_label() {
+    use c3_core::roster::positions_for;
+    let text = r#"{ "roster_version": 1, "reviewers": [
+        {"provider":"openai","model":"gpt-6"},
+        {"provider":"byteplus","model":"a"},
+        {"provider":"byteplus","model":"b"},
+        {"provider":"byteplus","model":"c"},
+        {"provider":"gemini","engine":"agy","model":"g-hi"},
+        {"provider":"gemini","engine":"agy","model":"g-pro"}
+    ] }"#;
+    let r = validate_roster("/tmp/roster.json", text, None);
+    assert!(r.error.is_empty(), "{}", r.error);
+    assert_eq!(
+        positions_for(&r.entries, "byteplus", "codex"),
+        vec![2, 3, 4]
+    );
+    assert_eq!(positions_for(&r.entries, "gemini", "agy"), vec![5, 6]);
+    assert_eq!(
+        positions_for(&r.entries, "byteplus", "agy"),
+        Vec::<i64>::new()
+    );
+    assert_eq!(positions_for(&r.entries, "openai", "codex"), vec![1]);
+}
+
+#[test]
 fn health_later_success_clears_earlier_failure() {
     let now: DateTime<Utc> = Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
     let consults = vec![
