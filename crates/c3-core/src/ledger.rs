@@ -36,6 +36,16 @@ use serde_json::{Map, Value};
 
 use crate::ps_json;
 
+/// Deserialize an optional string so a *present* value (including `null`) becomes `Some(..)`
+/// and an *absent* key stays `None`: the tri-state `revision_moved` needs (see that field).
+/// With `#[serde(default)]`, an absent key never calls this and defaults to `None`.
+fn deserialize_present_string<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<String>::deserialize(d)?))
+}
+
 /// The whole `sessions.json` document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionsFile {
@@ -81,8 +91,11 @@ pub struct LedgerEntry {
     pub preflight: String,
     #[serde(default)]
     pub preflight_warning: String,
+    /// The roster record `{path, position, skipped[], applied[]}`; `null` for a run with no
+    /// roster (`$rosterRecord` is `$null` then, `codex-consult.ps1`). All real-roster runs
+    /// write an object, so the byte-identity fixtures round-trip through `Some`.
     #[serde(default)]
-    pub roster: RosterRef,
+    pub roster: Option<RosterRef>,
     /// `null` for a single (non-panel) run.
     #[serde(default)]
     pub panel: Option<Panel>,
@@ -185,6 +198,17 @@ pub struct LedgerEntry {
     pub tree_sha256_after: String,
     #[serde(default)]
     pub tree_changed_during_review: bool,
+    /// A moved HEAD whose file contents stayed identical during the run (wave 24c,
+    /// `codex-consult.ps1`). A tri-state so byte-identity survives: **absent** in a pre-24c
+    /// store (`None`) is skipped on rewrite; a real entry writes `null` (HEAD did not move,
+    /// `Some(None)`) or the `<old> -> <new>` string (`Some(Some(_))`). It sits between
+    /// `tree_changed_during_review` and `changed_files` in the wave-24c field order.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_string"
+    )]
+    pub revision_moved: Option<Option<String>>,
     /// The count of changed files at review time (a number, not a list).
     #[serde(default)]
     pub changed_files: i64,

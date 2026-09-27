@@ -14,3 +14,6 @@ serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 chrono.workspace = true
+clap.workspace = true
+sha2.workspace = true
+uuid.workspace = true

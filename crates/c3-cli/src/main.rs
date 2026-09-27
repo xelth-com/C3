@@ -29,15 +29,23 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// The `Consult`/`Findings` variants carry the filled clap arg structs (many flags), which
+// are larger than the unit variants; boxing a clap `Args` variant is awkward, so the size
+// spread is accepted here rather than in the dispatch.
+#[allow(clippy::large_enum_variant)]
 enum Commands {
     /// List the Codex model providers and whether each one is usable right now.
     Providers(ProvidersArgs),
     /// Ask one reviewer for a one-page consultation (milestone 2).
-    Consult,
+    Consult(c3::cli::consult::ConsultArgs),
     /// Run several reviewers on one brief as a panel (milestone 4).
     Panel,
-    /// List and rate tracked findings (milestone 3).
-    Findings,
+    /// List, move and rate tracked findings (milestone 3).
+    Findings(c3::cli::findings::FindingsArgs),
+    /// Per-reviewer usefulness scoreboard (milestone 3).
+    Scoreboard(c3::cli::scoreboard::ScoreboardArgs),
+    /// The one-line SessionStart availability summary (milestone 3).
+    Hook(c3::cli::hook::HookArgs),
     /// Build a reviewer pack or a project snapshot (milestone 7).
     Pack,
     /// Build an explainer pack for one claim (milestone 7).
@@ -92,9 +100,11 @@ fn main() {
             no_network: a.no_network,
             short: a.short,
         }),
-        Some(Commands::Consult) => stub("consult", 2),
+        Some(Commands::Consult(a)) => c3::cli::consult::run(a),
         Some(Commands::Panel) => stub("panel", 4),
-        Some(Commands::Findings) => stub("findings", 3),
+        Some(Commands::Findings(a)) => c3::cli::findings::run(a),
+        Some(Commands::Scoreboard(a)) => c3::cli::scoreboard::run(a),
+        Some(Commands::Hook(a)) => c3::cli::hook::run(a),
         Some(Commands::Pack) => stub("pack", 7),
         Some(Commands::Explain) => stub("explain", 7),
         Some(Commands::Snapshot) => stub("snapshot", 7),

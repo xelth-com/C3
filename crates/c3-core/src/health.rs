@@ -73,6 +73,33 @@ pub fn provider_failure_class(message: &str) -> String {
     "unknown".into()
 }
 
+/// Minutes an endpoint stays out after a quota failure that named no reset time: a burst
+/// 429 recovers fast (`$script:BurstOutMinutes`, wave 24c); a real usage window keeps 60.
+pub const BURST_OUT_MINUTES: i64 = 10;
+/// Minutes a reset-less usage-limit failure keeps the endpoint out (`$script:QuotaOutMinutes`).
+pub const QUOTA_OUT_MINUTES: i64 = 60;
+
+fn burst_text_re() -> Regex {
+    Regex::new(r"(?i)\b429\b|too many requests|concurren").unwrap()
+}
+
+fn quota_window_re() -> Regex {
+    Regex::new(r"(?i)usage[ _]?limit|\bquota|resource_exhausted|insufficient|\bbalance|\bcredits?\b|\bbilling|\bpayment|\b402\b|token[ _]plan|plan exhausted|\b(?:hours?|days?|weeks?|months?)\b|hourly|daily|weekly|monthly|\bwindow|\bresets?\b").unwrap()
+}
+
+/// `Get-FailureKind` (wave 24c): `"burst"` for a quota failure whose text names a 429 /
+/// too-many-requests / concurrency condition but NO usage window, quota, balance, credits,
+/// billing, token plan or reset; `""` for every other failure (and every non-quota class).
+pub fn failure_kind(class: &str, text: &str) -> String {
+    if class != "quota" || text.is_empty() {
+        return String::new();
+    }
+    if burst_text_re().is_match(text) && !quota_window_re().is_match(text) {
+        return "burst".into();
+    }
+    String::new()
+}
+
 /// `Test-UsableOutcome`.
 pub fn is_usable_outcome(outcome: &str) -> bool {
     outcome == "usable reply" || outcome == "usable reply (after a timeout continuation)"
@@ -348,6 +375,8 @@ pub fn format_offset_iso(v: DateTime<FixedOffset>) -> String {
 #[derive(Debug, Clone)]
 pub struct Record {
     pub class: String,
+    /// `"burst"` for a reset-less burst 429, else `""` (wave 24c).
+    pub kind: String,
     pub code: String,
     pub message: String,
     pub when: String,
@@ -437,6 +466,7 @@ pub fn endpoint_health(
         let when = at.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
         let mut rec = Record {
             class: String::new(),
+            kind: String::new(),
             code: String::new(),
             message: String::new(),
             when,
@@ -478,6 +508,14 @@ pub fn endpoint_health(
                 rec.code = code;
                 rec.message = message;
             }
+            // (wave 24c) the failure kind decides the reset-less out-window: a burst 429 is
+            // out for 10 minutes, a real usage window for 60.
+            rec.kind = failure_kind(&rec.class, &format!("{} {}", rec.code, rec.message));
+            let out_minutes = if rec.kind == "burst" {
+                BURST_OUT_MINUTES
+            } else {
+                QUOTA_OUT_MINUTES
+            };
             if rec.retry_after.is_none() {
                 rec.retry_after = retry_after_ref(&rec.message, reference);
             }
@@ -487,7 +525,7 @@ pub fn endpoint_health(
             }
             rec.hit = hit;
             rec.hit_iso = format_offset_iso(hit);
-            rec.until = hit + Duration::minutes(60);
+            rec.until = hit + Duration::minutes(out_minutes);
             if let Some(ra) = rec.retry_after {
                 rec.retry_after_iso = format_offset_iso(ra);
                 rec.until = ra;

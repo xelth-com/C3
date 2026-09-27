@@ -108,7 +108,20 @@ struct Ctx {
     engine_launchers: RefCell<HashMap<String, String>>,
 }
 
-fn run_inner(opts: &Options) -> Result<i32, String> {
+/// Everything [`run_inner`] computes before it prints, so both the printing path and
+/// [`short_line`] (the `c3 hook` reuse) can share one computation without a network call.
+struct Prepared {
+    ctx: Ctx,
+    rows: Vec<Row>,
+    where_: String,
+    clock: DateTime<FixedOffset>,
+    health_source: String,
+    walk: Option<Walk>,
+    availability_records: Vec<AvailabilityRecord>,
+    availability_line: String,
+}
+
+fn prepare(opts: &Options) -> Result<Prepared, String> {
     let launcher = resolve_codex_launcher(&opts.codex_exe)?;
     let config_path = get_codex_config_path();
     let config = read_codex_config(&config_path);
@@ -259,39 +272,63 @@ fn run_inner(opts: &Options) -> Result<i32, String> {
     let availability_line =
         format_availability_line(&availability_records, noun, "codex-consult: ", suffix);
 
+    Ok(Prepared {
+        ctx,
+        rows,
+        where_,
+        clock,
+        health_source,
+        walk,
+        availability_records,
+        availability_line,
+    })
+}
+
+fn run_inner(opts: &Options) -> Result<i32, String> {
+    let p = prepare(opts)?;
+
     // ---- output
     if opts.short {
         if opts.json {
             print_short_json(
-                &availability_line,
-                &health_source,
-                &availability_records,
-                &ctx.roster,
+                &p.availability_line,
+                &p.health_source,
+                &p.availability_records,
+                &p.ctx.roster,
             );
         } else {
-            println!("{availability_line}");
+            println!("{}", p.availability_line);
         }
         return Ok(0);
     }
 
     if opts.json {
-        print_rows_json(&rows);
+        print_rows_json(&p.rows);
     } else {
         print_table(
-            &ctx,
-            &rows,
-            &where_,
-            &clock,
-            &health_source,
-            &walk,
-            &availability_line,
+            &p.ctx,
+            &p.rows,
+            &p.where_,
+            &p.clock,
+            &p.health_source,
+            &p.walk,
+            &p.availability_line,
         );
     }
 
     if !opts.provider.is_empty() {
-        return Ok(exit_code_for_verdict(&rows[0].verdict));
+        return Ok(exit_code_for_verdict(&p.rows[0].verdict));
     }
     Ok(0)
+}
+
+/// The `codex-consult:` availability line `providers --short` prints, computed WITHOUT
+/// printing anything and without a network call (the caller passes `no_network: true`).
+/// This is the reuse `c3 hook` needs: it produces the SessionStart line in-process
+/// instead of shelling out to `codex-providers.ps1 -Short -Json -NoNetwork` and parsing
+/// its `line` field, as `codex-consult-hook.ps1` does.
+pub fn short_line(opts: &Options) -> Result<String, String> {
+    Ok(prepare(opts)?.availability_line)
 }
 
 /// The `-Provider` exit code: 0 available, 2 unavailable, 3 unknown.
@@ -1336,7 +1373,7 @@ fn win_sep(s: String) -> String {
     }
 }
 
-fn get_codex_config_path() -> String {
+pub(crate) fn get_codex_config_path() -> String {
     let home = get_codex_home();
     if home.is_empty() {
         return String::new();
@@ -1347,7 +1384,7 @@ fn get_codex_config_path() -> String {
         .to_string()
 }
 
-fn read_codex_config(path: &str) -> CodexConfig {
+pub(crate) fn read_codex_config(path: &str) -> CodexConfig {
     if path.is_empty() || !Path::new(path).exists() {
         return config_not_found(path);
     }
@@ -1372,7 +1409,7 @@ fn read_codex_config(path: &str) -> CodexConfig {
     }
 }
 
-fn get_consult_clock_peek() -> Result<DateTime<FixedOffset>, String> {
+pub(crate) fn get_consult_clock_peek() -> Result<DateTime<FixedOffset>, String> {
     let raw = std::env::var("CODEX_CONSULT_NOW").unwrap_or_default();
     if raw.trim().is_empty() {
         return Ok(Local::now().fixed_offset());
@@ -1414,7 +1451,7 @@ fn malformed_now(raw: &str, item: &str) -> String {
     format!("CODEX_CONSULT_NOW='{raw}' is malformed: bad token '{item}' (a test hook: ISO timestamps with an offset, e.g. 2026-09-24T13:59:59+08:00, comma-separated)")
 }
 
-fn resolve_repo_root(cwd: &Path) -> PathBuf {
+pub fn resolve_repo_root(cwd: &Path) -> PathBuf {
     let out = Command::new("git")
         .arg("-C")
         .arg(cwd)
@@ -1440,7 +1477,7 @@ fn resolve_repo_root(cwd: &Path) -> PathBuf {
 }
 
 // Strip the Windows verbatim prefix that canonicalize adds.
-fn dunce_simplify(p: PathBuf) -> PathBuf {
+pub fn dunce_simplify(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\") {
         PathBuf::from(rest)
@@ -1449,7 +1486,7 @@ fn dunce_simplify(p: PathBuf) -> PathBuf {
     }
 }
 
-fn resolve_collab_root(repo_root: &Path, collab_dir: &str) -> PathBuf {
+pub fn resolve_collab_root(repo_root: &Path, collab_dir: &str) -> PathBuf {
     let dir = if collab_dir.is_empty() {
         ".collab"
     } else {
@@ -1636,7 +1673,7 @@ fn resolve_from_sources(sources: &[(String, &str)]) -> Result<Option<String>, St
     Ok(None)
 }
 
-fn resolve_codex_launcher(explicit: &str) -> Result<String, String> {
+pub fn resolve_codex_launcher(explicit: &str) -> Result<String, String> {
     let sources = vec![
         (explicit.to_string(), "-CodexExe"),
         (
@@ -1826,7 +1863,7 @@ fn run_with_timeout(
     }
 }
 
-fn get_codex_login_status(launcher: &str, timeout_sec: u64) -> CredentialResult {
+pub(crate) fn get_codex_login_status(launcher: &str, timeout_sec: u64) -> CredentialResult {
     if launcher.is_empty() {
         return CredentialResult::unknown(
             "codex CLI not found, `codex login status` could not run",

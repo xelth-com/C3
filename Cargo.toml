@@ -22,6 +22,7 @@ sha2 = "0.10"
 regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
 
 # The port adds a dependency only when a ported piece needs it. surrealdb and tokio
 # are deliberately absent until milestone 8 (index) and the http engine (milestone 7).

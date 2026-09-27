@@ -1,0 +1,301 @@
+//! The `--dry-run` block (`codex-consult.ps1:2500-2665`): the console preview and the
+//! `sessions.json` entry preview. A dry run writes nothing.
+//!
+//! M2c renders the console block (the `repo root`/`task dir`/.../`prompt`/`argv`/`command`
+//! lines) faithfully and prints a `sessions.json entry preview` built from the resolved
+//! context with the plugin's placeholder strings for the fields only a real run fills.
+
+use serde_json::{json, Value};
+
+use c3_core::ps_json;
+
+use super::orchestrate::{fmt_wall, Context};
+
+/// Print the whole dry-run block for `ctx` (writes nothing).
+pub(crate) fn render(ctx: &Context) {
+    println!("DRY RUN - nothing was executed and no file was written.");
+    println!();
+    for line in console_lines(ctx) {
+        println!("{line}");
+    }
+}
+
+/// The console lines of the dry-run block (without the leading DRY RUN banner).
+pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
+    let task_dir = ctx.collab_root.join(ctx.task.as_str());
+    let sessions = task_dir.join("sessions.json");
+    let findings = task_dir.join("findings.json");
+    let lock = task_dir.join(".consult.lock");
+    let effort_shown = ctx.effort.sent.clone().unwrap_or_else(|| "nothing".into());
+    let mut out: Vec<String> = Vec::new();
+
+    out.push(format!("repo root   : {}", ctx.repo_root.display()));
+    out.push(format!("task dir    : {}", task_dir.display()));
+    out.push(format!("sessions    : {}", sessions.display()));
+    if !ctx.r.raw {
+        out.push(format!(
+            "findings    : {} ({} open finding(s) listed in the prompt)",
+            findings.display(),
+            ctx.open_findings_count
+        ));
+    }
+    out.push(format!(
+        "lock        : {} (held open for the run; not in a dry run)",
+        lock.display()
+    ));
+    if ctx.launcher.is_empty() {
+        out.push("launcher    : (codex not found on PATH)".into());
+    } else {
+        out.push(format!("launcher    : {}", ctx.launcher));
+    }
+    out.push(format!("codex       : {}", ctx.codex_version));
+    let config_path = crate::providers::get_codex_config_path();
+    out.push(format!(
+        "config      : {}",
+        if config_path.is_empty() {
+            "(no Codex home)".to_string()
+        } else {
+            config_path
+        }
+    ));
+    out.push(format!("reviewer    : {}", reviewer_shown(&ctx.identity)));
+    out.push(format!("lineage     : {}", ctx.identity.lineage));
+    let preflight_line = if ctx.o.skip_preflight {
+        "skipped (-SkipPreflight)".to_string()
+    } else if let Some((refusal, _)) = &ctx.preflight_refusal {
+        format!("a real run is refused - {refusal}")
+    } else if ctx.preflight.is_empty() {
+        "(non-openai credential check deferred to M2c+)".to_string()
+    } else {
+        format!("available ({})", ctx.preflight)
+    };
+    out.push(format!("preflight   : {preflight_line}"));
+    out.push(format!("model       : {}", model_label(ctx)));
+    out.push(format!(
+        "purpose     : {} (effort {}, max words {})",
+        ctx.r.purpose_label,
+        if ctx.effort.sent.is_none() {
+            "none sent".to_string()
+        } else {
+            effort_shown.clone()
+        },
+        ctx.r.max_words
+    ));
+    out.push(format!(
+        "effort      : {} sent (requested {}, mapping {}, by {})",
+        effort_shown, ctx.effort.requested, ctx.effort.mapping, ctx.effort.basis
+    ));
+    out.push(format!(
+        "timeout     : {} s ({}); continuation after a timeout kill: {}",
+        ctx.r.timeout_sec,
+        if ctx.r.timeout_source == "purpose" {
+            format!(
+                "the default of purpose {}; -TimeoutSec overrides",
+                ctx.r.purpose_label
+            )
+        } else {
+            "-TimeoutSec".to_string()
+        },
+        if ctx.r.continue_sec > 0 {
+            format!(
+                "one turn of up to {} s on the same thread (-ContinueSec; 0 = off)",
+                ctx.r.continue_sec
+            )
+        } else {
+            "off (-ContinueSec 0)".to_string()
+        }
+    ));
+    if ctx.r.raw {
+        out.push(format!(
+            "reply format: raw text ({}: no schema, no findings bookkeeping)",
+            if ctx.o.purpose == "chore" {
+                "-Purpose chore"
+            } else {
+                "-Raw"
+            }
+        ));
+    } else {
+        let schema = ctx
+            .schema_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        out.push(format!("schema      : {schema}"));
+        match ctx.transport.transport.as_str() {
+            "output-schema" => out.push(format!(
+                "transport   : output-schema ({}): passed as --output-schema",
+                ctx.transport.basis
+            )),
+            _ => out.push(format!(
+                "transport   : prompt-only ({}): --output-schema is NOT passed; the schema travels in the prompt, the reply is validated locally",
+                ctx.transport.basis
+            )),
+        }
+    }
+    if !ctx.r.raw && ctx.o.format_retry == 1 {
+        out.push("format retry : 1 attempt if the reply is not valid JSON".into());
+    } else {
+        out.push("format retry : 0 (off)".into());
+    }
+    out.push(format!("mode        : {}", mode_str(ctx)));
+    if mode_str(ctx) == "new" {
+        out.push("thread      : (a new thread will be created)".into());
+    } else {
+        out.push(format!(
+            "thread      : {} (parent for {})",
+            ctx.o.thread,
+            mode_str(ctx)
+        ));
+    }
+    out.push(format!(
+        "consult id  : {} (the prompt's last line)",
+        ctx.consult_id
+    ));
+    out.push(format!(
+        "handoff     : {:02} (consult n = {})",
+        ctx.nn, ctx.consult_n
+    ));
+    out.push(format!(
+        "reviewed    : {}, base {}, {} changed files",
+        ctx.revision.reviewed_revision, ctx.revision.base_commit, ctx.revision.changed_files
+    ));
+    let tree = if ctx.revision.tree_sha256.is_empty() {
+        "(none)".to_string()
+    } else {
+        ctx.revision.tree_sha256.clone()
+    };
+    out.push(format!(
+        "tree sha256 : {} ({})",
+        tree, ctx.revision.fingerprint_note
+    ));
+    if let Some(bp) = &ctx.brief_path {
+        if let Ok(bytes) = std::fs::read(bp) {
+            out.push(format!("brief sha256: {}", c3_core::sha256_hex(&bytes)));
+        }
+    }
+    out.push(String::new());
+    out.push("argv        :".into());
+    out.push("    codex".to_string());
+    for a in &ctx.argv {
+        out.push(format!("    {a}"));
+    }
+    out.push(String::new());
+    out.push(format!(
+        "command     : codex {}",
+        ctx.argv_display.trim_start_matches("codex ")
+    ));
+    out.push(format!(
+        "prompt (stdin, {} chars):",
+        ctx.prompt_text.chars().count()
+    ));
+    out.push("----".into());
+    out.push(ctx.prompt_text.clone());
+    out.push("----".into());
+    out.push(String::new());
+    out.push(format!("reply file  : {}", ctx.reply_path.display()));
+    if !ctx.r.raw {
+        out.push(format!("reply json  : {}", ctx.reply_json_path.display()));
+    }
+    out.push(format!("events file : {}", ctx.events_path.display()));
+    out.push(format!(
+        "last message: {} (temp)",
+        ctx.last_msg_path.display()
+    ));
+    out.push(String::new());
+    out.push("sessions.json entry preview:".into());
+    out.push(ps_json::format_value_root(&preview(ctx)));
+    out
+}
+
+fn preview(ctx: &Context) -> Value {
+    let effort_sent = ctx
+        .effort
+        .sent
+        .clone()
+        .map(Value::String)
+        .unwrap_or(Value::Null);
+    json!({
+        "n": ctx.consult_n,
+        "when": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        "purpose": ctx.o.purpose,
+        "consult_id": ctx.consult_id,
+        "lineage": ctx.identity.lineage,
+        "parent_thread": ctx.o.thread,
+        "thread": "<filled from the event stream>",
+        "thread_source": "events|rollout (verified by consultation id)|unknown",
+        "mode": mode_str(ctx),
+        "command": format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
+        "brief": ctx.brief_ref,
+        "prompt_chars": ctx.prompt_text.chars().count(),
+        "model": model_label(ctx),
+        "effort": effort_sent,
+        "effort_requested": ctx.effort.requested,
+        "effort_sent": ctx.effort.sent.clone().map(Value::String).unwrap_or(Value::Null),
+        "effort_mapping": ctx.effort.mapping,
+        "effort_caps": ctx.effort.caps,
+        "max_words": ctx.r.max_words,
+        "sandbox": sandbox_label(ctx),
+        "timeout_sec": ctx.r.timeout_sec,
+        "timeout_source": ctx.r.timeout_source,
+        "continue_sec": ctx.r.continue_sec,
+        "schema": if ctx.r.raw { "" } else { "consult-reply v1" },
+        "schema_transport": ctx.transport.transport,
+        "schema_transport_source": ctx.transport.source,
+        "structured": if ctx.r.raw { Value::Bool(false) } else { Value::String("<true when the reply validates>".into()) },
+        "base_commit": ctx.revision.base_commit,
+        "reviewed_revision": ctx.revision.reviewed_revision,
+        "tree_sha256": ctx.revision.tree_sha256,
+        "tree_sha256_after": "<computed after the run>",
+        "tree_changed_during_review": "<true|false: a file's content changed during the run>",
+        "revision_moved": "<null, or \"<old base_commit> -> <new base_commit>\" when HEAD moved during the run>",
+        "changed_files": ctx.revision.changed_files,
+        "fingerprint_note": ctx.revision.fingerprint_note,
+        "bridge_outcome": "<usable reply | failed: ...>",
+        "wall_seconds": 0,
+        "finished_at": "<written at the commit>",
+        "commit_wait_ms": "<ms the commit waited for the write lock>"
+    })
+}
+
+fn model_label(ctx: &Context) -> String {
+    if ctx.identity.model_source == "unknown" {
+        "unknown".to_string()
+    } else {
+        ctx.identity.model.clone()
+    }
+}
+
+fn sandbox_label(ctx: &Context) -> String {
+    if ctx.o.sandbox.is_empty() {
+        "read-only".to_string()
+    } else {
+        ctx.o.sandbox.clone()
+    }
+}
+
+fn mode_str(ctx: &Context) -> String {
+    if ctx.o.mode.is_empty() {
+        "new".to_string()
+    } else {
+        ctx.o.mode.clone()
+    }
+}
+
+fn reviewer_shown(id: &c3_core::lineage::ReviewerIdentity) -> String {
+    format!(
+        "{} ({})",
+        id.lineage,
+        if id.provider_source.is_empty() {
+            "codex default".to_string()
+        } else {
+            id.provider_source.clone()
+        }
+    )
+}
+
+// Keep fmt_wall referenced (used by summary/orchestrate); silences an unused import if the
+// dry-run ever needs the wall formatting.
+#[allow(dead_code)]
+fn _wall(w: f64) -> String {
+    fmt_wall(w)
+}

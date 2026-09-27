@@ -1,0 +1,203 @@
+//! Launching a subprocess engine turn (`Start-EngineProcess` / `Invoke-EngineTurn`,
+//! `codex-consult.ps1:695-818`).
+//!
+//! One turn is: write the prompt where the engine expects it (per [`PromptDelivery`]),
+//! spawn the launcher from the repo root with stdout redirected to the run's
+//! `.events.jsonl`, stderr to a sidecar file, feed stdin, then wait up to `timeout`. On a
+//! timeout the process tree is killed (Windows `taskkill /T`, Unix a plain kill of the
+//! child) and the wall time is measured and rounded to one decimal exactly like the plugin
+//! (`[math]::Round($watch.Elapsed.TotalSeconds, 1)`).
+//!
+//! This module is engine-agnostic: it delivers the prompt and captures the streams; parsing
+//! the events into an [`crate::engines`] outcome is the engine adapter's job ([`super::codex`]).
+
+use std::fs::File;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+use c3_core::engine::PromptDelivery;
+
+/// One subprocess turn to run.
+pub struct SpawnRequest<'a> {
+    /// The resolved launcher path (may be a `.cmd`/`.bat` on Windows).
+    pub launcher: &'a str,
+    /// Everything after the launcher (already built by `c3_core::engine`).
+    pub argv: &'a [String],
+    /// The working directory (the git repo root).
+    pub cwd: &'a Path,
+    /// How the prompt reaches the engine; decides whether stdin carries it.
+    pub prompt_delivery: PromptDelivery,
+    /// The bytes to write to child stdin: the prompt for codex, the NDJSON line for agy,
+    /// empty for muse (its prompt is the `--prompt-file` named in `argv`).
+    pub stdin_text: &'a str,
+    /// stdout is redirected here (the `.events.jsonl`).
+    pub events_path: &'a Path,
+    /// stderr is redirected here.
+    pub stderr_path: &'a Path,
+    /// The wall-clock budget for the turn.
+    pub timeout: Duration,
+}
+
+/// The result of one subprocess turn.
+#[derive(Debug, Clone)]
+pub struct TurnResult {
+    /// Whether a process was actually started.
+    pub started: bool,
+    /// The child's exit code, or `None` when it was killed/timed out or never started.
+    pub exit_code: Option<i32>,
+    /// The turn was killed on its timeout.
+    pub timed_out: bool,
+    /// Pids that survived the kill (best-effort; empty when the tree died cleanly).
+    pub survivors: Vec<u32>,
+    /// Wall time, rounded to one decimal.
+    pub wall_seconds: f64,
+    /// The captured stderr text (UTF-8, lossily decoded).
+    pub stderr: String,
+    /// A launch error, when the process could not be started.
+    pub error: Option<String>,
+}
+
+impl TurnResult {
+    fn not_started(error: String) -> TurnResult {
+        TurnResult {
+            started: false,
+            exit_code: None,
+            timed_out: false,
+            survivors: Vec::new(),
+            wall_seconds: 0.0,
+            stderr: String::new(),
+            error: Some(error),
+        }
+    }
+}
+
+fn round1(secs: f64) -> f64 {
+    (secs * 10.0).round() / 10.0
+}
+
+/// Build `(program, args)` so a `.cmd`/`.bat` launcher runs through `cmd /c` on Windows,
+/// mirroring `providers::run_with_timeout`.
+fn program_and_args(launcher: &str, argv: &[String]) -> (String, Vec<String>) {
+    let is_cmd = cfg!(windows)
+        && Path::new(launcher)
+            .extension()
+            .map(|e| {
+                let e = e.to_string_lossy().to_lowercase();
+                e == "cmd" || e == "bat"
+            })
+            .unwrap_or(false);
+    if is_cmd {
+        let mut v = vec!["/c".to_string(), launcher.to_string()];
+        v.extend(argv.iter().cloned());
+        ("cmd".to_string(), v)
+    } else {
+        (launcher.to_string(), argv.to_vec())
+    }
+}
+
+/// Run one subprocess turn (spawn, feed stdin, capture streams, wait with a timeout kill).
+pub fn run_turn(req: &SpawnRequest) -> TurnResult {
+    let stdout_file = match File::create(req.events_path) {
+        Ok(f) => f,
+        Err(e) => return TurnResult::not_started(format!("could not open the events file: {e}")),
+    };
+    let stderr_file = match File::create(req.stderr_path) {
+        Ok(f) => f,
+        Err(e) => return TurnResult::not_started(format!("could not open the stderr file: {e}")),
+    };
+
+    let (program, args) = program_and_args(req.launcher, req.argv);
+    let mut cmd = Command::new(&program);
+    cmd.args(&args)
+        .current_dir(req.cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+
+    let mut child: Child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return TurnResult::not_started(format!("could not start {program}: {e}")),
+    };
+
+    // Feed stdin. muse gets an empty stdin; codex/agy get their text. Closing the handle
+    // (drop) sends EOF so the child's ReadToEnd returns.
+    if let Some(mut stdin) = child.stdin.take() {
+        // A muse turn writes nothing (its prompt is a file) — still close stdin.
+        if !matches!(req.prompt_delivery, PromptDelivery::PromptFile) {
+            let _ = stdin.write_all(req.stdin_text.as_bytes());
+        }
+        // drop closes stdin
+    }
+
+    let start = Instant::now();
+    let mut timed_out = false;
+    let mut survivors = Vec::new();
+    let exit_code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.code(),
+            Ok(None) => {
+                if start.elapsed() >= req.timeout {
+                    survivors = kill_tree(&mut child);
+                    timed_out = true;
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return TurnResult {
+                    started: true,
+                    exit_code: None,
+                    timed_out: false,
+                    survivors: Vec::new(),
+                    wall_seconds: round1(start.elapsed().as_secs_f64()),
+                    stderr: read_text(req.stderr_path),
+                    error: Some(format!("waiting on the child failed: {e}")),
+                };
+            }
+        }
+    };
+    let wall_seconds = round1(start.elapsed().as_secs_f64());
+
+    TurnResult {
+        started: true,
+        exit_code,
+        timed_out,
+        survivors,
+        wall_seconds,
+        stderr: read_text(req.stderr_path),
+        error: None,
+    }
+}
+
+/// Kill the process tree. On Windows `taskkill /F /T /PID <pid>` kills the whole tree
+/// (the `cmd`/`powershell` wrapper the fakes use plus its grandchildren); on Unix the child
+/// is killed directly. Returns pids that appear to have survived (best-effort; empty here).
+fn kill_tree(child: &mut Child) -> Vec<u32> {
+    #[cfg(windows)]
+    {
+        let pid = child.id();
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let _ = child.kill();
+        Vec::new()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child.kill();
+        Vec::new()
+    }
+}
+
+fn read_text(path: &Path) -> String {
+    let mut s = Vec::new();
+    if let Ok(mut f) = File::open(path) {
+        let _ = f.read_to_end(&mut s);
+    }
+    String::from_utf8_lossy(&s).to_string()
+}

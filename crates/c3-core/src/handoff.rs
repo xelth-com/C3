@@ -216,7 +216,7 @@ impl HandoffHeader {
         let mut lines: Vec<String> = Vec::new();
         // 1. title, blank
         lines.push(format!(
-            "# Handoff {} - {}: {}",
+            "# Handoff {:02} - {}: {}",
             self.nn, self.engine_label, self.slug
         ));
         lines.push(String::new());

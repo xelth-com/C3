@@ -214,12 +214,13 @@ fn health_auth_failure_recent_blocks() {
 
 #[test]
 fn health_reset_unknown_quota_blocks_for_60_min_then_clears() {
-    // A usage limit that names NO reset time blocks for 60 minutes (wave 24b, F08-7).
+    // A usage limit that names NO reset time blocks for 60 minutes (wave 24b, F08-7). The
+    // message names a usage window, so wave-24c's burst rule does NOT shorten it to 10 min.
     let failure = || {
         Some(json!({
             "class": "quota",
             "code": "429",
-            "message": "429 Too Many Requests",
+            "message": "You've hit your usage limit; try again later.",
             "when": "2026-09-26T13:30:00+02:00" // 11:30 UTC
         }))
     };
@@ -277,6 +278,51 @@ fn health_reset_unknown_quota_blocks_for_60_min_then_clears() {
     assert!(
         h2.last_limit.is_some(),
         "the cleared limit still shows as the last failure"
+    );
+}
+
+#[test]
+fn health_burst_429_clears_after_10_minutes() {
+    // (wave 24c) A 429 that names no usage window is a BURST: the endpoint is out for 10
+    // minutes, not 60. At 5 min it still blocks; at 15 min it has cleared.
+    use c3_core::health::failure_kind;
+    assert_eq!(
+        failure_kind(
+            "quota",
+            "429 exceeded retry limit, last status: 429 Too Many Requests"
+        ),
+        "burst"
+    );
+    assert_eq!(failure_kind("quota", "You've hit your usage limit."), "");
+    assert_eq!(failure_kind("auth", "429 Too Many Requests"), "");
+
+    let failure = || {
+        Some(json!({
+            "class": "quota",
+            "code": "429",
+            "message": "exceeded retry limit, last status: 429 Too Many Requests",
+            "when": "2026-09-26T13:30:00+02:00" // 11:30 UTC
+        }))
+    };
+    let consults = vec![consult(
+        "2026-09-26T13:30:00+02:00",
+        "provider error",
+        failure(),
+    )];
+    // 5 minutes after the hit: still out.
+    let at5: DateTime<Utc> = Utc.with_ymd_and_hms(2026, 9, 26, 11, 35, 0).unwrap();
+    let h5 = endpoint_health(&consults, FP, at5);
+    assert!(
+        h5.quota.is_some(),
+        "a burst 429 blocks for its 10-minute window"
+    );
+    assert_eq!(h5.quota.as_ref().unwrap().kind, "burst");
+    // 15 minutes after the hit: the 10-minute burst window has passed.
+    let at15: DateTime<Utc> = Utc.with_ymd_and_hms(2026, 9, 26, 11, 45, 0).unwrap();
+    let h15 = endpoint_health(&consults, FP, at15);
+    assert!(
+        h15.quota.is_none(),
+        "after 10 min the burst clears (not 60)"
     );
 }
 

@@ -1,17 +1,24 @@
 //! C3 runtime library.
 //!
-//! The runtime modules that build on `c3-core`'s types and formats. Only
-//! [`providers`] is implemented at milestone 1 (providers and preflight); the rest
-//! are named here so the crate's shape matches the design and later milestones drop
-//! in without moving code.
+//! The runtime modules that build on `c3-core`'s types and formats. [`providers`]
+//! is implemented (milestone 1); [`cli`] holds the clap argument structs and the
+//! `run` entry point of every subcommand so the binary in `c3-cli` only dispatches;
+//! the other modules are named here so the crate's shape matches the design and
+//! later milestones drop in without moving code.
 
 pub mod providers;
 
-pub mod engines {
-    //! Engine adapters (`codex`, `agy`, `muse`, `http`): one attempt per call, the
-    //! CLIs wrapped exactly as the plugin drives them, the `http` engine sending one
-    //! OpenAI-compatible request. Milestone 2.
-}
+pub mod cli;
+
+pub mod engines;
+
+pub mod consult;
+
+pub mod findings_tool;
+
+pub mod scoreboard;
+
+pub mod hook;
 
 pub mod panel {
     //! Panel sizing (plugin R14), the endpoint-aware scheduler and detach/status
