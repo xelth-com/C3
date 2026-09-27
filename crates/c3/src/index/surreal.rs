@@ -115,7 +115,9 @@ impl SurrealIndex {
                         .use_db(&db_name)
                         .await
                         .map_err(|e| redact_err(&e.to_string()))?;
-                    define_schema(&db).await.map_err(|e| redact_err(&e.to_string()))?;
+                    define_schema(&db)
+                        .await
+                        .map_err(|e| redact_err(&e.to_string()))?;
                     Ok::<_, String>(Handle::Local(db))
                 })?;
                 (handle, endpoint)
@@ -127,9 +129,10 @@ impl SurrealIndex {
                     let db = any::connect(ep)
                         .await
                         .map_err(|e| redact_err(&e.to_string()))?;
-                    if let (Ok(user), Ok(pass)) =
-                        (std::env::var("C3_INDEX_USER"), std::env::var("C3_INDEX_PASS"))
-                    {
+                    if let (Ok(user), Ok(pass)) = (
+                        std::env::var("C3_INDEX_USER"),
+                        std::env::var("C3_INDEX_PASS"),
+                    ) {
                         db.signin(surrealdb::opt::auth::Root {
                             username: user,
                             password: pass,
@@ -141,7 +144,9 @@ impl SurrealIndex {
                         .use_db(&db_name)
                         .await
                         .map_err(|e| redact_err(&e.to_string()))?;
-                    define_schema(&db).await.map_err(|e| redact_err(&e.to_string()))?;
+                    define_schema(&db)
+                        .await
+                        .map_err(|e| redact_err(&e.to_string()))?;
                     Ok::<_, String>(Handle::Any(db))
                 })?;
                 (handle, endpoint)
@@ -158,7 +163,11 @@ impl SurrealIndex {
     }
 
     /// Index `files` (each `(rel_posix_path, content)`) at `generation`.
-    pub fn index(&self, files: &[(String, String)], generation: &str) -> Result<IndexStats, String> {
+    pub fn index(
+        &self,
+        files: &[(String, String)],
+        generation: &str,
+    ) -> Result<IndexStats, String> {
         let name = self.backend.name().to_string();
         let endpoint = self.endpoint.clone();
         self.rt
@@ -172,7 +181,11 @@ impl SurrealIndex {
     }
 
     /// Drop everything, then index — the acceptance-test path.
-    pub fn rebuild(&self, files: &[(String, String)], generation: &str) -> Result<IndexStats, String> {
+    pub fn rebuild(
+        &self,
+        files: &[(String, String)],
+        generation: &str,
+    ) -> Result<IndexStats, String> {
         let name = self.backend.name().to_string();
         let endpoint = self.endpoint.clone();
         self.rt
@@ -354,7 +367,11 @@ async fn do_retrieve<C: Connection>(
         rankings.push(bm25_leg(db, field, query).await?);
     }
     let fused = super::rrf(&rankings, 60.0);
-    let primary_ids: Vec<String> = fused.iter().take(TOP_PRIMARY).map(|(id, _)| id.clone()).collect();
+    let primary_ids: Vec<String> = fused
+        .iter()
+        .take(TOP_PRIMARY)
+        .map(|(id, _)| id.clone())
+        .collect();
     let score_of: BTreeMap<String, f64> = fused.into_iter().collect();
 
     let mut hits: Vec<Hit> = Vec::new();
@@ -363,7 +380,11 @@ async fn do_retrieve<C: Connection>(
     for id in &primary_ids {
         if let Some(row) = fetch_row(db, id).await? {
             seen.insert(id.clone());
-            hits.push(row_to_hit(row, *score_of.get(id).unwrap_or(&0.0), Vec::new()));
+            hits.push(row_to_hit(
+                row,
+                *score_of.get(id).unwrap_or(&0.0),
+                Vec::new(),
+            ));
         }
     }
 
@@ -411,7 +432,11 @@ async fn do_retrieve<C: Connection>(
     Ok(hits)
 }
 
-async fn bm25_leg<C: Connection>(db: &Surreal<C>, field: &str, query: &str) -> Result<Vec<String>, String> {
+async fn bm25_leg<C: Connection>(
+    db: &Surreal<C>,
+    field: &str,
+    query: &str,
+) -> Result<Vec<String>, String> {
     // The `@1@` reference number is an inline literal (v3 Rule 2/6); the search text is
     // bound so it is never concatenated into the SQL. `field` is from a fixed allowlist.
     let sql = format!(
@@ -426,8 +451,13 @@ async fn bm25_leg<C: Connection>(db: &Surreal<C>, field: &str, query: &str) -> R
     Ok(rows.into_iter().map(|r| r.id).collect())
 }
 
-async fn neighbours<C: Connection>(db: &Surreal<C>, table: &str, id: &str) -> Result<Vec<String>, String> {
-    let sql = format!("SELECT record::id(out) AS id FROM {table} WHERE in = type::record('entity', $id)");
+async fn neighbours<C: Connection>(
+    db: &Surreal<C>,
+    table: &str,
+    id: &str,
+) -> Result<Vec<String>, String> {
+    let sql =
+        format!("SELECT record::id(out) AS id FROM {table} WHERE in = type::record('entity', $id)");
     let mut resp = db
         .query(sql)
         .bind(("id", id.to_string()))
@@ -447,9 +477,17 @@ async fn fetch_row<C: Connection>(db: &Surreal<C>, id: &str) -> Result<Option<Ro
     Ok(rows.into_iter().next())
 }
 
-async fn do_stats<C: Connection>(db: &Surreal<C>, backend_name: &str, endpoint: &str) -> Result<IndexStats, String> {
+async fn do_stats<C: Connection>(
+    db: &Surreal<C>,
+    backend_name: &str,
+    endpoint: &str,
+) -> Result<IndexStats, String> {
     let entities = count(db, "SELECT count() FROM entity GROUP ALL").await?;
-    let files = count(db, "SELECT count() FROM entity WHERE kind = 'file' GROUP ALL").await?;
+    let files = count(
+        db,
+        "SELECT count() FROM entity WHERE kind = 'file' GROUP ALL",
+    )
+    .await?;
     let belongs_to = count(db, "SELECT count() FROM belongs_to GROUP ALL").await?;
     let calls = count(db, "SELECT count() FROM calls GROUP ALL").await?;
     let relates_to = count(db, "SELECT count() FROM relates_to GROUP ALL").await?;

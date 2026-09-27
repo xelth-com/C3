@@ -116,13 +116,17 @@ pub fn run_forget_me(args: ForgetMeArgs) -> i32 {
     }
 }
 
-/// `c3 telemetry status`: the dry-run status sentence plus the instance id.
+/// `c3 telemetry status`: the dry-run status sentence plus the instance id, read-only (it
+/// never creates the telemetry salt).
 pub fn run_telemetry(args: TelemetryArgs) -> i32 {
     match args.action {
         TelemetryAction::Status => {
             let config = Config::default();
             println!("{}", telemetry::status(&config));
-            println!("instance: {}", telemetry::instance_id());
+            match telemetry::instance_id_if_exists() {
+                Some(id) => println!("instance: {id}"),
+                None => println!("instance: (not created yet - created on the first consultation)"),
+            }
             0
         }
     }

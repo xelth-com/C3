@@ -1,0 +1,79 @@
+{
+  "reply_markdown": "Reviewed at HEAD `9d9ccdf43fe317a6898afdbb387e6aced70ddae9`.\n\n**Q1. Document/code mismatches.** The 11 tool names, required/optional argument names, JSON types, CLI mappings, timeout defaults, and `.mcp.json` snippet in `docs/port/mcp.md` match `tool_defs()` and `build_argv()`. Drifts:\n\n1. Containment is lexical, not filesystem-resolved: `reject_escape` accepts a normal component that is a symlink/junction, and pack output is then written directly through it. Thus a path such as `inside-link/pack.md` can escape the working directory, contrary to the claimed invariant (finding #1).\n2. Path semantics are described inconsistently: the `c3_consult` schema says an absolute path inside the repo is accepted, and the prose implies only an escaping `..` is rejected; the implementation rejects every absolute path and every `..` component, even `foo/../bar` (finding #2).\n3. The note saying `panel`/`index` are “not built” is stale for `index`: the CLI has implemented build/rebuild/query/stats actions, although it is correctly not exposed over MCP (finding #3).\n4. `c3_telemetry_status` is described as read-only, but obtaining its instance id creates the telemetry directory and salt file on first use (outside the repository) (finding #4).\n\n**Q2. Is “no tool commits” enforced?** It is more than a tool-list label, but not a centralized capability gate. `tools/call` dispatches through the fixed `build_argv` allow-list; unknown names fail, and no branch passes an arbitrary CLI subcommand. `complain` and `forget-me` have no mappings. Current production Git usage found in code is non-mutating (`rev-parse`, `status`, `diff`, `ls-files`, and `hash-object` without `-w`); `git commit` appeared only in test setup. Future regressions in a mapped subcommand would still need tests or an explicit permission boundary to catch.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/mcp/mod.rs", "line": 188},
+        {"path": "crates/c3-core/src/task_slug.rs", "line": 116},
+        {"path": "crates/c3/src/pack/reviewer.rs", "line": 317}
+      ],
+      "claim": "The MCP path-containment invariant can be bypassed by a symlink or junction: validation only checks lexical components, while downstream tools follow the link when reading or writing. trigger: call `c3_pack` with `out` set to `<in-repo-symlink>/pack.md`, where the link points outside the MCP working directory.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/mcp/mod.rs:185-192", "observation": "`reject_escape` calls `contained_join` on the untrusted string and otherwise passes the original path to the CLI."},
+        {"kind": "read-code", "reference": "crates/c3-core/src/task_slug.rs:116-148", "observation": "`contained_join` rejects roots and `..` but accepts all normal components and never canonicalizes or checks symlink targets."},
+        {"kind": "read-code", "reference": "crates/c3/src/pack/reviewer.rs:317-325", "observation": "Pack output creates parents and writes both files directly at the supplied path, so a symlinked parent is followed."}
+      ],
+      "verification": "In a disposable repository, create an in-repo link to an external writable directory, invoke MCP `c3_pack` with that link in `out`, and check whether the external directory receives `pack.md` and `pack.pack.json`.",
+      "remedy": "After lexical validation, canonicalize the resolved target and reject it unless it remains under the canonical working directory; for writes, also verify the final parent/file does not cross a symlink boundary.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "docs/port/mcp.md", "line": 21},
+        {"path": "crates/c3/src/mcp/mod.rs", "line": 596},
+        {"path": "crates/c3-core/src/task_slug.rs", "line": 143}
+      ],
+      "claim": "The published path contract does not match runtime validation: absolute paths inside the working directory are rejected, and every `..` component is rejected even when normalization would remain inside. trigger: supply `brief` as an absolute in-repo path or `foo/../bar.md`.",
+      "evidence": [
+        {"kind": "read-code", "reference": "docs/port/mcp.md:21-23", "observation": "The document says paths are rejected when absolute or when a `..` component escapes the working directory."},
+        {"kind": "read-code", "reference": "crates/c3/src/mcp/mod.rs:596", "observation": "The tool schema explicitly says `brief` may be repo-relative or absolute inside the repo."},
+        {"kind": "read-code", "reference": "crates/c3-core/src/task_slug.rs:116-148", "observation": "Every `ParentDir`, root, or prefix component is rejected regardless of the final normalized location."}
+      ],
+      "verification": "Call `build_argv` for `c3_consult` with an absolute in-repo brief and separately with `foo/../bar.md`; both should return a path refusal.",
+      "remedy": "Change the schema description and prose to state that only `..`-free relative paths are accepted, or implement the more permissive precisely documented policy.",
+      "supersedes": []
+    },
+    {
+      "severity": "note",
+      "locations": [
+        {"path": "docs/port/mcp.md", "line": 63},
+        {"path": "crates/c3/src/cli/index.rs", "line": 1}
+      ],
+      "claim": "The documentation says `index` is not built, but the current CLI implements the index surface; only its absence from MCP is accurate. trigger: read the current CLI dispatch and index implementation.",
+      "evidence": [
+        {"kind": "read-code", "reference": "docs/port/mcp.md:63", "observation": "The text lists `panel`/`index` as not built."},
+        {"kind": "read-code", "reference": "crates/c3/src/cli/index.rs:1-39", "observation": "The file implements milestone-8 build, rebuild, query, and stats actions."}
+      ],
+      "verification": "Run `c3 index stats` or inspect the CLI dispatch to confirm the implemented subcommand exists.",
+      "remedy": "Rewrite as: `panel` is not built; `index` exists but is intentionally not exposed as an MCP tool.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3/src/mcp/mod.rs", "line": 739},
+        {"path": "crates/c3/src/cli/telemetry.rs", "line": 120},
+        {"path": "crates/c3/src/telemetry/mod.rs", "line": 169}
+      ],
+      "claim": "`c3_telemetry_status` is not read-only on first use: displaying the instance id creates a telemetry directory and persistent salt file outside the repository. trigger: invoke `c3_telemetry_status` before the telemetry salt exists.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/mcp/mod.rs:738-740", "observation": "The tool description says it is read-only and sends nothing."},
+        {"kind": "read-code", "reference": "crates/c3/src/cli/telemetry.rs:120-126", "observation": "Telemetry status prints `telemetry::instance_id()`."},
+        {"kind": "read-code", "reference": "crates/c3/src/telemetry/mod.rs:169-197", "observation": "`instance_id` calls `read_or_create_salt`, which creates the directory and writes the salt when absent."}
+      ],
+      "verification": "Point the telemetry home at an empty temporary home, invoke `c3_telemetry_status`, and observe creation of the telemetry directory and salt file.",
+      "remedy": "For status, read an existing instance id without creating one, or update the tool description and document the one-time local configuration write.",
+      "supersedes": []
+    }
+  ],
+  "verdict": "ADVISE",
+  "verdict_reason": "The documented MCP surface mostly matches the implementation, but containment, path wording, status writing, and stale index wording need correction.",
+  "prior_findings": [],
+  "unproven": [
+    "The symlink bypass and first telemetry-status write were established by code inspection, not exercised in a live MCP process."
+  ],
+  "first_run_checklist": [],
+  "schema_version": "1"
+}

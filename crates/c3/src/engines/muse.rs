@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use c3_core::engine::{
     AttemptOutcome, Capabilities, ConversationId, ConversationTrust, Engine, EngineError,
     EngineKind, LaunchPlan, Mode, RawReply, Reply, Request, StructuredReply, SubprocessEngine,
-    TurnKind, TurnRequest, MUSE_API_KEY_VARS,
+    TurnKind, TurnRequest,
 };
 use c3_core::health::{convert_from_provider_error_text, provider_failure_class};
 use serde_json::Value;
@@ -199,9 +199,13 @@ impl Engine for MuseEngine {
     }
 
     fn precheck(&self, _turn: &TurnRequest) -> Result<(), EngineError> {
-        match muse_launch_block() {
-            Some(msg) => Err(EngineError::Precheck(msg)),
-            None => Ok(()),
+        // The billing/oauth launch guard lives once, in `providers` (`Get-MuseLaunchBlock`): it
+        // re-reads `auth.json` afresh, so this is safe to call before EVERY turn. Empty = ok.
+        let block = crate::providers::get_muse_launch_block();
+        if block.is_empty() {
+            Ok(())
+        } else {
+            Err(EngineError::Precheck(block))
         }
     }
 
@@ -858,156 +862,7 @@ pub fn muse_salvage(events_text: &str) -> Option<String> {
     }
 }
 
-// --------------------------------------------------------------------------- launch guard (precheck)
-
-/// The muse sign-in state read from `~/.config/muse/auth.json` (`Get-MuseCredentialInfo`).
-#[derive(Debug, Clone, Default)]
-struct MuseCredential {
-    ok: bool,
-    reason: String,
-    cause: String,
-    mechanism: String,
-}
-
-fn muse_auth_path() -> String {
-    let home = if cfg!(windows) {
-        std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty())
-    } else {
-        std::env::var("HOME").ok().filter(|s| !s.is_empty())
-    }
-    .or_else(|| std::env::var("HOME").ok().filter(|s| !s.is_empty()));
-    match home {
-        Some(h) => Path::new(&h)
-            .join(".config")
-            .join("muse")
-            .join("auth.json")
-            .to_string_lossy()
-            .to_string(),
-        None => String::new(),
-    }
-}
-
-/// Read the muse credential state. Mirrors the private `providers::muse_credential_info`; see the
-/// report (the intended follow-up is to expose that as `pub` and call it here).
-fn muse_credential_info() -> MuseCredential {
-    const SHOWN: &str = "~/.config/muse/auth.json";
-    let backend = std::env::var("TBH_CREDENTIAL_BACKEND")
-        .unwrap_or_default()
-        .trim()
-        .to_lowercase();
-    let mut c = MuseCredential::default();
-    if backend != "file" {
-        let b = if backend.is_empty() {
-            "not set".to_string()
-        } else {
-            format!("'{backend}'")
-        };
-        c.cause = format!("TBH_CREDENTIAL_BACKEND is {b}: the keychain backend cannot be read");
-        c.reason = format!("sign-in not checkable: TBH_CREDENTIAL_BACKEND is {b} (the keychain backend cannot be read; set TBH_CREDENTIAL_BACKEND=file - required on Windows - and run `muse login`)");
-        return c;
-    }
-    let path = muse_auth_path();
-    if path.is_empty() {
-        c.cause = "no home directory (USERPROFILE / HOME)".into();
-        c.reason = "sign-in not checkable: no home directory (USERPROFILE / HOME)".into();
-        return c;
-    }
-    if !Path::new(&path).is_file() {
-        c.cause = format!("{SHOWN} does not exist");
-        c.reason = format!("not signed in: {SHOWN} does not exist (run `muse login` with TBH_CREDENTIAL_BACKEND=file)");
-        return c;
-    }
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    if text.trim().is_empty() {
-        c.cause = format!("{SHOWN} is empty or could not be read");
-        c.reason = format!("sign-in not checkable: {SHOWN} is empty or could not be read");
-        return c;
-    }
-    let data: Value = match serde_json::from_str::<Value>(&text) {
-        Ok(v) if v.is_object() => v,
-        Ok(_) => {
-            c.cause = format!("{SHOWN} is not a JSON object");
-            c.reason = format!("sign-in not checkable: {SHOWN} is not a JSON object");
-            return c;
-        }
-        Err(_) => {
-            c.cause = format!("{SHOWN} does not parse as JSON");
-            c.reason = format!("sign-in not checkable: {SHOWN} does not parse as JSON");
-            return c;
-        }
-    };
-    let meta = data
-        .get("providers")
-        .filter(|p| p.is_object())
-        .and_then(|p| p.get("meta"))
-        .filter(|m| m.is_object());
-    match meta {
-        None => {
-            c.cause = format!("{SHOWN} has no Meta sign-in (providers.meta)");
-            c.reason = format!(
-                "not signed in: {SHOWN} has no Meta sign-in (providers.meta; run `muse login`)"
-            );
-        }
-        Some(m) => match m
-            .get("mechanism")
-            .and_then(|x| x.as_str())
-            .filter(|s| !s.trim().is_empty())
-        {
-            None => {
-                c.cause = format!("providers.meta in {SHOWN} names no mechanism");
-                c.reason =
-                    format!("sign-in not checkable: providers.meta in {SHOWN} names no mechanism");
-            }
-            Some(mech) => {
-                c.ok = true;
-                c.mechanism = if re(r"^[A-Za-z][A-Za-z0-9_.-]{0,31}$").is_match(mech) {
-                    mech.to_string()
-                } else {
-                    "unrecognized".to_string()
-                };
-                c.reason = format!(
-                    "signed in ({SHOWN}: providers.meta, mechanism {})",
-                    c.mechanism
-                );
-            }
-        },
-    }
-    c
-}
-
-/// The billing invariant of a muse launch (`Get-MuseLaunchBlock`, fail-closed). `None` ONLY for an
-/// established oauth sign-in; otherwise the refusal reason. Re-checked before EVERY turn; reads
-/// `auth.json` afresh (no cache). Names only — a credential value is never read out.
-pub fn muse_launch_block() -> Option<String> {
-    const SHOWN: &str = "~/.config/muse/auth.json";
-    for name in MUSE_API_KEY_VARS {
-        if let Ok(v) = std::env::var(name) {
-            if !v.trim().is_empty() {
-                return Some(format!(
-                    "{name} is set: a muse run would bill per token instead of the Muse Code subscription; unset it (the muse process would inherit it)"
-                ));
-            }
-        }
-    }
-    let c = muse_credential_info();
-    if c.ok && c.mechanism == "oauth" {
-        return None;
-    }
-    if !c.mechanism.is_empty() && c.mechanism != "oauth" {
-        return Some(format!(
-            "the Muse sign-in in {SHOWN} uses mechanism '{}', not oauth: a muse run would not bill the Muse Code subscription; sign in with `muse login`",
-            c.mechanism
-        ));
-    }
-    let cause = if !c.cause.is_empty() {
-        c.cause
-    } else {
-        c.reason
-    };
-    Some(format!(
-        "the Muse sign-in is not established as oauth ({cause}): a muse run might bill per token instead of the Muse Code subscription; set TBH_CREDENTIAL_BACKEND=file and run `muse login`"
-    ))
-}
+// --------------------------------------------------------------------------- helpers
 
 fn parse_structured(raw_text: &str) -> Option<StructuredReply> {
     let trimmed = raw_text.trim();
@@ -1027,6 +882,7 @@ fn read_text(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use c3_core::engine::MUSE_API_KEY_VARS;
 
     const OK: &str = include_str!("fixtures/muse_ok.events.jsonl");
     const FAILED: &str = include_str!("fixtures/muse_failed.events.jsonl");
@@ -1094,7 +950,11 @@ mod tests {
         let key = MUSE_API_KEY_VARS[0];
         let prev_key = std::env::var(key).ok();
         std::env::set_var(key, "sk-xxx");
-        let block = muse_launch_block().expect("the guard must refuse while an API key is set");
+        let block = crate::providers::get_muse_launch_block();
+        assert!(
+            !block.is_empty(),
+            "the guard must refuse while an API key is set"
+        );
         assert!(block.contains(key));
         assert!(block.contains("bill per token"));
         match prev_key {
@@ -1122,7 +982,7 @@ mod tests {
         std::env::set_var("USERPROFILE", &dir);
         std::env::set_var("HOME", &dir);
 
-        let block = muse_launch_block();
+        let block = crate::providers::get_muse_launch_block();
 
         // Restore.
         match prev_backend {
@@ -1139,7 +999,10 @@ mod tests {
         }
         let _ = std::fs::remove_dir_all(&dir);
 
-        let block = block.expect("a non-oauth mechanism must refuse the launch");
+        assert!(
+            !block.is_empty(),
+            "a non-oauth mechanism must refuse the launch"
+        );
         assert!(block.contains("apikey"), "block: {block}");
         assert!(block.contains("not oauth"));
     }

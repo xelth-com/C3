@@ -141,7 +141,12 @@ impl IndexStats {
         } else {
             format!(
                 "index: {} ({} entities | {} files | {} belongs_to | {} calls | {} relates_to)",
-                self.backend, self.entities, self.files, self.belongs_to, self.calls, self.relates_to
+                self.backend,
+                self.entities,
+                self.files,
+                self.belongs_to,
+                self.calls,
+                self.relates_to
             )
         }
     }

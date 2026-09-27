@@ -2,21 +2,27 @@
 //!
 //! A newline-delimited JSON-RPC 2.0 server over stdin/stdout (the MCP stdio
 //! transport) that exposes C3's *read-and-record* tools to a coordinator model
-//! (Claude Code, or any MCP client). It carries no commit or finish tool —
-//! design invariant 3, "C3 never commits", holds here too.
+//! (Claude Code, or any MCP client). It carries no commit or finish tool: no
+//! tool dispatched here runs a Git write command (design invariant 3, "C3
+//! never commits"). That is a statement about C3's own operations, not a
+//! sandbox around what a reviewer process a tool launches might do on its
+//! own; reviewers run in their own sandboxes/read-only modes, and the engine
+//! tree check reports any working-tree or HEAD change it observes.
 //!
 //! Every tool runs the *same code path* as the matching CLI subcommand: the
 //! server re-invokes its own executable (`std::env::current_exe()`) with the CLI
 //! arguments and captures stdout / stderr / the exit code. That guarantees the
-//! files a tool writes are byte-identical to a CLI run, and isolates each tool's
-//! locks and timeouts in a child process. Console output only leaves through the
-//! captured pipe, so this server's stdout carries JSON-RPC frames alone.
+//! same implementation and the same file set as a CLI run — not byte-identical
+//! artifacts across separate runs, since some fields (timestamps, ids, anchors)
+//! are run-dependent by design — and isolates each tool's locks and timeouts in
+//! a child process. Console output only leaves through the captured pipe, so
+//! this server's stdout carries JSON-RPC frames alone.
 //!
 //! CRITICAL: stdout is JSON-RPC only. All logging goes to stderr and only when
 //! `C3_DEBUG=1`.
 
 use std::io::{BufRead, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -182,14 +188,63 @@ fn opt_arr(args: &Value, key: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Reject a path argument that is absolute or escapes the server's working
-/// directory with `..`. The MCP server inherits the coordinator's repo as its
-/// cwd, and no read-and-record tool has any business outside it.
+/// Reject a path argument that is absolute, contains a `..` component, or —
+/// after both the working directory and the argument are resolved
+/// (canonicalized, following symlinks/junctions) — lands outside the server's
+/// working directory. The MCP server inherits the coordinator's repo as its
+/// cwd, and no read-and-record tool has any business outside it; lexical
+/// containment alone is not enough because a normal-looking path component can
+/// be a symlink or junction that points elsewhere (F03-1).
 fn reject_escape(val: &str) -> Result<(), String> {
     let cwd = std::env::current_dir().map_err(|e| format!("cannot read cwd: {e}"))?;
-    contained_join(Path::new(&cwd), val)
-        .map(|_| ())
-        .map_err(|e| format!("path argument '{val}' is refused: {e}"))
+    check_contained(&cwd, val)
+}
+
+/// The resolved-path half of [`reject_escape`], split out so tests can pass an explicit
+/// base directory instead of the process cwd.
+fn check_contained(base: &Path, val: &str) -> Result<(), String> {
+    let joined =
+        contained_join(base, val).map_err(|e| format!("path argument '{val}' is refused: {e}"))?;
+    let real_base = canonicalize_best_effort(base).map_err(|e| {
+        format!("path argument '{val}' is refused: cannot resolve the working directory: {e}")
+    })?;
+    let real_target = canonicalize_best_effort(&joined).map_err(|e| {
+        format!("path argument '{val}' is refused: cannot resolve the target path: {e}")
+    })?;
+    if real_target.starts_with(&real_base) {
+        Ok(())
+    } else {
+        Err(format!(
+            "path argument '{val}' is refused: resolves outside the working directory"
+        ))
+    }
+}
+
+/// Canonicalize `path`, resolving symlinks and junctions. When `path` (or a trailing part
+/// of it) does not exist yet — the common case for an `out` file the tool is about to
+/// create — canonicalize the deepest existing ancestor instead and re-append the missing
+/// tail, so the check still follows any link earlier in the chain.
+fn canonicalize_best_effort(path: &Path) -> std::io::Result<PathBuf> {
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut cur = path.to_path_buf();
+    loop {
+        match std::fs::canonicalize(&cur) {
+            Ok(mut resolved) => {
+                for part in tail.into_iter().rev() {
+                    resolved.push(part);
+                }
+                return Ok(resolved);
+            }
+            Err(e) => {
+                let popped = cur.file_name().map(|n| n.to_os_string());
+                let had_parent = cur.pop();
+                match (popped, had_parent) {
+                    (Some(name), true) => tail.push(name),
+                    _ => return Err(e),
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -456,8 +511,53 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             v.push("status".into());
             Ok((v, DEFAULT_TIMEOUT))
         }
+        "c3_index_stats" => {
+            v.push("index".into());
+            v.push("stats".into());
+            v.push("--json".into());
+            if let Some(c) = opt_str(args, "conn") {
+                validate_conn(&c)?;
+                v.push("--conn".into());
+                v.push(c);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_index_query" => {
+            v.push("index".into());
+            v.push("query".into());
+            v.push(req_str(args, "query")?);
+            if let Some(b) = opt_i64(args, "budget") {
+                v.push("--budget".into());
+                v.push(b.to_string());
+            }
+            if opt_bool(args, "json") {
+                v.push("--json".into());
+            }
+            if let Some(c) = opt_str(args, "conn") {
+                validate_conn(&c)?;
+                v.push("--conn".into());
+                v.push(c);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
+}
+
+/// Validate an `index` `conn` string's path portion, if it names a local path
+/// (`surrealkv:<path>` / `surrealkv://<path>`); a `none` or `ws://` connection string
+/// carries no path to contain.
+fn validate_conn(conn: &str) -> Result<(), String> {
+    let c = conn.trim();
+    let path = c
+        .strip_prefix("surrealkv://")
+        .or_else(|| c.strip_prefix("surrealkv:"));
+    if let Some(p) = path {
+        reject_escape(p)?;
+    }
+    Ok(())
 }
 
 /// Push a validated `--collab-dir` if the argument is present.
@@ -593,7 +693,7 @@ fn tool_defs() -> Value {
                 "properties": {
                     "task": { "type": "string", "description": "Task slug (letters, digits, dot, dash, underscore) grouping this consultation." },
                     "purpose": { "type": "string", "description": "framing | decision | checkpoint | core-contract | acceptance | diff-review | stuck | chore." },
-                    "brief": { "type": "string", "description": "The one-page brief file (repo-relative or absolute inside the repo); C3 reads it, never writes." },
+                    "brief": { "type": "string", "description": "The one-page brief file, relative to the working directory with no '..' component; C3 reads it, never writes." },
                     "prompt": { "type": "string", "description": "The ask, prepended to the prompt." },
                     "reply_name": { "type": "string", "description": "The handoff base name (a slug), e.g. `reply`." },
                     "mode": { "type": "string", "description": "new | fork | resume (empty = auto)." },
@@ -721,7 +821,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "c3_snapshot",
-            "description": "Take a repository snapshot (a single markdown context file), optionally as a git delta since C3's last full-snapshot anchor. Depth 0-9 controls truncation (0 tree only, 5-6 skeleton, 7-9 full); a token budget trims the periphery while focus globs are kept whole. Reads the repo and writes the snapshot file only; no commit.",
+            "description": "Take a repository snapshot (a single markdown context file), optionally as a git delta since C3's last full-snapshot anchor. Depth 0-9 controls truncation (0 tree only, 5-6 skeleton, 7-9 full); a token budget trims the periphery while focus globs are kept whole. Reads the repo and writes the snapshot file; a full (non-delta) snapshot also updates C3's anchor and sequence state under <collab>/.c3/. No commit.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -736,8 +836,34 @@ fn tool_defs() -> Value {
         },
         {
             "name": "c3_telemetry_status",
-            "description": "Print C3's telemetry on/off status and this installation's instance id (the same output as `c3 telemetry status`). Telemetry is on by default with a one-line off switch. Read-only; sends nothing.",
+            "description": "Print C3's telemetry on/off status and this installation's instance id (the same output as `c3 telemetry status`). Telemetry is on by default with a one-line off switch. Read-only; creates nothing — if no instance id has been created yet, it reports that instead of creating one.",
             "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "c3_index_stats",
+            "description": "Counts per table, the generation, the backend and its path for the derived context index (the same output as `c3 index stats --json`). Read-only; never builds or rebuilds the index (that stays CLI-only — it takes the index lock for minutes).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "collab_dir": { "type": "string", "description": "Where the index lives (<collab>/.c3/index by default); inside the working directory." },
+                    "conn": { "type": "string", "description": "Connection string: none | surrealkv:<path> | ws://host. Default: an embedded store at <collab>/.c3/index/." }
+                }
+            }
+        },
+        {
+            "name": "c3_index_query",
+            "description": "BM25 + reciprocal-rank retrieval with a bounded 1-hop expansion over the derived context index (the same output as `c3 index query`). Read-only; never builds or rebuilds the index (that stays CLI-only — it takes the index lock for minutes).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "The search text." },
+                    "budget": { "type": "integer", "description": "Token budget for the returned hits (0 = no cap)." },
+                    "json": { "type": "boolean", "description": "Return hit objects instead of the rendered text." },
+                    "collab_dir": { "type": "string", "description": "Where the index lives (<collab>/.c3/index by default); inside the working directory." },
+                    "conn": { "type": "string", "description": "Connection string: none | surrealkv:<path> | ws://host. Default: an embedded store at <collab>/.c3/index/." }
+                },
+                "required": ["query"]
+            }
         }
     ])
 }
@@ -795,6 +921,8 @@ mod tests {
             "c3_explain",
             "c3_snapshot",
             "c3_telemetry_status",
+            "c3_index_stats",
+            "c3_index_query",
         ] {
             assert!(names.contains(&expected), "missing tool {expected}");
         }
@@ -898,5 +1026,108 @@ mod tests {
     #[test]
     fn unknown_tool_errors() {
         assert!(build_argv("c3_nope", &json!({})).is_err());
+    }
+
+    #[test]
+    fn index_stats_always_requests_json() {
+        let (argv, _t) = build_argv("c3_index_stats", &json!({})).unwrap();
+        assert_eq!(argv[0], "index");
+        assert_eq!(argv[1], "stats");
+        assert!(argv.contains(&"--json".to_string()));
+    }
+
+    #[test]
+    fn index_query_maps_flags() {
+        let (argv, _t) = build_argv(
+            "c3_index_query",
+            &json!({ "query": "consult flow", "budget": 500, "json": true }),
+        )
+        .unwrap();
+        assert_eq!(argv[0], "index");
+        assert_eq!(argv[1], "query");
+        assert_eq!(argv[2], "consult flow");
+        assert!(argv.contains(&"--budget".to_string()));
+        assert!(argv.contains(&"500".to_string()));
+        assert!(argv.contains(&"--json".to_string()));
+    }
+
+    #[test]
+    fn index_query_requires_query() {
+        let err = build_argv("c3_index_query", &json!({})).unwrap_err();
+        assert!(err.contains("query"), "got: {err}");
+    }
+
+    #[test]
+    fn index_conn_rejects_path_escape() {
+        let err = build_argv(
+            "c3_index_query",
+            &json!({ "query": "x", "conn": "surrealkv:../evil" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("refused"), "got: {err}");
+    }
+
+    // ------------------------------------------------------------------
+    // F03-1: symlink/junction path containment
+    // ------------------------------------------------------------------
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-mcp-contain-{tag}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(windows)]
+    fn make_link(link: &Path, target: &Path) -> bool {
+        std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(link)
+            .arg(target)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(windows))]
+    fn make_link(link: &Path, target: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[test]
+    fn check_contained_follows_symlink_targets() {
+        let base = scratch_dir("base");
+        let outside = scratch_dir("outside");
+        let link = base.join("inside-link");
+
+        if !make_link(&link, &outside) {
+            eprintln!(
+                "skipping check_contained_follows_symlink_targets: could not create a \
+                 junction/symlink (needs Developer Mode or admin on this Windows host)"
+            );
+            let _ = std::fs::remove_dir_all(&base);
+            let _ = std::fs::remove_dir_all(&outside);
+            return;
+        }
+
+        // A path lexically inside `base` but through the link resolves outside it, so
+        // both an existing and a not-yet-created target must be refused.
+        let err = check_contained(&base, "inside-link").unwrap_err();
+        assert!(err.contains("refused"), "got: {err}");
+        let err = check_contained(&base, "inside-link/pack.md").unwrap_err();
+        assert!(err.contains("refused"), "got: {err}");
+
+        // A plain in-base path is still accepted.
+        assert!(check_contained(&base, "plain.md").is_ok());
+
+        let _ = std::fs::remove_dir_all(&link);
+        let _ = std::fs::remove_dir_all(&base);
+        let _ = std::fs::remove_dir_all(&outside);
     }
 }

@@ -181,6 +181,27 @@ pub fn instance_id_in(dir: &Path) -> String {
     to_hex(&hasher.finalize())
 }
 
+/// The stable, anonymous installation id if it has already been created, without creating
+/// one. `None` when no salt has been written yet — this call itself writes nothing, unlike
+/// [`instance_id`]. Uses the default directory.
+pub fn instance_id_if_exists() -> Option<String> {
+    instance_id_if_exists_in(&telemetry_dir())
+}
+
+/// [`instance_id_if_exists`] with an explicit directory (for tests).
+pub fn instance_id_if_exists_in(dir: &Path) -> Option<String> {
+    let existing = std::fs::read_to_string(dir.join("salt")).ok()?;
+    let salt = existing.trim();
+    if salt.is_empty() {
+        return None;
+    }
+    let host = machine_name();
+    let mut hasher = Sha256::new();
+    hasher.update(salt.as_bytes());
+    hasher.update(host.as_bytes());
+    Some(to_hex(&hasher.finalize()))
+}
+
 /// Read the 64-hex-char salt, creating it (32 random bytes) once.
 fn read_or_create_salt(dir: &Path) -> String {
     let path = dir.join("salt");

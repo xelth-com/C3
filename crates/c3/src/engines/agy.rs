@@ -222,11 +222,12 @@ impl Engine for AgyEngine {
         if self.no_network {
             return Ok(());
         }
-        match agy_sign_in(&self.launcher, self.models_timeout_sec) {
-            AgySignIn::Ok => Ok(()),
-            AgySignIn::NotSignedIn(msg) | AgySignIn::Unknown(msg) => {
-                Err(EngineError::Precheck(msg))
-            }
+        // The sign-in check lives once, in `providers` (`Get-AgyModelsStatus`): a model listing =
+        // signed in; an auth-wording line = not signed in; anything else unknown.
+        let cred = crate::providers::get_agy_models_status(&self.launcher, self.models_timeout_sec);
+        match cred.state {
+            c3_core::credential::State::Ok => Ok(()),
+            _ => Err(EngineError::Precheck(cred.reason)),
         }
     }
 
@@ -787,114 +788,7 @@ pub fn agy_salvage(events_text: &str) -> Option<String> {
     }
 }
 
-// --------------------------------------------------------------------------- sign-in (precheck)
-
-/// The result of the `agy models` sign-in check (`Get-AgyModelsStatus`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AgySignIn {
-    Ok,
-    NotSignedIn(String),
-    Unknown(String),
-}
-
-/// Run `agy models` and classify sign-in, mirroring `providers::get_agy_models_status`
-/// (a model listing = signed in; an auth-wording line = not signed in; anything else unknown).
-///
-/// NOTE: this duplicates the private `providers::get_agy_models_status` — see the report; the
-/// intended follow-up is to expose that (and `run_with_timeout`) as `pub` and call it here.
-pub fn agy_sign_in(launcher: &str, timeout_sec: u64) -> AgySignIn {
-    if launcher.trim().is_empty() {
-        return AgySignIn::NotSignedIn("agy CLI not found on PATH".into());
-    }
-    let (code, out, err) = match run_models(launcher, timeout_sec) {
-        Some(t) => t,
-        None => {
-            return AgySignIn::Unknown(format!(
-                "`agy models` did not finish within {timeout_sec} s"
-            ))
-        }
-    };
-    let model_re = re(r"^\S+\t");
-    let models = out
-        .split(['\r', '\n'])
-        .filter(|l| !l.trim().is_empty())
-        .filter(|l| model_re.is_match(l))
-        .count();
-    if code == 0 && models >= 1 {
-        return AgySignIn::Ok;
-    }
-    let merged = format!("{out}\n{err}");
-    let all: Vec<String> = merged
-        .split(['\r', '\n'])
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
-    let auth_re = re(r"(?i)log ?in|sign in|signed in|\bauth|unauthenticated");
-    if let Some(al) = all.iter().find(|l| auth_re.is_match(l)) {
-        return AgySignIn::NotSignedIn(format!("`agy models`: {al}"));
-    }
-    let first = all.last().cloned().unwrap_or_else(|| "no output".into());
-    AgySignIn::Unknown(format!(
-        "`agy models` exit {code} without a model list ({first})"
-    ))
-}
-
-/// Spawn `<launcher> models` with a timeout; `(exit_code, stdout, stderr)` or `None` on timeout.
-/// A `.cmd`/`.bat` launcher runs through `cmd /c` on Windows (as `subprocess`/`providers` do).
-fn run_models(launcher: &str, timeout_sec: u64) -> Option<(i32, String, String)> {
-    use std::io::Read;
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
-    let is_cmd = cfg!(windows)
-        && std::path::Path::new(launcher)
-            .extension()
-            .map(|e| {
-                let e = e.to_string_lossy().to_lowercase();
-                e == "cmd" || e == "bat"
-            })
-            .unwrap_or(false);
-    let (program, args): (String, Vec<String>) = if is_cmd {
-        (
-            "cmd".into(),
-            vec!["/c".into(), launcher.into(), "models".into()],
-        )
-    } else {
-        (launcher.into(), vec!["models".into()])
-    };
-    let mut child = Command::new(&program)
-        .args(&args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
-    let start = Instant::now();
-    let timeout = Duration::from_secs(timeout_sec.max(1));
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut out = String::new();
-                let mut err = String::new();
-                if let Some(mut o) = child.stdout.take() {
-                    let _ = o.read_to_string(&mut out);
-                }
-                if let Some(mut e) = child.stderr.take() {
-                    let _ = e.read_to_string(&mut err);
-                }
-                return Some((status.code().unwrap_or(-1), out, err));
-            }
-            Ok(None) => {
-                if start.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(_) => return None,
-        }
-    }
-}
+// --------------------------------------------------------------------------- helpers
 
 fn read_text(path: &std::path::Path) -> String {
     std::fs::read(path)

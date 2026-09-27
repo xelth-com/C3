@@ -1,0 +1,561 @@
+{
+    "task_id":  "smoke-c3",
+    "findings":  [
+                     {
+                         "id":  "F03-1",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/mcp/mod.rs",
+                                               "line":  188
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/task_slug.rs",
+                                               "line":  116
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/pack/reviewer.rs",
+                                               "line":  317
+                                           }
+                                       ],
+                         "claim":  "The MCP path-containment invariant can be bypassed by a symlink or junction: validation only checks lexical components, while downstream tools follow the link when reading or writing. trigger: call `c3_pack` with `out` set to `\u003cin-repo-symlink\u003e/pack.md`, where the link points outside the MCP working directory.",
+                         "trigger":  "",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/mcp/mod.rs:185-192",
+                                              "observation":  "`reject_escape` calls `contained_join` on the untrusted string and otherwise passes the original path to the CLI."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/task_slug.rs:116-148",
+                                              "observation":  "`contained_join` rejects roots and `..` but accepts all normal components and never canonicalizes or checks symlink targets."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/pack/reviewer.rs:317-325",
+                                              "observation":  "Pack output creates parents and writes both files directly at the supplied path, so a symlinked parent is followed."
+                                          }
+                                      ],
+                         "verification":  "In a disposable repository, create an in-repo link to an external writable directory, invoke MCP `c3_pack` with that link in `out`, and check whether the external directory receives `pack.md` and `pack.pack.json`.",
+                         "remedy":  "After lexical validation, canonicalize the resolved target and reject it unless it remains under the canonical working directory; for writes, also verify the final parent/file does not cross a symlink boundary.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-codex-mcp-doc-check.md",
+                                        "thread":  "01a0e3f7-d55a-7533-a958-6afe35987a9f",
+                                        "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                        "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-27T20:03:10+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         },
+                                         {
+                                             "when":  "2026-09-27T20:25:07+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fixed in crates/c3/src/mcp/mod.rs, docs/port/mcp.md, telemetry (instance_id_if_exists); 18 mcp + 11 telemetry tests",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-09-27T20:08:21+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated by code: contained_join checks components only; reviewer::write uses ordinary create_dir_all/fs::write through accepted paths. No symlink or junction reproduction was run.",
+                                                     "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                                     "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F03-2",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "docs/port/mcp.md",
+                                               "line":  21
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/mcp/mod.rs",
+                                               "line":  596
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/task_slug.rs",
+                                               "line":  143
+                                           }
+                                       ],
+                         "claim":  "The published path contract does not match runtime validation: absolute paths inside the working directory are rejected, and every `..` component is rejected even when normalization would remain inside. trigger: supply `brief` as an absolute in-repo path or `foo/../bar.md`.",
+                         "trigger":  "",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "docs/port/mcp.md:21-23",
+                                              "observation":  "The document says paths are rejected when absolute or when a `..` component escapes the working directory."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/mcp/mod.rs:596",
+                                              "observation":  "The tool schema explicitly says `brief` may be repo-relative or absolute inside the repo."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/task_slug.rs:116-148",
+                                              "observation":  "Every `ParentDir`, root, or prefix component is rejected regardless of the final normalized location."
+                                          }
+                                      ],
+                         "verification":  "Call `build_argv` for `c3_consult` with an absolute in-repo brief and separately with `foo/../bar.md`; both should return a path refusal.",
+                         "remedy":  "Change the schema description and prose to state that only `..`-free relative paths are accepted, or implement the more permissive precisely documented policy.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-codex-mcp-doc-check.md",
+                                        "thread":  "01a0e3f7-d55a-7533-a958-6afe35987a9f",
+                                        "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                        "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-27T20:03:10+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         },
+                                         {
+                                             "when":  "2026-09-27T20:25:08+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fixed in crates/c3/src/mcp/mod.rs, docs/port/mcp.md, telemetry (instance_id_if_exists); 18 mcp + 11 telemetry tests",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-09-27T20:08:21+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated with qualification: docs/port/mcp.md:21 already prohibits absolute paths, whereas mcp/mod.rs:596 permits them in the brief description. task_slug.rs:130-132 rejects all ParentDir, RootDir and Prefix components.",
+                                                     "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                                     "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F03-3",
+                         "status":  "implemented",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "docs/port/mcp.md",
+                                               "line":  63
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/cli/index.rs",
+                                               "line":  1
+                                           }
+                                       ],
+                         "claim":  "The documentation says `index` is not built, but the current CLI implements the index surface; only its absence from MCP is accurate. trigger: read the current CLI dispatch and index implementation.",
+                         "trigger":  "",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "docs/port/mcp.md:63",
+                                              "observation":  "The text lists `panel`/`index` as not built."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/cli/index.rs:1-39",
+                                              "observation":  "The file implements milestone-8 build, rebuild, query, and stats actions."
+                                          }
+                                      ],
+                         "verification":  "Run `c3 index stats` or inspect the CLI dispatch to confirm the implemented subcommand exists.",
+                         "remedy":  "Rewrite as: `panel` is not built; `index` exists but is intentionally not exposed as an MCP tool.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-codex-mcp-doc-check.md",
+                                        "thread":  "01a0e3f7-d55a-7533-a958-6afe35987a9f",
+                                        "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                        "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-27T20:03:10+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         },
+                                         {
+                                             "when":  "2026-09-27T20:25:09+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fixed in crates/c3/src/mcp/mod.rs, docs/port/mcp.md, telemetry (instance_id_if_exists); 18 mcp + 11 telemetry tests",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-09-27T20:08:21+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated: crates/c3-cli/src/main.rs:62,120 declares and dispatches Index; crates/c3/src/cli/index.rs implements build, rebuild, query and stats. MCP does not expose it.",
+                                                     "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                                     "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F03-4",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/mcp/mod.rs",
+                                               "line":  739
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/cli/telemetry.rs",
+                                               "line":  120
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/mod.rs",
+                                               "line":  169
+                                           }
+                                       ],
+                         "claim":  "`c3_telemetry_status` is not read-only on first use: displaying the instance id creates a telemetry directory and persistent salt file outside the repository. trigger: invoke `c3_telemetry_status` before the telemetry salt exists.",
+                         "trigger":  "",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/mcp/mod.rs:738-740",
+                                              "observation":  "The tool description says it is read-only and sends nothing."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/cli/telemetry.rs:120-126",
+                                              "observation":  "Telemetry status prints `telemetry::instance_id()`."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/mod.rs:169-197",
+                                              "observation":  "`instance_id` calls `read_or_create_salt`, which creates the directory and writes the salt when absent."
+                                          }
+                                      ],
+                         "verification":  "Point the telemetry home at an empty temporary home, invoke `c3_telemetry_status`, and observe creation of the telemetry directory and salt file.",
+                         "remedy":  "For status, read an existing instance id without creating one, or update the tool description and document the one-time local configuration write.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-codex-mcp-doc-check.md",
+                                        "thread":  "01a0e3f7-d55a-7533-a958-6afe35987a9f",
+                                        "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                        "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-27T20:03:10+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         },
+                                         {
+                                             "when":  "2026-09-27T20:25:09+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fixed in crates/c3/src/mcp/mod.rs, docs/port/mcp.md, telemetry (instance_id_if_exists); 18 mcp + 11 telemetry tests",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-09-27T20:08:21+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Corroborated: cli/telemetry.rs:125 calls instance_id; telemetry/mod.rs:175-196 reads or creates salt using create_dir_all and fs::write in the telemetry home. No first-use invocation was run.",
+                                                     "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                                     "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F04-1",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "docs/port/mcp.md",
+                                               "line":  17
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/mcp/mod.rs",
+                                               "line":  10
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/pack/reviewer.rs",
+                                               "line":  276
+                                           }
+                                       ],
+                         "claim":  "The blanket guarantee of byte-identical MCP and CLI artifacts is false across separate runs because generated artifacts include run-dependent data.",
+                         "trigger":  "Generate the same reviewer pack through MCP and CLI at different times.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/mcp/mod.rs:484",
+                                              "observation":  "The runner invokes current_exe with mapped CLI arguments."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/pack/reviewer.rs:276",
+                                              "observation":  "The sidecar\u0027s generated field uses chrono::Local::now().to_rfc3339()."
+                                          }
+                                      ],
+                         "verification":  "Generate equivalent packs at different times and compare their sidecar generated fields.",
+                         "remedy":  "Describe implementation and format parity instead of unconditional byte identity.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-codex-mcp-doc-check-astra.md",
+                                        "thread":  "01a0e40a-9a1e-7f20-af50-3ae08a874be4",
+                                        "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                        "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-27T20:08:21+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         },
+                                         {
+                                             "when":  "2026-09-27T20:25:10+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fixed in crates/c3/src/mcp/mod.rs, docs/port/mcp.md, telemetry (instance_id_if_exists); 18 mcp + 11 telemetry tests",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-2",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/mcp/mod.rs",
+                                               "line":  724
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/pack/snapshot.rs",
+                                               "line":  351
+                                           }
+                                       ],
+                         "claim":  "The snapshot tool description says it writes only the snapshot file, but full snapshots also update persistent anchor and sequence state.",
+                         "trigger":  "Run a full snapshot in a repository with a HEAD commit.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/mcp/mod.rs:724",
+                                              "observation":  "The tool description promises snapshot-file-only writes."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/pack/snapshot.rs:351-356",
+                                              "observation":  "The full-snapshot branch calls write_anchor and reset_seq."
+                                          }
+                                      ],
+                         "verification":  "Compare \u003ccollab\u003e/.c3 state before and after a full snapshot in a disposable repository.",
+                         "remedy":  "Include anchor and sequence updates in the tool\u0027s side-effect description.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-codex-mcp-doc-check-astra.md",
+                                        "thread":  "01a0e40a-9a1e-7f20-af50-3ae08a874be4",
+                                        "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                        "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-27T20:08:21+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         },
+                                         {
+                                             "when":  "2026-09-27T20:25:11+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fixed in crates/c3/src/mcp/mod.rs, docs/port/mcp.md, telemetry (instance_id_if_exists); 18 mcp + 11 telemetry tests",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-3",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "docs/port/mcp.md",
+                                               "line":  86
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/mcp/mod.rs",
+                                               "line":  484
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  10
+                                           }
+                                       ],
+                         "claim":  "The no-commit invariant is not a transitive enforcement boundary for reviewer descendants: MCP restricts command dispatch, but does not prohibit Git writes, and engine content checks do not reject content-preserving commits.",
+                         "trigger":  "A reviewer descendant changes HEAD without changing working-tree contents.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/mcp/mod.rs:459,484-494",
+                                              "observation":  "Unknown tools are refused, but allowed child commands are spawned without an MCP-level sandbox."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:10-12,28-31",
+                                              "observation":  "Content-preserving commits are explicitly treated as informational revision movement rather than content violations."
+                                          }
+                                      ],
+                         "verification":  "Inspect the engine comparison result for identical content fingerprints with different HEAD values; confirm it does not flag content tampering.",
+                         "remedy":  "Document the invariant as C3 not initiating commits, or add preventive restrictions and explicit Git-state validation for descendants.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-codex-mcp-doc-check-astra.md",
+                                        "thread":  "01a0e40a-9a1e-7f20-af50-3ae08a874be4",
+                                        "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                        "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-27T20:08:21+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         },
+                                         {
+                                             "when":  "2026-09-27T20:25:12+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fixed in crates/c3/src/mcp/mod.rs, docs/port/mcp.md, telemetry (instance_id_if_exists); 18 mcp + 11 telemetry tests",
+                                             "evidence":  "",
+                                             "base_commit":  "9d9ccdf43fe317a6898afdbb387e6aced70ddae9",
+                                             "tree_sha256":  "f3ee73ccc59e9db916d0fb57eb9fce6d99bf315865b9c7b2f314350ff0796f2c"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     }
+                 ],
+    "ratings":  [
+                    {
+                        "n":  2,
+                        "consult_id":  "b49e1417-e8cb-47bf-ad5f-b5b629d0cda1",
+                        "lineage":  "ZAI :: glm-5.3",
+                        "provider":  "ZAI",
+                        "model":  "glm-5.3",
+                        "purpose":  "checkpoint",
+                        "useful":  "yes",
+                        "note":  "first live c3 run: four real findings on the MCP server (symlink containment bypass, doc drift, telemetry status side effect)",
+                        "when":  "2026-09-27T20:04:44+02:00"
+                    },
+                    {
+                        "n":  3,
+                        "consult_id":  "d945dd42-934e-48ef-b7d7-27aa88a5c009",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "purpose":  "checkpoint",
+                        "useful":  "yes",
+                        "note":  "Astra live through c3: corroborated GLM\u0027s four, three precise minors on path guarantees, side-effect wording and the byte-identity claim",
+                        "when":  "2026-09-27T20:09:06+02:00"
+                    }
+                ]
+}

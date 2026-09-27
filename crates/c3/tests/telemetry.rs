@@ -213,6 +213,28 @@ fn instance_id_is_stable_and_salted() {
     assert_ne!(a, c, "a different salt yields a different id");
 }
 
+#[test]
+fn instance_id_if_exists_is_read_only_until_created() {
+    let dir = temp_dir("iid-ro");
+    assert_eq!(
+        telemetry::instance_id_if_exists_in(&dir),
+        None,
+        "no salt yet"
+    );
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        0,
+        "status must not create the salt file (or anything else) on first use"
+    );
+
+    let created = telemetry::instance_id_in(&dir);
+    assert_eq!(
+        telemetry::instance_id_if_exists_in(&dir),
+        Some(created),
+        "once the salt exists, it reports the same id without rewriting it"
+    );
+}
+
 // --------------------------------------------------------------------------- spool
 
 fn enqueue_one(spool: &Spool, purpose: &str) {

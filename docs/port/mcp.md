@@ -14,13 +14,21 @@ no async runtime.
 
 Every tool re-invokes the running `c3` executable (`std::env::current_exe()`) as a child
 process with the matching CLI arguments and captures its stdout / stderr / exit code. This
-guarantees the files a tool writes are **byte-identical to a CLI run** and isolates each
-tool's locks and timeouts in a child process. The child inherits the environment and the
-server's working directory (the repository the coordinator runs in); its stdin is closed.
+guarantees **the same implementation and the same file set as a CLI run** — not byte-identical
+artifacts across separate runs, since some written fields (timestamps, ids, snapshot anchors)
+are run-dependent by design — and isolates each tool's locks and timeouts in a child process.
+The child inherits the environment and the server's working directory (the repository the
+coordinator runs in); its stdin is closed.
 
-Path-shaped arguments (`collab_dir`, `brief`, `out`, `focus[]`, `artifact[]`) are rejected
-if they are absolute or contain a `..` component that escapes the working directory
-(`c3-core::task_slug::contained_join`).
+Path-shaped arguments (`collab_dir`, `brief`, `out`, `focus[]`, `artifact[]`) must be
+relative to the working directory: an absolute path or any `..` component is rejected
+outright, even one that would normalize back inside (`foo/../bar`) — the rule is lexical
+containment, not "escapes after normalization" (`c3-core::task_slug::contained_join`).
+The working directory and the joined argument are then both canonicalized (symlinks and
+junctions resolved; for a path that does not exist yet, its deepest existing ancestor is
+resolved and the missing tail re-appended), and the argument is rejected unless its
+resolved form still starts with the resolved working directory — so a normal-looking path
+component that is actually a symlink or junction pointing elsewhere is refused too.
 
 Timeouts: `c3_consult` gets 3600 s (a consultation may take minutes); every other tool gets
 120 s. A timeout kills the child and the tool result is flagged `isError`.
@@ -57,11 +65,14 @@ that has one; omitted from the argument column below for brevity.
 | `c3_scoreboard` | `task?`, `json?` | `c3 scoreboard [--task] [--json]` |
 | `c3_pack` | **`brief`**, **`out`**, `focus?[]`, `budget?`, `task?` | `c3 pack --brief … --out … [--focus] [--budget] [--task]` |
 | `c3_explain` | **`claim`**, `focus?[]`, `budget?`, `audience?`, `out?` | `c3 explain --claim … --yes [--focus] [--budget] [--audience] [--out]` (always passes `--yes`; the pack is meant to leave the machine) |
-| `c3_snapshot` | `out?`, `delta?`, `depth?`, `budget?`, `focus?[]` | `c3 snapshot [--out] [--delta] [--depth] [--budget] [--focus]` |
+| `c3_snapshot` | `out?`, `delta?`, `depth?`, `budget?`, `focus?[]` | `c3 snapshot [--out] [--delta] [--depth] [--budget] [--focus]` (a full, non-delta snapshot also updates the anchor and sequence state under `<collab>/.c3/`) |
 | `c3_telemetry_status` | *(none)* | `c3 telemetry status` |
+| `c3_index_stats` | `collab_dir?`, `conn?` | `c3 index stats --json [--collab-dir] [--conn]` |
+| `c3_index_query` | **`query`**, `budget?`, `json?`, `collab_dir?`, `conn?` | `c3 index query <query> [--budget] [--json] [--collab-dir] [--conn]` |
 
-Not exposed: `complain` and `forget-me` (interactive), `panel`/`index` (not built), and
-anything that commits — there is no such tool.
+Not exposed: `complain` and `forget-me` (interactive), `panel` (not built), `index build`
+and `index rebuild` (they take the index lock for minutes and stay CLI-only), and anything
+that commits — there is no such tool.
 
 ## Registering the server in Claude Code
 
@@ -84,5 +95,10 @@ If `c3` is not on `PATH`, use the absolute path to the built binary as `command`
 ## Invariant
 
 **No tool commits.** Every tool only reads the repository and records consultation
-artifacts (briefs, replies, ledger entries, findings, packs, snapshots) as files. `git
-add`/`commit` and the eck finish loop stay with the coordinator — C3 never commits.
+artifacts (briefs, replies, ledger entries, findings, packs, snapshots) as files; no tool
+dispatched here runs a Git write command (`add`/`commit`/etc.), and the eck finish loop
+stays with the coordinator. This is a statement about what C3's own tools do, not a
+sandbox around a reviewer process a tool launches: `c3_consult` runs each reviewer in its
+own sandbox or read-only mode, and the engine tree check reports any working-tree or HEAD
+change it observes around a run, but neither is a preventive guarantee against a
+descendant process that chooses to run Git itself.

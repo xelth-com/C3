@@ -2040,7 +2040,7 @@ pub(crate) fn find_roster_entry<'a>(
 
 // ---- credential subprocess checks
 
-fn run_with_timeout(
+pub(crate) fn run_with_timeout(
     program: &str,
     args: &[&str],
     timeout: Duration,
@@ -2140,7 +2140,7 @@ pub(crate) fn get_codex_login_status(launcher: &str, timeout_sec: u64) -> Creden
     }
 }
 
-fn get_agy_models_status(launcher: &str, timeout_sec: u64) -> CredentialResult {
+pub(crate) fn get_agy_models_status(launcher: &str, timeout_sec: u64) -> CredentialResult {
     if launcher.is_empty() {
         return CredentialResult::missing("agy CLI not found on PATH");
     }
@@ -2200,14 +2200,14 @@ fn muse_auth_path() -> String {
     }
 }
 
-struct MuseInfo {
+pub(crate) struct MuseInfo {
     state: State,
     reason: String,
     cause: String,
     mechanism: String,
 }
 
-fn muse_credential_info() -> MuseInfo {
+pub(crate) fn muse_credential_info() -> MuseInfo {
     const SHOWN: &str = "~/.config/muse/auth.json";
     let backend = std::env::var("TBH_CREDENTIAL_BACKEND")
         .unwrap_or_default()
@@ -2306,7 +2306,7 @@ fn get_muse_sign_in() -> CredentialResult {
     CredentialResult::new(c.state, c.reason)
 }
 
-fn get_muse_launch_block() -> String {
+pub(crate) fn get_muse_launch_block() -> String {
     const SHOWN: &str = "~/.config/muse/auth.json";
     for name in ["META_API_KEY", "MODEL_API_KEY"] {
         if let Ok(v) = std::env::var(name) {

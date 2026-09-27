@@ -245,7 +245,10 @@ fn decl_at(line: &str, lang: Lang) -> Option<(EntityKind, String)> {
     match lang {
         Lang::Rust => {
             let t = strip_prefixes(t, &["pub ", "pub(crate) ", "pub(super) ", "default "]);
-            if let Some(r) = t.strip_prefix("async fn ").or_else(|| t.strip_prefix("fn ")) {
+            if let Some(r) = t
+                .strip_prefix("async fn ")
+                .or_else(|| t.strip_prefix("fn "))
+            {
                 return ident(r).map(|n| (EntityKind::Fn, n));
             }
             for (kw, kind) in [
@@ -624,7 +627,10 @@ impl Point {
 }
 ";
         let ents = extract_file("src/lib.rs", src, GEN);
-        let kinds: Vec<_> = ents.iter().map(|e| (e.kind.as_str(), e.name.as_str())).collect();
+        let kinds: Vec<_> = ents
+            .iter()
+            .map(|e| (e.kind.as_str(), e.name.as_str()))
+            .collect();
         assert!(kinds.contains(&("file", "lib.rs")));
         assert!(kinds.contains(&("fn", "add")));
         assert!(kinds.contains(&("struct", "Point")));
@@ -673,13 +679,15 @@ pub fn helper() {}
             .find(|e| e.kind == EntityKind::File && e.name == "x.rs")
             .unwrap();
 
-        assert!(rels.iter().any(|r| r.from == caller.id
-            && r.kind == RelationKind::Calls
-            && r.to == helper.id));
-        assert!(rels.iter().any(|r| r.from == caller.id
-            && r.kind == RelationKind::BelongsTo
-            && r.to == file.id));
-        assert!(rels.iter().any(|r| r.from == file.id && r.kind == RelationKind::BelongsTo));
+        assert!(rels
+            .iter()
+            .any(|r| r.from == caller.id && r.kind == RelationKind::Calls && r.to == helper.id));
+        assert!(rels
+            .iter()
+            .any(|r| r.from == caller.id && r.kind == RelationKind::BelongsTo && r.to == file.id));
+        assert!(rels
+            .iter()
+            .any(|r| r.from == file.id && r.kind == RelationKind::BelongsTo));
         assert!(rels.iter().any(|r| r.from == caller.id
             && r.kind == RelationKind::RelatesTo
             && r.to == helper.id));
@@ -689,12 +697,18 @@ pub fn helper() {}
     fn python_and_js() {
         let py = "class Foo:\n    def bar(self):\n        return 1\n";
         let ents = extract_file("a.py", py, GEN);
-        assert!(ents.iter().any(|e| e.kind == EntityKind::Class && e.name == "Foo"));
-        assert!(ents.iter().any(|e| e.kind == EntityKind::Function && e.name == "bar"));
+        assert!(ents
+            .iter()
+            .any(|e| e.kind == EntityKind::Class && e.name == "Foo"));
+        assert!(ents
+            .iter()
+            .any(|e| e.kind == EntityKind::Function && e.name == "bar"));
 
         let js = "export function greet(name) {\n  return name;\n}\n";
         let ents = extract_file("a.js", js, GEN);
-        assert!(ents.iter().any(|e| e.kind == EntityKind::Function && e.name == "greet"));
+        assert!(ents
+            .iter()
+            .any(|e| e.kind == EntityKind::Function && e.name == "greet"));
     }
 
     #[test]

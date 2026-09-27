@@ -150,7 +150,11 @@ fn build(args: BuildArgs, rebuild: bool) -> i32 {
     };
     match backend {
         index::Backend::None => {
-            println!("{} {}", index::PREFIX, IndexStats::none("connection string is none").verdict());
+            println!(
+                "{} {}",
+                index::PREFIX,
+                IndexStats::none("connection string is none").verdict()
+            );
             0
         }
         _ => build_backend(&ctx, backend, rebuild),
@@ -227,7 +231,13 @@ fn query(args: QueryArgs) -> i32 {
 }
 
 #[cfg(not(feature = "index-surreal"))]
-fn query_backend(_ctx: &Ctx, _backend: index::Backend, _text: &str, _budget: usize, json: bool) -> i32 {
+fn query_backend(
+    _ctx: &Ctx,
+    _backend: index::Backend,
+    _text: &str,
+    _budget: usize,
+    json: bool,
+) -> i32 {
     report_none_query(json);
     0
 }
@@ -267,7 +277,10 @@ fn report_none_query(json: bool) {
 
 fn report_none_query_reason(json: bool, reason: &str) {
     if json {
-        println!("{}", serde_json::json!({ "hits": [], "index": "none", "reason": reason }));
+        println!(
+            "{}",
+            serde_json::json!({ "hits": [], "index": "none", "reason": reason })
+        );
     } else {
         println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
     }
@@ -276,7 +289,10 @@ fn report_none_query_reason(json: bool, reason: &str) {
 #[cfg(feature = "index-surreal")]
 fn print_hits(hits: &[index::Hit], json: bool) {
     if json {
-        println!("{}", serde_json::to_string(&serde_json::json!({ "hits": hits })).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string(&serde_json::json!({ "hits": hits })).unwrap_or_default()
+        );
         return;
     }
     if hits.is_empty() {

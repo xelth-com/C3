@@ -1,0 +1,86 @@
+{
+  "schema_version": "1",
+  "verdict": "ADVISE",
+  "verdict_reason": "The documented tool surface matches, but path guarantees, side-effect descriptions, and byte-identity claims need correction.",
+  "reply_markdown": "1. **Q1:** Checked current HEAD `9d9ccdf`. All 11 tool names, listed arguments, required fields, array notation, CLI mappings, `.collab` default, and timeout values match. The document does not enumerate all JSON types, but gives no conflicting types. The registration snippet correctly invokes `c3 mcp`; actual Claude Code registration was not exercised.\n\n   - **F03-1 corroborated:** containment is lexical; an accepted path through a symlink/junction can reach outside the working directory.\n   - **F03-2 corroborated with qualification:** the document already rejects absolute paths, but the `brief` schema description explicitly permits absolute in-repository paths. Runtime rejects those and **every** `..` component, including `foo/../bar.md`.\n   - **F03-3 corroborated:** `index` is implemented and dispatched by the CLI, although absent from MCP. “Not built” is stale.\n   - **F03-4 corroborated:** telemetry status creates the installation salt when absent, contradicting its schema’s “Read-only” description.\n   - Additional drift: using the same executable guarantees the same implementation, not byte-identical artifacts across runs; pack sidecars contain the current timestamp. The snapshot schema also understates writes: full snapshots update anchor/sequence state.\n\n2. **Q2:** More than the advertised tool list: `build_argv` explicitly allowlists commands and rejects unknown tool names, so callers cannot directly invoke a commit/finish command. However, `run_cli` adds no sandbox or Git prohibition. The absolute “never commits” guarantee is therefore not enforced across all descendants; engine tree checks explicitly treat content-preserving HEAD changes as informational. Scope the claim to C3’s own implemented operations, or enforce it across reviewer execution.\n\nThis was a read-only code review; no files were changed and no mutating reproductions were run.",
+  "findings": [
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "docs/port/mcp.md", "line": 17},
+        {"path": "crates/c3/src/mcp/mod.rs", "line": 10},
+        {"path": "crates/c3/src/pack/reviewer.rs", "line": 276}
+      ],
+      "claim": "The blanket guarantee of byte-identical MCP and CLI artifacts is false across separate runs because generated artifacts include run-dependent data.",
+      "trigger": "Generate the same reviewer pack through MCP and CLI at different times.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/mcp/mod.rs:484", "observation": "The runner invokes current_exe with mapped CLI arguments."},
+        {"kind": "read-code", "reference": "crates/c3/src/pack/reviewer.rs:276", "observation": "The sidecar's generated field uses chrono::Local::now().to_rfc3339()."}
+      ],
+      "verification": "Generate equivalent packs at different times and compare their sidecar generated fields.",
+      "remedy": "Describe implementation and format parity instead of unconditional byte identity.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3/src/mcp/mod.rs", "line": 724},
+        {"path": "crates/c3/src/pack/snapshot.rs", "line": 351}
+      ],
+      "claim": "The snapshot tool description says it writes only the snapshot file, but full snapshots also update persistent anchor and sequence state.",
+      "trigger": "Run a full snapshot in a repository with a HEAD commit.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/mcp/mod.rs:724", "observation": "The tool description promises snapshot-file-only writes."},
+        {"kind": "read-code", "reference": "crates/c3/src/pack/snapshot.rs:351-356", "observation": "The full-snapshot branch calls write_anchor and reset_seq."}
+      ],
+      "verification": "Compare <collab>/.c3 state before and after a full snapshot in a disposable repository.",
+      "remedy": "Include anchor and sequence updates in the tool's side-effect description.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "docs/port/mcp.md", "line": 86},
+        {"path": "crates/c3/src/mcp/mod.rs", "line": 484},
+        {"path": "crates/c3/src/engines/tree_check.rs", "line": 10}
+      ],
+      "claim": "The no-commit invariant is not a transitive enforcement boundary for reviewer descendants: MCP restricts command dispatch, but does not prohibit Git writes, and engine content checks do not reject content-preserving commits.",
+      "trigger": "A reviewer descendant changes HEAD without changing working-tree contents.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/mcp/mod.rs:459,484-494", "observation": "Unknown tools are refused, but allowed child commands are spawned without an MCP-level sandbox."},
+        {"kind": "read-code", "reference": "crates/c3/src/engines/tree_check.rs:10-12,28-31", "observation": "Content-preserving commits are explicitly treated as informational revision movement rather than content violations."}
+      ],
+      "verification": "Inspect the engine comparison result for identical content fingerprints with different HEAD values; confirm it does not flag content tampering.",
+      "remedy": "Document the invariant as C3 not initiating commits, or add preventive restrictions and explicit Git-state validation for descendants.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F03-1",
+      "status": "still-open",
+      "note": "Corroborated by code: contained_join checks components only; reviewer::write uses ordinary create_dir_all/fs::write through accepted paths. No symlink or junction reproduction was run."
+    },
+    {
+      "id": "F03-2",
+      "status": "still-open",
+      "note": "Corroborated with qualification: docs/port/mcp.md:21 already prohibits absolute paths, whereas mcp/mod.rs:596 permits them in the brief description. task_slug.rs:130-132 rejects all ParentDir, RootDir and Prefix components."
+    },
+    {
+      "id": "F03-3",
+      "status": "still-open",
+      "note": "Corroborated: crates/c3-cli/src/main.rs:62,120 declares and dispatches Index; crates/c3/src/cli/index.rs implements build, rebuild, query and stats. MCP does not expose it."
+    },
+    {
+      "id": "F03-4",
+      "status": "still-open",
+      "note": "Corroborated: cli/telemetry.rs:125 calls instance_id; telemetry/mod.rs:175-196 reads or creates salt using create_dir_all and fs::write in the telemetry home. No first-use invocation was run."
+    }
+  ],
+  "unproven": [
+    "Actual Claude Code registration and protocol interoperability were not exercised.",
+    "Symlink/junction escape and first-use telemetry writes were established from code, not runtime reproduction.",
+    "No reviewer was induced to commit; the review establishes the absence of a transitive enforcement guarantee."
+  ],
+  "first_run_checklist": []
+}

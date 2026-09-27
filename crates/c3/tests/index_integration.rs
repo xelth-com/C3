@@ -62,16 +62,21 @@ fn build_query_lock_and_rebuild() {
     let files = files();
     let generation = "testgen-abc1234";
 
-    let idx = SurrealIndex::open(backend.clone(), "c3", "test")
-        .expect("open embedded index");
+    let idx = SurrealIndex::open(backend.clone(), "c3", "test").expect("open embedded index");
 
     // Build.
     let s1 = idx.index(&files, generation).expect("index");
     assert!(s1.entities >= 5, "entities: {}", s1.entities);
     assert_eq!(s1.files, 2, "two file entities");
     assert!(s1.belongs_to > 0, "belongs_to edges present");
-    assert!(s1.calls > 0, "calls edges present (run_demo -> add/multiply)");
-    assert!(s1.relates_to > 0, "relates_to edge present (add -> multiply)");
+    assert!(
+        s1.calls > 0,
+        "calls edges present (run_demo -> add/multiply)"
+    );
+    assert!(
+        s1.relates_to > 0,
+        "relates_to edge present (add -> multiply)"
+    );
     assert_eq!(s1.generation.as_deref(), Some(generation));
 
     // Query: a known function name comes back, ranked first.
