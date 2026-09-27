@@ -1,0 +1,902 @@
+//! Stdio MCP server: `c3 mcp`.
+//!
+//! A newline-delimited JSON-RPC 2.0 server over stdin/stdout (the MCP stdio
+//! transport) that exposes C3's *read-and-record* tools to a coordinator model
+//! (Claude Code, or any MCP client). It carries no commit or finish tool —
+//! design invariant 3, "C3 never commits", holds here too.
+//!
+//! Every tool runs the *same code path* as the matching CLI subcommand: the
+//! server re-invokes its own executable (`std::env::current_exe()`) with the CLI
+//! arguments and captures stdout / stderr / the exit code. That guarantees the
+//! files a tool writes are byte-identical to a CLI run, and isolates each tool's
+//! locks and timeouts in a child process. Console output only leaves through the
+//! captured pipe, so this server's stdout carries JSON-RPC frames alone.
+//!
+//! CRITICAL: stdout is JSON-RPC only. All logging goes to stderr and only when
+//! `C3_DEBUG=1`.
+
+use std::io::{BufRead, Read, Write};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
+
+use c3_core::task_slug::contained_join;
+
+/// The protocol version echoed when a client's `initialize` omits its own.
+const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// Per-tool timeouts: a consultation may take an hour; everything else is bounded.
+const CONSULT_TIMEOUT: Duration = Duration::from_secs(3600);
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Log to stderr only under `C3_DEBUG=1`.
+fn dlog(msg: &str) {
+    if std::env::var("C3_DEBUG").as_deref() == Ok("1") {
+        eprintln!("[c3 mcp] {msg}");
+    }
+}
+
+/// Entry point for `c3 mcp`: serve until stdin closes. Returns the process exit code.
+pub fn run() -> i32 {
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let mut writer = stdout.lock();
+    match serve(stdin.lock(), &mut writer) {
+        Ok(()) => 0,
+        Err(e) => {
+            dlog(&format!("serve error: {e}"));
+            1
+        }
+    }
+}
+
+/// The stdio serve loop: one JSON-RPC message per line in, one frame per response
+/// out. Parse failures answer with a `-32700` error; notifications (no `id`) get
+/// no response. Split out from [`run`] so tests can drive it with in-memory pipes.
+pub fn serve<R: BufRead, W: Write>(reader: R, writer: &mut W) -> std::io::Result<()> {
+    dlog("stdio MCP server ready");
+    for line in reader.lines() {
+        let line = line?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        dlog(&format!("<- {line}"));
+        let reply = match serde_json::from_str::<Value>(line) {
+            Ok(msg) => handle_message(&msg),
+            Err(e) => Some(rpc_error(Value::Null, -32700, &format!("parse error: {e}"))),
+        };
+        if let Some(v) = reply {
+            write_frame(writer, &v)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_frame<W: Write>(writer: &mut W, v: &Value) -> std::io::Result<()> {
+    let s = v.to_string();
+    dlog(&format!("-> {s}"));
+    writer.write_all(s.as_bytes())?;
+    writer.write_all(b"\n")?;
+    writer.flush()
+}
+
+/// Route one parsed JSON-RPC message. Returns `None` for notifications (no `id`),
+/// which take no response.
+pub fn handle_message(msg: &Value) -> Option<Value> {
+    let method = msg
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
+    // Notifications carry no `id` and get no reply (this also covers
+    // `notifications/initialized`).
+    let id = msg.get("id").cloned()?;
+
+    match method {
+        "initialize" => {
+            let pv = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or(DEFAULT_PROTOCOL_VERSION);
+            Some(rpc_result(
+                id,
+                json!({
+                    "protocolVersion": pv,
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": "c3", "version": env!("CARGO_PKG_VERSION") },
+                }),
+            ))
+        }
+        "ping" => Some(rpc_result(id, json!({}))),
+        "tools/list" => Some(rpc_result(id, json!({ "tools": tool_defs() }))),
+        "tools/call" => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let args = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let (text, is_error) = match call_tool(name, &args) {
+                Ok(t) => (t, false),
+                Err(t) => (t, true),
+            };
+            Some(rpc_result(
+                id,
+                json!({
+                    "content": [{ "type": "text", "text": text }],
+                    "isError": is_error,
+                }),
+            ))
+        }
+        other => Some(rpc_error(id, -32601, &format!("method not found: {other}"))),
+    }
+}
+
+fn rpc_result(id: Value, result: Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+fn rpc_error(id: Value, code: i64, message: &str) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+}
+
+// ---------------------------------------------------------------------------
+// Argument accessors
+// ---------------------------------------------------------------------------
+
+/// A non-empty trimmed string argument, if present.
+fn opt_str(args: &Value, key: &str) -> Option<String> {
+    args.get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// A required non-empty string argument.
+fn req_str(args: &Value, key: &str) -> Result<String, String> {
+    opt_str(args, key).ok_or_else(|| format!("missing required string argument '{key}'"))
+}
+
+fn opt_bool(args: &Value, key: &str) -> bool {
+    args.get(key).and_then(Value::as_bool).unwrap_or(false)
+}
+
+fn opt_i64(args: &Value, key: &str) -> Option<i64> {
+    args.get(key).and_then(Value::as_i64)
+}
+
+fn opt_arr(args: &Value, key: &str) -> Vec<String> {
+    args.get(key)
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Reject a path argument that is absolute or escapes the server's working
+/// directory with `..`. The MCP server inherits the coordinator's repo as its
+/// cwd, and no read-and-record tool has any business outside it.
+fn reject_escape(val: &str) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("cannot read cwd: {e}"))?;
+    contained_join(Path::new(&cwd), val)
+        .map(|_| ())
+        .map_err(|e| format!("path argument '{val}' is refused: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Tool dispatch: build the CLI argv, validate paths, run the child, format.
+// ---------------------------------------------------------------------------
+
+fn call_tool(name: &str, args: &Value) -> Result<String, String> {
+    let (argv, timeout) = build_argv(name, args)?;
+    let result = run_cli(&argv, timeout)?;
+    let text = format_result(&result);
+    if is_failure(&result) {
+        Err(text)
+    } else {
+        Ok(text)
+    }
+}
+
+/// Map a tool name + its JSON arguments to the `c3` CLI argv and a timeout.
+/// Every path-shaped argument is checked for containment first.
+fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), String> {
+    let mut v: Vec<String> = Vec::new();
+
+    match name {
+        "c3_providers" => {
+            v.push("providers".into());
+            if let Some(p) = opt_str(args, "provider") {
+                v.push("--provider".into());
+                v.push(p);
+            }
+            if opt_bool(args, "short") {
+                v.push("--short".into());
+            }
+            if opt_bool(args, "no_network") {
+                v.push("--no-network".into());
+            }
+            if let Some(c) = opt_str(args, "collab_dir") {
+                reject_escape(&c)?;
+                v.push("--collab-dir".into());
+                v.push(c);
+            }
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_consult" => {
+            v.push("consult".into());
+            let task = req_str(args, "task")?;
+            let purpose = req_str(args, "purpose")?;
+            let brief = req_str(args, "brief")?;
+            let prompt = req_str(args, "prompt")?;
+            let reply_name = req_str(args, "reply_name")?;
+            reject_escape(&brief)?;
+            v.push("--task".into());
+            v.push(task);
+            v.push("--purpose".into());
+            v.push(purpose);
+            v.push("--brief".into());
+            v.push(brief);
+            v.push("--prompt".into());
+            v.push(prompt);
+            v.push("--reply-name".into());
+            v.push(reply_name);
+            for (key, flag) in [
+                ("mode", "--mode"),
+                ("thread", "--thread"),
+                ("provider", "--provider"),
+                ("model", "--model"),
+                ("effort", "--effort"),
+                ("range", "--range"),
+                ("schema_transport", "--schema-transport"),
+                ("telemetry", "--telemetry"),
+            ] {
+                if let Some(val) = opt_str(args, key) {
+                    v.push(flag.into());
+                    v.push(val);
+                }
+            }
+            for (key, flag) in [
+                ("max_words", "--max-words"),
+                ("timeout_sec", "--timeout-sec"),
+                ("continue_sec", "--continue-sec"),
+                ("format_retry", "--format-retry"),
+            ] {
+                if let Some(n) = opt_i64(args, key) {
+                    v.push(flag.into());
+                    v.push(n.to_string());
+                }
+            }
+            for a in opt_arr(args, "artifact") {
+                reject_escape(&a)?;
+                v.push("--artifact".into());
+                v.push(a);
+            }
+            for c in opt_arr(args, "codex_config") {
+                v.push("--codex-config".into());
+                v.push(c);
+            }
+            if opt_bool(args, "raw") {
+                v.push("--raw".into());
+            }
+            if opt_bool(args, "dry_run") {
+                v.push("--dry-run".into());
+            }
+            if opt_bool(args, "skip_preflight") {
+                v.push("--skip-preflight".into());
+            }
+            if opt_bool(args, "off_peak_only") {
+                v.push("--off-peak-only".into());
+            }
+            if let Some(c) = opt_str(args, "collab_dir") {
+                reject_escape(&c)?;
+                v.push("--collab-dir".into());
+                v.push(c);
+            }
+            Ok((v, CONSULT_TIMEOUT))
+        }
+        "c3_findings_list" => {
+            v.push("findings".into());
+            v.push("--task".into());
+            v.push(req_str(args, "task")?);
+            v.push("--list".into());
+            if opt_bool(args, "all") {
+                v.push("--all".into());
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_findings_stats" => {
+            v.push("findings".into());
+            v.push("--task".into());
+            v.push(req_str(args, "task")?);
+            v.push("--stats".into());
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_findings_status" => {
+            v.push("findings".into());
+            v.push("--task".into());
+            v.push(req_str(args, "task")?);
+            v.push("--id".into());
+            v.push(req_str(args, "id")?);
+            v.push("--status".into());
+            v.push(req_str(args, "status")?);
+            if let Some(n) = opt_str(args, "note") {
+                v.push("--note".into());
+                v.push(n);
+            }
+            if let Some(e) = opt_str(args, "evidence") {
+                v.push("--evidence".into());
+                v.push(e);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_rate" => {
+            v.push("findings".into());
+            v.push("--task".into());
+            v.push(req_str(args, "task")?);
+            let n = opt_i64(args, "n")
+                .ok_or_else(|| "missing required integer argument 'n'".to_string())?;
+            v.push("--rate".into());
+            v.push(n.to_string());
+            v.push("--useful".into());
+            v.push(req_str(args, "useful")?);
+            if let Some(note) = opt_str(args, "note") {
+                v.push("--note".into());
+                v.push(note);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_scoreboard" => {
+            v.push("scoreboard".into());
+            if let Some(t) = opt_str(args, "task") {
+                v.push("--task".into());
+                v.push(t);
+            }
+            if opt_bool(args, "json") {
+                v.push("--json".into());
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_pack" => {
+            v.push("pack".into());
+            let brief = req_str(args, "brief")?;
+            reject_escape(&brief)?;
+            v.push("--brief".into());
+            v.push(brief);
+            let out = req_str(args, "out")?;
+            reject_escape(&out)?;
+            v.push("--out".into());
+            v.push(out);
+            for f in opt_arr(args, "focus") {
+                reject_escape(&f)?;
+                v.push("--focus".into());
+                v.push(f);
+            }
+            if let Some(b) = opt_i64(args, "budget") {
+                v.push("--budget".into());
+                v.push(b.to_string());
+            }
+            if let Some(t) = opt_str(args, "task") {
+                v.push("--task".into());
+                v.push(t);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_explain" => {
+            v.push("explain".into());
+            v.push("--claim".into());
+            v.push(req_str(args, "claim")?);
+            // The explainer pack is meant to leave the machine; the CLI asks
+            // before writing, so the tool always confirms.
+            v.push("--yes".into());
+            for f in opt_arr(args, "focus") {
+                reject_escape(&f)?;
+                v.push("--focus".into());
+                v.push(f);
+            }
+            if let Some(b) = opt_i64(args, "budget") {
+                v.push("--budget".into());
+                v.push(b.to_string());
+            }
+            if let Some(a) = opt_str(args, "audience") {
+                v.push("--audience".into());
+                v.push(a);
+            }
+            if let Some(o) = opt_str(args, "out") {
+                reject_escape(&o)?;
+                v.push("--out".into());
+                v.push(o);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_snapshot" => {
+            v.push("snapshot".into());
+            if let Some(o) = opt_str(args, "out") {
+                reject_escape(&o)?;
+                v.push("--out".into());
+                v.push(o);
+            }
+            if opt_bool(args, "delta") {
+                v.push("--delta".into());
+            }
+            if let Some(d) = opt_i64(args, "depth") {
+                v.push("--depth".into());
+                v.push(d.to_string());
+            }
+            if let Some(b) = opt_i64(args, "budget") {
+                v.push("--budget".into());
+                v.push(b.to_string());
+            }
+            for f in opt_arr(args, "focus") {
+                reject_escape(&f)?;
+                v.push("--focus".into());
+                v.push(f);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_telemetry_status" => {
+            v.push("telemetry".into());
+            v.push("status".into());
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        other => Err(format!("unknown tool: {other}")),
+    }
+}
+
+/// Push a validated `--collab-dir` if the argument is present.
+fn push_collab(v: &mut Vec<String>, args: &Value) -> Result<(), String> {
+    if let Some(c) = opt_str(args, "collab_dir") {
+        reject_escape(&c)?;
+        v.push("--collab-dir".into());
+        v.push(c);
+    }
+    Ok(())
+}
+
+/// The captured outcome of a child `c3` run.
+struct CliResult {
+    stdout: String,
+    stderr: String,
+    code: Option<i32>,
+    timed_out: bool,
+}
+
+/// Re-invoke this executable with `argv`, capturing stdout/stderr and enforcing a
+/// timeout by polling `try_wait` (no extra dependency). The child inherits the
+/// environment and this process's working directory; its stdin is closed.
+fn run_cli(argv: &[String], timeout: Duration) -> Result<CliResult, String> {
+    let exe =
+        std::env::current_exe().map_err(|e| format!("cannot locate the c3 executable: {e}"))?;
+    dlog(&format!("run: {} {:?}", exe.display(), argv));
+    let mut child = Command::new(&exe)
+        .args(argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn c3: {e}"))?;
+
+    // Drain both pipes on threads so a full pipe never deadlocks the wait loop.
+    let mut out_pipe = child.stdout.take().expect("stdout piped");
+    let mut err_pipe = child.stderr.take().expect("stderr piped");
+    let out_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let err_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = err_pipe.read_to_end(&mut buf);
+        buf
+    });
+
+    let start = Instant::now();
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break Some(st),
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    timed_out = true;
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("waiting on c3 failed: {e}")),
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&out_handle.join().unwrap_or_default()).into_owned();
+    let stderr = String::from_utf8_lossy(&err_handle.join().unwrap_or_default()).into_owned();
+    Ok(CliResult {
+        stdout,
+        stderr,
+        code: status.and_then(|s| s.code()),
+        timed_out,
+    })
+}
+
+/// Assemble the tool result text: the console output plus the exit code (and any
+/// stderr). A non-zero exit or a timeout is reported by the caller via `isError`.
+fn format_result(r: &CliResult) -> String {
+    let mut out = String::new();
+    out.push_str(r.stdout.trim_end());
+    if !r.stderr.trim().is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("--- stderr ---\n");
+        out.push_str(r.stderr.trim_end());
+    }
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    if r.timed_out {
+        out.push_str("[timed out]");
+    } else {
+        match r.code {
+            Some(c) => out.push_str(&format!("[exit code: {c}]")),
+            None => out.push_str("[terminated without an exit code]"),
+        }
+    }
+    out
+}
+
+/// True when the CLI run indicates failure (non-zero exit or a timeout).
+fn is_failure(r: &CliResult) -> bool {
+    r.timed_out || r.code != Some(0)
+}
+
+// ---------------------------------------------------------------------------
+// Tool definitions (name, description for a coordinator model, input schema)
+// ---------------------------------------------------------------------------
+
+fn tool_defs() -> Value {
+    json!([
+        {
+            "name": "c3_providers",
+            "description": "List the configured C3 reviewer providers (Codex model endpoints) and whether each is usable right now — the same table the `c3 providers` CLI prints. Use it before a consultation to sanity-check who is available, or with `short: true` for a one-line summary of what is OUT and how many reviewers are ready. Read-only; writes nothing.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "provider": { "type": "string", "description": "Report only this provider (case-sensitive, as in the config)." },
+                    "short": { "type": "boolean", "description": "One line: what is OUT per roster entry and how many reviewers are available." },
+                    "no_network": { "type": "boolean", "description": "Do no network call (an agy sign-in reads 'not checked'; muse stays local)." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; a relative path resolves against the repo root. Must stay inside the working directory." }
+                }
+            }
+        },
+        {
+            "name": "c3_consult",
+            "description": "Ask one read-only reviewer (a different lab's model, via the Codex engine) to look at a one-page brief and reply with structured findings, recorded as files next to the code (the brief, the reply verbatim, a JSON ledger entry, findings tracked by id). This is the core consultation and MAY TAKE MINUTES — the call blocks until the reviewer finishes (timeout up to one hour). A background panel with detach/status is NOT available yet (milestone 4), so run one reviewer at a time. C3 never commits: this only reads and records. `task` groups the consultation; `purpose` picks the preset (framing/decision/checkpoint/acceptance/diff-review/stuck/chore); `brief` is a repo path C3 reads, never writes; `prompt` is the ask.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "Task slug (letters, digits, dot, dash, underscore) grouping this consultation." },
+                    "purpose": { "type": "string", "description": "framing | decision | checkpoint | core-contract | acceptance | diff-review | stuck | chore." },
+                    "brief": { "type": "string", "description": "The one-page brief file (repo-relative or absolute inside the repo); C3 reads it, never writes." },
+                    "prompt": { "type": "string", "description": "The ask, prepended to the prompt." },
+                    "reply_name": { "type": "string", "description": "The handoff base name (a slug), e.g. `reply`." },
+                    "mode": { "type": "string", "description": "new | fork | resume (empty = auto)." },
+                    "thread": { "type": "string", "description": "The thread uuid to fork or resume (needs mode fork or resume)." },
+                    "provider": { "type": "string", "description": "The provider label; needs `model`." },
+                    "model": { "type": "string", "description": "The model id." },
+                    "effort": { "type": "string", "description": "low | medium | high | xhigh." },
+                    "max_words": { "type": "integer", "description": "reply_markdown word cap (0 = the purpose preset)." },
+                    "timeout_sec": { "type": "integer", "description": "Run timeout in seconds (0 = the purpose default)." },
+                    "continue_sec": { "type": "integer", "description": "Timeout-continuation budget (-1 = min(timeout,900); 0 = none)." },
+                    "range": { "type": "string", "description": "base..head or base...head (diff-review / acceptance only)." },
+                    "artifact": { "type": "array", "items": { "type": "string" }, "description": "File(s) bound to the review (repo-relative)." },
+                    "raw": { "type": "boolean", "description": "A plain-text consultation: no schema, no findings bookkeeping." },
+                    "dry_run": { "type": "boolean", "description": "Print the plan and exit; writes nothing." },
+                    "skip_preflight": { "type": "boolean", "description": "Skip the availability preflight (then warn)." },
+                    "off_peak_only": { "type": "boolean", "description": "Refuse a run inside the provider's declared peak window." },
+                    "codex_config": { "type": "array", "items": { "type": "string" }, "description": "Per-run `-c key=value` overrides (identity/effort keys are refused)." },
+                    "schema_transport": { "type": "string", "description": "output-schema | prompt-only (empty = the endpoint default)." },
+                    "format_retry": { "type": "integer", "description": "One format-repair turn if the reply is not valid JSON (0|1)." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." },
+                    "telemetry": { "type": "string", "description": "on | off (default on)." }
+                },
+                "required": ["task", "purpose", "brief", "prompt", "reply_name"]
+            }
+        },
+        {
+            "name": "c3_findings_list",
+            "description": "List the tracked findings for a task (from `findings.json`). By default it prints the open findings (proposed | implemented); pass `all: true` for every finding including verified/rejected/wontfix/superseded. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "The task slug." },
+                    "all": { "type": "boolean", "description": "Print every finding, not just the open ones." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["task"]
+            }
+        },
+        {
+            "name": "c3_findings_stats",
+            "description": "One line per consultation of a task (from `sessions.json`), with its findings broken down by status. Use it to see how each reviewer's findings have landed. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "The task slug." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["task"]
+            }
+        },
+        {
+            "name": "c3_findings_status",
+            "description": "Move one tracked finding to a new status and record it in `findings.json`. Status is one of proposed | implemented | verified | rejected | wontfix | superseded. A `note` is required for `rejected` and for reopening to `proposed`; `evidence` (what was run / where the proof is) is required for `verified`. This records the state change only — it never commits code.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "The task slug." },
+                    "id": { "type": "string", "description": "Finding id (`F<NN>-<k>`)." },
+                    "status": { "type": "string", "description": "proposed | implemented | verified | rejected | wontfix | superseded." },
+                    "note": { "type": "string", "description": "Why (required for rejected and for a reopen to proposed)." },
+                    "evidence": { "type": "string", "description": "What was run / where the proof is (required for verified)." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["task", "id", "status"]
+            }
+        },
+        {
+            "name": "c3_rate",
+            "description": "Rate consultation number `n` of a task for how useful it was (yes | partly | no), recorded against that ledger entry. This feeds the reviewer scoreboard and later routing. Records only; no commit.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "The task slug." },
+                    "n": { "type": "integer", "description": "The consultation number (a ledger entry of the task) to rate." },
+                    "useful": { "type": "string", "description": "yes | partly | no." },
+                    "note": { "type": "string", "description": "Optional note on the rating." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["task", "n", "useful"]
+            }
+        },
+        {
+            "name": "c3_scoreboard",
+            "description": "Print the per-reviewer usefulness scoreboard — how each provider/model has scored across rated consultations. Omit `task` for every task, or name one to scope it; `json: true` returns row objects instead of the table. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "One task only; omit for every task." },
+                    "json": { "type": "boolean", "description": "Return an array of row objects instead of the printed table." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                }
+            }
+        },
+        {
+            "name": "c3_pack",
+            "description": "Build a reviewer pack (a self-contained context bundle) from a one-page brief plus focus files, for the http engine, writing the pack and a `.pack.json` sidecar to `out`. Use it to prepare context for a reviewer that cannot browse the repo. Reads the repo and writes only the pack files (no commit).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "brief": { "type": "string", "description": "The one-page brief file (repo path)." },
+                    "focus": { "type": "array", "items": { "type": "string" }, "description": "Focus file(s): path or glob, included in full (repeatable)." },
+                    "budget": { "type": "integer", "description": "Token budget for the periphery (0 = none)." },
+                    "task": { "type": "string", "description": "Task slug whose findings.json supplies the open-findings snapshot." },
+                    "out": { "type": "string", "description": "Output path for the pack; the .pack.json sidecar is written beside it." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["brief", "out"]
+            }
+        },
+        {
+            "name": "c3_explain",
+            "description": "Build an explainer pack for one claim: a context bundle assembled around focus files and written to a markdown file. IMPORTANT: this file is meant to LEAVE THE MACHINE (it is what you hand to an outside audience), so the tool always confirms the write on your behalf. Reads the repo and writes the explainer file only; it never commits.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "claim": { "type": "string", "description": "The claim to explain, verbatim (marked unverified in the pack)." },
+                    "focus": { "type": "array", "items": { "type": "string" }, "description": "Focus file(s): path or glob, in full with line numbers (repeatable)." },
+                    "budget": { "type": "integer", "description": "Token budget for the periphery (0 = none)." },
+                    "audience": { "type": "string", "description": "Who the explanation is for (free text)." },
+                    "out": { "type": "string", "description": "Output path. Default: <collab>/.c3/explains/<repo>_<ts>.md." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["claim"]
+            }
+        },
+        {
+            "name": "c3_snapshot",
+            "description": "Take a repository snapshot (a single markdown context file), optionally as a git delta since C3's last full-snapshot anchor. Depth 0-9 controls truncation (0 tree only, 5-6 skeleton, 7-9 full); a token budget trims the periphery while focus globs are kept whole. Reads the repo and writes the snapshot file only; no commit.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "out": { "type": "string", "description": "Output path. Default under <collab>/.c3/snapshots/." },
+                    "delta": { "type": "boolean", "description": "Snapshot only what changed since C3's anchor." },
+                    "depth": { "type": "integer", "description": "0 tree only, 1-4 truncate, 5-6 skeleton, 7-9 full (default 9)." },
+                    "budget": { "type": "integer", "description": "Token budget; periphery is trimmed to fit (0 = none)." },
+                    "focus": { "type": "array", "items": { "type": "string" }, "description": "Keep matching files whole regardless of depth/budget (repeatable glob)." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                }
+            }
+        },
+        {
+            "name": "c3_telemetry_status",
+            "description": "Print C3's telemetry on/off status and this installation's instance id (the same output as `c3 telemetry status`). Telemetry is on by default with a one-line off switch. Read-only; sends nothing.",
+            "inputSchema": { "type": "object", "properties": {} }
+        }
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req(id: i64, method: &str, params: Value) -> Value {
+        json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params })
+    }
+
+    #[test]
+    fn initialize_echoes_protocol_and_declares_tools() {
+        let reply = handle_message(&req(
+            1,
+            "initialize",
+            json!({ "protocolVersion": "2025-03-26" }),
+        ))
+        .unwrap();
+        assert_eq!(reply["jsonrpc"], "2.0");
+        assert_eq!(reply["id"], 1);
+        assert_eq!(reply["result"]["protocolVersion"], "2025-03-26");
+        assert!(reply["result"]["capabilities"]["tools"].is_object());
+        assert_eq!(reply["result"]["serverInfo"]["name"], "c3");
+    }
+
+    #[test]
+    fn initialize_defaults_protocol_when_absent() {
+        let reply = handle_message(&req(1, "initialize", json!({}))).unwrap();
+        assert_eq!(reply["result"]["protocolVersion"], DEFAULT_PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn ping_returns_empty_result() {
+        let reply = handle_message(&req(7, "ping", json!({}))).unwrap();
+        assert_eq!(reply["id"], 7);
+        assert!(reply["result"].is_object());
+    }
+
+    #[test]
+    fn tools_list_names_every_tool() {
+        let reply = handle_message(&req(2, "tools/list", json!({}))).unwrap();
+        let tools = reply["result"]["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        for expected in [
+            "c3_providers",
+            "c3_consult",
+            "c3_findings_list",
+            "c3_findings_stats",
+            "c3_findings_status",
+            "c3_rate",
+            "c3_scoreboard",
+            "c3_pack",
+            "c3_explain",
+            "c3_snapshot",
+            "c3_telemetry_status",
+        ] {
+            assert!(names.contains(&expected), "missing tool {expected}");
+        }
+        // Every tool carries a description and an object input schema.
+        for t in tools {
+            assert!(t["description"]
+                .as_str()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false));
+            assert_eq!(t["inputSchema"]["type"], "object");
+        }
+    }
+
+    #[test]
+    fn unknown_method_is_method_not_found() {
+        let reply = handle_message(&req(3, "does/not/exist", json!({}))).unwrap();
+        assert_eq!(reply["error"]["code"], -32601);
+        assert_eq!(reply["id"], 3);
+    }
+
+    #[test]
+    fn notifications_get_no_reply() {
+        let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
+        assert!(handle_message(&note).is_none());
+    }
+
+    #[test]
+    fn parse_error_frame_on_bad_json() {
+        let input = b"not json at all\n" as &[u8];
+        let mut out: Vec<u8> = Vec::new();
+        serve(std::io::BufReader::new(input), &mut out).unwrap();
+        let line = String::from_utf8(out).unwrap();
+        let v: Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["error"]["code"], -32700);
+        assert!(v["id"].is_null());
+    }
+
+    #[test]
+    fn serve_answers_a_script_of_messages() {
+        let mut input = String::new();
+        input.push_str(
+            &req(1, "initialize", json!({ "protocolVersion": "2025-06-18" })).to_string(),
+        );
+        input.push('\n');
+        input.push_str(
+            &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }).to_string(),
+        );
+        input.push('\n');
+        input.push_str(&req(2, "tools/list", json!({})).to_string());
+        input.push('\n');
+        let mut out: Vec<u8> = Vec::new();
+        serve(std::io::BufReader::new(input.as_bytes()), &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        // Two responses: initialize + tools/list. The notification produced none.
+        assert_eq!(lines.len(), 2, "got: {text}");
+        let init: Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(init["id"], 1);
+        let list: Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(list["id"], 2);
+        assert!(list["result"]["tools"].is_array());
+    }
+
+    #[test]
+    fn build_argv_maps_flags() {
+        let (argv, _t) = build_argv(
+            "c3_providers",
+            &json!({ "short": true, "no_network": true }),
+        )
+        .unwrap();
+        assert_eq!(argv[0], "providers");
+        assert!(argv.contains(&"--short".to_string()));
+        assert!(argv.contains(&"--no-network".to_string()));
+    }
+
+    #[test]
+    fn build_argv_rejects_path_escape() {
+        let err = build_argv(
+            "c3_pack",
+            &json!({ "brief": "../evil.md", "out": "pack.md" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("refused"), "got: {err}");
+    }
+
+    #[test]
+    fn build_argv_requires_consult_fields() {
+        let err = build_argv("c3_consult", &json!({ "task": "t" })).unwrap_err();
+        assert!(
+            err.contains("purpose") || err.contains("required"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn explain_always_confirms() {
+        let (argv, _t) = build_argv("c3_explain", &json!({ "claim": "x" })).unwrap();
+        assert!(argv.contains(&"--yes".to_string()));
+    }
+
+    #[test]
+    fn unknown_tool_errors() {
+        assert!(build_argv("c3_nope", &json!({})).is_err());
+    }
+}

@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if command -v pwsh >/dev/null 2>&1; then pwsh -NoProfile -File \"${CLAUDE_PLUGIN_ROOT}/hooks/c3-hook.ps1\"; elif command -v powershell >/dev/null 2>&1; then powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/hooks/c3-hook.ps1\"; else sh \"${CLAUDE_PLUGIN_ROOT}/hooks/c3-hook.sh\"; fi",
+            "timeout": 15,
+            "statusMessage": "c3: checking whether the reviewer bridge is usable"
+          }
+        ]
+      }
+    ]
+  }
+}

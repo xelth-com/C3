@@ -249,11 +249,11 @@ fn resolve_preflight(
     launcher: &str,
     config: &c3_core::config::CodexConfig,
     collab_root: &Path,
-) -> (String, Option<(String, i32)>) {
+) -> (String, Option<(String, i32)>, String) {
     // The plugin refuses a preflight through `Stop-WithError` (exit 1, nothing written,
     // `codex-consult.ps1:304`); c3 matches that, not cli-surface.md's aspirational exit 2/3.
     if let Some(v) = verdict_pre_credential(id) {
-        return (v.preflight, Some((v.refusal, 1)));
+        return (v.preflight, Some((v.refusal, 1)), v.label);
     }
     // Endpoint health from every task ledger of THIS repository, read at the consult clock and
     // matched by the resolved identity's provider fingerprint: a recorded auth failure (within
@@ -281,9 +281,9 @@ fn resolve_preflight(
     let cred = providers::identity_credential(config, id, launcher, false, timeout);
     let v = verdict_with_credential(id, health.as_ref(), cred, false);
     if v.state == "available" {
-        (v.preflight, None)
+        (v.preflight, None, v.label)
     } else {
-        (v.preflight, Some((v.refusal, 1)))
+        (v.preflight, Some((v.refusal, 1)), v.label)
     }
 }
 
@@ -389,8 +389,16 @@ pub(crate) struct Context {
     pub(crate) parent_thread: String,
     /// The parent-thread note (`$r.Note`); empty when none.
     pub(crate) parent_note: String,
+    /// The `Roster: ...` console/handoff line (empty when no roster file).
+    pub(crate) roster_line: String,
+    /// The `roster{}` ledger record (`None` for a run with no roster file).
+    pub(crate) roster_record: Option<c3_core::ledger::RosterRef>,
+    /// The `extra_config_source` (`""`, `-CodexConfig` or `roster`).
+    pub(crate) extra_config_source: String,
     /// The preflight string recorded in the ledger / handoff (`""` when not evaluated).
     pub(crate) preflight: String,
+    /// The dry-run `preflight :` label (verdict `.Label`).
+    pub(crate) preflight_label: String,
     /// The `-SkipPreflight` quota warning (`Format-QuotaWarning`), printed `WARNING: ...` before
     /// a live launch and recorded in the ledger; empty otherwise.
     pub(crate) preflight_warning: String,
@@ -486,7 +494,7 @@ fn run_inner(o: Options) -> i32 {
     }
 }
 
-fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
+fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> {
     let o_telemetry = o.telemetry; // captured before `o` moves into the Context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
@@ -498,14 +506,143 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     let config_path = providers::get_codex_config_path();
     let config = providers::read_codex_config(&config_path);
     let openai_base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_default();
-    let identity = resolve_reviewer_identity(
+
+    // The reviewer roster (`Read-ReviewerRoster`). A missing `CODEX_CONSULT_ROSTER` file or an
+    // unusable roster refuses before anything is planned (a dry run too — FILE).
+    let roster = providers::read_reviewer_roster().map_err(|m| (m, 1))?;
+    let utc_now = c3_core::peak::consult_clock(0)
+        .map(|(u, _, _)| u)
+        .unwrap_or_else(|_| chrono::Utc::now());
+
+    // This task's ledger (read before the lock; `Select-ParentThread` re-checks under it), used
+    // by the `-Thread` roster rule to source the reviewer from the thread's own entry.
+    let store = FilesStore::new(collab_root.clone());
+    let ledger_entries = store
+        .read_sessions(&task)
+        .ok()
+        .flatten()
+        .map(|s| s.codex.consults)
+        .unwrap_or_default();
+
+    // Which reviewer (`Read-ReviewerRoster`, `Select-RosterReviewer`): no roster → -Provider /
+    // -Model, else the Codex config; -Provider → its entry supplies model/codex_config; -Thread →
+    // the thread's reviewer, its entry supplies codex_config; otherwise the roster walk.
+    let mut identity_provider = o.provider.clone();
+    let mut identity_model = o.model.clone();
+    let mut provider_source_override = String::new();
+    let mut model_source_override = String::new();
+    let mut roster_rule = String::new();
+    let mut roster_entry: Option<c3_core::roster::RosterEntry> = None;
+    let mut roster_skipped: Vec<(String, String, String, String)> = Vec::new();
+    let mut roster_applied: Vec<String> = Vec::new();
+    let mut run_warnings: Vec<String> = Vec::new();
+    let mut extra_config_source = if r.extra_config.is_empty() {
+        String::new()
+    } else {
+        "-CodexConfig".to_string()
+    };
+
+    if roster.exists {
+        if !o.provider.is_empty() {
+            roster_rule = "provider".into();
+            roster_entry = providers::find_roster_entry(&roster, &o.provider, &o.model).cloned();
+            if let Some(e) = &roster_entry {
+                if !o.model.is_empty() {
+                    // model given: nothing applied from the roster's model
+                } else if !e.model.is_empty() {
+                    identity_model = e.model.clone();
+                    model_source_override = "roster".into();
+                    roster_applied.push("model".into());
+                }
+                if e.engine_declared {
+                    roster_applied.push("engine".into());
+                }
+                let same = roster
+                    .entries
+                    .iter()
+                    .filter(|x| x.provider == o.provider)
+                    .count();
+                if o.model.is_empty() && same > 1 {
+                    let shown = if !e.model.is_empty() {
+                        c3_core::lineage::format_reviewer_lineage(&e.provider, &e.model, &e.engine)
+                    } else {
+                        format!("{} (config model)", e.provider)
+                    };
+                    run_warnings.push(format!(
+                        "roster: label {} names {same} entries; the first ({shown}) is used - pass -Model for another",
+                        o.provider
+                    ));
+                }
+            }
+        } else if !o.thread.trim().is_empty() {
+            roster_rule = "thread".into();
+            if let Some(rev) = ledger_entries
+                .iter()
+                .rev()
+                .find(|e| e.thread.trim() == o.thread.trim())
+                .map(|e| &e.reviewer)
+            {
+                identity_provider = rev.provider.clone();
+                provider_source_override = "-Thread".into();
+                if o.model.is_empty() {
+                    identity_model = rev.model.clone();
+                    model_source_override = "-Thread".into();
+                }
+            }
+            roster_entry =
+                providers::find_roster_entry(&roster, &identity_provider, &identity_model).cloned();
+        } else {
+            roster_rule = "walk".into();
+            let walk_ctx = providers::Ctx::for_consult(
+                config.clone(),
+                providers::read_all_task_consults(&collab_root),
+                roster.clone(),
+                launcher.clone(),
+                openai_base_url.clone(),
+                utc_now,
+            );
+            let walk = walk_ctx.walk_full(&o.model, o.skip_preflight);
+            if !walk.error.is_empty() {
+                return Err((walk.error, 1));
+            }
+            let e = walk.entry.expect("an available walk has an entry");
+            roster_skipped = walk.skipped;
+            identity_provider = e.provider.clone();
+            provider_source_override = "roster".into();
+            if e.engine_declared {
+                roster_applied.push("engine".into());
+            }
+            if o.model.is_empty() && !e.model.is_empty() {
+                identity_model = e.model.clone();
+                model_source_override = "roster".into();
+                roster_applied.push("model".into());
+            }
+            roster_entry = Some(e);
+        }
+        // codex_config from the entry when -CodexConfig is empty.
+        if let Some(e) = &roster_entry {
+            if r.extra_config.is_empty() && !e.codex_config.is_empty() {
+                r.extra_config = e.codex_config.clone();
+                extra_config_source = "roster".into();
+                roster_applied.push("codex_config".into());
+            }
+        }
+    }
+
+    let mut identity = resolve_reviewer_identity(
         &config,
-        &o.provider,
-        &o.model,
+        &identity_provider,
+        &identity_model,
         &openai_base_url,
         "codex",
         &launcher,
     );
+    if !provider_source_override.is_empty() {
+        identity.provider_source = provider_source_override.clone();
+    }
+    if !model_source_override.is_empty() {
+        identity.model_source = model_source_override.clone();
+    }
 
     // A resolved identity is required for fork/resume (F02-1).
     if !identity.resolved && (o.mode == "fork" || o.mode == "resume") {
@@ -521,7 +658,8 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
             1,
         ));
     }
-    if !o.provider.is_empty() && o.model.is_empty() {
+    // `-Provider` without a model that neither `-Model` nor the roster supplied.
+    if !o.provider.is_empty() && identity_model.is_empty() {
         return Err((
             format!("-Provider needs -Model: the bridge cannot know which model a provider serves by default (e.g. -Provider {} -Model <model>).", o.provider),
             1,
@@ -531,25 +669,55 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     // Preflight (M2c: credentials only, no recorded endpoint-health/24h block). openai runs
     // `codex login status`; a non-openai provider's credential check is deferred (its
     // preflight is left unevaluated and never refuses). `-SkipPreflight` bypasses the check.
-    let (preflight, preflight_refusal, preflight_warning) = if o.skip_preflight {
+    let (preflight, mut preflight_refusal, preflight_warning, mut preflight_label) = if o
+        .skip_preflight
+    {
         // The check is skipped, but an active quota record still earns a warning (the plugin's
         // `Format-QuotaWarning`), printed before launch and recorded in the ledger.
         let warning = if identity.resolved {
             let consults = providers::read_all_task_consults(&collab_root);
-            let utc_now = c3_core::peak::consult_clock(0)
-                .map(|(u, _, _)| u)
-                .unwrap_or_else(|_| chrono::Utc::now());
             let health =
                 c3_core::health::endpoint_health(&consults, &identity.fingerprint, utc_now);
             format_quota_warning(&identity, &health)
         } else {
             String::new()
         };
-        ("skipped".to_string(), None, warning)
+        (
+            "skipped".to_string(),
+            None,
+            warning,
+            "skipped (-SkipPreflight)".to_string(),
+        )
     } else {
-        let (p, r) = resolve_preflight(&identity, &launcher, &config, &collab_root);
-        (p, r, String::new())
+        let (p, refusal, label) = resolve_preflight(&identity, &launcher, &config, &collab_root);
+        (p, refusal, String::new(), label)
     };
+
+    // When a `-Thread` run's endpoint is unavailable, name the reviewer a new thread would get
+    // (`codex-consult.ps1:2910`).
+    if roster_rule == "thread" {
+        if let Some((refusal, code)) = preflight_refusal.take() {
+            let alt = providers::Ctx::for_consult(
+                config.clone(),
+                providers::read_all_task_consults(&collab_root),
+                roster.clone(),
+                launcher.clone(),
+                openai_base_url.clone(),
+                utc_now,
+            )
+            .walk_full("", false);
+            let hint = if let Some(aid) = &alt.identity {
+                format!(
+                    "; to continue with another reviewer, start a new thread: -Mode new; the roster would select {}",
+                    c3_core::lineage::format_reviewer_lineage(&aid.provider, &aid.model, "codex")
+                )
+            } else {
+                "; the roster has no available reviewer for a new thread either".to_string()
+            };
+            preflight_refusal = Some((format!("{refusal}{hint}"), code));
+            preflight_label.push_str(&hint);
+        }
+    }
 
     let effort = effort_plan(
         &identity,
@@ -600,19 +768,10 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     }
     let (peak_warning, peak_label) = peak_display(&peak_provider, &peak);
 
-    // Numbering.
-    let store = FilesStore::new(collab_root.clone());
-
     // Parent-thread walk (`Select-ParentThread`): validate `-Thread` against this task's ledger
     // by lineage + provenance, or resolve the automatic parent (the newest verified thread of
     // this lineage) for `-Mode fork|resume`. A refusal here happens before the lock (nothing
     // started). `-Thread needs -Mode fork or resume` is already refused in `args::validate`.
-    let ledger_entries = store
-        .read_sessions(&task)
-        .ok()
-        .flatten()
-        .map(|s| s.codex.consults)
-        .unwrap_or_default();
     let parent = match select_parent_thread(&ledger_entries, &identity, &o.mode, &o.thread) {
         Ok(p) => p,
         Err(refusal) => return Err((refusal, 1)),
@@ -691,7 +850,6 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     // Range (`git diff --shortstat <spec> --`, measured once, before the lock). An unknown
     // range refuses here (nothing started). The counts go to the prompt, the ledger `range{}`
     // record and — over 1500 lines under a sub-2400 s timeout — a size warning.
-    let mut run_warnings: Vec<String> = Vec::new();
     let mut range_record: Option<RangeRecord> = None;
     let mut range_text = String::new();
     let mut prompt_range: Option<prompt::Range> = None;
@@ -768,6 +926,87 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
         recovery_dry_lines = rec.items.iter().map(super::recovery::dry_line).collect();
     }
 
+    // The roster decision line (console/dry-run/handoff) and the `roster{}` ledger record
+    // (`None` without a roster file). `codex-consult.ps1:2920-2949`.
+    let mut roster_line = String::new();
+    let mut roster_record: Option<c3_core::ledger::RosterRef> = None;
+    if roster.exists {
+        let count = roster.entries.len();
+        let position = roster_entry.as_ref().map(|e| e.position as i64);
+        let applied_text = if roster_applied.is_empty() {
+            "nothing applied".to_string()
+        } else {
+            format!("{} applied", roster_applied.join(", "))
+        };
+        let lineage_shown =
+            c3_core::lineage::format_reviewer_lineage(&identity.provider, &identity.model, "codex");
+        roster_line = match roster_rule.as_str() {
+            "walk" => {
+                let mut l = format!(
+                    "Roster: {} - position {} of {count}",
+                    roster.path,
+                    position.map(|p| p.to_string()).unwrap_or_default()
+                );
+                if o.skip_preflight {
+                    l.push_str(" (-SkipPreflight: taken unchecked)");
+                }
+                if !roster_skipped.is_empty() {
+                    l.push_str(&format!(
+                        "; skipped {}",
+                        c3_core::availability::format_roster_skips(&roster_skipped)
+                    ));
+                }
+                l
+            }
+            "provider" => {
+                if let Some(pos) = position {
+                    format!(
+                        "Roster: {} - entry {pos} of {count} for -Provider {} ({applied_text})",
+                        roster.path, o.provider
+                    )
+                } else {
+                    format!(
+                        "Roster: {} - no entry for -Provider {} (nothing applied)",
+                        roster.path, o.provider
+                    )
+                }
+            }
+            _ => {
+                if let Some(pos) = position {
+                    format!(
+                        "Roster: {} - entry {pos} of {count} for -Thread {}, {lineage_shown} ({applied_text})",
+                        roster.path, o.thread
+                    )
+                } else {
+                    format!(
+                        "Roster: {} - no entry for -Thread {}, {lineage_shown} (nothing applied)",
+                        roster.path, o.thread
+                    )
+                }
+            }
+        };
+        roster_record = Some(c3_core::ledger::RosterRef {
+            path: roster.path.clone(),
+            position,
+            skipped: roster_skipped
+                .iter()
+                .map(|(provider, model, engine, reason)| {
+                    serde_json::json!({
+                        "provider": provider,
+                        "model": model,
+                        "engine": if engine.is_empty() { "codex" } else { engine },
+                        "reason": reason,
+                    })
+                })
+                .collect(),
+            applied: roster_applied
+                .iter()
+                .map(|a| serde_json::Value::String(a.clone()))
+                .collect(),
+            ..Default::default()
+        });
+    }
+
     Ok(Context {
         o,
         r,
@@ -794,7 +1033,11 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
         effective_mode,
         parent_thread,
         parent_note,
+        roster_line,
+        roster_record,
+        extra_config_source,
         preflight,
+        preflight_label,
         preflight_warning,
         preflight_refusal,
         revision,
@@ -1246,6 +1489,10 @@ fn run_live(mut ctx: Context) -> i32 {
     // Ensure the handoffs dir exists.
     if let Err(e) = std::fs::create_dir_all(&ctx.handoffs_dir) {
         return refuse(&format!("could not create the handoffs directory: {e}"));
+    }
+    // The roster decision line prints before the lock on a real run (`codex-consult.ps1:2968`).
+    if !ctx.roster_line.is_empty() {
+        println!("{}", ctx.roster_line);
     }
     // The `-SkipPreflight` quota warning prints before the lock (never on a dry run, which
     // never reaches `run_live`).
@@ -2975,7 +3222,11 @@ fn render_handoff(
         } else {
             format!("Preflight: {}.", ctx.preflight)
         },
-        roster_line: None,
+        roster_line: if ctx.roster_line.is_empty() {
+            None
+        } else {
+            Some(format!("{}.", ctx.roster_line))
+        },
         parent_result_line: {
             let parent_line = if !ctx.parent_thread.is_empty() {
                 format!("Parent thread: `{}`.", ctx.parent_thread)
@@ -3264,6 +3515,8 @@ fn build_entry(
             .iter()
             .map(|s| serde_json::Value::String(s.clone()))
             .collect(),
+        extra_config_source: ctx.extra_config_source.clone(),
+        roster: ctx.roster_record.clone(),
         // Peak status evaluated at launch (`run_live` re-evaluated it as call 1).
         peak: ctx.peak,
         peak_schedule: ctx.peak_schedule.clone(),
@@ -3327,7 +3580,7 @@ fn build_entry(
     e
 }
 
-fn build_reviewer(id: &ReviewerIdentity, codex_version: &str) -> Reviewer {
+pub(crate) fn build_reviewer(id: &ReviewerIdentity, codex_version: &str) -> Reviewer {
     // provider_config: `{builtin:"openai"}` for the built-in endpoint (no base_url), else the
     // user provider table's `{base_url,name,wire_api}` (`Resolve-ReviewerIdentity`).
     let provider_config = if id.base_url.is_empty() {

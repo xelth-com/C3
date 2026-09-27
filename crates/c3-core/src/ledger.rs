@@ -308,8 +308,10 @@ pub struct Reviewer {
 pub struct RosterRef {
     #[serde(default)]
     pub path: String,
+    /// The selected entry's position, or `null` when no entry matched (`-Provider`/`-Thread`
+    /// with no roster entry).
     #[serde(default)]
-    pub position: i64,
+    pub position: Option<i64>,
     /// Skipped roster fields (element shape not exercised here) - raw JSON.
     #[serde(default)]
     pub skipped: Vec<Value>,

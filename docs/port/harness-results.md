@@ -311,3 +311,74 @@ These are the largest remaining clusters; all were already failing in Run 1 (no 
 - **Prior-finding lifecycle** (decision 6): the open-findings prompt snapshot already exists; the
   reply-side ingestion (the ACCEPT-vs-still-open-blocker contradiction, `unchecked_prior_blockers`,
   `supersedes`/`superseded_by`, `reviewer_checks`) is not yet wired into the commit path.
+
+---
+
+# Run 3 — the roster walk wired into `c3 consult` (M2d-4)
+
+Same procedure as Run 2 (the five C3 shims from `tests/shim/`, the plugin's own
+`codex-consult-common.ps1` + `codex-consult-detached.ps1`, a sibling
+`schemas/consult-reply.schema.json`; `$env:C3_EXE = target\debug\c3.exe`, rebuilt this pass;
+each harness run ONE AT A TIME through the wave-25 `-ScriptsDir` override). Only the two
+harnesses in scope were re-run: `harness-0.3.ps1` and `harness-roster.ps1`.
+
+## Summary table (Run 2 → Run 3)
+
+| harness | Run 2 pass/fail | Run 3 pass/fail | ran to its own summary line? | regressions |
+|---|---|---|---|---|
+| harness-0.3 | 189 / 40 | **202 / 26** | yes (both runs) | none (a Run-2-vs-Run-3 FAIL-set diff shows **zero** new failures; 14 Run-2 failures now pass) |
+| harness-roster | 19 / 25 (crashed in QUOTA) | **56 / 1** (ran to completion) | no in Run 2, **yes** in Run 3 | none |
+
+Net: **+13** in harness-0.3, **+37** in harness-roster. harness-roster now advances all the way
+through PROV/FILE/WALK/QUOTA/RULE1/RULE2/AUTO to its own summary line for the first time (the
+Run-1/Run-2 `Last-Entry`/null-array crash is gone because every section it depends on now
+produces a ledger). A Run-2-vs-Run-3 diff of the harness-0.3 FAIL sets shows **zero** new
+failures; the 14 flipped-to-pass checks are the base-identity/preflight dry-run rows the roster
+wiring unblocked (F02-1 preview identity, F06-1 unresolved-identity dry-run plan, F09-1/PREFL/OPENAI
+`-DryRun still prints the verdict`).
+
+## What this pass landed (item 1 of the brief — the roster walk, codex)
+
+- **Roster read + fail-closed validation, wired into consult** — `c3 consult` now reads the
+  reviewer roster (`providers::read_reviewer_roster`) before planning; a `CODEX_CONSULT_ROSTER`
+  file that does not exist, or an unusable roster, refuses on a real run **and a dry run** (FILE).
+  `CODEX_CONSULT_ROSTER=none` and a missing default file resolve silently to no roster.
+- **`Select-RosterReviewer` (rule 3, the walk)** — `providers::Ctx::walk_full`: the first entry
+  whose preflight verdict is available, `-Model` narrowing, `-SkipPreflight` (first entry
+  unchecked), the skip records, the "no entry available" refusal listing every entry with its
+  reason, and the "-Model … no entry resolves" refusal. Quota-skip across tasks rides the existing
+  `endpoint_health` (a future `provider_failure.retry_after` in another task skips that endpoint).
+- **`-Provider` rule / `-Thread` rule** — `find_roster_entry` supplies the entry's model (when
+  `-Model` is empty) and `codex_config` (when `-CodexConfig` is empty); the `-Thread` rule sources
+  the reviewer from the thread's ledger entry and names the roster's alternative when that
+  endpoint is out.
+- **The `roster{}` ledger record + `Roster:` line** — `{path, position (null when no entry),
+  skipped[{provider,model,engine,reason}], applied[]}`; the `Roster: …` line on the console (real
+  run), the dry-run block and the handoff header. `extra_config_source` (`""`/`-CodexConfig`/`roster`)
+  and the `provider_source`/`model_source` overrides (`roster`/`-Thread`) are recorded.
+- **Dry-run preview completeness** — the `sessions.json entry preview` now carries `reviewer`,
+  `preflight`, `preflight_warning`, `roster`, `panel` (null), `extra_config`, `extra_config_source`,
+  and the `preflight :` dry-run line now shows the verdict **label** (matching the plugin), which
+  flipped the F09-1/F06-1/OPENAI/PREFL dry-run verdict rows to pass.
+
+## Remaining differing checks (verbatim, top 10)
+
+1. `FAIL WALK env key of entry 1 missing -> entry 2 selected: reviewer mimo ... argv -c model_provider="mimo"` — the **only** harness-roster failure. The `roster{}` record, `Roster:` line, reviewer and sources are all correct and the ledger `command` contains `-c model_provider="mimo"` byte-for-byte; the failing conjunct is the FAKE_CODEX `.cmd` log's `%*`, which expects PowerShell's `model_provider=""mimo""` quote-doubling. Rust's `std::process` escapes the embedded quotes as `\"` for the Windows command line, so cmd's `%*` logs `\"` not `""`. Environmental (the delivered argument value and the recorded command are identical), same class as the documented `cwd`/schema-path diffs.
+2. `FAIL F02-3 no thread.started + a rollout containing the consultation id -> thread verified` (+7 more F02-3 rows) — the rollout-file thread verification (brief item 6) is not done this pass.
+3. `FAIL CFG ~/ is expanded ... passed as -c after the bridge's own -c options, before -o; ledger extra_config` (+3 more CFG rows) — `-CodexConfig` `~` expansion / comma-split / argv-order (brief item 5) not done this pass; note the roster's `codex_config` `~` expansion (RULE1) DOES pass, since it runs through `convert_from_codex_config_items` at validation time.
+4. `FAIL WIRE reply header says "wire_api: (default)"; ledger provider_config has no wire_api` — `reviewer.provider_config` still synthesizes `{base_url,name,wire_api}` rather than echoing the raw table keys (brief item 4) not done this pass.
+5. `FAIL F02-1 unreadable config (fatal line) -> provider unknown, lineage unknown :: gpt-5.1, fingerprint empty, mode new with a note` (+4 more F02-1 rows) — the pre-existing base-identity dry-run ordering (an unresolved identity makes `effort_plan` error before the plan renders); not a decision of this pass.
+6. `FAIL OPENAI no table + OPENAI_BASE_URL in the environment: preview records it, console names it` — pre-existing base-identity path.
+7. `FAIL F09-1 codex login status hanging past 15 s -> refused ...` — the login-timeout wiring (pre-existing, partial in M2d-3).
+8. `FAIL F09-3 a failed run with an SSE error on stderr -> ledger provider_failure {auth, invalid_api_key, ...}` — the SSE-error-on-stderr classification (pre-existing).
+9. `FAIL TRANSP undeclared host -> prompt-only by default, and the dry run says so` / `FAIL F02-4 undeclared host -> refused` — the undeclared-`localhost` host rows (pre-existing; the effort/transport refusal wording differs).
+10. `FAIL PARENT no thread of lineage ZAI :: glm-4.6 -> mode new with a note naming legacy/other/unresolved/candidates` — the parent-walk note enumeration (pre-existing).
+
+## Not implemented this pass (brief items 2–8)
+
+Items 2 (prior-finding lifecycle), 3 (main-turn `failed: codex exit N`), 4 (`provider_config` raw
+echo), 5 (`-CodexConfig` `~`/argv-order — the roster half is done, the `-CodexConfig` half is not),
+6 (rollout-file thread verification), 7 (`--artifact` hashing/drift), 8 (the full summary console)
+were **not** implemented this pass. This pass was scoped to the roster walk (item 1), the single
+largest remaining harness-roster cluster; it closes all of harness-roster except the one
+Windows-argv-quoting check above.

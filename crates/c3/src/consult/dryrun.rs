@@ -70,7 +70,9 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             .unwrap_or(&reviewer_full)
     ));
     out.push(format!("lineage     : {}", ctx.identity.lineage));
-    let preflight_line = if ctx.o.skip_preflight {
+    let preflight_line = if !ctx.preflight_label.is_empty() {
+        ctx.preflight_label.clone()
+    } else if ctx.o.skip_preflight {
         "skipped (-SkipPreflight)".to_string()
     } else if let Some((refusal, _)) = &ctx.preflight_refusal {
         format!("a real run is refused - {refusal}")
@@ -80,8 +82,14 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         format!("available ({})", ctx.preflight)
     };
     out.push(format!("preflight   : {preflight_line}"));
+    if !ctx.roster_line.is_empty() {
+        out.push(ctx.roster_line.clone());
+    }
     for w in &ctx.run_warnings {
         out.push(format!("WARNING: {w}"));
+    }
+    if !ctx.preflight_warning.is_empty() {
+        out.push(format!("WARNING: {}", ctx.preflight_warning));
     }
     out.push(format!("model       : {}", model_label(ctx)));
     out.push(format!(
@@ -253,7 +261,14 @@ fn preview(ctx: &Context) -> Value {
         "when": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
         "purpose": ctx.o.purpose,
         "consult_id": ctx.consult_id,
+        "reviewer": serde_json::to_value(super::orchestrate::build_reviewer(&ctx.identity, &ctx.codex_version)).unwrap_or(Value::Null),
         "lineage": ctx.identity.lineage,
+        "preflight": ctx.preflight,
+        "preflight_warning": ctx.preflight_warning,
+        "roster": ctx.roster_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
+        "panel": Value::Null,
+        "extra_config": ctx.r.extra_config.clone(),
+        "extra_config_source": ctx.extra_config_source,
         "parent_thread": ctx.parent_thread,
         "thread": "<filled from the event stream>",
         "thread_source": "events|rollout (verified by consultation id)|unknown",

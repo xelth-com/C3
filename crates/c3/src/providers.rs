@@ -96,7 +96,7 @@ struct Row {
     health_source: String,
 }
 
-struct Ctx {
+pub(crate) struct Ctx {
     config: CodexConfig,
     consults: Vec<Value>,
     roster: Roster,
@@ -356,6 +356,178 @@ struct Walk {
     entry: Option<RosterEntry>,
     identity: Option<ReviewerIdentity>,
     skipped: Vec<(String, String, String, String)>,
+}
+
+/// The full `Select-RosterReviewer` result the consult path needs (the walk to the first
+/// available entry, `-Model` narrowing, `-SkipPreflight`, the "no entry" refusals, the
+/// `Considered` count and the skip records).
+pub(crate) struct RosterWalk {
+    pub entry: Option<RosterEntry>,
+    pub identity: Option<ReviewerIdentity>,
+    /// `(provider, model, engine, reason)` in roster order.
+    pub skipped: Vec<(String, String, String, String)>,
+    pub error: String,
+}
+
+impl Ctx {
+    /// Construct a context for the consult roster walk (its own fresh caches).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn for_consult(
+        config: CodexConfig,
+        consults: Vec<Value>,
+        roster: Roster,
+        launcher: String,
+        openai_base_url: String,
+        utc_now: DateTime<Utc>,
+    ) -> Ctx {
+        Ctx {
+            config,
+            consults,
+            roster,
+            launcher,
+            openai_base_url,
+            utc_now,
+            no_network: false,
+            login_cache: RefCell::new(HashMap::new()),
+            engine_launchers: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// The full roster walk (`Select-RosterReviewer`): the first entry whose preflight is
+    /// available. `model` (an explicit `-Model` without `-Provider`) restricts the walk to the
+    /// entries that resolve to that model; `skip_preflight` takes the first unchecked entry.
+    pub(crate) fn walk_full(&self, model: &str, skip_preflight: bool) -> RosterWalk {
+        let mut skipped: Vec<(String, String, String, String)> = Vec::new();
+        let mut listing: Vec<String> = Vec::new();
+        let mut considered = 0usize;
+        for e in &self.roster.entries {
+            let entry_engine = if e.engine.is_empty() {
+                "codex"
+            } else {
+                &e.engine
+            };
+            let entry_launcher = self.engine_launcher(entry_engine);
+            let id = resolve_reviewer_identity(
+                &self.config,
+                &e.provider,
+                &e.model,
+                &self.openai_base_url,
+                entry_engine,
+                &entry_launcher,
+            );
+            if !model.is_empty() && id.model != *model {
+                continue;
+            }
+            considered += 1;
+            let block = self.engine_launch_block(entry_engine);
+            if !block.is_empty() {
+                let reason = format!("refused: {block}");
+                skipped.push((
+                    e.provider.clone(),
+                    id.model.clone(),
+                    entry_engine.to_string(),
+                    reason.clone(),
+                ));
+                listing.push(format!(
+                    "#{} {} ({reason})",
+                    e.position,
+                    format_reviewer_lineage(&id.provider, &id.model, entry_engine)
+                ));
+                continue;
+            }
+            if skip_preflight {
+                if !id.error.is_empty() {
+                    return RosterWalk {
+                        entry: None,
+                        identity: None,
+                        skipped,
+                        error: id.error,
+                    };
+                }
+                return RosterWalk {
+                    entry: Some(e.clone()),
+                    identity: Some(id),
+                    skipped,
+                    error: String::new(),
+                };
+            }
+            let health = if id.resolved {
+                Some(endpoint_health(
+                    &self.consults,
+                    &id.fingerprint,
+                    self.utc_now,
+                ))
+            } else {
+                None
+            };
+            let verdict = self.preflight(
+                &id,
+                health.as_ref(),
+                &entry_launcher,
+                e.auth == "none",
+                true,
+            );
+            if verdict.state == "available" {
+                return RosterWalk {
+                    entry: Some(e.clone()),
+                    identity: Some(id),
+                    skipped,
+                    error: String::new(),
+                };
+            }
+            listing.push(format!(
+                "#{} {} ({})",
+                e.position,
+                format_reviewer_lineage(&id.provider, &id.model, entry_engine),
+                verdict.reason
+            ));
+            skipped.push((
+                e.provider.clone(),
+                id.model.clone(),
+                entry_engine.to_string(),
+                verdict.reason.clone(),
+            ));
+        }
+        if considered == 0 {
+            let all = self
+                .roster
+                .entries
+                .iter()
+                .map(|e| {
+                    format!(
+                        "#{} {}",
+                        e.position,
+                        if !e.model.is_empty() {
+                            format_reviewer_lineage(&e.provider, &e.model, &e.engine)
+                        } else {
+                            format!("{} (config model)", e.provider)
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            return RosterWalk {
+                entry: None,
+                identity: None,
+                skipped,
+                    error: format!(
+                    "-Model {model}: no entry of the reviewer roster '{}' resolves to that model ({all}); pass -Provider <name> -Model {model} to choose a reviewer outside the roster",
+                    self.roster.path
+                ),
+            };
+        }
+        let error = format!(
+            "no reviewer of the roster '{}' is available; nothing was started: {} (run codex-providers.ps1 for the full picture)",
+            self.roster.path,
+            listing.join("; ")
+        );
+        RosterWalk {
+            entry: None,
+            identity: None,
+            skipped,
+            error,
+        }
+    }
 }
 
 impl Ctx {
@@ -1655,7 +1827,7 @@ fn get_roster_path() -> (String, bool, bool) {
     (default, false, false)
 }
 
-fn read_reviewer_roster() -> Result<Roster, String> {
+pub(crate) fn read_reviewer_roster() -> Result<Roster, String> {
     let (path, from_env, disabled) = get_roster_path();
     let mut r = Roster {
         path: path.clone(),
@@ -1842,7 +2014,7 @@ fn resolve_engine_exe_binding(roster: &Roster, provider: &str) -> Result<String,
     }
 }
 
-fn find_roster_entry<'a>(
+pub(crate) fn find_roster_entry<'a>(
     roster: &'a Roster,
     provider: &str,
     model: &str,
@@ -2156,4 +2328,86 @@ fn get_muse_launch_block() -> String {
         c.reason
     };
     format!("the Muse sign-in is not established as oauth ({cause}): a muse run might bill per token instead of the Muse Code subscription; set TBH_CREDENTIAL_BACKEND=file and run `muse login`")
+}
+
+#[cfg(test)]
+mod roster_walk_tests {
+    use super::*;
+    use c3_core::config::scan_config_text;
+    use c3_core::roster::{Roster, RosterEntry};
+
+    fn entry(pos: usize, provider: &str, model: &str) -> RosterEntry {
+        RosterEntry {
+            position: pos,
+            provider: provider.into(),
+            model: model.into(),
+            codex_config: vec![],
+            auth: String::new(),
+            panel: "always".into(),
+            engine: "codex".into(),
+            engine_declared: false,
+        }
+    }
+
+    fn roster(entries: Vec<RosterEntry>) -> Roster {
+        Roster {
+            exists: true,
+            path: "R.json".into(),
+            entries,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn find_roster_entry_narrows_by_model_when_ambiguous() {
+        let r = roster(vec![entry(1, "gemini", "flash"), entry(2, "gemini", "pro")]);
+        // No model: the first entry of the label.
+        assert_eq!(find_roster_entry(&r, "gemini", "").unwrap().model, "flash");
+        // A model that a second entry names: that one.
+        assert_eq!(find_roster_entry(&r, "gemini", "pro").unwrap().model, "pro");
+        // A label no entry uses.
+        assert!(find_roster_entry(&r, "openai", "").is_none());
+    }
+
+    #[test]
+    fn walk_model_narrowing_refuses_when_no_entry_resolves_to_it() {
+        // openai resolves without config/network; the only entry resolves to gpt-5.1.
+        let ctx = Ctx::for_consult(
+            scan_config_text("", ""),
+            vec![],
+            roster(vec![entry(1, "openai", "gpt-5.1")]),
+            String::new(),
+            String::new(),
+            Utc::now(),
+        );
+        let w = ctx.walk_full("gpt-99", false);
+        assert!(w.entry.is_none());
+        assert!(
+            w.error.starts_with(
+                "-Model gpt-99: no entry of the reviewer roster 'R.json' resolves to that model"
+            ),
+            "got: {}",
+            w.error
+        );
+        assert!(w.error.contains("#1 openai :: gpt-5.1"));
+    }
+
+    #[test]
+    fn walk_skip_preflight_takes_first_entry_unchecked() {
+        let ctx = Ctx::for_consult(
+            scan_config_text("", ""),
+            vec![],
+            roster(vec![
+                entry(1, "openai", "gpt-5.1"),
+                entry(2, "openai", "gpt-6"),
+            ]),
+            String::new(),
+            String::new(),
+            Utc::now(),
+        );
+        let w = ctx.walk_full("", true);
+        let e = w.entry.expect("first entry taken");
+        assert_eq!(e.position, 1);
+        assert!(w.skipped.is_empty());
+    }
 }

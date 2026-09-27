@@ -1,0 +1,21 @@
+{
+  "name": "c3",
+  "displayName": "C3",
+  "description": "Runs the `c3` binary as a read-only reviewer bridge from Claude Code and records each consultation as files (brief, verbatim reply, JSON ledger, findings tracked by id), with per-reviewer thread lineages, a fail-closed provider preflight, a reviewer roster and (planned) a review panel and further engines (Gemini through agy, Meta Muse through muse); needs the `c3` binary on PATH or CLAUDE_PLUGIN_ROOT-relative, git, and the Codex CLI signed in to ChatGPT or given a [model_providers] table whose env key the user sets.",
+  "version": "0.1.0",
+  "author": {
+    "name": "xelth-com",
+    "url": "https://xelth.com"
+  },
+  "homepage": "https://github.com/xelth-com/C3",
+  "repository": "https://github.com/xelth-com/C3",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "openai",
+    "second-opinion",
+    "code-review",
+    "consultation",
+    "rust"
+  ]
+}

@@ -6,6 +6,7 @@ pub mod consult;
 pub mod explain;
 pub mod findings;
 pub mod hook;
+pub mod mcp;
 pub mod pack;
 pub mod scoreboard;
 pub mod snapshot;

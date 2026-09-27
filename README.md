@@ -102,6 +102,18 @@ The plugin's harnesses can drive the binary through `tests/shim/` (see
 `docs/port/harness-shim.md`); `docs/port/m1-acceptance.md` lists the assertions milestone 1
 answers to.
 
+## Install into Claude Code
+
+`plugin/` is a Claude Code plugin directory (milestone 6): a `SessionStart` hook and two
+skills (`consult`, `setup-providers`) that are a thin layer over the `c3` binary built
+above — it carries no reviewer logic of its own. Install the binary first (`cargo install
+--path crates/c3-cli`, or a release download, on `PATH` or pointed at with `C3_EXE=<path>`),
+then add the plugin directory in Claude Code (`/plugin marketplace add`, then
+`/plugin install`, against this repository or a local checkout). See
+[plugin/README.md](plugin/README.md) for the exact commands, prerequisites and how it
+relates to the PowerShell [`codex-consult`](https://github.com/xelth-com/claude-codex-consult)
+plugin (both can be installed side by side; their `.collab` files are byte-compatible).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

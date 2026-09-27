@@ -118,7 +118,7 @@ fn main() {
         Some(Commands::Explain(a)) => c3::cli::explain::run(a),
         Some(Commands::Snapshot(a)) => c3::cli::snapshot::run(a),
         Some(Commands::Index) => stub("index", 8),
-        Some(Commands::Mcp) => stub("mcp", 10),
+        Some(Commands::Mcp) => c3::cli::mcp::run(),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).
             use clap::CommandFactory;

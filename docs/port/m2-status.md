@@ -90,7 +90,8 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 
 | check id | status | note |
 |---|---|---|
-| WALK / QUOTA / RULES / AUTH / SCHEMA / UTF8 | not yet | the roster walk (rule 1/2/3, quota-skip, `auth:none`, `-SkipPreflight`/`-Model` narrowing) is a panel/roster concern deferred to M4; a single `c3 consult` run resolves identity directly. `CODEX_CONSULT_ROSTER=none` is honoured. SCHEMA's `-SchemaTransport`+`-Raw` refusal IS covered (see TRANSPORT / CONTR). |
+| WALK / QUOTA / RULE1 / RULE2 / AUTO / FILE / PROV | verified | M2d-4: the roster walk is wired into `c3 consult` (codex). `providers::Ctx::walk_full` ports `Select-RosterReviewer` (rule 3, `-Model` narrowing, `-SkipPreflight`, skip records, the two "no entry" refusals); the `-Provider`/`-Thread` rules source the entry's model/`codex_config`; quota-skip across tasks rides `endpoint_health`; the `roster{}` ledger record, the `Roster:` console/dry-run/handoff line, `extra_config_source`, and the `provider_source`/`model_source` overrides all land. The reviewer roster is read (and fail-closed validated) before planning — a missing `CODEX_CONSULT_ROSTER` file or an unusable roster refuses on a dry run too (FILE). harness-roster: **56/1** (was 19/25), the one failure a Windows argv-quoting nuance in the FAKE `.cmd` log (the delivered arg + ledger command are byte-correct). 3 unit tests. |
+| RULES / AUTH / SCHEMA / UTF8 | partial | `auth:none` narrowing and the panel-specific rows are still M4; the walk's `-SkipPreflight`/`-Model` narrowing IS covered above. SCHEMA's `-SchemaTransport`+`-Raw` refusal IS covered (see TRANSPORT / CONTR). |
 
 ## Other engines (n/a for the codex task)
 
@@ -302,3 +303,43 @@ pre-existing base-identity dry-run ordering rows (F02-1/OPENAI/F06-1: an unresol
 `effort_plan` error before the dry-run plan renders), the rollout-file thread verification (F02-3),
 `reviewer.provider_config` echoing the raw table keys (WIRE), and the `-CodexConfig` `~` expansion
 argv rows (CFG).
+
+## M2d-4 progress — the roster walk in `c3 consult` (this pass)
+
+Scoped to brief item 1 (the roster walk), the single largest remaining harness-roster cluster.
+
+New/changed code:
+1. **`crates/c3/src/providers.rs`** — `read_reviewer_roster`/`find_roster_entry` made `pub(crate)`;
+   `Ctx` + `Ctx::for_consult` exposed; `Ctx::walk_full` ports the full `Select-RosterReviewer`
+   (rule 3 walk, `-Model` narrowing, `-SkipPreflight`, skip records, the "no entry available" and
+   "-Model no entry resolves" refusals). 3 unit tests (`roster_walk_tests`).
+2. **`crates/c3/src/consult/orchestrate.rs`** — `build_context` reads the roster before planning
+   and resolves the reviewer through the `-Provider`/`-Thread`/walk rules: identity provider/model
+   + `provider_source`/`model_source` overrides (`roster`/`-Thread`), `codex_config` from the entry
+   (`extra_config_source` `roster`), the `roster{}` ledger record (`{path, position|null,
+   skipped[{provider,model,engine,reason}], applied[]}`), the `Roster:` line (console/dry-run/handoff)
+   and the ambiguous-label run warning. `-Provider needs -Model` now fires only when neither
+   `-Model` nor the roster supplied a model. `resolve_preflight` also returns the verdict **label**
+   (dry-run `preflight :` line); a `-Thread` endpoint that is out names the roster's alternative.
+3. **`crates/c3/src/consult/dryrun.rs`** — the `sessions.json entry preview` now carries
+   `reviewer`, `preflight`, `preflight_warning`, `roster`, `panel` (null), `extra_config`,
+   `extra_config_source`; the `preflight :` line uses the verdict label; the `Roster:` line and the
+   `-SkipPreflight` quota WARNING print in the dry-run block.
+4. **`crates/c3-core/src/ledger.rs`** — `RosterRef.position` is now `Option<i64>` (`null` when no
+   entry matched, e.g. `-Provider`/`-Thread` with no roster entry).
+
+Parity result: **harness-roster 19/25 → 56/1** (ran to its own summary line for the first time),
+**harness-0.3 189/40 → 202/26**, **zero regressions** in either (14 previously-failing base-identity
+/ preflight dry-run rows now pass because the roster wiring + preview completeness unblocked them).
+The single remaining harness-roster failure is a Windows argv quote-encoding nuance surfaced only
+through the FAKE codex `.cmd`'s `%*` log (`\"` from Rust's `std::process` vs PowerShell's `""`); the
+delivered argument value and the recorded `command` are byte-identical.
+
+Tests: workspace `cargo test` green (**219**, +3 roster-walk tests), `cargo clippy --all-targets --
+-D warnings` clean, `cargo fmt` applied.
+
+Still open (next pass): brief items 2 (prior-finding lifecycle), 3 (main-turn `failed: codex exit
+N`), 4 (`provider_config` raw echo — WIRE), 5 (`-CodexConfig` `~`/argv-order — CFG; the roster
+half is done), 6 (rollout-file thread verification — F02-3), 7 (`--artifact` hashing/drift), 8 (the
+full summary console), plus the pre-existing base-identity dry-run ordering rows (F02-1/OPENAI/F06-1
+error-before-plan), F09-1 login-hang timeout, and F09-3 SSE classification.

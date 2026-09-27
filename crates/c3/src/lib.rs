@@ -44,3 +44,5 @@ pub mod index {
 pub mod pack;
 
 pub mod telemetry;
+
+pub mod mcp;
