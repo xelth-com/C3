@@ -107,9 +107,24 @@ pub fn status(config: &Config) -> String {
 }
 
 /// The first-run notice, returned once for the caller to print, then never again (a marker
-/// file records that it was shown). Uses the default directory.
+/// file records that it was shown). The marker lives under the REAL home config dir
+/// (`~/.codex/c3/telemetry/notice-shown`), ignoring `CODEX_HOME`, so scratch homes used by
+/// the harnesses never mark it shown nor trigger it.
 pub fn first_run_notice() -> Option<String> {
-    first_run_notice_in(&telemetry_dir())
+    first_run_notice_in(&real_home_telemetry_dir())
+}
+
+/// The real-home telemetry config dir for the notice marker, ignoring `CODEX_HOME`
+/// (`~/.codex/c3/telemetry`).
+fn real_home_telemetry_dir() -> PathBuf {
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty()));
+    match home {
+        Some(h) => PathBuf::from(h).join(".codex").join("c3").join("telemetry"),
+        None => PathBuf::from(".codex").join("c3").join("telemetry"),
+    }
 }
 
 /// [`first_run_notice`] at an explicit directory (for tests).

@@ -22,8 +22,8 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 | FP (fingerprint stability) | verified | reused `c3-core::lineage`/`health` (M1); `provider_fingerprint` byte-identical in the live `sessions.json` diff. |
 | F02-1 (identity resolution, refused paths) | partial | happy path, `-Provider` without `-Model` refusal, and fork/resume-on-unresolved refusal implemented; the `-Mode new` records-`unknown` path is implemented; full roster-sourced identity is M4. |
 | F02-1 (unresolved forecloses fork/resume) | verified | `build_context` refuses `-Mode fork/resume` on an unresolved identity. |
-| PARENT (lineage-scoped fork/resume) | not yet | thread-from-events works; resolving/validating a parent thread from the ledger by lineage is deferred (M2c+). `--mode resume --thread` sends `resume <id>` but does not yet cross-check the ledger lineage. |
-| PARENT (endpoint fingerprint drift) | not yet | deferred with parent-thread resolution. |
+| PARENT (lineage-scoped fork/resume) | verified | M2d-3: `select_parent_thread` (`Select-ParentThread`) ports the walk — `-Thread` validated against this task's ledger by lineage + provenance (unknown/candidate/legacy/unresolved refusals), the automatic parent = the newest verified thread of the same lineage, `-Mode fork/resume` refused with the plugin's "needs a parent thread: <note>" when none. `-Thread` with auto mode now reaches the walk (only explicit `-Mode new` + `-Thread` is refused up front). The effective mode + `parent_thread` feed the codex `resume`/`fork` argv and the ledger. 6 unit tests. |
+| PARENT (endpoint fingerprint drift) | verified | M2d-3: the drift refusal (`endpoint or protocol of provider ... changed since thread ...`) fires when a candidate parent's `provider_fingerprint` differs from the resolved identity's — unit-tested. |
 | F02-3 (thread verified by consultation id) | partial | thread taken from `thread.started` (verified); the rollout-file fallback + consultation-id verification is deferred. |
 | EVENTS (thread source from the event stream) | verified | `engines::codex::parse_thread_id` (primary + `session_configured`/`session.started` drift nets, foreign non-uuid ignored) — unit-tested. |
 | F02-4 (effort vocabulary mapping) | verified | `orchestrate::effort_plan` maps through caps-v1 + the vocabulary table; undeclared host/model → refusal; `-NativeEffort` verbatim. Effort line byte-matches in dry-run. |
@@ -38,9 +38,9 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 | LEDGER (field order, reviewer, no config mutation) | verified | ledger entry from `c3-core::ledger` (fixed field order incl. new `revision_moved`); `reviewer{}` sub-object and full entry byte-identical in the live `sessions.json` diff (only `cwd` differs, environmental); the user config is never written. |
 | CODEXCFG (`-CodexConfig` overrides) | verified | reused `c3-core::roster::convert_from_codex_config_items` (~ expansion, `key=` splitting, identity/effort-key refusal) via `args::validate` — unit-tested. |
 | TRANSPORT (schema transport selection) | verified | `orchestrate::resolve_transport` (caps-v1 default, `-SchemaTransport` override, `-Raw` → `""`); the dry-run `transport` line + ledger `schema_transport`/`_source` match. |
-| F09-1 (fail-closed preflight, `-SkipPreflight`) | partial | credential preflight for the built-in openai endpoint (`codex login status`) refuses before the lock (exit 1, nothing written — verified against the plugin's byte-identical refusal message); `-SkipPreflight` bypasses (ledger `preflight: "skipped"`); the hanging-check / non-openai-credential paths are deferred. |
-| F09-2/4 (endpoint health blocks a run) | not yet | the recorded 24 h auth block / usage-limit block reads no task ledgers yet (endpoint-health preflight deferred; `verdict_with_credential` is called with `health: None`). |
-| F09-3 (provider_failure classification) | partial | a failed run classifies via `c3-core::health::provider_failure_class` and records `provider_failure{class,code,message}`; the later-run endpoint block is deferred (see F09-2/4). |
+| F09-1 (fail-closed preflight, `-SkipPreflight`) | partial | M2d-3: the credential preflight now runs for **every** provider before the lock — openai(-auth) via `codex login status`, a third-party provider via its `env_key` (`env X not set`) / bearer token (`providers::identity_credential`). `-SkipPreflight` bypasses and, when a quota record is active, prints the `Format-QuotaWarning` line (`preflight_warning`, also recorded in the ledger). The `codex login status` **hanging** row and the `-DryRun still prints the verdict` row still fail (the login timeout wiring / dry-run verdict rendering for an unavailable identity). |
+| F09-2/4 (endpoint health blocks a run) | verified | M2d-3: `resolve_preflight` reads every task ledger of this repo (`read_all_task_consults`) and computes `endpoint_health` for the resolved identity's fingerprint, then gates via `verdict_with_credential` — a recorded auth failure (24 h), usage limit (with reset), burst 429 (10 min) or reset-less quota (60 min) refuses before the lock. The QUOTA `... out for 60 minutes, until <iso>; nothing was started (pass -SkipPreflight to launch anyway)` refusal passes in harness-roster. `verdict.rs` gained the burst-vs-usage wording. |
+| F09-3 (provider_failure classification) | partial | a failed run classifies via `c3-core::health::provider_failure_class` and records `provider_failure{class,code,message}`; the SSE-error-on-stderr classification row (`{auth, invalid_api_key, ...}`) still differs. The later-run endpoint block now lands (see F09-2/4). |
 
 ## harness-fixes.ps1 (F04-*: store integrity, locking, numbering, validation, drift)
 
@@ -256,3 +256,49 @@ Verified against the fake codex: **none of the five** ran through a live fake-co
 items 1–5 are verified by unit tests and byte-identity contract tests, because each rides a
 subsystem (peak/endpoint-health, drift detection, timeout continuation) that is itself deferred
 in M2c. They are correct in isolation and ready for those subsystems to land.
+
+## M2d-3 progress — single-consultation parity pass (this pass)
+
+The coordinator's 10 parity decisions for the remaining single-consultation rows. **8 of 10
+landed and verified** (unit tests + the two plugin harnesses re-run — see
+`docs/port/harness-results.md` "Run 2": harness-0.3 154/75 → **189/40**, harness-roster 18/34 →
+**19/25**, zero regressions).
+
+1. **Prefixes** — every consult refusal/console line uses `codex-consult:` and every providers line
+   uses `codex-providers:` (the `TOOL` const + `providers::run`); no `c3 <cmd>:` remains.
+2. **Telemetry notice** — no longer on STDOUT before the run; printed to STDERR after the
+   summary/refusal, once per install, marker under the real home (`~/.codex/c3/telemetry/notice-shown`,
+   ignoring `CODEX_HOME`). Dry-run `telemetry` line kept.
+3. **Reviewer line** — `endpoint <base_url>, wire_api: <x>|(default)` (`identity_display`) in the
+   dry-run line, handoff header and console reviewer line.
+4. **Preflight completeness** — endpoint-health gating from this repo's ledgers + the non-openai
+   `env X not set` credential check + the openai login check, all before the lock; `-SkipPreflight`
+   quota warning. Burst (10 min) vs usage (60 min) wording in `verdict.rs`. (F09-2/4 verified.)
+5. **Roster + lineage** — **5b (parent-thread walk) DONE** (`select_parent_thread`, PARENT/drift
+   verified, 6 unit tests). **5a (roster walk `Select-RosterReviewer`) NOT DONE** — the WALK/FILE
+   rows and roster-related QUOTA rows still fail; a single run resolves identity directly and
+   ignores `CODEX_CONSULT_ROSTER` except `=none`.
+6. **Prior-finding lifecycle** — **NOT DONE** (the prompt open-findings snapshot already exists; the
+   reply-side ingestion — ACCEPT-vs-still-open contradiction, `unchecked_prior_blockers`,
+   `supersedes`/`superseded_by`, `reviewer_checks` — is not yet wired into the commit path).
+7. **Reviewer `topics`/`role`** — DONE: written as top-level ledger fields between `purpose` and
+   `consult_id` (empty defaults `[]` / `""`), tri-state so pre-topics fixtures stay byte-identical
+   (omittable on read).
+8. **Failed-continuation outcome** — DONE: `failed: codex exit N - <msg>` (bare `codex exit N` when
+   no error text); the raw exit code is surfaced from the adapter via
+   `AttemptOutcome::ProviderFailure { failure, exit_code }`. The format-repair turn uses the same
+   `codex exit N` framing.
+9. **`--panel-concurrency <n>`** — DONE: parsed by clap, refused as a milestone-4 feature like
+   `--panel`.
+10. **TRANSP prompt-only validation** — DONE: `parse_structured` strips a single fence before the
+    structured parse, so a fenced short JSON reply validates locally instead of falling to the prose
+    gate's word floor.
+
+Tests: workspace `cargo test` green (**202**, +7 from 195: the fenced-reply regression test + 6
+parent-walk tests), `cargo clippy --all-targets -- -D warnings` clean, `cargo fmt` applied.
+
+Still open (next pass): the roster walk (5a), the prior-finding lifecycle (6), and the smaller
+pre-existing base-identity dry-run ordering rows (F02-1/OPENAI/F06-1: an unresolved identity makes
+`effort_plan` error before the dry-run plan renders), the rollout-file thread verification (F02-3),
+`reviewer.provider_config` echoing the raw table keys (WIRE), and the `-CodexConfig` `~` expansion
+argv rows (CFG).

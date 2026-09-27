@@ -81,6 +81,16 @@ pub struct LedgerEntry {
     pub when: String,
     #[serde(default)]
     pub purpose: String,
+    /// `-Topics` (an empty array by default) — a top-level entry field, between `purpose` and
+    /// `consult_id`. A tri-state so byte-identity survives: **absent** in a pre-topics store
+    /// (`None`) is skipped on rewrite; a fresh entry writes `Some(vec![])` → `[]`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topics: Option<Vec<Value>>,
+    /// `-Role` (empty by default) — a top-level entry field, between `topics` and `consult_id`.
+    /// Omittable like `topics`: absent (`None`) skipped on rewrite; a fresh entry writes
+    /// `Some(String::new())` → `""`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
     #[serde(default)]
     pub consult_id: String,
     #[serde(default)]

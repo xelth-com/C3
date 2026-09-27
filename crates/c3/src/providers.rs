@@ -56,7 +56,7 @@ pub fn run(opts: Options) -> i32 {
     match run_inner(&opts) {
         Ok(code) => code,
         Err(msg) => {
-            println!("c3 providers: {msg}");
+            println!("codex-providers: {msg}");
             1
         }
     }
@@ -1011,11 +1011,80 @@ impl Ctx {
 
 // --------------------------------------------------------------------------- formatting
 
-fn strip_query(url: &str) -> String {
+pub(crate) fn strip_query(url: &str) -> String {
     match url.find('?') {
         Some(i) => format!("{}?...", &url[..i]),
         None => url.to_string(),
     }
+}
+
+/// The provider's config table (`Runner::provider_table_ref` as a free helper for the consult
+/// preflight).
+pub(crate) fn resolve_provider_table<'a>(config: &'a CodexConfig, name: &str) -> Option<&'a Table> {
+    if config.exists && config.ok {
+        let pt = provider_table(config, name);
+        if pt.found {
+            if let Some(key) = pt.table_key {
+                return config.table_by_key(&key);
+            }
+        }
+    }
+    None
+}
+
+/// The credential check for a codex-engine identity, for the consult preflight (no login cache).
+/// Mirrors `Runner::provider_credential`: openai-auth (`openai` or `requires_openai_auth`) runs
+/// `codex login status`; a third-party provider checks its `env_key` (`env X not set` when it is
+/// unset), then a bearer token, then a roster-declared `auth = none`.
+pub(crate) fn identity_credential(
+    config: &CodexConfig,
+    id: &ReviewerIdentity,
+    launcher: &str,
+    anonymous: bool,
+    login_timeout: u64,
+) -> CredentialResult {
+    let name = &id.provider;
+    let table = resolve_provider_table(config, name);
+    let mut openai_auth = name == "openai";
+    if !openai_auth {
+        if let Some(t) = table {
+            if let Some(e) = t.entry("requires_openai_auth") {
+                if e.supported && e.kind == "boolean" && e.value.as_deref() == Some("true") {
+                    openai_auth = true;
+                }
+            }
+        }
+    }
+    if openai_auth {
+        return get_codex_login_status(launcher, login_timeout);
+    }
+    let table = match table {
+        Some(t) => t,
+        None => return CredentialResult::unknown(format!("no [model_providers.{name}] table")),
+    };
+    let ek = config::get_toml_string(Some(table), "env_key");
+    let bt = config::get_toml_string(Some(table), "experimental_bearer_token");
+    let mut env_name = String::new();
+    if ek.present && ek.reason.is_empty() {
+        env_name = ek.value.trim().to_string();
+    }
+    if !env_name.is_empty() {
+        if let Ok(v) = std::env::var(&env_name) {
+            if !v.trim().is_empty() {
+                return CredentialResult::ok(format!("env {env_name} set"));
+            }
+        }
+    }
+    if bt.present && bt.reason.is_empty() && !bt.value.is_empty() {
+        return CredentialResult::ok("bearer token in config");
+    }
+    if !env_name.is_empty() {
+        return CredentialResult::missing(format!("env {env_name} not set"));
+    }
+    if anonymous {
+        return CredentialResult::ok("declared anonymous in the roster");
+    }
+    CredentialResult::missing("no env_key/bearer token in the table")
 }
 
 /// `Format-RowVerdict`.
@@ -1517,7 +1586,7 @@ fn count_task_ledgers(collab_root: &Path) -> usize {
         .unwrap_or(0)
 }
 
-fn read_all_task_consults(collab_root: &Path) -> Vec<Value> {
+pub(crate) fn read_all_task_consults(collab_root: &Path) -> Vec<Value> {
     let mut all = Vec::new();
     if !collab_root.is_dir() {
         return all;

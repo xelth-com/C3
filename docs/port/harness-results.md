@@ -239,3 +239,75 @@ yet.
   satisfied by a thin shim in principle — is that acceptable as a permanent gap in this comparison,
   or does it call for a stub `codex-consult-common.ps1`-shaped file that at least defines
   `Invoke-EngineTurn` (and whatever else is introspected) as a thin forwarder too?
+
+---
+
+# Run 2 — after the single-consultation parity pass (M2d-3)
+
+Same procedure as Run 1: the scratch scripts directory holds the five C3 shims from
+`tests/shim/`, plus the plugin's own `codex-consult-common.ps1` **and** `codex-consult-detached.ps1`
+(the common lib dot-sources the latter) and a sibling `schemas/consult-reply.schema.json`.
+`$env:C3_EXE = target\debug\c3.exe` (rebuilt this pass); each harness run ONE AT A TIME through the
+wave-25 `-ScriptsDir` override. Only the two harnesses in scope were re-run: `harness-0.3.ps1` and
+`harness-roster.ps1`.
+
+## Summary table (Run 1 → Run 2)
+
+| harness | Run 1 pass/fail | Run 2 pass/fail | ran to its own summary line? | regressions |
+|---|---|---|---|---|
+| harness-0.3 | 154 / 75 | **189 / 40** | yes (both runs) | none (every Run-2 failure was already failing in Run 1) |
+| harness-roster | 18 / 34 (crashed in PROV) | **19 / 25** (crashed in QUOTA — reached further) | no (both runs) | none |
+
+Net: **+35** checks now pass in harness-0.3, **+1** in harness-roster (and it now advances past the
+PROV/FILE/WALK sections into QUOTA before the harness's own `Last-Entry`/null-array crash — that
+crash is inherent to running a Rust CLI through a PowerShell-source harness once a section it needs
+produced no ledger, unchanged from Run 1). A Run-1-vs-Run-2 diff of the FAIL sets shows **zero new
+failures** in either harness.
+
+## What the parity pass fixed (the Run-1 "C3 output differs" list, now closed)
+
+- **Error-message prefix** — `codex-consult:` / `codex-providers:` everywhere (was `c3 consult:` /
+  `c3 providers:`). This alone flipped a large fraction of the exact/`-match` refusal assertions.
+- **Telemetry consent banner** — no longer printed to STDOUT before the run; it now prints to
+  STDERR after the summary/refusal, once per installation, with the marker under the real home
+  (`~/.codex/c3/telemetry/notice-shown`, ignoring `CODEX_HOME`) so scratch homes never trigger it.
+  The first-line PREFL/F09-1 assertions are no longer corrupted.
+- **Reviewer line** — the full canonical base_url and the `wire_api: <x>` / `wire_api: (default)`
+  clause (`endpoint https://api.z.ai/api/v1, wire_api: responses`, `endpoint (default), wire_api:
+  (default)`) in the dry-run line, the handoff header and the console reviewer line.
+- **TRANSP fenced reply** — a fenced short JSON object now validates locally (the fence is stripped
+  before the structured parse), so `Structured reply (prompt-only transport): ...` renders instead
+  of `reply too short (3 words)`.
+- **`-Thread` with auto mode** — `-Thread` without `-Mode` now reaches the parent-thread walk (only
+  an explicit `-Mode new` + `-Thread` is refused), so the PARENT cross-lineage / unknown / legacy /
+  unresolved / candidate refusals fire from `Select-ParentThread`.
+- **Endpoint-health preflight** — a recorded auth/usage/burst/quota-unknown failure on the endpoint
+  now blocks a later run before the lock (the QUOTA `... out for 60 minutes, until <iso>; nothing
+  was started (pass -SkipPreflight to launch anyway)` refusal passes), and `-SkipPreflight` prints
+  the `Format-QuotaWarning` line.
+
+## Remaining "C3 output differs" / failing checks (verbatim, top 10)
+
+These are the largest remaining clusters; all were already failing in Run 1 (no regressions).
+
+1. `FAIL WALK env key of entry 1 missing -> entry 2 selected: reviewer mimo from roster ... ledger roster {path, position 2, skipped [ZAI missing], applied [model]}` — the **roster walk** (`Select-RosterReviewer`, decision 5a) is not implemented.
+2. `FAIL WALK no entry available -> refusal listing every entry with its reason` — roster walk.
+3. `FAIL WALK console and handoff header carry the Roster line` — roster walk (the `roster{}` record + `Roster:` line).
+4. `FAIL FILE unusable roster files refused (-DryRun too), message names the path: corrupt, version2, ...` — roster file validation (roster walk).
+5. `FAIL QUOTA future provider_failure.retry_after in another task -> openai skipped ..., ZAI selected` — roster-walk quota-skip (endpoint-health gating exists, but the walk to the next entry does not).
+6. `FAIL F02-3 no thread.started + a rollout containing the consultation id -> thread verified` — the rollout-file thread verification / `thread_candidate` fallback is deferred (M2c note).
+7. `FAIL F02-1 config model_provider=ZAI, no -Provider: preview records ZAI (source config), lineage ZAI :: glm-5.3` — pre-existing identity path (dry-run preview of a config-sourced identity); not in this pass's decisions.
+8. `FAIL F02-1 unreadable config (fatal line) -> provider unknown, lineage unknown :: gpt-5.1, fingerprint empty, mode new with a note` — pre-existing: an unresolved identity makes `effort_plan` error and `build_context` returns that error before the dry-run plan is rendered (an ordering issue in the base identity path, not a decision here).
+9. `FAIL WIRE reply header says "wire_api: (default)"; ledger provider_config has no wire_api` — the reviewer line is now correct, but `reviewer.provider_config` still carries `wire_api: "(default)"`; the plugin echoes only the table's declared keys, so it omits it. (Left alone to avoid disturbing the M2c LEDGER byte-parity; `build_reviewer` synthesizes `{base_url,name,wire_api}` rather than echoing the raw table.)
+10. `FAIL F04-* / prior-finding lifecycle` (not reached in these two harnesses' passing subset) and `FAIL CFG ~/ is expanded ...` — the `-CodexConfig` `~` expansion / comma-split argv rows and the prior-finding ingestion (decision 6) remain.
+
+## Not implemented this pass (the two largest subsystems)
+
+- **Roster walk** (`Select-RosterReviewer`, decision 5a): entry selection, skip reasons, the
+  `roster{}` ledger record, the `Roster:` header/dry-run line, `--provider X` taking the entry's
+  model, `codex_config` from the entry. This is the bulk of the remaining `harness-roster` WALK/FILE
+  failures and the roster-related QUOTA rows. The **parent-thread walk** half of decision 5 (5b) IS
+  implemented and unit-tested.
+- **Prior-finding lifecycle** (decision 6): the open-findings prompt snapshot already exists; the
+  reply-side ingestion (the ACCEPT-vs-still-open-blocker contradiction, `unchecked_prior_blockers`,
+  `supersedes`/`superseded_by`, `reviewer_checks`) is not yet wired into the commit path.

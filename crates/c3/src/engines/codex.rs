@@ -129,12 +129,15 @@ impl CodexEngine {
             };
             let (code, message) = convert_from_provider_error_text(&source);
             let class = provider_failure_class(&message);
-            return Ok(AttemptOutcome::ProviderFailure(ProviderFailure {
-                class,
-                code,
-                message,
-                ..Default::default()
-            }));
+            return Ok(AttemptOutcome::ProviderFailure {
+                failure: ProviderFailure {
+                    class,
+                    code,
+                    message,
+                    ..Default::default()
+                },
+                exit_code: result.exit_code,
+            });
         }
 
         let raw_text = read_text(&files.events_reply(turn));
@@ -313,12 +316,31 @@ pub fn parse_usage(events_text: &str) -> Option<Usage> {
 /// Parse the reply text into a validated [`StructuredReply`]; `None` when it is not one bare
 /// JSON object or fails validation (the orchestrator then decides prose/repair).
 pub fn parse_structured(raw_text: &str) -> Option<StructuredReply> {
-    let trimmed = raw_text.trim();
+    // Strip a single ```lang ... ``` fence first, exactly like the plugin's
+    // `ConvertFrom-StructuredReply` (a fenced JSON object is a valid structured reply).
+    let body = strip_reply_fence(raw_text.trim());
+    let trimmed = body.trim();
     if !trimmed.starts_with('{') {
         return None;
     }
     let raw: RawReply = serde_json::from_str(trimmed).ok()?;
     StructuredReply::try_from(raw).ok()
+}
+
+/// Strip a single leading/trailing ```lang fence, returning the body; the input unchanged when
+/// it is not one fenced block. Mirrors `ConvertFrom-StructuredReply`'s fence net.
+fn strip_reply_fence(t: &str) -> String {
+    static FENCE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = FENCE.get_or_init(|| {
+        regex::Regex::new(r"(?s)^```[A-Za-z0-9_-]*[ \t]*\r?\n(.*?)\r?\n[ \t]*```$").unwrap()
+    });
+    match re.captures(t) {
+        Some(c) => c
+            .get(1)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_else(|| t.to_string()),
+        None => t.to_string(),
+    }
 }
 
 /// Salvage the reasoning / agent-message / command text of a killed turn's items, for the

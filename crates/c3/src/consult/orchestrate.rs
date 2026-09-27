@@ -47,7 +47,7 @@ use super::render;
 use super::revision::{self, RevisionInfo};
 use super::summary;
 
-const TOOL: &str = "c3 consult";
+const TOOL: &str = "codex-consult";
 
 /// `-Range` size-warning thresholds (`$rangeWarnLines` / `$rangeWarnTimeout`).
 const RANGE_WARN_LINES: i64 = 1500;
@@ -244,27 +244,75 @@ fn effort_plan(id: &ReviewerIdentity, requested: &str, native: &str) -> EffortPl
 /// A non-openai provider's credential check is deferred: it is left unevaluated (`""`) and
 /// never refuses, so such a run still proceeds (the recorded endpoint-health 24h block and
 /// the non-openai credential/env-key check land later).
-fn resolve_preflight(id: &ReviewerIdentity, launcher: &str) -> (String, Option<(String, i32)>) {
+fn resolve_preflight(
+    id: &ReviewerIdentity,
+    launcher: &str,
+    config: &c3_core::config::CodexConfig,
+    collab_root: &Path,
+) -> (String, Option<(String, i32)>) {
     // The plugin refuses a preflight through `Stop-WithError` (exit 1, nothing written,
     // `codex-consult.ps1:304`); c3 matches that, not cli-surface.md's aspirational exit 2/3.
     if let Some(v) = verdict_pre_credential(id) {
         return (v.preflight, Some((v.refusal, 1)));
     }
-    // Only the built-in openai endpoint's `codex login status` is checked in M2c.
-    let builtin_openai = id.provider == "openai" && id.base_url.is_empty();
-    if !builtin_openai {
-        return (String::new(), None);
-    }
+    // Endpoint health from every task ledger of THIS repository, read at the consult clock and
+    // matched by the resolved identity's provider fingerprint: a recorded auth failure (within
+    // 24 h), usage limit (with a reset), burst 429 (10 min) or reset-less quota (60 min) blocks
+    // a later run before the lock (F09-2/4).
+    let health = if id.resolved {
+        let consults = providers::read_all_task_consults(collab_root);
+        let utc_now = c3_core::peak::consult_clock(0)
+            .map(|(u, _, _)| u)
+            .unwrap_or_else(|_| chrono::Utc::now());
+        Some(c3_core::health::endpoint_health(
+            &consults,
+            &id.fingerprint,
+            utc_now,
+        ))
+    } else {
+        None
+    };
+    // The credential check: openai runs `codex login status`; a third-party provider checks its
+    // `env_key` (`env X not set`) / bearer token. `-SkipPreflight` bypasses this whole function.
     let timeout = std::env::var("CODEX_CONSULT_TEST_LOGIN_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(20);
-    let cred = providers::get_codex_login_status(launcher, timeout);
-    let v = verdict_with_credential(id, None, cred, false);
+    let cred = providers::identity_credential(config, id, launcher, false, timeout);
+    let v = verdict_with_credential(id, health.as_ref(), cred, false);
     if v.state == "available" {
         (v.preflight, None)
     } else {
         (v.preflight, Some((v.refusal, 1)))
+    }
+}
+
+/// The `-SkipPreflight` quota warning (`Format-QuotaWarning`): empty unless a quota record is
+/// active on the endpoint. A known reset names the reset time; a reset-less limit names the
+/// out-window end and marks a burst 429.
+fn format_quota_warning(id: &ReviewerIdentity, health: &c3_core::health::EndpointHealth) -> String {
+    let q = match &health.quota {
+        Some(q) => q,
+        None => return String::new(),
+    };
+    if health.quota_known {
+        format!(
+            "provider {} hit a usage limit {} min ago that lasts until {}: {}",
+            id.provider, q.age_minutes, q.retry_after_iso, q.message
+        )
+    } else {
+        let limit = if q.kind == "burst" {
+            "burst limit (429)"
+        } else {
+            "usage limit"
+        };
+        format!(
+            "provider {} hit a {limit} {} min ago (reset unknown; out until {}): {}",
+            id.provider,
+            q.age_minutes,
+            c3_core::health::format_offset_iso(q.until),
+            q.message
+        )
     }
 }
 
@@ -334,8 +382,18 @@ pub(crate) struct Context {
     pub(crate) brief_sha: String,
     pub(crate) schema_path: Option<PathBuf>,
     pub(crate) open_findings_count: usize,
+    /// The effective mode after the parent-thread walk (`new`|`fork`|`resume`), recorded in the
+    /// ledger and used to plan the codex `resume`/`fork` argv.
+    pub(crate) effective_mode: String,
+    /// The resolved parent thread (`Select-ParentThread`'s `$r.Parent`); empty for a new thread.
+    pub(crate) parent_thread: String,
+    /// The parent-thread note (`$r.Note`); empty when none.
+    pub(crate) parent_note: String,
     /// The preflight string recorded in the ledger / handoff (`""` when not evaluated).
     pub(crate) preflight: String,
+    /// The `-SkipPreflight` quota warning (`Format-QuotaWarning`), printed `WARNING: ...` before
+    /// a live launch and recorded in the ledger; empty otherwise.
+    pub(crate) preflight_warning: String,
     /// A preflight refusal `(message, exit_code)` for a real run; `None` = available/skipped.
     pub(crate) preflight_refusal: Option<(String, i32)>,
     pub(crate) revision: RevisionInfo,
@@ -473,10 +531,24 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     // Preflight (M2c: credentials only, no recorded endpoint-health/24h block). openai runs
     // `codex login status`; a non-openai provider's credential check is deferred (its
     // preflight is left unevaluated and never refuses). `-SkipPreflight` bypasses the check.
-    let (preflight, preflight_refusal) = if o.skip_preflight {
-        ("skipped".to_string(), None)
+    let (preflight, preflight_refusal, preflight_warning) = if o.skip_preflight {
+        // The check is skipped, but an active quota record still earns a warning (the plugin's
+        // `Format-QuotaWarning`), printed before launch and recorded in the ledger.
+        let warning = if identity.resolved {
+            let consults = providers::read_all_task_consults(&collab_root);
+            let utc_now = c3_core::peak::consult_clock(0)
+                .map(|(u, _, _)| u)
+                .unwrap_or_else(|_| chrono::Utc::now());
+            let health =
+                c3_core::health::endpoint_health(&consults, &identity.fingerprint, utc_now);
+            format_quota_warning(&identity, &health)
+        } else {
+            String::new()
+        };
+        ("skipped".to_string(), None, warning)
     } else {
-        resolve_preflight(&identity, &launcher)
+        let (p, r) = resolve_preflight(&identity, &launcher, &config, &collab_root);
+        (p, r, String::new())
     };
 
     let effort = effort_plan(
@@ -530,6 +602,25 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
 
     // Numbering.
     let store = FilesStore::new(collab_root.clone());
+
+    // Parent-thread walk (`Select-ParentThread`): validate `-Thread` against this task's ledger
+    // by lineage + provenance, or resolve the automatic parent (the newest verified thread of
+    // this lineage) for `-Mode fork|resume`. A refusal here happens before the lock (nothing
+    // started). `-Thread needs -Mode fork or resume` is already refused in `args::validate`.
+    let ledger_entries = store
+        .read_sessions(&task)
+        .ok()
+        .flatten()
+        .map(|s| s.codex.consults)
+        .unwrap_or_default();
+    let parent = match select_parent_thread(&ledger_entries, &identity, &o.mode, &o.thread) {
+        Ok(p) => p,
+        Err(refusal) => return Err((refusal, 1)),
+    };
+    let effective_mode = parent.mode.clone();
+    let parent_thread = parent.parent_thread.clone();
+    let parent_note = parent.note.clone();
+
     let nn_n = store.next_numbers(&task).map_err(|e| (e.to_string(), 1))?;
     let (nn, consult_n) = (nn_n.nn, nn_n.n);
 
@@ -655,6 +746,7 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
         &prompt_text,
         &schema_path,
         &last_msg_path,
+        resolved_mode(&effective_mode, &parent_thread, &identity),
     );
     let argv = match c3_core::engine::SubprocessEngine::new(EngineKind::Codex).plan(&request) {
         Ok(c3_core::engine::LaunchPlan::Subprocess(a)) => a,
@@ -699,7 +791,11 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
         brief_sha,
         schema_path,
         open_findings_count,
+        effective_mode,
+        parent_thread,
+        parent_note,
         preflight,
+        preflight_warning,
         preflight_refusal,
         revision,
         range_record,
@@ -771,6 +867,7 @@ fn make_request(
     prompt_text: &str,
     schema_path: &Option<PathBuf>,
     last_msg_path: &Path,
+    mode: Mode,
 ) -> Request {
     let sandbox = if o.sandbox.is_empty() {
         "read-only".to_string()
@@ -799,7 +896,7 @@ fn make_request(
         engine: EngineKind::Codex,
         effort: effort.sent.clone(),
         timeout_sec: r.timeout_sec as f64,
-        mode: mode_of(o),
+        mode,
         sandbox,
         schema_path: schema_arg,
         extra_config: r.extra_config.clone(),
@@ -809,20 +906,253 @@ fn make_request(
     }
 }
 
-fn mode_of(o: &Options) -> Mode {
-    // M2c: fork/resume lineage resolution from the ledger is deferred; a bare -Mode
-    // fork/resume with -Thread uses the resolved identity's lineage as the key.
-    match o.mode.as_str() {
-        "fork" if !o.thread.is_empty() => Mode::Fork {
-            thread: o.thread.clone(),
-            lineage: c3_core::engine::Lineage(String::new()),
-        },
-        "resume" if !o.thread.is_empty() => Mode::Resume {
-            thread: o.thread.clone(),
-            lineage: c3_core::engine::Lineage(String::new()),
-        },
-        _ => Mode::New,
+/// The codex `Mode` from the resolved parent walk: a `fork`/`resume` on the resolved parent
+/// thread (carrying the run's own lineage so the core refuses a cross-lineage resume), else a
+/// fresh thread.
+fn resolved_mode(effective_mode: &str, parent_thread: &str, id: &ReviewerIdentity) -> Mode {
+    if parent_thread.is_empty() {
+        return Mode::New;
     }
+    let lineage = c3_core::engine::Lineage(id.lineage.clone());
+    if effective_mode == "resume" {
+        Mode::Resume {
+            thread: parent_thread.to_string(),
+            lineage,
+        }
+    } else {
+        Mode::Fork {
+            thread: parent_thread.to_string(),
+            lineage,
+        }
+    }
+}
+
+/// The resolved parent-thread walk result (`Select-ParentThread`'s `$r`).
+#[derive(Debug)]
+struct ParentResolved {
+    parent_thread: String,
+    /// The mode after the walk (`new` when no parent; `fork` defaulted from auto with a parent).
+    mode: String,
+    /// The parent note text (`$r.Note`); empty when none.
+    note: String,
+}
+
+/// `Test-SameReviewer`: provider and model equal (ordinal, case-sensitive), each on its own,
+/// and the same engine (an absent one is codex).
+fn same_reviewer(rev: &Reviewer, id: &ReviewerIdentity) -> bool {
+    let id_engine = if id.engine.is_empty() {
+        "codex"
+    } else {
+        id.engine.as_str()
+    };
+    let entry_engine = if rev.engine.is_empty() {
+        "codex"
+    } else {
+        rev.engine.as_str()
+    };
+    rev.provider == id.provider && rev.model == id.model && entry_engine == id_engine
+}
+
+/// An entry's reviewer lineage (`Get-EntryReviewer`'s `Display` = `Format-ReviewerLineage`).
+fn entry_reviewer_lineage(rev: &Reviewer) -> String {
+    let engine = if rev.engine.is_empty() {
+        "codex"
+    } else {
+        rev.engine.as_str()
+    };
+    c3_core::lineage::format_reviewer_lineage(&rev.provider, &rev.model, engine)
+}
+
+/// Whether an entry predates the reviewer record (0.1/0.2): no reviewer fields at all. C3 cannot
+/// see a truly absent `reviewer` key (it deserializes to a blank record), so an all-empty
+/// reviewer is treated as legacy.
+fn reviewer_absent(rev: &Reviewer) -> bool {
+    rev.provider.is_empty()
+        && rev.model.is_empty()
+        && rev.engine.is_empty()
+        && rev.provider_fingerprint.is_empty()
+}
+
+/// `Select-ParentThread`: resolve the parent thread (a `resume`/`fork` target) and the effective
+/// mode from `-Mode`/`-Thread` and this task's ledger, or an `Err` refusal (byte-identical to the
+/// plugin). `-Thread` is validated by lineage and provenance; the automatic parent is the newest
+/// verified thread of the same lineage.
+fn select_parent_thread(
+    entries: &[LedgerEntry],
+    id: &ReviewerIdentity,
+    mode: &str,
+    thread: &str,
+) -> Result<ParentResolved, String> {
+    let lineage = &id.lineage;
+    let unresolved_msg = format!(
+        "provider identity could not be resolved ({}); pass -Provider and -Model explicitly, or use -Mode new",
+        id.note
+    );
+    let drift_msg = |t: &str, n: &str, fp: &str| {
+        format!(
+            "endpoint or protocol of provider {} changed since thread {t} (consult n={n} recorded provider fingerprint {}, now {}); start a new thread with -Mode new",
+            id.provider,
+            short_hash(fp),
+            short_hash(&id.fingerprint)
+        )
+    };
+    let thread = thread.trim();
+    let mut res = ParentResolved {
+        parent_thread: String::new(),
+        mode: mode.to_string(),
+        note: String::new(),
+    };
+
+    if !thread.is_empty() {
+        if !id.resolved {
+            return Err(unresolved_msg);
+        }
+        // Find-ThreadEntry: the newest entry recording this thread as a verified thread.
+        let match_entry = match entries.iter().rev().find(|e| e.thread.trim() == thread) {
+            Some(e) => e,
+            None => {
+                // A codex candidate (a foreign rollout) is never a parent; name it if present.
+                let cand = entries
+                    .iter()
+                    .rev()
+                    .find(|e| e.thread_candidate.trim() == thread);
+                return Err(match cand {
+                    Some(c) => format!(
+                        "thread {thread} has unknown provenance: it is only an unverified rollout candidate of consult n={} (that rollout did not contain the run's consultation id); use -Mode new",
+                        c.n
+                    ),
+                    None => format!(
+                        "thread {thread} has unknown provenance: it is not in this task's ledger; use -Mode new"
+                    ),
+                });
+            }
+        };
+        let n = match_entry.n;
+        if reviewer_absent(&match_entry.reviewer) {
+            return Err(format!(
+                "thread {thread} has unknown provenance (recorded before 0.3.0); use -Mode new"
+            ));
+        }
+        if match_entry.reviewer.provider_fingerprint.is_empty() {
+            return Err(format!(
+                "thread {thread} has unknown provenance: consult n={n} ran with an unresolved reviewer identity ({}); use -Mode new",
+                entry_reviewer_lineage(&match_entry.reviewer)
+            ));
+        }
+        if !same_reviewer(&match_entry.reviewer, id) {
+            let theirs = entry_reviewer_lineage(&match_entry.reviewer);
+            return Err(format!(
+                "thread {thread} belongs to lineage {theirs} (consult n={n}); this run is {lineage}. A thread never changes provider or model: use -Mode new, or run as {theirs}"
+            ));
+        }
+        let fp = &match_entry.reviewer.provider_fingerprint;
+        if *fp != id.fingerprint {
+            return Err(drift_msg(thread, &n.to_string(), fp));
+        }
+        if res.mode.is_empty() {
+            res.mode = "fork".into();
+        }
+        res.parent_thread = thread.to_string();
+        res.note = format!("-Thread, lineage {lineage} (consult n={n})");
+        return Ok(res);
+    }
+
+    // No -Thread.
+    if !id.resolved {
+        if mode == "fork" || mode == "resume" {
+            return Err(unresolved_msg);
+        }
+        res.mode = "new".into();
+        res.note = format!(
+            "reviewer identity unresolved, automatic fork/resume is off ({})",
+            id.note
+        );
+        return Ok(res);
+    }
+
+    // The automatic parent: the newest verified thread of the same lineage.
+    let mut parent: Option<&LedgerEntry> = None;
+    let (mut legacy, mut unresolved, mut candidates) = (0i64, 0i64, 0i64);
+    let mut others: Vec<String> = Vec::new();
+    for c in entries.iter().rev() {
+        let t = c.thread.trim();
+        if t.is_empty() {
+            if !c.thread_candidate.trim().is_empty() {
+                candidates += 1;
+            }
+            continue;
+        }
+        if reviewer_absent(&c.reviewer) {
+            legacy += 1;
+            continue;
+        }
+        if c.reviewer.provider_fingerprint.is_empty() {
+            unresolved += 1;
+            continue;
+        }
+        if !same_reviewer(&c.reviewer, id) {
+            let d = entry_reviewer_lineage(&c.reviewer);
+            if !others.contains(&d) {
+                others.push(d);
+            }
+            continue;
+        }
+        if parent.is_none() {
+            parent = Some(c);
+        }
+    }
+    if let Some(p) = parent {
+        if mode == "new" {
+            return Ok(res); // -Mode new starts a fresh thread even when a parent is available.
+        }
+        let pt = p.thread.trim().to_string();
+        let n = p.n;
+        let fp = &p.reviewer.provider_fingerprint;
+        if *fp != id.fingerprint {
+            return Err(drift_msg(&pt, &n.to_string(), fp));
+        }
+        if res.mode.is_empty() {
+            res.mode = "fork".into();
+        }
+        res.parent_thread = pt;
+        res.note = format!("newest thread of lineage {lineage} (consult n={n})");
+        return Ok(res);
+    }
+
+    // No parent of this lineage.
+    let mut why: Vec<String> = Vec::new();
+    if legacy > 0 {
+        why.push(format!(
+            "{legacy} thread(s) recorded before 0.3.0 have unknown provenance and are never automatic parents"
+        ));
+    }
+    if !others.is_empty() {
+        why.push(format!("other lineage(s): {}", others.join(", ")));
+    }
+    if unresolved > 0 {
+        why.push(format!(
+            "{unresolved} thread(s) of runs with an unresolved reviewer identity are never parents"
+        ));
+    }
+    if candidates > 0 {
+        why.push(format!(
+            "{candidates} unverified rollout candidate(s) are never parents"
+        ));
+    }
+    let mut note = format!("no thread of lineage {lineage} in this task's ledger");
+    if !why.is_empty() {
+        note.push_str(&format!("; {}", why.join("; ")));
+    }
+    if mode == "fork" || mode == "resume" {
+        return Err(format!(
+            "-Mode {mode} needs a parent thread: {note}. Pass -Thread <uuid> of lineage {lineage}, or use -Mode new"
+        ));
+    }
+    res.mode = "new".into();
+    if !entries.is_empty() {
+        res.note = note;
+    }
+    Ok(res)
 }
 
 fn schema_file(_repo_root: &Path) -> Option<PathBuf> {
@@ -916,6 +1246,11 @@ fn run_live(mut ctx: Context) -> i32 {
     // Ensure the handoffs dir exists.
     if let Err(e) = std::fs::create_dir_all(&ctx.handoffs_dir) {
         return refuse(&format!("could not create the handoffs directory: {e}"));
+    }
+    // The `-SkipPreflight` quota warning prints before the lock (never on a dry run, which
+    // never reaches `run_live`).
+    if !ctx.preflight_warning.is_empty() {
+        println!("WARNING: {}", ctx.preflight_warning);
     }
     let store = FilesStore::new(ctx.collab_root.clone());
     let pending = PendingRef::single(ctx.task.clone());
@@ -1132,7 +1467,7 @@ fn make_live_request(ctx: &Context) -> Request {
         engine: EngineKind::Codex,
         effort: ctx.effort.sent.clone(),
         timeout_sec: ctx.r.timeout_sec as f64,
-        mode: mode_of(o),
+        mode: resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity),
         sandbox,
         schema_path: schema_arg,
         extra_config: ctx.r.extra_config.clone(),
@@ -1218,7 +1553,7 @@ fn finish(
             };
             timeout_survivors = survivors;
         }
-        AttemptOutcome::ProviderFailure(pf) => {
+        AttemptOutcome::ProviderFailure { failure: pf, .. } => {
             bridge_outcome = format!("failed: {} - {}", pf.class, pf.message);
             provider_failure = Some(pf);
         }
@@ -1544,7 +1879,7 @@ fn finish(
         usable,
         wall_seconds: fmt_wall(wall_seconds),
         lineage_shown: ctx.identity.lineage.clone(),
-        mode: mode_str(&ctx.o),
+        mode: ctx.effective_mode.clone(),
         thread: thread.clone(),
         thread_source: thread_source.clone(),
         continue_line: continue_line.unwrap_or_default(),
@@ -1826,7 +2161,7 @@ fn run_timeout_continuation(
     };
 
     println!(
-        "c3 consult: the main turn was killed at {} s of {} s; one continuation turn on thread {} (up to {} s)",
+        "{TOOL}: the main turn was killed at {} s of {} s; one continuation turn on thread {} (up to {} s)",
         fmt_wall(main_wall),
         ctx.r.timeout_sec,
         continue_thread,
@@ -1899,11 +2234,18 @@ fn run_timeout_continuation(
             );
             sec.continue_killed = true;
         }
-        AttemptOutcome::ProviderFailure(pf) => {
-            // The plugin reports the killed continuation as `codex exit N - <err>`; the adapter
-            // has already classified it, so name the classified message (the exact `codex exit N`
-            // framing is the plugin's raw read — a documented divergence).
-            continue_problem = pf.message.clone();
+        AttemptOutcome::ProviderFailure {
+            failure: pf,
+            exit_code,
+        } => {
+            // The plugin frames a non-clean continuation exit as `codex exit N - <err>` (a bare
+            // `codex exit N` when no error text), surfacing the raw process exit code.
+            let n = exit_code.unwrap_or(-1);
+            continue_problem = if pf.message.trim().is_empty() {
+                format!("codex exit {n}")
+            } else {
+                format!("codex exit {n} - {}", pf.message)
+            };
             *provider_failure = Some(finalize_pf(pf));
         }
         AttemptOutcome::LaunchFailed { message, .. } => {
@@ -2067,8 +2409,9 @@ fn run_format_repair(
             repair_problem = format!("timeout after {repair_timeout} s (process tree killed)");
             sec.repair_killed = true;
         }
-        AttemptOutcome::ProviderFailure(pf) => {
-            repair_problem = pf.message.clone();
+        AttemptOutcome::ProviderFailure { exit_code, .. } => {
+            // The plugin frames a non-clean repair exit as a bare `codex exit N`.
+            repair_problem = format!("codex exit {}", exit_code.unwrap_or(-1));
         }
         AttemptOutcome::LaunchFailed { message, .. } => {
             repair_problem = format!("could not start codex - {message}");
@@ -2301,14 +2644,6 @@ fn classify_exit(outcome: &str, pf: Option<&c3_core::ledger::ProviderFailure>) -
     // are an M2c+ refinement, not the timeout-kill path (which is a plain failed run = 1).
     let _ = (outcome, pf);
     1
-}
-
-fn mode_str(o: &Options) -> String {
-    if o.mode.is_empty() {
-        "new".to_string()
-    } else {
-        o.mode.clone()
-    }
 }
 
 fn build_finding(
@@ -2624,7 +2959,7 @@ fn render_handoff(
         effort_mapping: ctx.effort.mapping.clone(),
         effort_basis: ctx.effort.basis.clone(),
         consult_id: ctx.consult_id.clone(),
-        mode: mode_str(&ctx.o),
+        mode: ctx.effective_mode.clone(),
         sandbox: sandbox_label(&ctx.o),
         purpose: ctx.r.purpose_label.clone(),
         argv: format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
@@ -2641,10 +2976,21 @@ fn render_handoff(
             format!("Preflight: {}.", ctx.preflight)
         },
         roster_line: None,
-        parent_result_line: format!(
-            "Parent thread: (none - new thread). Result thread: `{}` (source: {}).",
-            thread, thread_source
-        ),
+        parent_result_line: {
+            let parent_line = if !ctx.parent_thread.is_empty() {
+                format!("Parent thread: `{}`.", ctx.parent_thread)
+            } else if !ctx.parent_note.is_empty() {
+                format!("Parent thread: (none - new thread; {}).", ctx.parent_note)
+            } else {
+                "Parent thread: (none - new thread).".to_string()
+            };
+            let result_thread = if thread.is_empty() {
+                "(unknown)".to_string()
+            } else {
+                format!("`{thread}`")
+            };
+            format!("{parent_line} Result thread: {result_thread} (source: {thread_source}).")
+        },
         brief_reviewed_line: brief_reviewed_line(ctx),
         timeout_line: {
             let mut t = format!(
@@ -2785,15 +3131,26 @@ fn short_hash(h: &str) -> String {
 
 /// `Reviewer: <lineage> (provider from <src>, model from <src>; endpoint <host>; provider
 /// fingerprint <short>[; <note>]; harness <harness>).` (`$reviewerLine`).
+/// The reviewer identity's `endpoint <base_url>, wire_api: <x>` display (`$identity.Display`):
+/// the full canonical base_url with the query redacted (`(default)` when the endpoint is
+/// Codex's own default), and the wire_api label (`(default)` when the table declares none).
+pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
+    let audit = if id.base_url.trim().is_empty() {
+        "(default)".to_string()
+    } else {
+        crate::providers::strip_query(&id.base_url)
+    };
+    let wire_label = match id.wire_api.trim() {
+        "" | "(built in)" => "(default)",
+        other => other,
+    };
+    format!("endpoint {audit}, wire_api: {wire_label}")
+}
+
 pub(crate) fn reviewer_line(id: &ReviewerIdentity, codex_version: &str) -> String {
     let harness = format!("codex-cli {}", codex_version.replace("codex-cli ", ""));
-    let host = if id.host.is_empty() {
-        "builtin:openai"
-    } else {
-        &id.host
-    };
     let mut line = format!(
-        "Reviewer: {} (provider from {}, model from {}; endpoint {}",
+        "Reviewer: {} (provider from {}, model from {}; {}",
         id.lineage,
         if id.provider_source.is_empty() {
             "codex default"
@@ -2805,7 +3162,7 @@ pub(crate) fn reviewer_line(id: &ReviewerIdentity, codex_version: &str) -> Strin
         } else {
             &id.model_source
         },
-        host
+        identity_display(id)
     );
     if id.resolved {
         line.push_str(&format!(
@@ -2871,13 +3228,18 @@ fn build_entry(
         n: ctx.consult_n,
         when: iso_now(),
         purpose: ctx.o.purpose.clone(),
+        // `-Topics`/`-Role` are the roster/M4 surface; a single codex run writes the plugin's
+        // empty defaults (`[]` / `""`) so the entry is byte-identical to the live plugin.
+        topics: Some(Vec::new()),
+        role: Some(String::new()),
         consult_id: ctx.consult_id.clone(),
         lineage: ctx.identity.lineage.clone(),
         preflight: ctx.preflight.clone(),
-        parent_thread: String::new(),
+        preflight_warning: ctx.preflight_warning.clone(),
+        parent_thread: ctx.parent_thread.clone(),
         thread: thread.to_string(),
         thread_source: thread_source.to_string(),
-        mode: mode_str(&ctx.o),
+        mode: ctx.effective_mode.clone(),
         command: format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
         brief: ctx.brief_ref.clone(),
         prompt_chars: ctx.prompt_text.chars().count() as i64,
@@ -3060,5 +3422,125 @@ mod telemetry_tests {
 
         std::env::remove_var("CODEX_HOME");
         let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[cfg(test)]
+mod parent_walk_tests {
+    use super::*;
+    use c3_core::ledger::{LedgerEntry, Reviewer};
+
+    fn id(provider: &str, model: &str, fp: &str) -> ReviewerIdentity {
+        ReviewerIdentity {
+            provider: provider.into(),
+            provider_source: "-Provider".into(),
+            model: model.into(),
+            model_source: "-Model".into(),
+            lineage: c3_core::lineage::format_reviewer_lineage(provider, model, "codex"),
+            resolved: true,
+            note: String::new(),
+            error: String::new(),
+            fingerprint: fp.into(),
+            compat_string: String::new(),
+            host: String::new(),
+            base_url: String::new(),
+            wire_api: String::new(),
+            engine: "codex".into(),
+        }
+    }
+
+    fn entry(n: i64, thread: &str, provider: &str, model: &str, fp: &str) -> LedgerEntry {
+        LedgerEntry {
+            n,
+            thread: thread.into(),
+            reviewer: Reviewer {
+                provider: provider.into(),
+                model: model.into(),
+                engine: "codex".into(),
+                provider_fingerprint: fp.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unknown_thread_refused() {
+        let e =
+            select_parent_thread(&[], &id("openai", "gpt-5.1", "fp1"), "fork", "abc").unwrap_err();
+        assert_eq!(
+            e,
+            "thread abc has unknown provenance: it is not in this task's ledger; use -Mode new"
+        );
+    }
+
+    #[test]
+    fn cross_lineage_thread_refused() {
+        let entries = vec![entry(1, "t-1", "ZAI", "glm-5.3", "fpz")];
+        let e = select_parent_thread(&entries, &id("openai", "gpt-5.1", "fp1"), "fork", "t-1")
+            .unwrap_err();
+        assert!(
+            e.contains(
+                "belongs to lineage ZAI :: glm-5.3 (consult n=1); this run is openai :: gpt-5.1"
+            ),
+            "{e}"
+        );
+        assert!(
+            e.ends_with("use -Mode new, or run as ZAI :: glm-5.3"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn legacy_entry_refused_for_thread() {
+        // A pre-0.3 entry (no reviewer fields at all) recorded this thread.
+        let mut leg = entry(1, "t-1", "", "", "");
+        leg.reviewer = Reviewer::default();
+        let e = select_parent_thread(&[leg], &id("openai", "gpt-5.1", "fp1"), "fork", "t-1")
+            .unwrap_err();
+        assert_eq!(
+            e,
+            "thread t-1 has unknown provenance (recorded before 0.3.0); use -Mode new"
+        );
+    }
+
+    #[test]
+    fn fork_needs_parent_when_none_of_lineage() {
+        let entries = vec![entry(1, "t-1", "ZAI", "glm-5.3", "fpz")];
+        let e = select_parent_thread(&entries, &id("openai", "gpt-5.1", "fp1"), "fork", "")
+            .unwrap_err();
+        assert!(e.starts_with("-Mode fork needs a parent thread: no thread of lineage openai :: gpt-5.1 in this task's ledger"), "{e}");
+        assert!(e.contains("other lineage(s): ZAI :: glm-5.3"), "{e}");
+        assert!(
+            e.ends_with("Pass -Thread <uuid> of lineage openai :: gpt-5.1, or use -Mode new"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn auto_forks_newest_same_lineage() {
+        let entries = vec![
+            entry(1, "t-1", "openai", "gpt-5.1", "fp1"),
+            entry(2, "t-2", "openai", "gpt-5.1", "fp1"),
+        ];
+        let r = select_parent_thread(&entries, &id("openai", "gpt-5.1", "fp1"), "", "").unwrap();
+        assert_eq!(r.parent_thread, "t-2");
+        assert_eq!(r.mode, "fork");
+        assert_eq!(
+            r.note,
+            "newest thread of lineage openai :: gpt-5.1 (consult n=2)"
+        );
+    }
+
+    #[test]
+    fn thread_drift_refused() {
+        let entries = vec![entry(1, "t-1", "openai", "gpt-5.1", "OLDfp")];
+        let e = select_parent_thread(&entries, &id("openai", "gpt-5.1", "NEWfp"), "resume", "t-1")
+            .unwrap_err();
+        assert!(
+            e.contains("endpoint or protocol of provider openai changed since thread t-1"),
+            "{e}"
+        );
+        assert!(e.contains("start a new thread with -Mode new"), "{e}");
     }
 }

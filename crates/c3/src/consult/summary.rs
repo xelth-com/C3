@@ -186,7 +186,7 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     if !s.usable {
         out.push(format!(
-            "c3 consult: {} (wall {} s)",
+            "codex-consult: {} (wall {} s)",
             s.bridge_outcome, s.wall_seconds
         ));
         if !s.failure_hint.is_empty() {
@@ -219,7 +219,7 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
     }
 
     out.push(format!(
-        "c3 consult: {} - {}, mode {}, thread {} (source: {}), wall {} s",
+        "codex-consult: {} - {}, mode {}, thread {} (source: {}), wall {} s",
         s.bridge_outcome, s.lineage_shown, s.mode, s.thread, s.thread_source, s.wall_seconds
     ));
     if !s.continue_line.is_empty() {
@@ -333,7 +333,7 @@ mod tests {
             ..Default::default()
         };
         let lines = render_summary(&s);
-        assert!(lines[0].starts_with("c3 consult: failed: timeout"));
+        assert!(lines[0].starts_with("codex-consult: failed: timeout"));
         assert!(lines.iter().any(|l| l.starts_with("hint       :")));
         assert!(lines.iter().any(|l| l.starts_with("partial    :")));
         assert!(lines.iter().any(|l| l.starts_with("resume     :")));

@@ -168,6 +168,15 @@ mod tests {
     }
 
     #[test]
+    fn fenced_short_object_is_structured_not_short_prose() {
+        // TRANSP: a prompt-only run returns a fenced JSON object; it must validate as
+        // structured (not fall to the prose gate and count "```json"/blob/"```" as 3 words).
+        let json = "```json\n{\"schema_version\":\"1\",\"verdict\":\"ADVISE\",\"verdict_reason\":\"r\",\"reply_markdown\":\"m\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}\n```";
+        assert!(matches!(classify(json), Ingestion::Structured(_)));
+        assert!(first_validation_error(json).is_empty());
+    }
+
+    #[test]
     fn substantive_prose_earns_repair() {
         // one numbered answer, >= 40 words.
         let text = "Q1. The change is consistent with the surrounding module and does not \

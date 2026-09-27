@@ -348,7 +348,12 @@ pub enum AttemptOutcome {
         child_exists: bool,
         message: String,
     },
-    ProviderFailure(ProviderFailure),
+    ProviderFailure {
+        failure: ProviderFailure,
+        /// The child's raw process exit code, for the plugin's `codex exit N` framing on a
+        /// secondary (timeout-continuation / format-repair) turn. `None` when unknown.
+        exit_code: Option<i32>,
+    },
     Cancelled,
 }
 

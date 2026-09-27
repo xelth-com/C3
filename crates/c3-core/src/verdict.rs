@@ -129,6 +129,16 @@ pub fn verdict_with_credential(
         );
     } else if let Some(q) = quota {
         let until_iso = format_offset_iso(q.until);
+        // A reset-less burst 429 (`kind == "burst"`) is out for 10 minutes and names the 429
+        // in the parenthetical; a usage-limit-without-reset is out for 60 (wave 24c).
+        let is_burst = q.kind == "burst";
+        let limit_word = if is_burst { "burst" } else { "usage" };
+        let burst_clause = if is_burst {
+            " - a 429 that names no usage limit or quota"
+        } else {
+            ""
+        };
+        let out_min = (q.until - q.hit).num_minutes();
         v.state = "unavailable".into();
         v.kind = "quota-unknown-reset".into();
         v.hit = Some(q.hit);
@@ -144,7 +154,7 @@ pub fn verdict_with_credential(
             " (pass -SkipPreflight to launch anyway)"
         };
         v.refusal = format!(
-            "provider {p} is not usable: it hit a usage limit at {} ({}) and named no reset time - out for 60 minutes, until {until_iso}; nothing was started{tail}",
+            "provider {p} is not usable: it hit a {limit_word} limit at {} ({}{burst_clause}) and named no reset time - out for {out_min} minutes, until {until_iso}; nothing was started{tail}",
             q.hit_iso, q.message
         );
         v.label = format!(

@@ -160,14 +160,13 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
     } else {
         out.push("format retry : 0 (off)".into());
     }
-    out.push(format!("mode        : {}", mode_str(ctx)));
-    if mode_str(ctx) == "new" {
+    out.push(format!("mode        : {}", ctx.effective_mode));
+    if ctx.effective_mode == "new" {
         out.push("thread      : (a new thread will be created)".into());
     } else {
         out.push(format!(
             "thread      : {} (parent for {})",
-            ctx.o.thread,
-            mode_str(ctx)
+            ctx.parent_thread, ctx.effective_mode
         ));
     }
     out.push(format!(
@@ -255,10 +254,10 @@ fn preview(ctx: &Context) -> Value {
         "purpose": ctx.o.purpose,
         "consult_id": ctx.consult_id,
         "lineage": ctx.identity.lineage,
-        "parent_thread": ctx.o.thread,
+        "parent_thread": ctx.parent_thread,
         "thread": "<filled from the event stream>",
         "thread_source": "events|rollout (verified by consultation id)|unknown",
-        "mode": mode_str(ctx),
+        "mode": ctx.effective_mode,
         "command": format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
         "brief": ctx.brief_ref,
         "range": ctx.range_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
@@ -311,14 +310,6 @@ fn sandbox_label(ctx: &Context) -> String {
         "read-only".to_string()
     } else {
         ctx.o.sandbox.clone()
-    }
-}
-
-fn mode_str(ctx: &Context) -> String {
-    if ctx.o.mode.is_empty() {
-        "new".to_string()
-    } else {
-        ctx.o.mode.clone()
     }
 }
 

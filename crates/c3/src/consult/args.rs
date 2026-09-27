@@ -58,6 +58,7 @@ pub struct Options {
     pub max_model_steps: i64,
     pub panel: bool,
     pub panel_all: bool,
+    pub panel_concurrency_given: bool,
     pub detach: bool,
     pub status: bool,
     pub list: bool,
@@ -101,6 +102,12 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
     if o.panel || o.panel_all {
         return Err(
             "-Panel is a milestone 4 feature; c3 consult runs one reviewer (drop -Panel).".into(),
+        );
+    }
+    if o.panel_concurrency_given {
+        return Err(
+            "-PanelConcurrency is a milestone 4 (panel) feature; c3 consult runs one reviewer (drop -PanelConcurrency)."
+                .into(),
         );
     }
     if !o.engine.is_empty() && o.engine != "codex" {
@@ -207,7 +214,10 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
             ));
         }
     }
-    if !o.thread.is_empty() && (o.mode.is_empty() || o.mode == "new") {
+    // Only an EXPLICIT `-Mode new` with `-Thread` is refused here (matching `Select-ParentThread`,
+    // `if ($Mode -eq 'new')`); an empty/auto mode with `-Thread` falls through to the parent walk,
+    // which defaults the mode to fork.
+    if !o.thread.is_empty() && o.mode == "new" {
         return Err(
             "-Thread needs -Mode fork or resume (-Mode new always starts a fresh thread).".into(),
         );

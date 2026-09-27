@@ -111,6 +111,9 @@ pub struct ConsultArgs {
     /// Panel including weighty entries (M4).
     #[arg(long)]
     pub panel_all: bool,
+    /// Panel concurrency (M4); parsed so clap accepts it, refused like --panel.
+    #[arg(long, default_value_t = -1)]
+    pub panel_concurrency: i64,
     /// Reserved (R12).
     #[arg(long)]
     pub detach: bool,
@@ -134,6 +137,7 @@ pub fn run(args: ConsultArgs) -> i32 {
     // explicit -1; treat any value != -1 as given, and -1 as the default sentinel).
     let continue_sec_given = args.continue_sec != -1;
     let denial_retry_given = args.denial_retry != 1;
+    let panel_concurrency_given = args.panel_concurrency != -1;
     let opts = Options {
         task: args.task,
         collab_dir: args.collab_dir,
@@ -169,6 +173,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         max_model_steps: args.max_model_steps,
         panel: args.panel,
         panel_all: args.panel_all,
+        panel_concurrency_given,
         detach: args.detach,
         status: args.status,
         list: args.list,
