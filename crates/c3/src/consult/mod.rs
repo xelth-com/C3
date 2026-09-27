@@ -19,6 +19,7 @@ pub mod dryrun;
 pub mod ingest;
 pub mod orchestrate;
 pub mod prompt;
+pub mod recovery;
 pub mod render;
 pub mod revision;
 pub mod summary;

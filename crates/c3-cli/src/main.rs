@@ -52,12 +52,12 @@ enum Commands {
     ForgetMe(c3::cli::telemetry::ForgetMeArgs),
     /// Telemetry on/off status and the instance id (milestone 5).
     Telemetry(c3::cli::telemetry::TelemetryArgs),
-    /// Build a reviewer pack or a project snapshot (milestone 7).
-    Pack,
+    /// Build a reviewer pack for the http engine, with a `.pack.json` sidecar (milestone 7).
+    Pack(c3::cli::pack::PackArgs),
     /// Build an explainer pack for one claim (milestone 7).
-    Explain,
-    /// Take a repository snapshot (milestone 7).
-    Snapshot,
+    Explain(c3::cli::explain::ExplainArgs),
+    /// Take a repository snapshot, optionally as a git delta (milestone 7).
+    Snapshot(c3::cli::snapshot::SnapshotArgs),
     /// Build or query the code index (milestone 8).
     Index,
     /// Run the stdio MCP server (milestone 10).
@@ -114,9 +114,9 @@ fn main() {
         Some(Commands::Complain(a)) => c3::cli::telemetry::run_complain(a),
         Some(Commands::ForgetMe(a)) => c3::cli::telemetry::run_forget_me(a),
         Some(Commands::Telemetry(a)) => c3::cli::telemetry::run_telemetry(a),
-        Some(Commands::Pack) => stub("pack", 7),
-        Some(Commands::Explain) => stub("explain", 7),
-        Some(Commands::Snapshot) => stub("snapshot", 7),
+        Some(Commands::Pack(a)) => c3::cli::pack::run(a),
+        Some(Commands::Explain(a)) => c3::cli::explain::run(a),
+        Some(Commands::Snapshot(a)) => c3::cli::snapshot::run(a),
         Some(Commands::Index) => stub("index", 8),
         Some(Commands::Mcp) => stub("mcp", 10),
         None => {

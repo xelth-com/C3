@@ -43,6 +43,9 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         "lock        : {} (held open for the run; not in a dry run)",
         lock.display()
     ));
+    for line in &ctx.recovery_dry_lines {
+        out.push(format!("pending     : {line}"));
+    }
     if ctx.launcher.is_empty() {
         out.push("launcher    : (codex not found on PATH)".into());
     } else {

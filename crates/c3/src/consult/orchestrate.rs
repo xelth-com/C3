@@ -315,6 +315,11 @@ pub(crate) struct Context {
     pub(crate) peak_label: String,
     /// Whether telemetry is enabled for this run (`--telemetry`/env switch).
     pub(crate) telemetry_enabled: bool,
+    /// The dry-run `pending :` recovery lines (a dry run reports, never refuses).
+    pub(crate) recovery_dry_lines: Vec<String>,
+    /// The recovered/cleared lines of consumed records (set under the lock in `run_live`),
+    /// echoed to the console and carried into the handoff header as `Recovery record: ...`.
+    pub(crate) recovery_lines: Vec<String>,
     // paths
     pub(crate) handoffs_dir: PathBuf,
     pub(crate) reply_path: PathBuf,
@@ -617,6 +622,17 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     let codex_version = get_codex_version(&launcher);
     let revision = revision::revision_info(&repo_root, Some(&collab_root));
 
+    // Recovery records: a dry run only reports them (`pending :` lines); a real run reads and
+    // acts on them under the lock (`run_live`). An unusable record refuses even a dry run.
+    let mut recovery_dry_lines: Vec<String> = Vec::new();
+    if o.dry_run {
+        let rec = super::recovery::assess(&store, &task);
+        if let Some(err) = rec.error {
+            return Err((err, 1));
+        }
+        recovery_dry_lines = rec.items.iter().map(super::recovery::dry_line).collect();
+    }
+
     Ok(Context {
         o,
         r,
@@ -656,6 +672,8 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
         telemetry_enabled: telemetry::is_enabled(&telemetry::Config {
             telemetry: o_telemetry,
         }),
+        recovery_dry_lines,
+        recovery_lines: Vec::new(),
         handoffs_dir,
         reply_path,
         reply_json_path,
@@ -871,18 +889,45 @@ fn run_live(mut ctx: Context) -> i32 {
         }
     };
 
-    // Reserve the recovery record.
+    // Recovery records: read and judge every `.consult.pending*.json` of the task under the
+    // lock, BEFORE anything is written (`codex-consult.ps1` ~2766). A corrupt record refuses;
+    // a live process of an interrupted run refuses (its message names the pid); a dead record
+    // is consumed — numbering already skipped past it (`next_numbers`), a recovered/cleared
+    // line is printed and carried into the handoff, and a consumed panel-member record is
+    // removed (the single-run record is overwritten by this run's reservation below).
+    {
+        let assessed = super::recovery::assess(&store, &ctx.task);
+        if let Some(err) = assessed.error {
+            return refuse(&err);
+        }
+        if let Some(msg) = assessed.active_message() {
+            return refuse(&msg);
+        }
+        let own = pending.file_name();
+        for item in &assessed.items {
+            let line = super::recovery::run_line(item);
+            println!("{TOOL}: {line}");
+            ctx.recovery_lines.push(line);
+            let is_own = item
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().eq_ignore_ascii_case(&own))
+                .unwrap_or(false);
+            if !is_own {
+                if let Err(e) = std::fs::remove_file(&item.path) {
+                    println!(
+                        "{TOOL}: could not remove the consumed recovery record {} ({e})",
+                        item.path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    // Reserve the recovery record (`New-PendingRecord -State reserved`): this bridge's pid and
+    // start time (the writer-pid liveness rule), the host and this run's numbers/reply.
     let reply_rel = format!("handoffs/{:02}-codex-{}.md", ctx.nn, ctx.reply_name);
-    let mut rec = PendingRecord {
-        state: PendingState::Reserved,
-        ..Default::default()
-    };
-    rec.n = ctx.consult_n;
-    rec.nn = format!("{:02}", ctx.nn);
-    rec.reply = reply_rel.clone();
-    rec.consult_id = ctx.consult_id.clone();
-    rec.launcher = ctx.launcher.clone();
-    rec.engine = "codex".into();
+    let mut rec = new_pending_record(PendingState::Reserved, &ctx, &reply_rel);
     let _ = store.write_pending(&pending, &rec);
 
     // The plugin fingerprints the tree AFTER the lock and recovery record exist, so the
@@ -916,6 +961,34 @@ fn run_live(mut ctx: Context) -> i32 {
         println!("WARNING: {}", ctx.peak_warning);
     }
 
+    // (3) launching — from here on a crash may leave a codex process whose pid is not yet
+    // recorded; the next run then scans the tree (`codex-consult.ps1:3299`).
+    rec.state = PendingState::Launching;
+    rec.note = "codex is being started; its pid is not recorded yet".into();
+    let _ = store.write_pending(&pending, &rec);
+
+    // (4) running — the callback flips the record to `running` right after the child spawns,
+    // recording its pid and start time so the next run detects an interrupted-run process.
+    let events_rel_for_record = c3_core::paths::repo_relative(&ctx.repo_root, &ctx.events_path)
+        .unwrap_or_else(|| ctx.events_path.to_string_lossy().to_string());
+    let rec_arc = std::sync::Arc::new(std::sync::Mutex::new(rec));
+    let on_running: std::sync::Arc<dyn Fn(u32, String) + Send + Sync> = {
+        let cb_store = store.clone();
+        let cb_pending = pending.clone();
+        let cb_rec = std::sync::Arc::clone(&rec_arc);
+        let cb_events = events_rel_for_record.clone();
+        std::sync::Arc::new(move |child_pid: u32, child_start: String| {
+            if let Ok(mut r) = cb_rec.lock() {
+                r.state = PendingState::Running;
+                r.child_pid = Some(child_pid);
+                r.child_start_time = child_start;
+                r.events = cb_events.clone();
+                r.note = String::new();
+                let _ = cb_store.write_pending(&cb_pending, &r);
+            }
+        })
+    };
+
     // Run the primary turn.
     let engine_files = TurnFiles {
         events: ctx.events_path.clone(),
@@ -926,6 +999,7 @@ fn run_live(mut ctx: Context) -> i32 {
         cwd: ctx.repo_root.clone(),
         primary: engine_files,
         secondary: TurnFiles::default(),
+        on_running: Some(on_running),
     };
     let request = make_live_request(&ctx);
     let turn = TurnRequest {
@@ -945,7 +1019,46 @@ fn run_live(mut ctx: Context) -> i32 {
         }
     };
 
-    finish(ctx, store, pending, outcome)
+    let base_record = rec_arc.lock().map(|r| r.clone()).unwrap_or_default();
+    finish(ctx, store, pending, outcome, base_record)
+}
+
+/// A fresh recovery record for this run (`New-PendingRecord`): this bridge's pid/start/host
+/// (the writer-pid liveness rule) plus the run's numbers, reply and launcher.
+fn new_pending_record(state: PendingState, ctx: &Context, reply_rel: &str) -> PendingRecord {
+    let pid = std::process::id();
+    PendingRecord {
+        state,
+        n: ctx.consult_n,
+        nn: format!("{:02}", ctx.nn),
+        reply: reply_rel.to_string(),
+        consult_id: ctx.consult_id.clone(),
+        started: iso_now(),
+        pid,
+        start_time: crate::liveness::proc::process_start_iso(pid).unwrap_or_default(),
+        host: pending_host(),
+        launcher: ctx.launcher.clone(),
+        engine: "codex".into(),
+        ..Default::default()
+    }
+}
+
+fn pending_host() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_default()
+}
+
+/// Survivor entries `{pid, start_time, name}` for the pids a timeout kill left alive
+/// (`New-SurvivorEntries`); a pid already gone is left out so a reused pid is never mistaken
+/// for the survivor later.
+fn survivor_entries(pids: &[u32]) -> Vec<serde_json::Value> {
+    pids.iter()
+        .filter_map(|&pid| {
+            crate::liveness::proc::process_start_iso(pid)
+                .map(|start| serde_json::json!({ "pid": pid, "start_time": start, "name": "" }))
+        })
+        .collect()
 }
 
 fn make_live_request(ctx: &Context) -> Request {
@@ -991,7 +1104,13 @@ fn store_pending_path(store: &FilesStore, pending: &PendingRef) -> PathBuf {
 }
 
 /// Ingest the outcome, render, commit and print the summary.
-fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: AttemptOutcome) -> i32 {
+fn finish(
+    ctx: Context,
+    store: FilesStore,
+    pending: PendingRef,
+    outcome: AttemptOutcome,
+    base_record: PendingRecord,
+) -> i32 {
     let bridge_outcome;
     let mut structured: Option<StructuredReply> = None;
     let mut raw_text = String::new();
@@ -1002,6 +1121,9 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
     let mut validation_error = String::new();
     let mut provider_failure = None;
     let mut usable = false;
+    // Pids that survived a timeout kill: their recovery record is kept (`survivors`) so the
+    // next run for this task is refused until they exit.
+    let mut timeout_survivors: Vec<u32> = Vec::new();
 
     match outcome {
         AttemptOutcome::Completed(reply) => {
@@ -1042,15 +1164,24 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
         }
         AttemptOutcome::TimedOut { survivors, .. } => {
             wall_seconds = ctx.r.timeout_sec as f64;
-            bridge_outcome = format!(
-                "failed: timeout after {} s (process tree killed{})",
-                ctx.r.timeout_sec,
-                if survivors.is_empty() {
-                    String::new()
-                } else {
-                    format!("; {} processes survived", survivors.len())
-                }
-            );
+            bridge_outcome = if survivors.is_empty() {
+                format!(
+                    "failed: timeout after {} s (process tree killed)",
+                    ctx.r.timeout_sec
+                )
+            } else {
+                format!(
+                    "failed: timeout after {} s (process tree killed; {} processes survived: pid {}; the next run for this task is refused until they exit)",
+                    ctx.r.timeout_sec,
+                    survivors.len(),
+                    survivors
+                        .iter()
+                        .map(|p| p.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            timeout_survivors = survivors;
         }
         AttemptOutcome::ProviderFailure(pf) => {
             bridge_outcome = format!("failed: {} - {}", pf.class, pf.message);
@@ -1162,6 +1293,19 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
     // Commit under the write lock: the handoff `.md`. The raw `.reply.json` was already
     // written above, before the lock (crash-safety), so it is not in the commit `files` list.
     let files = vec![(handoff_rel.clone(), handoff_md.clone().into_bytes())];
+    // Timeout survivors: keep the recovery record in the `survivors` state (a live process of
+    // this run is still out there) so the commit does not delete it and the next run is
+    // refused until they exit. Written before the write lock, as the plugin does after the
+    // kill (`codex-consult.ps1:3375`).
+    let disposition = if timeout_survivors.is_empty() {
+        RecoveryDisposition::Remove
+    } else {
+        let mut survivor_rec = base_record.clone();
+        survivor_rec.state = PendingState::Survivors;
+        survivor_rec.survivors = survivor_entries(&timeout_survivors);
+        let _ = store.write_pending(&pending, &survivor_rec);
+        RecoveryDisposition::Retain
+    };
     let write_lock = match store.take_write_lock(&ctx.task) {
         Ok(l) => l,
         Err(e) => return refuse(&format!("could not take the write lock: {e}")),
@@ -1170,7 +1314,7 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
         entry,
         findings: delta,
         pending: &pending,
-        disposition: RecoveryDisposition::Remove,
+        disposition,
         files: &files,
         bootstrap_cwd: ctx.repo_root.to_string_lossy().to_string(),
         bootstrap_tool: ctx.codex_version.clone(),
@@ -1406,7 +1550,14 @@ fn render_handoff(
             engine: "codex".into(),
         },
     };
-    let mut records = OptionalRecords::default();
+    let mut records = OptionalRecords {
+        recovery_lines: ctx
+            .recovery_lines
+            .iter()
+            .map(|l| format!("Recovery record: {l}"))
+            .collect(),
+        ..Default::default()
+    };
     if !ctx.peak_warning.is_empty() {
         // The handoff records the past tense ('ran at') of the console warning, with the
         // same `WARNING: ` prefix the console line carries.

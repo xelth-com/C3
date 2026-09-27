@@ -32,7 +32,7 @@ pub struct TurnFiles {
 /// The runtime codex engine: the resolved launcher, the working directory (repo root) and
 /// the per-turn stream files. `plan`/`precheck`/`capabilities` delegate to the core
 /// [`SubprocessEngine`] so the argv stays byte-identical.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CodexEngine {
     pub launcher: String,
     pub cwd: PathBuf,
@@ -40,6 +40,10 @@ pub struct CodexEngine {
     pub primary: TurnFiles,
     /// The secondary turn's streams (format repair / timeout continuation), when one runs.
     pub secondary: TurnFiles,
+    /// Called once per turn, right after the child spawns and before it is waited on, with the
+    /// child pid and its start time — the orchestrator flips the recovery record `launching`
+    /// -> `running` (`codex-consult.ps1:3330`). `None` leaves the record `launching`.
+    pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
 }
 
 impl CodexEngine {
@@ -74,6 +78,10 @@ impl CodexEngine {
             events_path: &files.events,
             stderr_path: &files.stderr,
             timeout,
+            on_running: self
+                .on_running
+                .as_ref()
+                .map(|a| a.as_ref() as &dyn Fn(u32, String)),
         };
         let result = run_turn(&spawn);
 

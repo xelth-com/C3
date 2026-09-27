@@ -38,6 +38,11 @@ pub struct SpawnRequest<'a> {
     pub stderr_path: &'a Path,
     /// The wall-clock budget for the turn.
     pub timeout: Duration,
+    /// Called once, right after the child is spawned and before it is waited on, with the
+    /// child pid and its start time (.NET `o` string, or empty when unavailable). The
+    /// orchestrator uses it to flip the recovery record `launching` -> `running` while the
+    /// child is live (`codex-consult.ps1:3330-3339`).
+    pub on_running: Option<&'a dyn Fn(u32, String)>,
 }
 
 /// The result of one subprocess turn.
@@ -121,6 +126,16 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         Err(e) => return TurnResult::not_started(format!("could not start {program}: {e}")),
     };
 
+    // Register the running child (recovery record `launching` -> `running`) before it is
+    // waited on. The pid is the launcher's; on Windows the real codex is a descendant of the
+    // `cmd /c` wrapper, so a mid-run crash leaves the record naming this pid and the next run
+    // scans the tree — matching the plugin recording `$proc.Id`.
+    if let Some(cb) = req.on_running {
+        let pid = child.id();
+        let start = crate::liveness::proc::process_start_iso(pid).unwrap_or_default();
+        cb(pid, start);
+    }
+
     // Feed stdin. muse gets an empty stdin; codex/agy get their text. Closing the handle
     // (drop) sends EOF so the child's ReadToEnd returns.
     if let Some(mut stdin) = child.stdin.take() {
@@ -140,6 +155,16 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
             Ok(None) => {
                 if start.elapsed() >= req.timeout {
                     survivors = kill_tree(&mut child);
+                    // TEST HOOK: CODEX_CONSULT_TEST_SURVIVORS=<pid>[,<pid>] — these pids, when
+                    // alive, are reported as survivors of this kill (no test can make a real
+                    // process outlive a kill). Only ever adds (a stricter outcome), matching
+                    // the plugin's `$env:CODEX_CONSULT_TEST_SURVIVORS` hook.
+                    for hook in test_survivor_pids() {
+                        if crate::liveness::proc::pid_alive(hook, "") && !survivors.contains(&hook)
+                        {
+                            survivors.push(hook);
+                        }
+                    }
                     timed_out = true;
                     let _ = child.wait();
                     break None;
@@ -192,6 +217,19 @@ fn kill_tree(child: &mut Child) -> Vec<u32> {
         let _ = child.kill();
         Vec::new()
     }
+}
+
+/// The pids named by `CODEX_CONSULT_TEST_SURVIVORS` (comma-separated), for the survivor hook.
+fn test_survivor_pids() -> Vec<u32> {
+    std::env::var("CODEX_CONSULT_TEST_SURVIVORS")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .filter_map(|s| s.trim().parse::<u32>().ok())
+                .filter(|p| *p > 0)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn read_text(path: &Path) -> String {

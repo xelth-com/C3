@@ -41,9 +41,6 @@ pub mod index {
     //! per-user SurrealDB server, behind the `index-surreal` feature. Milestone 8.
 }
 
-pub mod pack {
-    //! The pack pipeline (`PackBuilder`): snapshots, reviewer packs and explainer
-    //! packs from one discovery/redaction/budget pipeline. Milestone 7.
-}
+pub mod pack;
 
 pub mod telemetry;

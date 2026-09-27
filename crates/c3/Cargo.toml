@@ -18,3 +18,5 @@ clap.workspace = true
 sha2.workspace = true
 uuid.workspace = true
 ureq.workspace = true
+ignore = { workspace = true }
+globset = { workspace = true }

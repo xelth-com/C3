@@ -27,6 +27,13 @@ uuid = { version = "1", features = ["v4"] }
 # and DELETE. Blocking on purpose — the send runs in a detached thread with a 3 s timeout,
 # so C3 pulls in no async runtime for one background call per consultation.
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+# ignore + globset: the pack pipeline's file discovery (milestone 7). `ignore` gives the same
+# .gitignore-aware repository walk eckSnapshot relies on (respecting nested .gitignore,
+# .git/info/exclude and the global excludes) with directory pruning; `globset` compiles C3's
+# hard-ignore list (`.env*`, key/cert files, index dirs, logs) that must apply regardless of
+# .gitignore. Blocking, no async runtime.
+ignore = "0.4"
+globset = "0.4"
 
 # The port adds a dependency only when a ported piece needs it. surrealdb and tokio
 # are deliberately absent until milestone 8 (index) and the http engine (milestone 7).

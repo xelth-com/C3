@@ -31,7 +31,7 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 | F02-9 (peak windows) | verified | `c3_core::peak` ports `ConvertFrom-PeakSpec`/`ConvertFrom-PeakExceptions`/`Get-PeakStatus`/`Get-ConsultClock`/`Get-PeakStatusNow` (M2d). `CODEX_CONSULT_PEAK_<PROVIDER>`/`_EXCEPT`, the `-OffPeakOnly` refusals (no provider / no schedule / inside window, before the lock), the warning, the `peak`/`peak_schedule`/`peak_source`/`peak_evaluated_at` ledger fields and the dry-run `peak` line — unit-tested (7 tests) and **live-verified**: the dry-run `peak` line and the `-OffPeakOnly` refusal message are byte-identical to the plugin under `CODEX_CONSULT_NOW`. |
 | F06-3 (peak re-evaluated at launch) | verified | `run_live` re-evaluates the peak at launch (call index 1; the early check is call 0), refuses `-OffPeakOnly` on a boundary crossing (pending record withdrawn, nothing written), and the ledger records the launch-time value. |
 | F06-4 (peak exception ranges) | verified | `parse_peak_exceptions` keeps ranges of any length (never expanded); only end-before-start refuses (`a range must not run backwards`) — unit-tested. |
-| KILL (process-tree kill) | partial | `engines::subprocess` kills the tree on timeout (Windows `taskkill /T`, verified: a 60 s hang is killed at the 3 s / 2 s timeout, exit 1); survivor **detection** is best-effort (empty list), the 5×-race and survivor-recording are deferred. |
+| KILL (process-tree kill) | verified | `engines::subprocess` kills the tree on timeout (Windows `taskkill /T`); survivor **recording** now lands — the `CODEX_CONSULT_TEST_SURVIVORS` hook adds live pids to the kill, the `survivors` record is written and kept (`RecoveryDisposition::Retain`), and the `bridge_outcome` wording (`... K processes survived: pid ...; the next run for this task is refused until they exit`) is byte-identical to the plugin (live-verified). Real survivor *detection* from the kill is still best-effort (a clean `taskkill /T` leaves an empty list); the 5×-race is deferred. |
 | OPENAI+WIRE (built-in vs user table) | verified | reused core; built-in `provider_config {builtin:openai}` matches in the live diff. |
 | F06-1/F06-2 (construct scoping) | verified | reused `c3-core::config` (M1). |
 | F02-5 (requested-checks paragraph + consult id) | verified | `consult::prompt` — unit-tested; the prompt byte-matches in dry-run; last line is `Consultation id: <guid>` = ledger `consult_id`. |
@@ -48,14 +48,14 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 |---|---|---|
 | F04-1 (atomic stores; corruption refuses) | partial | commit uses `c3-core::store` atomic writes + write order (reused); the empty/unparseable-store refusal is enforced by the store's readers but not re-surfaced as a `c3 consult` message path yet. |
 | F04-2 (held-handle task lock) | verified | reused `c3-core::store` fail-fast ownership lock; a second run is refused. |
-| F04-3 (reservation numbering) | partial | `next_numbers` reused; a fresh reservation gets the next `n`/`nn`; orphan flagging + dry-run recovery-preview are deferred (recovery is M2c+). |
+| F04-3 (reservation numbering) | verified | `next_numbers` reused; a fresh reservation gets the next `n`/`nn`; the recovery pass now consumes a dead leftover — numbering skips past its `n`/`nn` and a `recovered reservation ...`/`cleared the recovery record ...` line is printed (real run) and shown as the dry-run `pending :` line (byte-identical to the plugin, live-verified: a seeded `reserved` leftover n=9/nn=20 → the next run commits at n=6/nn=08 with the record removed). Orphan findings stay flagged by `c3 findings -List` (M3), not consult. |
 | F04-4 (verdict vs open prior blocker) | not yet | the prior-finding lifecycle ingestion (retained blockers, ACCEPT-contradiction, `unchecked_prior_blockers`) is deferred; the reply's own `prior_findings` are rendered as-is. |
 | F04-5 (finding `line` bounds) | not yet | the `1..2147483647` local validation error is deferred (the reply schema validator accepts any `i64` line). |
 | F04-6 (verdict fits the purpose) | not yet | per-purpose verdict-vocabulary validation deferred; the verdict is recorded as the reply gives it. |
 | F04-7 (file mode in the tree hash) | verified | `consult::revision` reads modes via `git diff --raw` (mode-transition `a>b`), part of the manifest; `tree_sha256` byte-identical to the plugin in the dry-run diff. |
 | F04-8 (case-sensitive paths) | partial | manifest keys are the git paths ordinal-sorted (matches on a case-sensitive tree); not separately exercised on Windows. |
 | F04-9 (brief/artifact drift) | partial | tree drift (`tree_sha256_after`, `tree_changed_during_review`, `revision_moved` + the `Note: HEAD moved ...` line) and brief drift (`brief_sha256`, `brief_sha256_after`, `brief_changed_during_review`) implemented in `orchestrate::finish` via `revision::compare_tree_content` (content-only) — the false-drift path is live-verified byte-identical in `sessions.json`. **Artifact** drift (`-Artifact` hashing, `artifacts[]`, `artifacts_changed_during_review`, per-file WARNING) is still deferred: `-Artifact` is parsed but not hashed. |
-| F04-10 (surviving child keeps the task locked) | not yet | pending-record liveness/recovery is deferred (M2d-2). The liveness code (`process_start_iso`/`pid_alive`/`Test-PendingActive`) is now a shared `crates/c3/src/liveness/` module (moved out of `findings_tool`) ready for the consult recovery path. |
+| F04-10 (surviving child keeps the task locked) | verified | a timeout kill that leaves survivors writes the `survivors` recovery record and keeps it (`RecoveryDisposition::Retain`, not `Remove`), so a subsequent run reads it and — while a recorded pid is alive — refuses (`consult::recovery` + the reserved→launching→running record transitions via the subprocess `on_running` callback). Live-verified: the `survivors` record is kept with the survivor pid; a live recorded child yields the byte-identical `a previous consultation's codex process (pid N) is still running (...)` refusal. |
 | F04-11 (raw-reply preservation on downstream failure) | partial | the raw `.reply.json` is now written to the handoff path **before the write lock** (crash-safety; `orchestrate::finish`, not the commit `files` list), matching the plugin's write order — live-verified byte-identical. The "preserving the raw reply itself fails → outcome names the kept path" nuance is still deferred. |
 
 ## harness-format.ps1 (structured/prose ingestion, format repair)
@@ -74,8 +74,8 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 | check id | status | note |
 |---|---|---|
 | lock2 (held-handle lock semantics) | partial | the ownership lock is reused from `c3-core::store` (held by handle, file kept on release); the in-flight-visibility interaction with `c3 findings -Status` is M3. |
-| pending (a)–(g), F06-1 | not yet | the reserved/launching/running/survivors recovery records and their process-liveness checks are deferred (M2c+); a run reserves and removes its own record but does not recover an interrupted one. |
-| 3b-a/b/c (`Test-PendingActive`) | not yet | deferred with pending recovery. |
+| pending (a)–(g), F06-1 | partial | the full lifecycle lands: `run_live` writes `reserved` → `launching` → `running` (this bridge's pid/start/host; the child pid + start time via the subprocess `on_running` callback) and, on timeout survivors, `survivors` (kept). Before launch, `consult::recovery::assess` reads every `.consult.pending*.json` under the lock: a corrupt record refuses; a live recorded process refuses (message names the pid, byte-identical to the plugin); a dead record is recovered/cleared (numbering skips past it, consumed member records removed). **Divergence (documented):** the machine-wide "looks like codex" descendant/name scan the plugin falls through to once every recorded pid is gone is intentionally reduced to an inactive verdict (`liveness::pending`), so a case that depends on that scan (some of a–g) resolves to *recover* where the plugin *refuses* on unrelated codex processes — verified live on this machine, where the plugin's scan matched the developer's real codex.exe/node processes. The full `harness-pending.ps1` suite was not run row-by-row. |
+| 3b-a/b/c (`Test-PendingActive`) | partial | the pid+start-time rules (writer-pid, reserved, recorded-pid/survivors) are ported and unit-tested + live-verified (a live recorded child is active with the plugin's exact message; a reserved/dead record is inactive → recovered). The name/descendant "looks like codex" scan is intentionally reduced (see the pending row). |
 
 ## harness-visibility.ps1 (per-purpose timeouts, `-Range`, timeout continuation)
 
@@ -102,9 +102,9 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 
 ## Counts
 
-- **verified:** 19
+- **verified:** 22
 - **partial:** 11
-- **not yet:** 17
+- **not yet:** 14
 - **n/a:** 3 (agy / muse / panel groups)
 
 ## M2d progress (this pass)
@@ -135,11 +135,44 @@ Landed and verified (unit tests + live fake-codex parity where the plugin has on
    dry-run `telemetry` line via `telemetry::status`.
 
 Still deferred to M2d-2 / later: format repair (REPAIR/TWICE/DRIFT/ORPHAN), timeout continuation
-(CONT/GATES), pending/lock recovery (pending a–g, 3b, F04-10, F04-11 residual), preflight endpoint
-health (F09-2/4), the roster walk (WALK/QUOTA/RULES/AUTH), the prior-finding lifecycle (F04-4),
-`-Artifact` hashing + artifact drift, and the full live summary-block console (the plugin's
-`warning    :`/verdict/drift summary lines) — the persisted stores are byte-parity, the summary
-console block is partial.
+(CONT/GATES), preflight endpoint health (F09-2/4), the roster walk (WALK/QUOTA/RULES/AUTH), the
+prior-finding lifecycle (F04-4), `-Artifact` hashing + artifact drift, and the full live
+summary-block console (the plugin's `warning    :`/verdict/drift summary lines) — the persisted
+stores are byte-parity, the summary console block is partial.
+
+## M2d-2 progress — pending recovery + liveness (item 1)
+
+Landed and verified (unit tests + live fake-codex parity where the plugin has one):
+
+1. **Recovery pass** (`crates/c3/src/consult/recovery.rs`) — before launch, under the task lock,
+   `assess` reads every `.consult.pending*.json` (`liveness::pending`): a corrupt record refuses
+   (`unusable`), a live recorded process refuses (message names the pid — byte-identical to the
+   plugin, live-verified), a dead record is recovered/cleared (numbering skips past it, consumed
+   member records removed). The dry-run `pending :` line and the handoff `Recovery record:` line
+   ride the existing slots; the dry-run line is byte-identical to the plugin.
+2. **Record lifecycle** — `run_live` writes `reserved` (this bridge's pid/start_time/host, the
+   writer-pid liveness rule) → `launching` → `running` (child pid + start time). The
+   `running` transition happens through a new subprocess `on_running` callback
+   (`engines::subprocess` + `CodexEngine::on_running`) that fires right after spawn, so a mid-run
+   crash leaves a record naming the live child.
+3. **Timeout survivors** — a kill that leaves survivors writes the `survivors` record and keeps it
+   (`RecoveryDisposition::Retain`), and the `bridge_outcome` wording matches the plugin; the
+   `CODEX_CONSULT_TEST_SURVIVORS` hook makes it testable. Live-verified end to end.
+4. **Panel naming only** — `.consult.pending-<NN>.json` (`PendingRef::member`) is honoured for
+   consuming/removing a member's leftover; the panel itself is M4.
+
+Divergence (documented, intended): the machine-wide "looks like codex" descendant/name scan the
+plugin falls through to once every recorded pid is gone is reduced to an inactive verdict in C3
+(recorded pid + start time only), avoiding the plugin's environment false-positives.
+
+Tests: 5 unit tests in `consult::recovery`, 3 live integration tests in
+`crates/c3/tests/pending_liveness.rs` (callback pid, survivor hook, start-time liveness);
+workspace `cargo test` green (185), `cargo clippy --all-targets -- -D warnings` clean, `cargo fmt`
+applied.
+
+Still to do before agy/muse (M2d-2 remaining, items 2–8 of the brief): timeout continuation, format
+repair, preflight endpoint-health, the roster walk, the prior-finding lifecycle, `-Artifact`
+hashing, and the byte-identical summary-console block.
 
 ## Wave-24c items (coordinator course-correction) — where verified
 
