@@ -117,6 +117,46 @@ pub fn not_attempted_suffix(gate: &ProseGate) -> String {
     format!("(format repair not attempted: {})", gate.reason)
 }
 
+/// The first-reply `validation_error` (`ConvertFrom-StructuredReply`'s `ValidationError`): an
+/// empty reply, `not valid JSON: <msg>` (the parser's message, truncated to 120 — the exact
+/// wording is runtime-specific, a documented divergence), else the first schema error. Empty
+/// string when the text IS a valid reply object.
+pub fn first_validation_error(text: &str) -> String {
+    let t = text.trim();
+    if t.is_empty() {
+        return "empty reply".to_string();
+    }
+    let body = strip_fence(t);
+    match serde_json::from_str::<serde_json::Value>(&body) {
+        Err(e) => {
+            let mut m = c3_core::one_line(&e.to_string());
+            if m.chars().count() > 120 {
+                m = m.chars().take(120).collect::<String>() + "...";
+            }
+            format!("not valid JSON: {m}")
+        }
+        Ok(_) => match serde_json::from_str::<c3_core::engine::RawReply>(&body) {
+            Ok(raw) => match StructuredReply::try_from(raw) {
+                Ok(_) => String::new(),
+                Err(e) => c3_core::one_line(&e.to_string()),
+            },
+            Err(e) => format!("not valid JSON: {}", c3_core::one_line(&e.to_string())),
+        },
+    }
+}
+
+/// Strip a single ```lang ... ``` fence, mirroring `ConvertFrom-StructuredReply`'s fence net.
+fn strip_fence(t: &str) -> String {
+    let re = Regex::new(r"(?s)^```[A-Za-z0-9_-]*[ \t]*\r?\n(.*?)\r?\n[ \t]*```$").unwrap();
+    if let Some(c) = re.captures(t) {
+        c.get(1)
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default()
+    } else {
+        t.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

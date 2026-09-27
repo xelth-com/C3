@@ -154,6 +154,12 @@ pub struct SummaryInputs {
     pub thread_source: String,
     /// A failure's operator hint (context-window etc.), when the bridge can explain it.
     pub failure_hint: String,
+    /// The `continued  : ...` line when a timeout continuation ran (empty otherwise).
+    pub continue_line: String,
+    /// The `format repair: ...` console line when a repair ran (empty otherwise).
+    pub repair_console: String,
+    /// The repair drift notes, each rendered as `  drift: <note>`.
+    pub repair_drift: Vec<String>,
     /// The `partial    :` and `resume     :` lines when a turn was killed.
     pub partial_path: String,
     pub partial_footer: String,
@@ -162,6 +168,9 @@ pub struct SummaryInputs {
     pub verdict_line: String,
     /// The findings line (`findings   : ...`).
     pub findings_line: String,
+    /// The `structured : INVALID (...)` line when a reply was ingested but is not structured
+    /// (prose kept); empty otherwise. Replaces the verdict/findings lines.
+    pub structured_invalid: String,
     pub reply_path: String,
     pub reply_json_path: String,
     pub events_path: String,
@@ -182,6 +191,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
         ));
         if !s.failure_hint.is_empty() {
             out.push(format!("hint       : {}", s.failure_hint));
+        }
+        if !s.continue_line.is_empty() {
+            out.push(s.continue_line.clone());
         }
         if !s.partial_path.is_empty() {
             out.push(format!(
@@ -210,6 +222,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
         "c3 consult: {} - {}, mode {}, thread {} (source: {}), wall {} s",
         s.bridge_outcome, s.lineage_shown, s.mode, s.thread, s.thread_source, s.wall_seconds
     ));
+    if !s.continue_line.is_empty() {
+        out.push(s.continue_line.clone());
+    }
     if !s.partial_path.is_empty() {
         out.push(format!(
             "partial    : {} ({})",
@@ -219,11 +234,20 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
             out.push(format!("resume     : {}", s.resume_command));
         }
     }
+    if !s.repair_console.is_empty() {
+        out.push(s.repair_console.clone());
+        for d in &s.repair_drift {
+            out.push(format!("  drift: {d}"));
+        }
+    }
     if !s.verdict_line.is_empty() {
         out.push(s.verdict_line.clone());
     }
     if !s.findings_line.is_empty() {
         out.push(s.findings_line.clone());
+    }
+    if !s.structured_invalid.is_empty() {
+        out.push(s.structured_invalid.clone());
     }
     out.push(format!("reply file : {}", s.reply_path));
     if !s.reply_json_path.is_empty() {

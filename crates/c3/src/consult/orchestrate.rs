@@ -41,7 +41,7 @@ use crate::providers;
 use crate::telemetry;
 
 use super::args::{self, Options, Resolved};
-use super::ingest::{self, Ingestion};
+use super::ingest;
 use super::prompt::{self, OpenFinding, PromptInputs};
 use super::render;
 use super::revision::{self, RevisionInfo};
@@ -57,6 +57,49 @@ const RANGE_WARN_TIMEOUT: i64 = 2400;
 fn refuse(msg: &str) -> i32 {
     eprintln!("{TOOL}: {msg}");
     1
+}
+
+/// The two secondary-turn mechanisms' results (timeout continuation + format repair), gathered
+/// so [`render_handoff`], [`build_entry`] and the summary render at their exact points.
+#[derive(Default)]
+struct Secondary {
+    // --- timeout continuation ---
+    timeout_continue: Option<c3_core::ledger::TimeoutContinue>,
+    continued: bool,
+    continue_thread: String,
+    continue_wall: f64,
+    continue_usage: Option<Usage>,
+    /// The continuation turn's event stream (`handoffs/...continue.events.jsonl`), a further turn.
+    continue_events_rel: Option<String>,
+    continue_rejected: bool,
+    continue_rejected_text: String,
+    continue_rejected_why: String,
+    /// A continuation turn was actually launched (not the "not attempted" skip).
+    continue_ran: bool,
+    /// The continuation turn was itself killed on its timeout.
+    continue_killed: bool,
+    /// The format-repair turn was killed on its timeout.
+    repair_killed: bool,
+    /// The `-ContinueSec` used, for the partial-footer `killed at ...` line.
+    repair_timeout: i64,
+    // --- format repair ---
+    format_retry: Option<c3_core::ledger::FormatRetry>,
+    repaired_ok: bool,
+    original_prose: String,
+    original_rel: String,
+    repair_wall: f64,
+    repair_reason: String,
+    drift_notes: Vec<String>,
+    /// The `format repair: ...` console line (empty when no repair ran).
+    repair_console: String,
+    // --- salvaged partial reply ---
+    partial_needed: bool,
+    partial_rel: String,
+    partial_footer: String,
+    /// The salvaged partial body (`Format-PartialBody`), for the `.partial.md` file.
+    partial_body: String,
+    /// The `resume     :` summary command (the plugin's `$resumeCommand`).
+    resume_command: String,
 }
 
 /// The after-run drift (`Compare-TreeContent`, the brief/artifact re-hash).
@@ -1111,7 +1154,7 @@ fn finish(
     outcome: AttemptOutcome,
     base_record: PendingRecord,
 ) -> i32 {
-    let bridge_outcome;
+    let mut bridge_outcome;
     let mut structured: Option<StructuredReply> = None;
     let mut raw_text = String::new();
     let mut usage: Option<Usage> = None;
@@ -1121,6 +1164,7 @@ fn finish(
     let mut validation_error = String::new();
     let mut provider_failure = None;
     let mut usable = false;
+    let mut main_timed_out = false;
     // Pids that survived a timeout kill: their recovery record is kept (`survivors`) so the
     // next run for this task is refused until they exit.
     let mut timeout_survivors: Vec<u32> = Vec::new();
@@ -1134,36 +1178,27 @@ fn finish(
                 thread = c.0.clone();
                 thread_source = "events".into();
             }
-            if ctx.r.raw {
-                bridge_outcome = "usable reply".to_string();
-                usable = true;
-            } else {
-                match ingest::classify(&raw_text) {
-                    Ingestion::Structured(s) => {
-                        structured = Some(*s);
-                        bridge_outcome = "usable reply".to_string();
-                        usable = true;
-                    }
-                    Ingestion::Prose(gate) => {
-                        // M2c: format repair is deferred; a substantive prose reply is kept as
-                        // the reply of record (usable), a non-substantive one records why.
-                        bridge_outcome = "usable reply".to_string();
-                        usable = true;
-                        validation_error = if gate.substantive {
-                            "the reply is prose, not a JSON object (format repair deferred to M2c+)"
-                                .to_string()
-                        } else {
-                            format!(
-                                "the reply is not a valid consult-reply v1 object {}",
-                                ingest::not_attempted_suffix(&gate)
-                            )
-                        };
-                    }
+            bridge_outcome = "usable reply".to_string();
+            usable = true;
+        }
+        AttemptOutcome::TimedOut {
+            survivors,
+            wall_seconds: w,
+            conversation,
+            ..
+        } => {
+            wall_seconds = w;
+            main_timed_out = true;
+            // A killed main turn still emitted `thread.started`, so its events file carries the
+            // thread; take it as the resume target (source `events`, like the plugin).
+            if let c3_core::engine::ConversationTrust::Verified(c)
+            | c3_core::engine::ConversationTrust::Candidate(c) = &conversation
+            {
+                if !c.0.is_empty() {
+                    thread = c.0.clone();
+                    thread_source = "events".into();
                 }
             }
-        }
-        AttemptOutcome::TimedOut { survivors, .. } => {
-            wall_seconds = ctx.r.timeout_sec as f64;
             bridge_outcome = if survivors.is_empty() {
                 format!(
                     "failed: timeout after {} s (process tree killed)",
@@ -1215,6 +1250,90 @@ fn finish(
         brief_changed: !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after,
     };
 
+    // ------------------------------------------------------------- secondary turns
+    // The two codex mechanisms (`codex-consult.ps1` waves 24/24b/24c): the timeout continuation
+    // (one `resume <thread>` turn after the main turn was killed) and the format repair (one
+    // `resume <thread>` turn that converts a prose reply into the object). Both run under the
+    // same task lock and recovery record, at most once.
+    let mut sec = Secondary::default();
+    let main_events_text = std::fs::read_to_string(&ctx.events_path).unwrap_or_default();
+    let main_stderr = std::fs::read_to_string(&ctx.stderr_path).unwrap_or_default();
+    let main_event_error = crate::engines::codex::parse_error(&main_events_text);
+
+    if main_timed_out {
+        run_timeout_continuation(
+            &ctx,
+            &drift,
+            &timeout_survivors,
+            &main_stderr,
+            &main_event_error,
+            wall_seconds,
+            &mut sec,
+            &mut bridge_outcome,
+            &mut raw_text,
+            &mut thread,
+            &mut thread_source,
+            &mut usable,
+            &mut provider_failure,
+        );
+    }
+
+    // Structured / prose classification (`ConvertFrom-StructuredReply`), on a usable, non-raw
+    // reply — the main reply, or a continuation that answered.
+    if !ctx.r.raw && usable {
+        match crate::engines::codex::parse_structured(&raw_text) {
+            Some(s) => structured = Some(s),
+            None => validation_error = ingest::first_validation_error(&raw_text),
+        }
+    }
+
+    // The handoff's `Structured reply: INVALID (...)` line names the FIRST reply's parse error
+    // (`$parse.ValidationError`), never the `(format repair …)` suffix the ledger's
+    // `validation_error` carries — capture it before the repair turn augments the ledger value.
+    let base_validation_error = validation_error.clone();
+
+    // Format repair: a substantive prose reply on a verified thread earns ONE convert-only turn.
+    if structured.is_none() {
+        run_format_repair(
+            &ctx,
+            &store,
+            &pending,
+            &base_record,
+            &thread,
+            &thread_source,
+            usable,
+            &mut sec,
+            &mut structured,
+            &mut raw_text,
+            &mut validation_error,
+        );
+    }
+
+    // A failed codex run records a classified provider_failure derived from its evidence
+    // (`codex-consult.ps1:4093`), unless a continuation already supplied one.
+    if !usable && provider_failure.is_none() {
+        provider_failure = Some(codex_failure_pf(
+            &bridge_outcome,
+            &main_event_error,
+            &main_stderr,
+        ));
+    }
+
+    // (`codex-consult.ps1:4106`) a usable reply produced by the continuation says so everywhere.
+    if sec.continued && usable {
+        bridge_outcome = "usable reply (after a timeout continuation)".to_string();
+    }
+
+    // Salvaged partial reply: a turn the bridge killed on its timeout with no usable
+    // continuation leaves `handoffs/NN-codex-<slug>.partial.md` (`codex-consult.ps1:4108`).
+    build_partial_reply(
+        &ctx,
+        &main_events_text,
+        &mut sec,
+        main_timed_out,
+        wall_seconds,
+    );
+
     // Build the finding delta + ids for a structured reply.
     let mut finding_ids: Vec<String> = Vec::new();
     let mut delta = FindingsDelta::default();
@@ -1231,8 +1350,8 @@ fn finish(
         }
     }
 
-    // Render the handoff markdown.
-    let handoff_md = render_handoff(
+    // Render the handoff markdown (and the salvaged partial file, when a turn was killed).
+    let (handoff_md, partial_md) = render_handoff(
         &ctx,
         &bridge_outcome,
         wall_seconds,
@@ -1241,10 +1360,13 @@ fn finish(
         &thread_source,
         structured.as_ref(),
         &finding_ids,
-        &validation_error,
+        &base_validation_error,
         provider_failure.as_ref(),
         &raw_text,
         &drift,
+        &sec,
+        &main_event_error,
+        &main_stderr,
     );
     let handoff_rel = format!("handoffs/{:02}-codex-{}.md", ctx.nn, ctx.reply_name);
     let events_rel = format!(
@@ -1281,6 +1403,7 @@ fn finish(
         &reply_json_rel,
         &events_rel,
         &drift,
+        &sec,
     );
 
     // Keep a copy for telemetry (the entry is moved into the commit below).
@@ -1290,9 +1413,13 @@ fn finish(
         None
     };
 
-    // Commit under the write lock: the handoff `.md`. The raw `.reply.json` was already
-    // written above, before the lock (crash-safety), so it is not in the commit `files` list.
-    let files = vec![(handoff_rel.clone(), handoff_md.clone().into_bytes())];
+    // Commit under the write lock: the handoff `.md` (and the salvaged `.partial.md`). The raw
+    // `.reply.json` was already written above, before the lock (crash-safety), so it is not in
+    // the commit `files` list.
+    let mut files = vec![(handoff_rel.clone(), handoff_md.clone().into_bytes())];
+    if let Some(pm) = &partial_md {
+        files.push((sec.partial_rel.clone(), pm.clone().into_bytes()));
+    }
     // Timeout survivors: keep the recovery record in the `survivors` state (a live process of
     // this run is still out there) so the commit does not delete it and the next run is
     // refused until they exit. Written before the write lock, as the plugin does after the
@@ -1342,7 +1469,17 @@ fn finish(
                 s.reply_markdown.clone()
             }
         })
-        .unwrap_or_else(|| raw_text.clone());
+        .unwrap_or_else(|| raw_text.trim().to_string());
+    // The `structured : INVALID (...)` summary line (a prose reply kept as the reply of record);
+    // it uses the FULL ledger validation_error (with the repair suffix), unlike the handoff.
+    let structured_invalid =
+        if !ctx.r.raw && usable && structured.is_none() && !raw_text.trim().is_empty() {
+            format!(
+                "structured : INVALID ({validation_error}) - raw text kept; no findings recorded"
+            )
+        } else {
+            String::new()
+        };
     let section = structured
         .as_ref()
         .map(|s| render::format_structured_section(s, &finding_ids))
@@ -1373,6 +1510,35 @@ fn finish(
         }
     });
 
+    // The `continued  :` console line (`codex-consult.ps1:4559`).
+    let continue_line = sec.timeout_continue.as_ref().map(|tc| {
+        if sec.continued {
+            format!(
+                "continued  : the main turn was killed at {} s of {} s; one continuation turn on thread {} answered in {} s",
+                fmt_wall(wall_seconds),
+                ctx.r.timeout_sec,
+                sec.continue_thread,
+                fmt_wall(sec.continue_wall),
+            )
+        } else {
+            let mut l = format!("continued  : {}", tc.outcome);
+            if sec.continue_wall > 0.0 || tc.events.is_some() {
+                l.push_str(&format!(" (in {} s)", fmt_wall(sec.continue_wall)));
+            }
+            if !sec.continue_thread.is_empty() {
+                l.push_str(&format!(" - thread {}", sec.continue_thread));
+            }
+            l
+        }
+    });
+    let partial_abs = if sec.partial_needed {
+        ctx.handoffs_dir
+            .join(format!("{:02}-codex-{}.partial.md", ctx.nn, ctx.reply_name))
+            .to_string_lossy()
+            .to_string()
+    } else {
+        String::new()
+    };
     let s = summary::SummaryInputs {
         bridge_outcome: bridge_outcome.clone(),
         usable,
@@ -1381,8 +1547,15 @@ fn finish(
         mode: mode_str(&ctx.o),
         thread: thread.clone(),
         thread_source: thread_source.clone(),
+        continue_line: continue_line.unwrap_or_default(),
+        repair_console: sec.repair_console.clone(),
+        repair_drift: sec.drift_notes.clone(),
+        partial_path: partial_abs,
+        partial_footer: sec.partial_footer.clone(),
+        resume_command: sec.resume_command.clone(),
         verdict_line: verdict_line.unwrap_or_default(),
         findings_line: findings_line.unwrap_or_default(),
+        structured_invalid,
         reply_path: ctx.reply_path.to_string_lossy().to_string(),
         reply_json_path: if reply_json_rel.is_empty() {
             String::new()
@@ -1409,6 +1582,716 @@ fn finish(
         0
     } else {
         classify_exit(&bridge_outcome, provider_failure.as_ref())
+    }
+}
+
+fn round1(s: f64) -> f64 {
+    (s * 10.0).round() / 10.0
+}
+
+/// Give a recorded provider failure the plugin's full shape (`New-ProviderFailure` always
+/// writes `kind` and `hint`, and stamps `when`).
+fn finalize_pf(mut pf: c3_core::ledger::ProviderFailure) -> c3_core::ledger::ProviderFailure {
+    if pf.kind.is_none() {
+        pf.kind = Some(String::new());
+    }
+    if pf.hint.is_none() {
+        pf.hint = Some(String::new());
+    }
+    if pf.when.is_empty() {
+        pf.when = iso_now();
+    }
+    pf
+}
+
+/// Build a codex run's `provider_failure` from its evidence (`codex-consult.ps1:4093`): an SSE
+/// `data:{...}` line on stderr, the event-stream error, the stderr tail, then the bridge's own
+/// reason — the first non-empty through the one classifier.
+fn codex_failure_pf(
+    bridge_outcome: &str,
+    event_error: &str,
+    stderr_text: &str,
+) -> c3_core::ledger::ProviderFailure {
+    let sse_last = stderr_text
+        .split(['\r', '\n'])
+        .map(|l| l.trim())
+        .rfind(|l| l.starts_with("data:") && l.contains('{'))
+        .unwrap_or("");
+    let stderr_tail = stderr_text
+        .split(['\r', '\n'])
+        .map(|l| l.trim())
+        .rfind(|l| !l.is_empty())
+        .unwrap_or("");
+    let reason = bridge_outcome
+        .strip_prefix("failed: ")
+        .unwrap_or(bridge_outcome);
+    let source = [sse_last, event_error, stderr_tail, reason]
+        .into_iter()
+        .find(|t| !t.is_empty())
+        .unwrap_or("");
+    let (code, message) = c3_core::health::convert_from_provider_error_text(source);
+    let class = c3_core::health::provider_failure_class(&format!("{code} {message}"));
+    let kind = c3_core::health::failure_kind(&class, &format!("{code} {message}"));
+    finalize_pf(c3_core::ledger::ProviderFailure {
+        class,
+        kind: Some(kind),
+        code,
+        message,
+        ..Default::default()
+    })
+}
+
+/// The reply schema inlined into a prompt (the plugin's
+/// `[IO.File]::ReadAllText(...).Trim() -replace "\r\n","\n" -replace "\n",$nl` with `$nl` = CRLF).
+fn schema_text_crlf() -> String {
+    c3_core::schema::REPLY_SCHEMA_V1
+        .trim()
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n")
+}
+
+/// Run one codex secondary turn (`resume <thread>`) and return its outcome and measured wall.
+#[allow(clippy::too_many_arguments)]
+fn run_codex_secondary(
+    ctx: &Context,
+    kind: TurnKind,
+    sandbox: &str,
+    effort: Option<String>,
+    schema_arg: Option<PathBuf>,
+    thread: &str,
+    prompt_text: &str,
+    last_path: &Path,
+    events_path: &Path,
+    stderr_path: &Path,
+    timeout_sec: f64,
+    on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+) -> (AttemptOutcome, f64) {
+    let mut request = Request {
+        prompt: prompt_text.to_string(),
+        brief_path: None,
+        model: if ctx.identity.model_source == "unknown" {
+            String::new()
+        } else {
+            ctx.identity.model.clone()
+        },
+        provider: if ctx.identity.provider_source.is_empty() {
+            String::new()
+        } else {
+            ctx.identity.provider.clone()
+        },
+        engine: EngineKind::Codex,
+        effort,
+        timeout_sec,
+        mode: Mode::New,
+        sandbox: sandbox.to_string(),
+        schema_path: schema_arg,
+        extra_config: ctx.r.extra_config.clone(),
+        output_last_message: Some(last_path.to_path_buf()),
+        prompt_file: None,
+        max_model_steps: None,
+    };
+    // The resume must carry the request's own lineage (the core refuses a cross-lineage resume).
+    let lineage = request.lineage();
+    request.mode = Mode::Resume {
+        thread: thread.to_string(),
+        lineage,
+    };
+    let codex = CodexEngine {
+        launcher: ctx.launcher.clone(),
+        cwd: ctx.repo_root.clone(),
+        primary: TurnFiles::default(),
+        secondary: TurnFiles {
+            events: events_path.to_path_buf(),
+            stderr: stderr_path.to_path_buf(),
+        },
+        on_running,
+    };
+    let turn = TurnRequest {
+        request,
+        consultation: ConsultationId(ctx.consult_id.clone()),
+        attempt: c3_core::engine::AttemptId(ctx.consult_id.clone()),
+        kind,
+        continuation: Some(c3_core::engine::Continuation::Native(
+            c3_core::engine::ConversationId(thread.to_string()),
+        )),
+    };
+    let start = std::time::Instant::now();
+    let outcome = codex
+        .run(&turn)
+        .unwrap_or_else(|e| AttemptOutcome::LaunchFailed {
+            child_exists: false,
+            message: format!("the secondary turn could not be planned ({e:?})"),
+        });
+    (outcome, round1(start.elapsed().as_secs_f64()))
+}
+
+/// The timeout continuation (`codex-consult.ps1:3626`): after a killed main turn, ONE
+/// `resume <thread>` turn — the main turn's options — asks the reviewer to finish now. Gated by
+/// the thread, survivors, files-changed and the killed turn's own failure evidence.
+#[allow(clippy::too_many_arguments)]
+fn run_timeout_continuation(
+    ctx: &Context,
+    drift: &Drift,
+    survivors: &[u32],
+    main_stderr: &str,
+    main_event_error: &str,
+    main_wall: f64,
+    sec: &mut Secondary,
+    bridge_outcome: &mut String,
+    raw_text: &mut String,
+    thread: &mut String,
+    thread_source: &mut String,
+    usable: &mut bool,
+    provider_failure: &mut Option<c3_core::ledger::ProviderFailure>,
+) {
+    let continue_thread = thread.clone();
+    sec.continue_thread = continue_thread.clone();
+    let continue_events_name = format!(
+        "{:02}-codex-{}.continue.events.jsonl",
+        ctx.nn, ctx.reply_name
+    );
+    let continue_events_rel = format!("handoffs/{continue_events_name}");
+    let continue_events_path = ctx.handoffs_dir.join(&continue_events_name);
+
+    // Gate (the plugin's `$continueSkip`).
+    let mut skip = String::new();
+    if ctx.r.continue_sec <= 0 {
+        skip = "-ContinueSec 0".to_string();
+    } else if continue_thread.is_empty() {
+        skip = "the thread of the killed turn is not known".to_string();
+    } else if !survivors.is_empty() {
+        skip = format!("{} process(es) survived the kill", survivors.len());
+    } else {
+        let mut moved: Vec<&str> = Vec::new();
+        if drift.tree_changed {
+            moved.push("the working tree");
+        }
+        if drift.brief_changed {
+            moved.push("the brief");
+        }
+        if !moved.is_empty() {
+            skip = format!("files changed during the run ({})", moved.join(", "));
+        }
+    }
+    if skip.is_empty() {
+        if let Some((class, text)) =
+            super::secondary::get_killed_turn_failure(main_event_error, main_stderr)
+        {
+            skip = format!("the killed turn reported a {class} failure ({text})");
+        }
+    }
+    if !skip.is_empty() {
+        sec.timeout_continue = Some(c3_core::ledger::TimeoutContinue {
+            thread: continue_thread,
+            wall_seconds: 0.0,
+            outcome: format!("not attempted: {skip}"),
+            events: None,
+            usage: None,
+            ..Default::default()
+        });
+        return;
+    }
+
+    // The continuation prompt (the main turn's contract; prompt-only re-sends the schema).
+    let mut parts: Vec<String> = Vec::new();
+    if !ctx.r.raw {
+        parts.push(prompt::FINAL_OUTPUT_CONTRACT.to_string());
+    }
+    parts.push(format!(
+        "Your previous turn was stopped by a time limit after {} s. Do not start over and do not read more files than you must: finish now and output your final answer in the required format.",
+        ctx.r.timeout_sec
+    ));
+    if !ctx.r.raw && ctx.transport.transport == "prompt-only" {
+        parts.push(prompt::schema_lines(
+            &ctx.o.purpose,
+            ctx.open_findings_count > 0,
+            true,
+        ));
+        parts.push(format!(
+            "JSON Schema of the reply:\r\n{}",
+            schema_text_crlf()
+        ));
+    }
+    parts.push(format!("Consultation id: {}", ctx.consult_id));
+    let continue_prompt = parts.join("\r\n\r\n");
+
+    let tmp = std::env::temp_dir();
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let continue_last = tmp.join(format!("codex-consult-continue-last-{id}.md"));
+    let continue_stderr = tmp.join(format!("codex-consult-continue-stderr-{id}.txt"));
+    let schema_arg = if !ctx.r.raw && ctx.transport.transport == "output-schema" {
+        ctx.schema_path.clone()
+    } else {
+        None
+    };
+
+    println!(
+        "c3 consult: the main turn was killed at {} s of {} s; one continuation turn on thread {} (up to {} s)",
+        fmt_wall(main_wall),
+        ctx.r.timeout_sec,
+        continue_thread,
+        ctx.r.continue_sec
+    );
+    sec.continue_ran = true;
+    // The continuation event stream is a further turn (added before the run, like the plugin).
+    sec.continue_events_rel = Some(continue_events_rel.clone());
+
+    let (outcome, wall) = run_codex_secondary(
+        ctx,
+        TurnKind::TimeoutContinuation,
+        &sandbox_label(&ctx.o),
+        ctx.effort.sent.clone(),
+        schema_arg,
+        &continue_thread,
+        &continue_prompt,
+        &continue_last,
+        &continue_events_path,
+        &continue_stderr,
+        ctx.r.continue_sec as f64,
+        None,
+    );
+    sec.continue_wall = wall;
+    let events_field = if continue_events_path.is_file() {
+        Some(continue_events_rel.clone())
+    } else {
+        None
+    };
+
+    let mut continue_problem = String::new();
+    let mut cont_usage: Option<Usage> = None;
+    match outcome {
+        AttemptOutcome::Completed(reply) => {
+            cont_usage = reply.usage.clone();
+            let cont_raw = reply.raw_text.trim().to_string();
+            let cont_thread = match &reply.conversation {
+                c3_core::engine::ConversationTrust::Verified(c)
+                | c3_core::engine::ConversationTrust::Candidate(c) => c.0.clone(),
+                _ => String::new(),
+            };
+            if !cont_thread.is_empty() && cont_thread != continue_thread {
+                continue_problem = format!(
+                    "the continuation came back on thread {cont_thread}, not {continue_thread}"
+                );
+            } else if cont_raw.is_empty() {
+                continue_problem = "empty reply".to_string();
+            } else {
+                let (ok, reason) = super::secondary::test_continuation_reply(&cont_raw, ctx.r.raw);
+                if !ok {
+                    continue_problem = format!("not a usable reply - {reason}");
+                    sec.continue_rejected = true;
+                    sec.continue_rejected_text = cont_raw.clone();
+                    sec.continue_rejected_why = reason;
+                }
+            }
+            if continue_problem.is_empty() {
+                sec.continued = true;
+                *bridge_outcome = "usable reply".to_string();
+                *usable = true;
+                *raw_text = reply.raw_text.clone();
+                *thread = continue_thread.clone();
+                *thread_source = "events".to_string();
+            }
+        }
+        AttemptOutcome::TimedOut { .. } => {
+            continue_problem = format!(
+                "timeout after {} s (process tree killed)",
+                ctx.r.continue_sec
+            );
+            sec.continue_killed = true;
+        }
+        AttemptOutcome::ProviderFailure(pf) => {
+            // The plugin reports the killed continuation as `codex exit N - <err>`; the adapter
+            // has already classified it, so name the classified message (the exact `codex exit N`
+            // framing is the plugin's raw read — a documented divergence).
+            continue_problem = pf.message.clone();
+            *provider_failure = Some(finalize_pf(pf));
+        }
+        AttemptOutcome::LaunchFailed { message, .. } => {
+            continue_problem = format!("could not start codex - {message}");
+        }
+        AttemptOutcome::Cancelled => {
+            continue_problem = "cancelled".to_string();
+        }
+    }
+
+    sec.continue_usage = cont_usage.clone();
+    sec.timeout_continue = Some(c3_core::ledger::TimeoutContinue {
+        thread: continue_thread,
+        wall_seconds: wall,
+        outcome: if sec.continued {
+            "usable reply".to_string()
+        } else {
+            format!("failed: {continue_problem}")
+        },
+        events: events_field,
+        usage: cont_usage,
+        ..Default::default()
+    });
+}
+
+/// The format repair (`codex-consult.ps1:3845`): a substantive prose reply on a verified thread
+/// earns ONE convert-only `resume <thread>` turn at the lowest effort, no `--output-schema`.
+#[allow(clippy::too_many_arguments)]
+fn run_format_repair(
+    ctx: &Context,
+    store: &FilesStore,
+    pending: &PendingRef,
+    base_record: &PendingRecord,
+    thread: &str,
+    thread_source: &str,
+    usable: bool,
+    sec: &mut Secondary,
+    structured: &mut Option<StructuredReply>,
+    raw_text: &mut String,
+    validation_error: &mut String,
+) {
+    let eligible = ctx.r.repair_enabled
+        && structured.is_none()
+        && usable
+        && !ctx.r.raw
+        && !thread.is_empty()
+        && thread_source == "events";
+    if !eligible {
+        return;
+    }
+    let gate = super::secondary::prose_gate(raw_text);
+    if !gate.substantive {
+        // No repair turn: the validation_error names why (`(format repair not attempted: ...)`).
+        *validation_error = format!(
+            "{} (format repair not attempted: {})",
+            validation_error, gate.reason
+        );
+        return;
+    }
+
+    let original_prose = raw_text.clone();
+    let mut repair_reason = validation_error.clone();
+    if repair_reason.chars().count() > 200 {
+        repair_reason = repair_reason.chars().take(200).collect();
+    }
+    sec.repair_reason = repair_reason;
+
+    // The original prose, byte for byte, kept next to the handoff BEFORE the repair process.
+    let original_name = format!("{:02}-codex-{}.original.md", ctx.nn, ctx.reply_name);
+    let original_full = ctx.handoffs_dir.join(&original_name);
+    let _ = c3_core::store::write_text_atomic(&original_full, original_prose.as_bytes());
+    sec.original_rel = format!("handoffs/{original_name}");
+    sec.original_prose = original_prose;
+
+    // The recovery record names the saved prose BEFORE the repair process exists (state
+    // launching), then the callback flips it to running with the repair pid.
+    let original_repo_rel = c3_core::paths::repo_relative(&ctx.repo_root, &original_full)
+        .unwrap_or_else(|| original_full.to_string_lossy().to_string());
+    let mut launching = base_record.clone();
+    launching.state = PendingState::Launching;
+    launching.original = Some(original_repo_rel.clone());
+    launching.first_reply = Some("usable prose (format repair in progress)".to_string());
+    launching.note = "format repair turn being started; its pid is not recorded yet".to_string();
+    let _ = store.write_pending(pending, &launching);
+
+    let rec_arc = std::sync::Arc::new(std::sync::Mutex::new(launching));
+    let on_running: std::sync::Arc<dyn Fn(u32, String) + Send + Sync> = {
+        let cb_store = store.clone();
+        let cb_pending = pending.clone();
+        let cb_rec = std::sync::Arc::clone(&rec_arc);
+        std::sync::Arc::new(move |child_pid: u32, child_start: String| {
+            if let Ok(mut r) = cb_rec.lock() {
+                r.state = PendingState::Running;
+                r.child_pid = Some(child_pid);
+                r.child_start_time = child_start;
+                r.note = "format repair turn".to_string();
+                let _ = cb_store.write_pending(&cb_pending, &r);
+            }
+        })
+    };
+
+    let repair_timeout = ctx.r.timeout_sec.min(300);
+    sec.repair_timeout = repair_timeout;
+    let tmp = std::env::temp_dir();
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let repair_last = tmp.join(format!("codex-consult-repair-last-{id}.md"));
+    let repair_events = tmp.join(format!("codex-consult-repair-events-{id}.jsonl"));
+    let repair_stderr = tmp.join(format!("codex-consult-repair-stderr-{id}.txt"));
+
+    let repair_prompt = format!(
+        "Your last message was prose, not the required JSON. Reply with exactly one bare JSON object satisfying the JSON Schema below - no fence, nothing before or after it. Convert, do not re-answer: copy your previous content unchanged (the same Q1..Qn answers verbatim inside reply_markdown, the same findings, the same Requested checks, the same prior-finding statuses and the same verdict); add or omit nothing.\r\n\r\nJSON Schema of the reply:\r\n{}\r\n\r\nConsultation id: {}",
+        schema_text_crlf(),
+        ctx.consult_id
+    );
+
+    let (outcome, wall) = run_codex_secondary(
+        ctx,
+        TurnKind::FormatRepair,
+        "read-only",
+        repair_effort(ctx),
+        None, // never --output-schema on a codex repair turn (prompt-only)
+        thread,
+        &repair_prompt,
+        &repair_last,
+        &repair_events,
+        &repair_stderr,
+        repair_timeout as f64,
+        Some(on_running),
+    );
+
+    let mut repair_problem = String::new();
+    let mut repair_usage: Option<Usage> = None;
+    let mut repair_thread = String::new();
+    let mut repaired: Option<StructuredReply> = None;
+    match outcome {
+        AttemptOutcome::Completed(reply) => {
+            repair_usage = reply.usage.clone();
+            repair_thread = match &reply.conversation {
+                c3_core::engine::ConversationTrust::Verified(c)
+                | c3_core::engine::ConversationTrust::Candidate(c) => c.0.clone(),
+                _ => String::new(),
+            };
+            let rr = reply.raw_text.trim();
+            if rr.is_empty() {
+                repair_problem = "empty reply".to_string();
+            } else {
+                match crate::engines::codex::parse_structured(rr) {
+                    Some(s) => {
+                        // .reply.json holds the repaired object, byte for byte.
+                        *raw_text = reply.raw_text.clone();
+                        repaired = Some(s);
+                    }
+                    None => {
+                        repair_problem =
+                            format!("still not valid: {}", ingest::first_validation_error(rr));
+                    }
+                }
+            }
+        }
+        AttemptOutcome::TimedOut { .. } => {
+            repair_problem = format!("timeout after {repair_timeout} s (process tree killed)");
+            sec.repair_killed = true;
+        }
+        AttemptOutcome::ProviderFailure(pf) => {
+            repair_problem = pf.message.clone();
+        }
+        AttemptOutcome::LaunchFailed { message, .. } => {
+            repair_problem = format!("could not start codex - {message}");
+        }
+        AttemptOutcome::Cancelled => {
+            repair_problem = "cancelled".to_string();
+        }
+    }
+
+    // Drift notes: a different repair thread, then the prose-vs-object comparison.
+    let mut drift_notes: Vec<String> = Vec::new();
+    if !repair_thread.is_empty() && repair_thread != thread {
+        drift_notes.push("repair returned a different thread id".to_string());
+    }
+    if let Some(s) = &repaired {
+        for d in super::secondary::get_format_repair_drift(&sec.original_prose, s) {
+            drift_notes.push(d);
+        }
+        *validation_error = String::new();
+        sec.repaired_ok = true;
+        *structured = repaired;
+    } else {
+        *validation_error = format!(
+            "{} (format repair failed: {})",
+            validation_error,
+            c3_core::one_line(&repair_problem)
+        );
+    }
+    sec.drift_notes = drift_notes.clone();
+
+    sec.format_retry = Some(c3_core::ledger::FormatRetry {
+        attempted: true,
+        reason: sec.repair_reason.clone(),
+        succeeded: sec.repaired_ok,
+        thread: repair_thread,
+        wall_seconds: wall,
+        usage: repair_usage,
+        drift: drift_notes
+            .iter()
+            .map(|d| serde_json::Value::String(d.clone()))
+            .collect(),
+        original: sec.original_rel.clone(),
+        events: None, // codex's repair event stream is a temp file, removed → null
+        schema_transport: "prompt-only".to_string(),
+        ..Default::default()
+    });
+    sec.repair_wall = wall;
+    sec.repair_console = format!(
+        "format repair: {} in {} s; drift: {} note(s)",
+        if sec.repaired_ok {
+            "succeeded"
+        } else {
+            "failed"
+        },
+        fmt_wall(wall),
+        drift_notes.len()
+    );
+
+    // temp cleanup
+    let _ = std::fs::remove_file(&repair_last);
+    let _ = std::fs::remove_file(&repair_events);
+    let _ = std::fs::remove_file(&repair_stderr);
+}
+
+/// The lowest effort of the endpoint's vocabulary for a repair turn (`Get-RepairEffort`).
+fn repair_effort(ctx: &Context) -> Option<String> {
+    if ctx.effort.mapping == "native" {
+        return ctx.effort.sent.clone();
+    }
+    let host = &ctx.identity.host;
+    if !host.is_empty() {
+        if let Some(cap) = caps(host) {
+            if let Some((_, low)) = vocabulary_map(cap.vocabulary, "low") {
+                return Some(low.to_string());
+            }
+        }
+    }
+    ctx.effort.sent.clone()
+}
+
+/// Build the salvaged `.partial.md` body, footer and resume command when a killed turn had no
+/// usable continuation (`codex-consult.ps1:4108`).
+fn build_partial_reply(
+    ctx: &Context,
+    main_events_text: &str,
+    sec: &mut Secondary,
+    main_timed_out: bool,
+    main_wall: f64,
+) {
+    let partial_needed =
+        (main_timed_out && !sec.continued) || sec.continue_killed || sec.repair_killed;
+    if !partial_needed {
+        return;
+    }
+    sec.partial_needed = true;
+    sec.partial_rel = format!("handoffs/{:02}-codex-{}.partial.md", ctx.nn, ctx.reply_name);
+
+    let mut turns: Vec<super::secondary::PartialTurn> = Vec::new();
+    let mut killed_at: Vec<String> = Vec::new();
+    turns.push(super::secondary::PartialTurn {
+        label: "Turn 1 - the main turn".to_string(),
+        note: if main_timed_out {
+            format!(
+                "killed at {} s of {} s",
+                fmt_wall(main_wall),
+                ctx.r.timeout_sec
+            )
+        } else {
+            "it ended by itself".to_string()
+        },
+        salvage: super::secondary::read_codex_salvage(main_events_text),
+    });
+    if main_timed_out {
+        killed_at.push(format!(
+            "{} s of {} s (the main turn)",
+            fmt_wall(main_wall),
+            ctx.r.timeout_sec
+        ));
+    }
+    if sec.continue_ran {
+        let cont_events = ctx.handoffs_dir.join(format!(
+            "{:02}-codex-{}.continue.events.jsonl",
+            ctx.nn, ctx.reply_name
+        ));
+        let cont_text = std::fs::read_to_string(&cont_events).unwrap_or_default();
+        let note = if sec.continue_killed {
+            format!(
+                "killed at {} s of {} s",
+                fmt_wall(sec.continue_wall),
+                ctx.r.continue_sec
+            )
+        } else if sec.continued {
+            format!("it answered in {} s", fmt_wall(sec.continue_wall))
+        } else {
+            let why = sec
+                .timeout_continue
+                .as_ref()
+                .map(|t| t.outcome.trim_start_matches("failed: ").to_string())
+                .unwrap_or_default();
+            format!("failed: {why}")
+        };
+        turns.push(super::secondary::PartialTurn {
+            label: format!("Turn {} - the timeout continuation", turns.len() + 1),
+            note,
+            salvage: super::secondary::read_codex_salvage(&cont_text),
+        });
+        if sec.continue_killed {
+            killed_at.push(format!(
+                "{} s of {} s (the timeout continuation)",
+                fmt_wall(sec.continue_wall),
+                ctx.r.continue_sec
+            ));
+        }
+    }
+
+    let mut body = super::secondary::format_partial_body(&turns);
+    // A continuation reply the checks REJECTED is not thrown away.
+    if sec.continue_rejected && !sec.continue_rejected_text.trim().is_empty() {
+        body = format!(
+            "{}\n\n## continuation reply (rejected: {})\n\n{}\n",
+            body.trim_end(),
+            sec.continue_rejected_why,
+            sec.continue_rejected_text.trim().replace("\r\n", "\n")
+        );
+        if let Some(tc) = &mut sec.timeout_continue {
+            tc.outcome = format!(
+                "{}; its text is kept in {} under \"continuation reply (rejected)\"",
+                tc.outcome, sec.partial_rel
+            );
+        }
+    }
+    sec.partial_body = body;
+
+    // The resume thread: this run's verified thread, else the killed turn's continuation thread.
+    let resume_thread = if !sec.continue_thread.is_empty() {
+        sec.continue_thread.clone()
+    } else {
+        String::new()
+    };
+    let killed_text = if killed_at.len() == 1 {
+        // strip the trailing " (...)"
+        let s = &killed_at[0];
+        s.rsplit_once(" (")
+            .map(|(a, _)| a.to_string())
+            .unwrap_or_else(|| s.clone())
+    } else {
+        killed_at.join(", ")
+    };
+    if !resume_thread.is_empty() {
+        let args = summary::build_resume_command(&summary::ResumeInputs {
+            task: ctx.o.task.clone(),
+            collab_dir: ctx.o.collab_dir.clone(),
+            thread: resume_thread.clone(),
+            no_roster: true,
+            provider: ctx.identity.provider.clone(),
+            model: ctx.identity.model.clone(),
+            purpose: ctx.o.purpose.clone(),
+            raw: ctx.r.raw,
+            reply_name: ctx.o.reply_name.clone(),
+            reply_name_given: !ctx.o.reply_name.is_empty(),
+            timeout_source: ctx.r.timeout_source.clone(),
+            timeout_sec: ctx.r.timeout_sec,
+            continue_sec: ctx.r.continue_sec,
+            effort: ctx.o.effort.clone(),
+            native_effort: ctx.o.native_effort.clone(),
+            max_words: ctx.o.max_words,
+            transport_override: ctx.r.transport_override.clone(),
+            codex_config: ctx.o.codex_config.clone(),
+            artifacts: ctx.o.artifacts.clone(),
+            range: ctx.o.range.clone(),
+            sandbox: sandbox_label(&ctx.o),
+            format_retry: ctx.o.format_retry,
+            off_peak_only: ctx.o.off_peak_only,
+            skip_preflight: ctx.o.skip_preflight,
+            codex_exe: ctx.o.codex_exe.clone(),
+        });
+        sec.partial_footer =
+            format!("killed at {killed_text}; thread {resume_thread} - continue with `{args}`");
+        sec.resume_command = args;
+    } else {
+        sec.partial_footer = format!(
+            "killed at {killed_text}; the thread of the killed turn is not known - no resume is possible (start again with -Mode new)"
+        );
     }
 }
 
@@ -1533,12 +2416,17 @@ fn render_handoff(
     provider_failure: Option<&c3_core::ledger::ProviderFailure>,
     raw_text: &str,
     drift: &Drift,
-) -> String {
+    sec: &Secondary,
+    main_event_error: &str,
+    main_stderr: &str,
+) -> (String, Option<String>) {
     let events_rel = format!(
         "handoffs/{:02}-codex-{}.events.jsonl",
         ctx.nn, ctx.reply_name
     );
     let effort_sent = ctx.effort.sent.clone().unwrap_or_else(|| "nothing".into());
+    // codex reports usage; a turn that produced none (a killed main turn) is `unknown`, matching
+    // `Format-Usage $null` — never "not reported by codex" (that is for agy/muse).
     let tokens = match usage {
         Some(u) => TokenReport::Reported {
             input: u.input_tokens,
@@ -1546,9 +2434,7 @@ fn render_handoff(
             output: u.output_tokens,
             reasoning: u.reasoning_output_tokens,
         },
-        None => TokenReport::NotReported {
-            engine: "codex".into(),
-        },
+        None => TokenReport::Unknown,
     };
     let mut records = OptionalRecords {
         recovery_lines: ctx
@@ -1608,6 +2494,65 @@ fn render_handoff(
             pf.class, code, pf.message
         ));
     }
+    // (18) Timeout continuation line.
+    if let Some(tc) = &sec.timeout_continue {
+        if sec.continued {
+            records.timeout_continuation = Some(format!(
+                "Timeout continuation: the main turn was killed at {} s of {} s; one continuation turn on thread `{}` answered in {} s. Tokens of that turn: {}.",
+                fmt_wall(wall),
+                ctx.r.timeout_sec,
+                sec.continue_thread,
+                fmt_wall(sec.continue_wall),
+                usage_clause(&sec.continue_usage),
+            ));
+        } else {
+            let mut h = format!("Timeout continuation: {}", tc.outcome);
+            if sec.continue_wall > 0.0 || tc.events.is_some() {
+                h.push_str(&format!(" (in {} s)", fmt_wall(sec.continue_wall)));
+            }
+            if !sec.continue_thread.is_empty() {
+                h.push_str(&format!(" - thread `{}`", sec.continue_thread));
+            }
+            h.push('.');
+            records.timeout_continuation = Some(h);
+        }
+    }
+    // (19) Partial reply line.
+    if sec.partial_needed {
+        records.partial_reply = Some(format!(
+            "Partial reply: `{}` - {}.",
+            sec.partial_rel, sec.partial_footer
+        ));
+    }
+    // (23) Format repair line.
+    if let Some(fr) = &sec.format_retry {
+        let drift_text = if sec.drift_notes.is_empty() {
+            "none".to_string()
+        } else {
+            format!(
+                "{} note(s): {}",
+                sec.drift_notes.len(),
+                sec.drift_notes.join("; ")
+            )
+        };
+        records.format_repair = Some(if sec.repaired_ok {
+            format!(
+                "Format repair: succeeded in {} s - the first reply was prose ({}); one repair turn resumed thread `{}` and converted it. Drift: {}. The original prose follows the structured section and is kept as `{}`.",
+                fmt_wall(fr.wall_seconds),
+                c3_core::one_line(&sec.repair_reason),
+                thread,
+                drift_text,
+                sec.original_rel,
+            )
+        } else {
+            format!(
+                "Format repair: failed in {} s - the first reply was prose ({}) and the repair turn did not produce a valid object; the prose is kept below (also `{}`).",
+                fmt_wall(fr.wall_seconds),
+                c3_core::one_line(&sec.repair_reason),
+                sec.original_rel,
+            )
+        });
+    }
     let reply_json_rel = if !ctx.r.raw && !raw_text.is_empty() {
         format!("handoffs/{:02}-codex-{}.reply.json", ctx.nn, ctx.reply_name)
     } else {
@@ -1649,7 +2594,10 @@ fn render_handoff(
         }
         line
     });
-    let structured_status = if !ctx.r.raw && structured.is_none() {
+    // The status line renders only when a reply was ingested (`if ($parse)` in the plugin) —
+    // i.e. a usable, non-raw run; a failed run (a killed turn) has no reply and no line.
+    let ingest_ran = !ctx.r.raw && c3_core::health::is_usable_outcome(bridge_outcome);
+    let structured_status = if ingest_ran && structured.is_none() {
         let mut line = format!(
             "Structured reply: INVALID ({validation_error}) - raw text kept; no findings recorded."
         );
@@ -1685,7 +2633,7 @@ fn render_handoff(
         wall_seconds: fmt_wall(wall),
         tokens,
         events_rel: events_rel.clone(),
-        further_turns: vec![],
+        further_turns: sec.continue_events_rel.iter().cloned().collect(),
         reviewer_line: reviewer_line(&ctx.identity, &ctx.codex_version),
         preflight_line: if ctx.preflight.is_empty() {
             "Preflight: not recorded (non-openai credential check deferred to M2c+).".into()
@@ -1725,26 +2673,93 @@ fn render_handoff(
         records,
     };
 
-    let mut out = header.render();
-    // The verbatim reply, then the structured section for a structured reply.
-    let body = structured
-        .map(|s| {
-            if s.reply_markdown.trim().is_empty() {
-                "_(empty reply_markdown)_".to_string()
-            } else {
-                s.reply_markdown.clone()
-            }
-        })
-        .unwrap_or_else(|| raw_text.to_string());
+    let header_str = header.render();
+    // The verbatim reply, then the structured section for a structured reply. A run with no
+    // captured reply (a killed turn, no usable continuation) prints the placeholder body and,
+    // when it exists, the engine error and stderr tail (`codex-consult.ps1:4382`).
+    let body = if raw_text.trim().is_empty() {
+        let mut b = if sec.partial_needed {
+            format!(
+                "_(no reply captured - what the killed turn(s) produced is salvaged in `{}`)_",
+                sec.partial_rel
+            )
+        } else {
+            "_(no reply captured)_".to_string()
+        };
+        if !main_event_error.is_empty() {
+            b.push_str(&format!("\n\nCodex reported: {main_event_error}"));
+        }
+        if !main_stderr.trim().is_empty() {
+            b.push_str(&format!("\n\n```\n{}\n```", main_stderr.trim()));
+        }
+        b
+    } else {
+        structured
+            .map(|s| {
+                if s.reply_markdown.trim().is_empty() {
+                    "_(empty reply_markdown)_".to_string()
+                } else {
+                    s.reply_markdown.clone()
+                }
+            })
+            // The reply body is the trimmed reply (`$rawReply = ...Trim()`); the byte-for-byte
+            // copy lives in `.reply.json`.
+            .unwrap_or_else(|| raw_text.trim().to_string())
+    };
     // The header ends `...---\n`; the plugin puts a blank line before the verbatim reply.
+    let mut out = header_str.clone();
     out.push('\n');
-    out.push_str(&body);
+    out.push_str(&body.replace("\r\n", "\n"));
+    out.push('\n');
     if let Some(s) = structured {
-        out.push_str("\n\n---\n\n");
+        out.push_str("\n---\n\n");
         out.push_str(&render::format_structured_section(s, finding_ids));
         out.push('\n');
     }
-    out
+    // (`codex-consult.ps1:4399`) a repaired reply keeps the original prose below the section.
+    if sec.repaired_ok {
+        out.push_str("\n---\n\n## Original reply (prose, before format repair)\n\n");
+        out.push_str(&sec.original_prose.trim().replace("\r\n", "\n"));
+        out.push('\n');
+    }
+
+    // The salvaged partial file (`codex-consult.ps1:4402`): the same metadata block (a new
+    // title, no `Verbatim reply follows.`), then the turns and the footer.
+    let partial_md = if sec.partial_needed {
+        let mut lines: Vec<String> = Vec::new();
+        lines.push(format!(
+            "# Handoff {:02} - Codex: {} - partial reply (a turn was killed on its timeout)",
+            ctx.nn, ctx.reply_name
+        ));
+        for l in header_str.lines().skip(1) {
+            if l == "Verbatim reply follows." {
+                break;
+            }
+            lines.push(l.to_string());
+        }
+        lines.push("What the reviewer produced before the kill follows (every agent message and reasoning text of each turn's event stream, in order, then its tool calls).".to_string());
+        let p_header = lines.join("\n");
+        Some(format!(
+            "{}\n\n---\n\n{}\n\n---\n\n{}\n",
+            p_header.trim_end(),
+            sec.partial_body.trim_end(),
+            sec.partial_footer
+        ))
+    } else {
+        None
+    };
+    (out, partial_md)
+}
+
+/// `Format-Usage` for a tokens clause: the reported counts, or `unknown` when null.
+fn usage_clause(u: &Option<Usage>) -> String {
+    match u {
+        Some(u) => format!(
+            "in {} (cached {}), out {}, reasoning {}",
+            u.input_tokens, u.cached_input_tokens, u.output_tokens, u.reasoning_output_tokens
+        ),
+        None => "unknown".to_string(),
+    }
 }
 
 fn model_label(id: &ReviewerIdentity) -> String {
@@ -1850,6 +2865,7 @@ fn build_entry(
     reply_json_rel: &str,
     events_rel: &str,
     drift: &Drift,
+    sec: &Secondary,
 ) -> LedgerEntry {
     let mut e = LedgerEntry {
         n: ctx.consult_n,
@@ -1868,6 +2884,7 @@ fn build_entry(
         reply: handoff_rel.to_string(),
         reply_json: reply_json_rel.to_string(),
         events: events_rel.to_string(),
+        partial_reply: sec.partial_rel.clone(),
         model: model_label(&ctx.identity),
         effort: ctx.effort.sent.clone(),
         effort_requested: ctx.effort.requested.clone(),
@@ -1898,6 +2915,8 @@ fn build_entry(
         schema_transport: ctx.transport.transport.clone(),
         schema_transport_source: ctx.transport.source.clone(),
         validation_error: validation_error.to_string(),
+        format_retry: sec.format_retry.clone(),
+        timeout_continue: sec.timeout_continue.clone(),
         range: ctx.range_record.clone(),
         warnings: ctx
             .run_warnings

@@ -340,6 +340,8 @@ pub enum AttemptOutcome {
         partial: Option<String>,
         survivors: Vec<u32>,
         conversation: ConversationTrust,
+        /// The measured wall time of the killed turn (`[math]::Round(..., 1)`).
+        wall_seconds: f64,
     },
     LaunchFailed {
         /// Whether a child process was left behind by the failed launch.

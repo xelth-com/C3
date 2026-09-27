@@ -22,6 +22,7 @@ pub mod prompt;
 pub mod recovery;
 pub mod render;
 pub mod revision;
+pub mod secondary;
 pub mod summary;
 
 pub use args::Options;

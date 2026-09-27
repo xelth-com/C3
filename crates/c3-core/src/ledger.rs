@@ -375,8 +375,9 @@ pub struct FormatRetry {
     pub thread: String,
     #[serde(default)]
     pub wall_seconds: f64,
+    /// The repair turn's usage; `null` when the engine reported none (empty/failed turn).
     #[serde(default)]
-    pub usage: Usage,
+    pub usage: Option<Usage>,
     #[serde(default)]
     pub drift: Vec<Value>,
     #[serde(default)]

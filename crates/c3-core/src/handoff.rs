@@ -96,8 +96,11 @@ pub enum TokenReport {
         output: i64,
         reasoning: i64,
     },
-    /// `not reported by <engine>`.
+    /// `not reported by <engine>` (an engine that reports no usage: agy/muse).
     NotReported { engine: String },
+    /// `unknown` — the engine reports usage (codex) but this turn produced none (a killed
+    /// turn), matching `Format-Usage` of a null usage.
+    Unknown,
 }
 
 impl TokenReport {
@@ -110,6 +113,7 @@ impl TokenReport {
                 reasoning,
             } => format!("in {input} (cached {cached}), out {output}, reasoning {reasoning}"),
             TokenReport::NotReported { engine } => format!("not reported by {engine}"),
+            TokenReport::Unknown => "unknown".to_string(),
         }
     }
 }

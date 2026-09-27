@@ -111,6 +111,7 @@ impl CodexEngine {
                 partial: salvage_partial(&events_text),
                 survivors: result.survivors,
                 conversation: conversation(false),
+                wall_seconds: result.wall_seconds,
             });
         }
 

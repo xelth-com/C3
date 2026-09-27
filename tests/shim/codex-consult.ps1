@@ -152,7 +152,10 @@ foreach ($c in $CodexConfig) {
     }
 }
 if ($SchemaTransport) { $c3Args.Add('--schema-transport'); $c3Args.Add($SchemaTransport) }
-if ($FormatRetry -eq 0) { $c3Args.Add('--no-format-retry') } else { $c3Args.Add('--format-retry') }
+# c3's --format-retry takes a value (0|1); it is NOT a boolean --format-retry/--no-format-retry
+# pair (that was the cli-surface.md design proposal - the actual binary kept the plugin's own
+# int semantics). Confirmed against `c3 consult --help`.
+$c3Args.Add('--format-retry'); $c3Args.Add([string]$FormatRetry)
 if ($Panel) { $c3Args.Add('--panel') }
 if ($PanelAll) { $c3Args.Add('--panel-all') }
 if ($PanelSpec) { $c3Args.Add('--panel-spec'); $c3Args.Add($PanelSpec) }
@@ -160,7 +163,8 @@ if ($PanelConcurrency -ne 0) { $c3Args.Add('--panel-concurrency'); $c3Args.Add([
 if ($Engine) { $c3Args.Add('--engine'); $c3Args.Add($Engine) }
 if ($EngineExe) { $c3Args.Add('--engine-exe'); $c3Args.Add($EngineExe) }
 if ($MaxModelSteps -ne 0) { $c3Args.Add('--max-model-steps'); $c3Args.Add([string]$MaxModelSteps) }
-if ($DenialRetry -eq 0) { $c3Args.Add('--no-denial-retry') } else { $c3Args.Add('--denial-retry') }
+# Same as --format-retry above: c3's --denial-retry takes a value (0|1), not a boolean pair.
+$c3Args.Add('--denial-retry'); $c3Args.Add([string]$DenialRetry)
 if ($DryRun) { $c3Args.Add('--dry-run') }
 
 # RESERVED R12 flags - forwarded only when explicitly passed.

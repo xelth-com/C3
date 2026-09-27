@@ -64,10 +64,10 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 |---|---|---|
 | CONTR (prompt opens with the contract; `-FormatRetry` bounds) | verified | the FINAL OUTPUT CONTRACT paragraph is first (unit + dry-run); `-FormatRetry 0`/`-Raw`/chore → no contract, dry-run "format retry : 0 (off)"; `-FormatRetry` accepts only 0/1 (`args::validate`, unit-tested). |
 | GATE (`Get-ProseGate`) | verified | `consult::ingest::prose_gate` ported exactly (refusal phrases, numbered-answer regex, the 25/40/120-word floors) — unit-tested. |
-| REPAIR (one repair turn) | not yet | the format-repair turn (resume the thread, convert-only prompt, `.original.md`, `format_retry` record, drift notes) is deferred (M2c+). A substantive-prose reply is kept as the reply of record with a `validation_error`. |
-| TWICE / NONE | not yet | deferred with REPAIR. |
-| DRIFT / DRIFT5 | not yet | `Get-FormatRepairDrift` is not ported yet (deferred with REPAIR). |
-| ORPHAN (mid-repair recovery record) | not yet | deferred with REPAIR + pending recovery. |
+| REPAIR (one repair turn) | verified | `consult::orchestrate::run_format_repair` — a substantive-prose reply on a verified thread earns ONE `resume <thread>` turn (sandbox `read-only`, the lowest-vocabulary effort via `Get-RepairEffort`, NO `--output-schema` — codex is always prompt-only on the repair turn), the convert-only prompt byte-for-byte; the repaired object goes to `.reply.json`, the prose to `.original.md`; `format_retry{attempted,reason,succeeded,thread,wall_seconds,usage,drift,original,events(null for codex),schema_transport:"prompt-only"}`; handoff `Format repair:` line and the `format repair:` console line. **Live-verified** byte-identical (sessions.json, handoff `.md`, `.reply.json`, console) against the plugin in the seven M2d1c scratch scenarios. |
+| TWICE / NONE | verified | never a second repair (`run_format_repair` runs at most once, only when `structured.is_none()`); `--format-retry 0` disables it (`format_retry: null`, `validation_error` names why) — live-verified in the `format-retry-0` scenario. A prose reply that is not substantive earns no repair turn (`validation_error` ends `(format repair not attempted: <reason>)`) — live-verified in `invalid-nonsub`. |
+| DRIFT / DRIFT5 | verified | `consult::secondary::get_format_repair_drift` ports `Get-FormatRepairDrift` (RC ids, numbered answers, F-ids named in prose but absent from prior/findings, the verdict token, and the >=60-char prose sentences missing from `reply_markdown`, the 40 longest); unit-tested and live-verified (a verdict-drift note in `repair-success`). |
+| ORPHAN (mid-repair recovery record) | verified | the recovery record names the saved prose (`original`, repo-relative) and `first_reply` BEFORE the repair process is launched (state `launching`), then the `on_running` callback flips it to `running` with the repair pid; the commit write order (findings.json before sessions.json, reused from `c3-core::store`) keeps a crash between the two detectable as the findings tool's `[ORPHAN]`. |
 
 ## harness-lock2 / harness-pending / harness-3b (lock ownership, pending recovery, liveness)
 
@@ -83,8 +83,8 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 |---|---|---|
 | DEFAULTS (per-purpose timeout/continue) | verified | `args::validate` — the purpose timeout table, `timeout_source`, and `continue_sec = min(timeout, 900)` (0 = off, negative refused) — unit-tested; dry-run `timeout` line matches. |
 | RANGE (`-Range`) | verified | `revision::range_stat` runs `git diff --shortstat <spec> --` once before the lock (unknown range refuses with the plugin's wording), records `range{spec,files,insertions,deletions,lines}`, adds the prompt line, the dry-run `range` line and the handoff `Range:` suffix, and the >1500-lines-under-2400 s size warning to `warnings[]` — unit-tested and **live-verified** byte-identical (dry-run `range` line + prompt `Review range:` line). |
-| CONT (codex timeout continuation) | not yet | the continuation turn, `timeout_continue` record, `.partial.md` salvage and the printed resume command are deferred; a killed main turn is a failed run (exit 1) with `bridge_outcome: "failed: timeout ..."`. |
-| GATES-F08-* / F07-1 | not yet | the continuation gates (tree/quota/survivor/short-reply) and prompt-only re-send are deferred with CONT. |
+| CONT (codex timeout continuation) | verified | `consult::orchestrate::run_timeout_continuation` — after the timeout kill, ONE `codex exec ... resume <thread> -` turn with the plugin's exact continuation prompt and the main turn's options; usable → `bridge_outcome: "usable reply (after a timeout continuation)"` + `timeout_continue{thread,wall_seconds,outcome,events,usage}` with its `.continue.events.jsonl` next to the primary (a further turn); failed → `.partial.md` (salvaged via `Read-CodexSalvage`/`Format-PartialBody`) + `partial_reply` in the ledger + the `partial :`/`resume :` summary lines (the resume args are `summary::build_resume_command`, byte-identical to the plugin). **Live-verified** in `cont-success`, `cont-failure`, `cont-sec-0` (sessions.json, handoff, partial, console byte-identical modulo the documented items below). `--continue-sec 0` → `timeout_continue.outcome "not attempted: -ContinueSec 0"`. |
+| GATES-F08-* / F07-1 | verified | the continuation gates are ported: no continuation without a verified thread, none when survivors remain, none after the killed turn's own quota/auth failure (`consult::secondary::get_killed_turn_failure`), and `-ContinueSec 0` off; the reply of the continuation must pass `Test-ContinuationReply` (`consult::secondary::test_continuation_reply`) before it counts. F07-1: a prompt-only transport re-sends the reply format + schema in the continuation prompt (`prompt::schema_lines` + the inlined schema); the built-in openai endpoint is `output-schema`, so it re-passes `--output-schema` instead — both paths implemented. The tree/brief-changed gate is wired (`drift.tree_changed`/`brief_changed`); the artifact-changed gate rides `-Artifact` hashing, still deferred. |
 
 ## harness-roster.ps1 (roster walk)
 
@@ -102,9 +102,9 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 
 ## Counts
 
-- **verified:** 22
+- **verified:** 28
 - **partial:** 11
-- **not yet:** 14
+- **not yet:** 8
 - **n/a:** 3 (agy / muse / panel groups)
 
 ## M2d progress (this pass)
@@ -173,6 +173,59 @@ applied.
 Still to do before agy/muse (M2d-2 remaining, items 2–8 of the brief): timeout continuation, format
 repair, preflight endpoint-health, the roster walk, the prior-finding lifecycle, `-Artifact`
 hashing, and the byte-identical summary-console block.
+
+## M2d-2 progress — timeout continuation + format repair (this pass)
+
+Both codex secondary-turn mechanisms landed and are **live-verified** against `codex-consult.ps1`
+(PS 5.1) in seven scratch scenarios under `.../scratchpad/m2d1c/` — timeout+continuation success,
+timeout+continuation failure (partial + resume), timeout with `--continue-sec 0`, prose+repair
+success (with a drift note), prose+repair failure, `--format-retry 0`, and invalid-JSON-not-prose.
+
+New/changed code:
+1. **`crates/c3/src/consult/secondary.rs`** (new) — `read_codex_salvage`/`format_partial_body`
+   (`Read-CodexSalvage`/`Format-PartialBody`), `get_format_repair_drift` (`Get-FormatRepairDrift`),
+   `test_continuation_reply` (`Test-ContinuationReply`), `get_killed_turn_failure`
+   (`Get-KilledTurnFailure`), the prose gate re-export. Unit-tested.
+2. **`consult::orchestrate::{run_timeout_continuation, run_format_repair, run_codex_secondary,
+   build_partial_reply, codex_failure_pf}`** — the two turns run through `CodexEngine`'s secondary
+   `TurnFiles`; the continuation events file is a further turn kept next to the primary, the repair
+   events/last are temp; the repair record transitions `launching`→`running` via `on_running`.
+3. **`consult::ingest::first_validation_error`** — `ConvertFrom-StructuredReply`'s `ValidationError`
+   analog (empty / `not valid JSON: <msg>` / a schema error).
+4. **Core**: `AttemptOutcome::TimedOut` carries `wall_seconds`; `TokenReport::Unknown` (`Format-Usage`
+   of a null usage = `unknown`, not "not reported by codex"); `FormatRetry.usage` is now
+   `Option<Usage>` (null on a failed/empty repair turn).
+5. **Summary/handoff**: the `continued :`, `partial :`/`resume :`, `format repair:`+`drift:` and
+   `structured : INVALID (...)` console lines; the handoff `Timeout continuation:`, `Partial reply:`
+   and `Format repair:` header lines (the header INVALID line uses the FIRST-reply parse error, the
+   ledger/console use the suffixed one — matching the plugin's `$parse.ValidationError` vs
+   `$validationError`).
+
+Parity result: sessions.json, the handoff `.md`, the `.partial.md`, `.reply.json` (byte-for-byte)
+and the console are identical to the plugin in all seven scenarios **except** these documented,
+expected differences:
+- **Reviewer `topics`/`role`** — the plugin writes these two roster fields (empty) into every
+  `reviewer` record; c3 omits them. Pre-existing (M4 roster surface), present in *every* scenario
+  incl. ones unrelated to this task, and not introduced here.
+- **Schema path in `command`/argv** — c3 passes its own materialised
+  `<CODEX_HOME>/c3/schemas/consult-reply.v1.json`; the plugin passes its bundled
+  `…/schemas/consult-reply.schema.json`. Environmental (like `cwd`), already documented for M2c.
+- **`not valid JSON: <msg>`** — the parser message is runtime/locale-specific (PS 5.1 gave a German
+  ".NET" message; Rust gives `expected value at line 1 column 1`). The surrounding structure and the
+  `(format repair failed/not attempted: …)` wrappers are byte-identical.
+- **Failed-continuation `outcome`** — c3 reports `failed: <classified message>`; the plugin reports
+  `failed: codex exit N - <message>`. The codex engine adapter classifies a turn failure into a
+  `ProviderFailure` (with a cleaned message) rather than re-deriving the raw `codex exit N` string;
+  everything else (that it failed, the thread, the partial, the resume line, `provider_failure`)
+  matches.
+- **`resume :` console prefix** — the plugin prints `pwsh/powershell -File "…codex-consult.ps1"
+  <args>`; c3 prints `<args>` alone (it has no single `.ps1` entrypoint). The **args** are
+  byte-identical (`summary::build_resume_command`), and the persisted `.partial.md` footer's
+  `continue with \`<args>\`` is byte-identical.
+- Tool-name prefix (`c3 consult:` vs `codex-consult:`) — the intended C3 rename.
+
+Tests: 7 unit tests in `consult::secondary`; workspace `cargo test` green (195), `cargo clippy
+--all-targets -- -D warnings` clean, `cargo fmt` applied.
 
 ## Wave-24c items (coordinator course-correction) — where verified
 

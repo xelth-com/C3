@@ -200,6 +200,39 @@ fn render_open_findings(open: &[OpenFinding]) -> String {
     lines.join(NL)
 }
 
+/// The `$schemaLines` block on its own, for a secondary turn (the timeout continuation on a
+/// prompt-only transport re-sends the reply format, `codex-consult.ps1:3695`). `has_open` picks
+/// the `prior_findings` line; `prompt_only` picks the first line's wording.
+pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> String {
+    // A minimal PromptInputs is enough: `schema_block` reads only `purpose`, whether
+    // `open_findings` is empty, and `schema_transport`.
+    let one = [OpenFinding {
+        id: String::new(),
+        status: String::new(),
+        locations: String::new(),
+        claim: String::new(),
+        trigger: String::new(),
+        verification: String::new(),
+    }];
+    let inp = PromptInputs {
+        raw: false,
+        purpose,
+        prompt: "",
+        brief_ref: "",
+        range: None,
+        open_findings: if has_open { &one } else { &[] },
+        schema_transport: if prompt_only {
+            "prompt-only"
+        } else {
+            "output-schema"
+        },
+        schema_text: "",
+        max_words: 0,
+        consult_id: "",
+    };
+    schema_block(&inp)
+}
+
 fn schema_block(inp: &PromptInputs) -> String {
     let prior_line = if inp.open_findings.is_empty() {
         "- prior_findings: an empty array (no earlier findings are open in this task)."
