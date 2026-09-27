@@ -46,30 +46,61 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
     for line in &ctx.recovery_dry_lines {
         out.push(format!("pending     : {line}"));
     }
-    if ctx.launcher.is_empty() {
-        out.push("launcher    : (codex not found on PATH)".into());
-    } else {
-        out.push(format!("launcher    : {}", ctx.launcher));
-    }
-    out.push(format!("codex       : {}", ctx.codex_version));
-    let config_path = crate::providers::get_codex_config_path();
-    out.push(format!(
-        "config      : {}",
-        if config_path.is_empty() {
-            "(no Codex home)".to_string()
+    let is_codex = ctx.engine == "codex";
+    let spec = c3_core::lineage::engine_spec(&ctx.engine);
+    if is_codex {
+        if ctx.launcher.is_empty() {
+            out.push("launcher    : (codex not found on PATH)".into());
         } else {
-            config_path
+            out.push(format!("launcher    : {}", ctx.launcher));
         }
-    ));
+        out.push(format!("codex       : {}", ctx.codex_version));
+        let config_path = crate::providers::get_codex_config_path();
+        out.push(format!(
+            "config      : {}",
+            if config_path.is_empty() {
+                "(no Codex home)".to_string()
+            } else {
+                config_path
+            }
+        ));
+    } else {
+        let label = spec.as_ref().map(|s| s.label).unwrap_or("");
+        let exe_env = spec.as_ref().map(|s| s.exe_env).unwrap_or("");
+        out.push(format!(
+            "engine      : {} - {label} (from {})",
+            ctx.engine, ctx.engine_from
+        ));
+        if ctx.engine_launcher.is_empty() {
+            out.push(format!(
+                "launcher    : ({} CLI not found on PATH; -EngineExe or {exe_env})",
+                ctx.engine
+            ));
+        } else {
+            out.push(format!("launcher    : {}", ctx.engine_launcher));
+        }
+        out.push(format!("harness     : {}", ctx.harness));
+        out.push(format!(
+            "config      : (not used by the {} engine)",
+            ctx.engine
+        ));
+    }
     // The full reviewer line, minus the `Reviewer: ` prefix (`$reviewerLine -replace ...`).
-    let reviewer_full = super::orchestrate::reviewer_line(&ctx.identity, &ctx.codex_version);
+    let reviewer_full = super::orchestrate::reviewer_line(&ctx.identity, &ctx.harness);
     out.push(format!(
         "reviewer    : {}",
         reviewer_full
             .strip_prefix("Reviewer: ")
             .unwrap_or(&reviewer_full)
     ));
-    out.push(format!("lineage     : {}", ctx.identity.lineage));
+    out.push(format!(
+        "lineage     : {}",
+        c3_core::lineage::format_reviewer_lineage(
+            &ctx.identity.provider,
+            &ctx.identity.model,
+            &ctx.engine
+        )
+    ));
     let preflight_line = if !ctx.preflight_label.is_empty() {
         ctx.preflight_label.clone()
     } else if ctx.o.skip_preflight {
@@ -152,13 +183,26 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         out.push(format!("schema      : {schema}"));
+        let schema_flag = spec
+            .as_ref()
+            .map(|s| s.schema_flag)
+            .unwrap_or("--output-schema");
         match ctx.transport.transport.as_str() {
             "output-schema" => out.push(format!(
                 "transport   : output-schema ({}): passed as --output-schema",
                 ctx.transport.basis
             )),
-            _ => out.push(format!(
+            "native" => out.push(format!(
+                "transport   : native ({}): passed as {schema_flag}, the reply is {} (validated locally too)",
+                ctx.transport.basis,
+                spec.as_ref().map(|s| s.reply_source).unwrap_or("")
+            )),
+            _ if is_codex => out.push(format!(
                 "transport   : prompt-only ({}): --output-schema is NOT passed; the schema travels in the prompt, the reply is validated locally",
+                ctx.transport.basis
+            )),
+            _ => out.push(format!(
+                "transport   : prompt-only ({}): {schema_flag} is NOT passed; the schema travels in the prompt, the reply is validated locally",
                 ctx.transport.basis
             )),
         }
@@ -167,6 +211,36 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         out.push("format retry : 1 attempt if the reply is not valid JSON".into());
     } else {
         out.push("format retry : 0 (off)".into());
+    }
+    // The engine-only lines (`codex-consult.ps1:3565-3569`): denial retry, the model-step cap,
+    // and the sandbox record (an engine's read-only enforcement).
+    if !is_codex {
+        if let Some(s) = &spec {
+            if !s.denial_retry {
+                out.push(format!(
+                    "denial retry: n/a (the {} engine runs with its write, shell and web tools disabled - nothing is auto-denied)",
+                    ctx.engine
+                ));
+            } else if ctx.o.denial_retry == 1 {
+                out.push("denial retry: 1 attempt if a tool was auto-denied and the turn produced nothing".into());
+            } else {
+                out.push("denial retry: 0 (off)".into());
+            }
+            if !s.steps_flag.is_empty() {
+                if ctx.o.max_model_steps > 0 {
+                    out.push(format!(
+                        "max steps   : {} ({})",
+                        ctx.o.max_model_steps, s.steps_flag
+                    ));
+                } else {
+                    out.push(format!(
+                        "max steps   : the {} CLI's default (no {})",
+                        ctx.engine, s.steps_flag
+                    ));
+                }
+            }
+        }
+        out.push(format!("sandbox     : {}", ctx.sandbox_record));
     }
     out.push(format!("mode        : {}", ctx.effective_mode));
     // The parent-thread note (`Select-ParentThread`'s note): why this run is a new thread, or
@@ -227,14 +301,26 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         out.push(format!("    {a}"));
     }
     out.push(String::new());
-    out.push(format!(
-        "command     : codex {}",
-        ctx.argv_display.trim_start_matches("codex ")
-    ));
-    out.push(format!(
-        "prompt (stdin, {} chars):",
-        ctx.prompt_text.chars().count()
-    ));
+    out.push(format!("command     : {}", command_str(ctx)));
+    let prompt_chars = ctx.prompt_text.chars().count();
+    if let Some(pf) = &ctx.prompt_file {
+        // muse reads its prompt through --prompt-file; stdin stays empty.
+        out.push(format!(
+            "prompt file : {} (the prompt below, UTF-8 without BOM, written at launch; stdin is empty)",
+            pf.display()
+        ));
+        out.push(format!("prompt (--prompt-file, {prompt_chars} chars):"));
+    } else {
+        if !is_codex {
+            let stdin_len = crate::engines::agy::convert_to_agy_stdin(&ctx.prompt_text)
+                .chars()
+                .count();
+            out.push(format!(
+                "stdin       : one NDJSON line {{\"event\":\"user\",\"message\":{{\"content\":<the prompt>}}}} ({stdin_len} chars, UTF-8, LF)"
+            ));
+        }
+        out.push(format!("prompt (stdin, {prompt_chars} chars):"));
+    }
     out.push("----".into());
     out.push(ctx.prompt_text.clone());
     out.push("----".into());
@@ -244,10 +330,17 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         out.push(format!("reply json  : {}", ctx.reply_json_path.display()));
     }
     out.push(format!("events file : {}", ctx.events_path.display()));
-    out.push(format!(
-        "last message: {} (temp)",
-        ctx.last_msg_path.display()
-    ));
+    if is_codex {
+        out.push(format!(
+            "last message: {} (temp)",
+            ctx.last_msg_path.display()
+        ));
+    } else {
+        out.push(format!(
+            "reply source: {}, extracted to the reply json before validation",
+            spec.as_ref().map(|s| s.reply_source).unwrap_or("")
+        ));
+    }
     out.push(String::new());
     out.push("sessions.json entry preview:".into());
     out.push(ps_json::format_value_root(&preview(ctx)));
@@ -266,7 +359,7 @@ fn preview(ctx: &Context) -> Value {
         "when": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
         "purpose": ctx.o.purpose,
         "consult_id": ctx.consult_id,
-        "reviewer": serde_json::to_value(super::orchestrate::build_reviewer(&ctx.identity, &ctx.codex_version)).unwrap_or(Value::Null),
+        "reviewer": serde_json::to_value(super::orchestrate::build_reviewer(&ctx.identity, &ctx.harness)).unwrap_or(Value::Null),
         "lineage": ctx.identity.lineage,
         "preflight": ctx.preflight,
         "preflight_warning": ctx.preflight_warning,
@@ -278,7 +371,10 @@ fn preview(ctx: &Context) -> Value {
         "thread": "<filled from the event stream>",
         "thread_source": "events|rollout (verified by consultation id)|unknown",
         "mode": ctx.effective_mode,
-        "command": format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
+        "command": command_str(ctx),
+        "reply": preview_rel(ctx, "md"),
+        "reply_json": if ctx.r.raw { Value::Null } else { Value::String(preview_rel(ctx, "reply.json")) },
+        "events": preview_rel(ctx, "events.jsonl"),
         "brief": ctx.brief_ref,
         "range": ctx.range_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
         "prompt_chars": ctx.prompt_text.chars().count(),
@@ -289,7 +385,7 @@ fn preview(ctx: &Context) -> Value {
         "effort_mapping": ctx.effort.mapping,
         "effort_caps": ctx.effort.caps,
         "max_words": ctx.r.max_words,
-        "sandbox": sandbox_label(ctx),
+        "sandbox": ctx.sandbox_record.clone(),
         "timeout_sec": ctx.r.timeout_sec,
         "timeout_source": ctx.r.timeout_source,
         "continue_sec": ctx.r.continue_sec,
@@ -311,9 +407,80 @@ fn preview(ctx: &Context) -> Value {
         "fingerprint_note": ctx.revision.fingerprint_note,
         "bridge_outcome": "<usable reply | failed: ...>",
         "warnings": ctx.run_warnings.clone(),
+        "denial_retry": Value::Null,
+        "usage": preview_usage(ctx),
+        "engine_run": preview_engine_run(ctx),
         "wall_seconds": 0,
         "finished_at": "<written at the commit>",
         "commit_wait_ms": "<ms the commit waited for the write lock>"
+    })
+}
+
+/// The engine's command string for the dry-run `command :` line and the preview `command` field
+/// (the launcher plus its argv; byte-identical to the plugin's `$commandStr`).
+fn command_str(ctx: &Context) -> String {
+    if ctx.engine == "codex" {
+        format!("codex {}", ctx.argv_display.trim_start_matches("codex "))
+    } else {
+        ctx.argv_display.clone()
+    }
+}
+
+/// `handoffs/NN-<prefix>-<reply>.<ext>` for the preview's `reply`/`reply_json`/`events` fields.
+fn preview_rel(ctx: &Context, ext: &str) -> String {
+    let prefix = c3_core::lineage::engine_spec(&ctx.engine)
+        .map(|s| s.prefix)
+        .unwrap_or("codex");
+    format!(
+        "handoffs/{:02}-{}-{}.{}",
+        ctx.nn, prefix, ctx.reply_name, ext
+    )
+}
+
+/// The preview `usage` placeholder: codex/agy report token usage, muse does not (`null`).
+fn preview_usage(ctx: &Context) -> Value {
+    if ctx.engine == "codex" {
+        return json!({
+            "input_tokens": "<n>",
+            "cached_input_tokens": "<n>",
+            "output_tokens": "<n>",
+            "reasoning_output_tokens": "<n>"
+        });
+    }
+    match c3_core::lineage::engine_spec(&ctx.engine) {
+        Some(s) if s.has_usage => json!({
+            "input_tokens": "<n>",
+            "cached_input_tokens": "<n (cache_read_tokens)>",
+            "output_tokens": "<n>",
+            "reasoning_output_tokens": "<n (thinking_tokens)>",
+            "total_tokens": "<n>"
+        }),
+        _ => Value::Null,
+    }
+}
+
+/// The preview `engine_run` placeholder: `null` for codex, else `{turns, max_model_steps,
+/// msp_schema_version}` (`max_model_steps` filled when >0; `msp_schema_version` for a
+/// prompt-file engine, muse).
+fn preview_engine_run(ctx: &Context) -> Value {
+    if ctx.engine == "codex" {
+        return Value::Null;
+    }
+    let spec = c3_core::lineage::engine_spec(&ctx.engine);
+    let max_steps = if ctx.o.max_model_steps > 0 {
+        json!(ctx.o.max_model_steps)
+    } else {
+        Value::Null
+    };
+    let msp = if spec.as_ref().map(|s| s.prompt_by_file).unwrap_or(false) {
+        Value::String("<the MSP schema_version of the stream: 1>".into())
+    } else {
+        Value::Null
+    };
+    json!({
+        "turns": "<the turns started: 1, + a denial retry, + a format repair>",
+        "max_model_steps": max_steps,
+        "msp_schema_version": msp
     })
 }
 
@@ -322,14 +489,6 @@ fn model_label(ctx: &Context) -> String {
         "unknown".to_string()
     } else {
         ctx.identity.model.clone()
-    }
-}
-
-fn sandbox_label(ctx: &Context) -> String {
-    if ctx.o.sandbox.is_empty() {
-        "read-only".to_string()
-    } else {
-        ctx.o.sandbox.clone()
     }
 }
 

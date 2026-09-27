@@ -54,7 +54,9 @@ pub struct Options {
     // Parsed-but-refused surface (see module docs).
     pub engine: String,
     pub engine_exe: String,
-    pub denial_retry_given: bool,
+    /// `--denial-retry` value (0|1; default 1). Meaningful for the agy engine; the dry-run
+    /// block prints its state. Codex/muse ignore it.
+    pub denial_retry: i64,
     pub max_model_steps: i64,
     pub panel: bool,
     pub panel_all: bool,
@@ -110,20 +112,15 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
                 .into(),
         );
     }
-    if !o.engine.is_empty() && o.engine != "codex" {
+    // `-Engine`, `-EngineExe`, `-DenialRetry` and `-MaxModelSteps` are engine-aware from M2d on
+    // (engine selection, the capability refusals and the `-EngineExe` binding live in
+    // `orchestrate::build_context`, after the roster fixes the engine). The only self-contained
+    // check here is `-MaxModelSteps`'s sign (`codex-consult.ps1:1770`).
+    if o.max_model_steps < 0 {
         return Err(format!(
-            "-Engine {} lands in milestone 2d; c3 consult currently runs the codex engine only.",
-            o.engine
+            "-MaxModelSteps must be a positive integer (got {}); omit it for the muse CLI's own default.",
+            o.max_model_steps
         ));
-    }
-    if !o.engine_exe.is_empty() {
-        return Err("-EngineExe names a non-codex engine launcher (milestone 2d); c3 consult uses -CodexExe.".into());
-    }
-    if o.denial_retry_given {
-        return Err("-DenialRetry applies to the agy engine (milestone 2d); it has no effect on a codex run.".into());
-    }
-    if o.max_model_steps != 0 {
-        return Err("-MaxModelSteps applies to the muse engine (milestone 2d); it has no effect on a codex run.".into());
     }
     if o.detach || o.status || o.list || o.wait || o.prune {
         return Err("--detach/--status/--list/--wait/--prune are reserved (plugin R12) and not implemented in c3 yet.".into());
@@ -233,10 +230,13 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
     // chore folds to raw.
     let raw = o.raw || o.purpose == "chore";
 
-    // -SchemaTransport value + -Raw exclusion.
+    // -SchemaTransport value + -Raw exclusion. `native` is a valid value here (the agy/muse
+    // engines take it; the "for the agy and muse engines" refusal for codex, and the
+    // "output-schema is refused" refusal for an engine, live in `orchestrate::build_context`,
+    // which knows the selected engine). `codex-consult.ps1:1754`.
     let transport_override = o.schema_transport.trim().to_lowercase();
     if !transport_override.is_empty() {
-        if transport_override != "output-schema" && transport_override != "prompt-only" {
+        if !["output-schema", "prompt-only", "native"].contains(&transport_override.as_str()) {
             return Err(format!(
                 "-SchemaTransport must be output-schema or prompt-only (got '{transport_override}'); omit it to use what caps-v1 declares for the endpoint."
             ));
@@ -414,7 +414,7 @@ mod tests {
             |o| o.codex_config = vec!["model_provider=x".into()]
         ))
         .contains("part of the reviewer identity"));
-        assert!(bad(Box::new(|o| o.engine = "agy".into())).contains("milestone 2d"));
+        assert!(bad(Box::new(|o| o.max_model_steps = -3)).contains("must be a positive integer"));
         assert!(bad(Box::new(|o| o.panel = true)).contains("milestone 4"));
     }
 

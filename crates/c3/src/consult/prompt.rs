@@ -118,6 +118,9 @@ pub struct PromptInputs<'a> {
     pub schema_text: &'a str,
     pub max_words: u32,
     pub consult_id: &'a str,
+    /// The engine's `Tools:` line (D11), added after the ask/brief/range for a non-codex
+    /// engine; empty for codex.
+    pub tools_line: &'a str,
 }
 
 const NL: &str = "\r\n";
@@ -142,6 +145,10 @@ pub fn assemble(inp: &PromptInputs) -> String {
             "Review range: `{}` - {} ({} insertions, {} deletions; git diff --shortstat). Plan your reading for its size.",
             r.spec, r.text, r.insertions, r.deletions
         ));
+    }
+    // The engine's own tools line (D11), after the ask/brief/range; empty for codex.
+    if !inp.tools_line.is_empty() {
+        parts.push(inp.tools_line.to_string());
     }
     if inp.raw {
         if inp.purpose == "chore" {
@@ -229,6 +236,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         schema_text: "",
         max_words: 0,
         consult_id: "",
+        tools_line: "",
     };
     schema_block(&inp)
 }
@@ -285,6 +293,7 @@ mod tests {
             schema_text: "",
             max_words: 700,
             consult_id: "abc-123",
+            tools_line: "",
         }
     }
 

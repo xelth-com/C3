@@ -167,8 +167,10 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
     };
     let mut why = String::new();
     for key in obj.keys() {
-        if !["roster_version", "reviewers", "parallel", "ext"].contains(&key.as_str()) {
-            why = format!("unknown key '{key}' at the top level (allowed: roster_version, reviewers, parallel, ext)");
+        // `require` and `ext` are wave-26 keys the bridge accepts and (for this pass) ignores;
+        // `roster_version` stays 1.
+        if !["roster_version", "reviewers", "parallel", "require", "ext"].contains(&key.as_str()) {
+            why = format!("unknown key '{key}' at the top level (allowed: roster_version, reviewers, parallel, require, ext)");
             break;
         }
     }
@@ -203,6 +205,8 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 }
             };
             for key in iobj.keys() {
+                // `lab`, `roles` and `ext` are wave-26 entry keys accepted and (for this pass)
+                // ignored; the semantics land in a later task.
                 if ![
                     "provider",
                     "model",
@@ -210,12 +214,14 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                     "auth",
                     "panel",
                     "engine",
+                    "lab",
+                    "roles",
                     "ext",
                 ]
                 .contains(&key.as_str())
                 {
                     why = format!(
-                        "{at} has an unknown key '{key}' (allowed: provider, model, codex_config, auth, panel, engine, ext)"
+                        "{at} has an unknown key '{key}' (allowed: provider, model, codex_config, auth, panel, engine, lab, roles, ext)"
                     );
                     break;
                 }

@@ -35,6 +35,38 @@ pub struct EngineSpec {
     pub model_example: &'static str,
     /// The sign-in check reads local files only (runs under `-NoNetwork` too).
     pub local_sign_in: bool,
+    // --- display / behaviour fields (`$script:Engines`), used by the consult orchestrator
+    // and the dry-run block. Codex leaves the engine-only ones empty (`isCodex` branches).
+    /// Header/author label: `Codex`, `Gemini (agy)`, `Meta Muse (muse)`.
+    pub label: &'static str,
+    /// Handoff file-name prefix (`codex`/`agy`/`muse`).
+    pub prefix: &'static str,
+    /// The flag the reply schema is passed with (`--output-schema` / `--json-schema`).
+    pub schema_flag: &'static str,
+    /// Where the reply text comes from (empty for codex).
+    pub reply_source: &'static str,
+    /// The resume flag (`--conversation` / `--session-id`; empty for codex).
+    pub thread_flag: &'static str,
+    /// The thread noun (`thread` / `conversation` / `session`).
+    pub thread_noun: &'static str,
+    /// The `-Sandbox` refusal parenthetical (empty for codex).
+    pub read_only_note: &'static str,
+    /// The ledger `sandbox` record for a non-codex engine (empty for codex).
+    pub sandbox_record: &'static str,
+    /// The prompt's `Tools:` line for a non-codex engine (empty for codex).
+    pub tools_line: &'static str,
+    /// The model-step-cap flag (`--max-model-steps`; empty = the engine has none).
+    pub steps_flag: &'static str,
+    /// The engine runs a denial-retry turn (agy only).
+    pub denial_retry: bool,
+    /// The stream reports token usage (codex/agy yes, muse no).
+    pub has_usage: bool,
+    /// The prompt is delivered through `--prompt-file` (muse), not stdin.
+    pub prompt_by_file: bool,
+    /// The transports the engine accepts (`["native", "prompt-only"]` for agy/muse).
+    pub transports: &'static [&'static str],
+    /// The default mode when `-Mode` is empty and no thread applies (`new` for engines).
+    pub default_mode: &'static str,
 }
 
 /// The engine's launcher basenames to look up on PATH, in order (platform-aware).
@@ -86,6 +118,21 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             default_provider: "",
             model_example: "gpt-5.1",
             local_sign_in: false,
+            label: "Codex",
+            prefix: "codex",
+            schema_flag: "--output-schema",
+            reply_source: "",
+            thread_flag: "",
+            thread_noun: "thread",
+            read_only_note: "",
+            sandbox_record: "",
+            tools_line: "",
+            steps_flag: "",
+            denial_retry: false,
+            has_usage: true,
+            prompt_by_file: false,
+            transports: &["output-schema", "prompt-only"],
+            default_mode: "",
         }),
         "agy" => Some(EngineSpec {
             name: "agy",
@@ -96,6 +143,21 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             default_provider: "gemini",
             model_example: "gemini-3.8-flash-high",
             local_sign_in: false,
+            label: "Gemini (agy)",
+            prefix: "agy",
+            schema_flag: "--json-schema",
+            reply_source: "the result event's structured_output (else its response text)",
+            thread_flag: "--conversation",
+            thread_noun: "conversation",
+            read_only_note: "its --sandbox restricts the terminal only; the bridge's tree check fails a run that writes",
+            sandbox_record: "read-only (requested; enforced by evidence for tracked and untracked files and the collab directory, not for gitignored paths, submodules or files outside the repository; agy --sandbox restricts the terminal only)",
+            tools_line: "Tools: you may read files of the repository; you have NO permission to run commands in this consultation - never call run_command; make NO file changes; a check that needs a command belongs under `## Requested checks`.",
+            steps_flag: "",
+            denial_retry: true,
+            has_usage: true,
+            prompt_by_file: false,
+            transports: &["native", "prompt-only"],
+            default_mode: "new",
         }),
         "muse" => Some(EngineSpec {
             name: "muse",
@@ -106,6 +168,21 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             default_provider: "meta",
             model_example: "muse-spark-1.3",
             local_sign_in: true,
+            label: "Meta Muse (muse)",
+            prefix: "muse",
+            schema_flag: "--output-schema",
+            reply_source: "the run_terminal record's text (run.terminal.completed)",
+            thread_flag: "--session-id",
+            thread_noun: "session",
+            read_only_note: "muse runs with --disable-write --disable-shell --disable-web-tools and the bridge's tree check fails a run that changed anything",
+            sandbox_record: "read-only (requested; muse --disable-write --disable-shell --disable-web-tools --approval-mode never; checked by evidence for tracked and untracked files and the collab directory, not for gitignored paths, submodules, files outside the repository or what the reviewer reads)",
+            tools_line: "Tools: you may read files of the repository (read_file); writing files, the shell and the web tools are disabled in this consultation (--disable-write --disable-shell --disable-web-tools) - do not try them; make NO file changes; a check that needs a command belongs under `## Requested checks`.",
+            steps_flag: "--max-model-steps",
+            denial_retry: false,
+            has_usage: false,
+            prompt_by_file: true,
+            transports: &["native", "prompt-only"],
+            default_mode: "new",
         }),
         // The `http` engine has a lineage row but no launcher: it sends an
         // OpenAI-compatible request (M7), so `command`/`exe_env` are empty and it never
@@ -121,6 +198,21 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             default_provider: "",
             model_example: "gpt-5.1",
             local_sign_in: false,
+            label: "HTTP",
+            prefix: "http",
+            schema_flag: "--output-schema",
+            reply_source: "",
+            thread_flag: "",
+            thread_noun: "thread",
+            read_only_note: "",
+            sandbox_record: "",
+            tools_line: "",
+            steps_flag: "",
+            denial_retry: false,
+            has_usage: true,
+            prompt_by_file: false,
+            transports: &["output-schema", "prompt-only"],
+            default_mode: "new",
         }),
         _ => None,
     }
@@ -455,7 +547,29 @@ fn resolve_engine_identity(
     id.wire_api = String::new();
     id.base_url = String::new();
     id.lineage = format_lineage(&id.provider, &id.model);
-    let _ = launcher;
+    // The ledger's `reviewer.provider_config` for a CLI engine (`Get-*IdentityConfig`): the
+    // engine name and the resolved launcher, and — for muse (D4) — the credential mechanism the
+    // billing guard requires (oauth). The http engine keeps a null config (its endpoint is a
+    // provider table). Built via an insertion-ordered map (serde_json preserve_order) so the
+    // muse keys stay `engine, launcher, credential_mechanism`.
+    if engine == "agy" || engine == "muse" {
+        let mut pc = serde_json::Map::new();
+        pc.insert(
+            "engine".into(),
+            serde_json::Value::String(engine.to_string()),
+        );
+        pc.insert(
+            "launcher".into(),
+            serde_json::Value::String(launcher.to_string()),
+        );
+        if engine == "muse" {
+            pc.insert(
+                "credential_mechanism".into(),
+                serde_json::Value::String("oauth".into()),
+            );
+        }
+        id.provider_config = serde_json::Value::Object(pc);
+    }
     if id.error.is_empty() {
         id.resolved = true;
         // The http engine's endpoint is a provider, so its fingerprint must distinguish one

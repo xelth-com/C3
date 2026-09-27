@@ -467,3 +467,83 @@ genuine "C3 output differs" failures remain.
    exit 0); the harness reported empty evidence, i.e. its `$b.Preview` extraction returned nothing
    for the multi-item comma+quotes `-CodexConfig` value — a harness/shim arg-passing artifact, not
    a c3 output difference (the two single-item `~` CFG rows pass).
+
+# Run 5 — agy/muse engines wired into `c3 consult`, dry-run path (M2d pass 1)
+
+This pass wires the agy and muse engines into `c3 consult` for **everything that does not launch
+a live engine turn**: engine selection (`-Engine`/roster/`-Thread`/walk, with the `engine_from`
+label), the reviewer identity + `provider_config` (`{engine, launcher}` for agy;
+`{engine, launcher, credential_mechanism: "oauth"}` for muse), the effort/transport resolution
+(model-tier for agy, `muse-v1` for muse; `native` default with the `-SchemaTransport` overrides
+and the codex/engine refusals), the capability refusals (fork / sandbox / `-CodexConfig` /
+transport / `-MaxModelSteps` / `-EngineExe` binding / muse billing guard), the engine file-name
+prefix (`NN-agy-*` / `NN-muse-*`), the ledger/preview `reviewer` (engine, harness, provider_config)
+and `engine_run`, and the full per-engine dry-run block (the `engine`/`harness`/`denial retry`/
+`max steps`/`sandbox`/`stdin`/`prompt file`/`reply source` lines and the engine `Tools:` prompt
+line). A **non-dry** `--engine agy|muse` run is still refused with
+`codex-consult: the <engine> engine runs at milestone 2d pass 2; use --dry-run` (pass 2 owns the
+live turns: denial retry, tree check, secondary turns).
+
+Same shim setup as Runs 2–4 (the scratch scripts directory with the C3 shims + the plugin's own
+`codex-consult-common.ps1` + a sibling `schemas/consult-reply.schema.json`; `$env:C3_EXE` = a fresh
+`cargo build` of `target\debug\c3.exe`). `harness-engines.ps1` and `harness-muse.ps1` were run ONE
+AT A TIME. Both were run with **`-Only` restricted to the pass-1 sections**
+(`UNIT,ROSTER,DRYRUN,LISTING` for engines; `UNIT,ROSTER,DRYRUN,ENGINEEXE` for muse): a full run
+crashes at the first live-run section (`RUN` → `Last-Entry` on an empty ledger) because pass 1
+refuses live engine turns — that crash is expected and is pass-2 work, not a regression.
+
+Local gates before the harness: `cargo build` (clean), `cargo test` (**256 passed, 0 failed** —
+unchanged), `cargo clippy --all-targets -- -D warnings` (clean), `rustfmt` on the changed files.
+
+## Summary table (Run 1 → Run 5, pass-1 sections)
+
+| harness | Run 1 pass/fail | Run 5 pass/fail (pass-1 sections) | notes |
+|---|---|---|---|
+| harness-engines | ~18 / ~18 (partial, crashed twice) | **31 / 3** (`UNIT,ROSTER,DRYRUN,LISTING`) | all 3 fails = the schema-path exact-command match (below) |
+| harness-muse | 19 / 13 (crashed in ENGINEEXE) | **30 / 3** (`UNIT,ROSTER,DRYRUN,ENGINEEXE`) | 1 N/A-to-c3, 1 schema-path, 1 pass-2 |
+
+All ROSTER checks (engine-field validation, the walk selecting the engine, `roster.applied`
+`[engine, model]`, the `-Engine`/`-Provider` contradiction refusal, the not-signed-in skip, the
+F10-3 label warning) and the identity/effort/transport/refusal/preflight/file-naming/`engine_run`
+DRYRUN checks pass for both engines. The muse LISTING/SIGNIN and the engine RUN/RESUME/DENIAL/FAIL
+sections are pass 2 (live turns) and were not measured.
+
+## Remaining differing checks (verbatim), grouped as pass-1 vs pass-2
+
+### Pass-1 differences (a real c3 design divergence, not fixable in this pass)
+
+- `FAIL DRYRUN argv: ... --json-schema <schema> ...` (harness-engines) and
+  `FAIL DRYRUN argv pinned to the real flags: muse exec --json --prompt-file ... --output-schema <schema> ...`
+  (harness-muse), plus the two agy rows that fold the full command in
+  (`FAIL DRYRUN -NativeEffort high -> --effort high at the end`,
+  `FAIL DRYRUN -Mode resume -> --conversation ...`).
+  **One diagnosis for all four:** the harness compares the whole command against its own
+  `$schemaPath` (`<parent of scripts>/schemas/consult-reply.schema.json`, the plugin's on-disk
+  schema). c3 materializes its **own** schema under `CODEX_HOME` and passes
+  `<CODEX_HOME>/c3/schemas/consult-reply.v1.json` — a different path *and* filename. This is the
+  same divergence codex has; codex passes only because harness-0.3 checks `--output-schema`
+  *presence*, whereas the agy/muse harnesses hard-code the exact path. The flag **structure** and
+  order are still confirmed by the passing sibling checks (`-SchemaTransport prompt-only` drops the
+  flag, `-Purpose chore` drops it, `native` is present, `-MaxModelSteps 40` appends
+  `--max-model-steps 40` as a suffix, `-Thread` appends `--conversation <t0>` as a suffix,
+  `effort_sent`/`effort_mapping` are correct). Not fixable without changing where c3 ships its
+  schema (out of scope; would affect codex byte-identity elsewhere).
+
+### Not applicable to c3
+
+- `FAIL UNIT D2 (every engine): codex-consult.ps1 names no engine's parser, outcome or argv
+  function ...` (harness-muse) — this UNIT check reads `[IO.File]::ReadAllText($consultPs)` and
+  counts `& $engineSpec.Adapter.Argv -Turn` / `.Events` / `.Outcome` call sites in the script under
+  test. `$consultPs` is the **C3 shim** (a thin forwarder), so it has zero such call sites. The
+  check asserts an internal structural property of the PowerShell orchestrator; it cannot pass
+  against a shim and is not a c3 behavior.
+
+### Pass-2 (live-turn) checks that surfaced in a pass-1 section
+
+- `FAIL ENGINEEXE D3: ... with none at all a real run is refused ("muse CLI not found")`
+  (harness-muse) — the check's `$noLauncher` leg is a **non-dry** muse run with no launcher; it
+  expects the live "muse CLI not found on PATH" refusal, but pass 1 refuses every non-dry engine
+  run first (`the muse engine runs at milestone 2d pass 2; use --dry-run`). The dry-run legs of the
+  same section (`-EngineExe` binding, ambiguity, `-Engine codex` → `-CodexExe`, no-roster/no-Engine,
+  a launcher that does not exist, the vendor install location) pass. Lands in pass 2 with the live
+  path.

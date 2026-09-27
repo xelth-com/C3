@@ -396,7 +396,7 @@ impl Ctx {
     /// The full roster walk (`Select-RosterReviewer`): the first entry whose preflight is
     /// available. `model` (an explicit `-Model` without `-Provider`) restricts the walk to the
     /// entries that resolve to that model; `skip_preflight` takes the first unchecked entry.
-    pub(crate) fn walk_full(&self, model: &str, skip_preflight: bool) -> RosterWalk {
+    pub(crate) fn walk_full(&self, model: &str, engine: &str, skip_preflight: bool) -> RosterWalk {
         let mut skipped: Vec<(String, String, String, String)> = Vec::new();
         let mut listing: Vec<String> = Vec::new();
         let mut considered = 0usize;
@@ -406,6 +406,10 @@ impl Ctx {
             } else {
                 &e.engine
             };
+            // `-Engine X` restricts the walk to entries of that engine (`Select-RosterReviewer`).
+            if !engine.is_empty() && entry_engine != engine {
+                continue;
+            }
             let entry_launcher = self.engine_launcher(entry_engine);
             let id = resolve_reviewer_identity(
                 &self.config,
@@ -620,6 +624,14 @@ impl Ctx {
             return CredentialResult::ok("declared anonymous in the roster");
         }
         CredentialResult::missing("no env_key/bearer token in the table")
+    }
+
+    /// Seed the launcher of one engine (`-EngineExe`): the consult walk and the row then use
+    /// this path instead of re-resolving it (`$engineLaunchers[$engineExeEngine]`).
+    pub(crate) fn seed_engine_launcher(&self, engine: &str, launcher: &str) {
+        self.engine_launchers
+            .borrow_mut()
+            .insert(engine.to_string(), launcher.to_string());
     }
 
     fn engine_credential(
@@ -1933,7 +1945,10 @@ pub fn resolve_codex_launcher(explicit: &str) -> Result<String, String> {
     Ok(String::new())
 }
 
-fn resolve_engine_launcher(engine: &str, explicit: &str) -> Result<Option<String>, String> {
+pub(crate) fn resolve_engine_launcher(
+    engine: &str,
+    explicit: &str,
+) -> Result<Option<String>, String> {
     if engine.is_empty() || engine == "codex" {
         return Ok(Some(resolve_codex_launcher(explicit)?));
     }
@@ -2330,6 +2345,138 @@ pub(crate) fn get_muse_launch_block() -> String {
     format!("the Muse sign-in is not established as oauth ({cause}): a muse run might bill per token instead of the Muse Code subscription; set TBH_CREDENTIAL_BACKEND=file and run `muse login`")
 }
 
+/// The engine credential for the CONSULT preflight (no `-NoNetwork`; the health short-circuit
+/// still applies): a recorded usable reply on this endpoint answers without a network check;
+/// muse reads `auth.json`; agy runs `agy models` (45 s, or `CODEX_CONSULT_TEST_LOGIN_TIMEOUT`).
+pub(crate) fn engine_consult_credential(
+    engine: &str,
+    launcher: &str,
+    health: Option<&EndpointHealth>,
+) -> CredentialResult {
+    let spec = match engine_spec(engine) {
+        Some(s) => s,
+        None => {
+            return CredentialResult::unknown(format!("no credential check for engine '{engine}'"))
+        }
+    };
+    if launcher.is_empty() {
+        return CredentialResult::missing(format!("{} CLI not found on PATH", spec.command));
+    }
+    if let Some(h) = health {
+        if let Some(ru) = &h.recent_usable {
+            return CredentialResult::ok(format!(
+                "signed in (usable reply {} min ago)",
+                ru.age_minutes
+            ));
+        }
+    }
+    if spec.local_sign_in {
+        return get_muse_sign_in();
+    }
+    let mut timeout = 45u64;
+    if let Ok(hook) = std::env::var("CODEX_CONSULT_TEST_LOGIN_TIMEOUT") {
+        if let Ok(n) = hook.trim().parse::<u64>() {
+            if n > 0 {
+                timeout = n;
+            }
+        }
+    }
+    get_agy_models_status(launcher, timeout)
+}
+
+/// `reviewer.harness` of a CLI engine run (`Get-EngineHarness`): muse reads its version from the
+/// install directory (`.muse-version` / `.muse-release-info.json` / `<launcher> --version`); agy
+/// has no `--version`, so its version comes from the launcher file's metadata (unavailable on a
+/// `.cmd` shim, hence `(version unknown)`).
+pub(crate) fn engine_harness(engine: &str, launcher: &str) -> String {
+    if engine == "muse" {
+        return get_muse_harness(launcher);
+    }
+    // agy (and any other CLI engine): the launcher file's ProductVersion, else version unknown.
+    let ver = launcher_file_version(launcher);
+    if !ver.trim().is_empty() {
+        format!("{engine}-cli {}", ver.trim())
+    } else {
+        format!("{engine}-cli (version unknown)")
+    }
+}
+
+/// A best-effort file version of a launcher. On Windows a `.exe` carries a ProductVersion; a
+/// `.cmd`/`.bat` shim does not (so agy shims read as "version unknown", matching the plugin).
+fn launcher_file_version(_launcher: &str) -> String {
+    // c3 does not read PE version resources; a shim launcher has none anyway. Left empty so the
+    // harness string is "<engine>-cli (version unknown)", exactly as for a `.cmd` launcher.
+    String::new()
+}
+
+/// muse version regex: a semver-ish token (`1.3.0`, `9.9.9-fake`, `v2.0`), used by
+/// [`get_muse_harness`].
+fn muse_version_token(s: &str) -> bool {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"^v?\d+\.\d+(\.\d+)?([.-][0-9A-Za-z.-]+)?$").unwrap())
+        .is_match(s)
+}
+
+/// `Get-MuseHarness` (D8): `muse-cli <version>` from `.muse-version` next to the launcher, else
+/// the `version` of `.muse-release-info.json` there, else `<launcher> --version` (15 s), else
+/// `muse-cli (version unknown)`.
+pub(crate) fn get_muse_harness(launcher: &str) -> String {
+    if launcher.trim().is_empty() {
+        return "muse-cli (version unknown)".to_string();
+    }
+    let mut ver = String::new();
+    if let Some(dir) = Path::new(launcher).parent() {
+        let vf = dir.join(".muse-version");
+        if vf.is_file() {
+            if let Ok(text) = std::fs::read_to_string(&vf) {
+                let first = text
+                    .split(['\r', '\n'])
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if muse_version_token(&first) {
+                    ver = first;
+                }
+            }
+        }
+        if ver.is_empty() {
+            let rf = dir.join(".muse-release-info.json");
+            if rf.is_file() {
+                if let Ok(text) = std::fs::read_to_string(&rf) {
+                    if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                        if let Some(s) = v.get("version").and_then(|x| x.as_str()) {
+                            if muse_version_token(s.trim()) {
+                                ver = s.trim().to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if ver.is_empty() {
+        if let Some((code, out, err)) =
+            run_with_timeout(launcher, &["--version"], Duration::from_secs(15))
+        {
+            if code == 0 {
+                let merged = format!("{out} {err}");
+                for tok in merged.split_whitespace() {
+                    if muse_version_token(tok) {
+                        ver = tok.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if ver.is_empty() {
+        "muse-cli (version unknown)".to_string()
+    } else {
+        format!("muse-cli {}", ver.trim_start_matches('v'))
+    }
+}
+
 #[cfg(test)]
 mod roster_walk_tests {
     use super::*;
@@ -2380,7 +2527,7 @@ mod roster_walk_tests {
             String::new(),
             Utc::now(),
         );
-        let w = ctx.walk_full("gpt-99", false);
+        let w = ctx.walk_full("gpt-99", "", false);
         assert!(w.entry.is_none());
         assert!(
             w.error.starts_with(
@@ -2405,7 +2552,7 @@ mod roster_walk_tests {
             String::new(),
             Utc::now(),
         );
-        let w = ctx.walk_full("", true);
+        let w = ctx.walk_full("", "", true);
         let e = w.entry.expect("first entry taken");
         assert_eq!(e.position, 1);
         assert!(w.skipped.is_empty());

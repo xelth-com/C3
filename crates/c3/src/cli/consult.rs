@@ -102,8 +102,9 @@ pub struct ConsultArgs {
     /// agy denial retry (M2d).
     #[arg(long, default_value_t = 1)]
     pub denial_retry: i64,
-    /// muse max model steps (M2d).
-    #[arg(long, default_value_t = 0)]
+    /// muse max model steps (M2d). `allow_hyphen_values` so a negative value reaches the
+    /// validator (which refuses it) instead of clap rejecting `-3` as an unknown flag.
+    #[arg(long, allow_hyphen_values = true, default_value_t = 0)]
     pub max_model_steps: i64,
     /// Run every available roster reviewer (M4).
     #[arg(long)]
@@ -136,7 +137,6 @@ pub fn run(args: ConsultArgs) -> i32 {
     // Whether the user actually passed --continue-sec (clap can't tell a default -1 from an
     // explicit -1; treat any value != -1 as given, and -1 as the default sentinel).
     let continue_sec_given = args.continue_sec != -1;
-    let denial_retry_given = args.denial_retry != 1;
     let panel_concurrency_given = args.panel_concurrency != -1;
     let opts = Options {
         task: args.task,
@@ -169,7 +169,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         dry_run: args.dry_run,
         engine: args.engine,
         engine_exe: args.engine_exe,
-        denial_retry_given,
+        denial_retry: args.denial_retry,
         max_model_steps: args.max_model_steps,
         panel: args.panel,
         panel_all: args.panel_all,

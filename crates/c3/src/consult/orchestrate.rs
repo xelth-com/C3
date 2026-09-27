@@ -294,7 +294,13 @@ fn resolve_preflight(
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(15);
-    let cred = providers::identity_credential(config, id, launcher, false, timeout);
+    // A CLI engine checks its own sign-in (`agy models` / muse `auth.json`), with the recorded
+    // endpoint-health short-circuit; codex runs `codex login status` / the provider env-key.
+    let cred = if id.engine.is_empty() || id.engine == "codex" {
+        providers::identity_credential(config, id, launcher, false, timeout)
+    } else {
+        providers::engine_consult_credential(&id.engine, launcher, health.as_ref())
+    };
     let v = verdict_with_credential(id, health.as_ref(), cred, false);
     if v.state == "available" {
         (v.preflight, None, v.label)
@@ -394,6 +400,17 @@ pub(crate) struct Context {
     pub(crate) transport: Transport,
     pub(crate) launcher: String,
     pub(crate) codex_version: String,
+    /// The selected engine (`codex`/`agy`/`muse`) and where it came from (dry-run `engine :`).
+    pub(crate) engine: String,
+    pub(crate) engine_from: String,
+    /// The resolved launcher of the selected engine (codex uses [`launcher`]).
+    pub(crate) engine_launcher: String,
+    /// `reviewer.harness` for the run (`codex-cli <v>` / `agy-cli ...` / `muse-cli <v>`).
+    pub(crate) harness: String,
+    /// The ledger `sandbox` record (an engine's enforcement note; codex = the requested value).
+    pub(crate) sandbox_record: String,
+    /// The muse `--prompt-file` path (a temp file); `None` for stdin engines.
+    pub(crate) prompt_file: Option<PathBuf>,
     pub(crate) prompt_text: String,
     pub(crate) argv_display: String,
     pub(crate) argv: Vec<String>,
@@ -502,6 +519,13 @@ fn run_inner(o: Options) -> i32 {
             if ctx.o.dry_run {
                 super::dryrun::render(&ctx);
                 0
+            } else if ctx.engine != "codex" {
+                // Pass 1 wires the agy/muse dry-run path only; a live turn (denial retry, tree
+                // check, secondary turns) lands in pass 2. Refuse a real run for now.
+                refuse(&format!(
+                    "the {} engine runs at milestone 2d pass 2; use --dry-run",
+                    ctx.engine
+                ))
             } else if let Some((msg, code)) = ctx.preflight_refusal.clone() {
                 // A preflight refusal happens before the lock: nothing is started or written.
                 eprintln!("{TOOL}: {msg}");
@@ -541,6 +565,35 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         .map(|(u, _, _)| u)
         .unwrap_or_else(|_| chrono::Utc::now());
 
+    // The engine (0.4.0): `-Engine`, else the engine of the roster entry used, else codex.
+    // `engine_from` labels the dry-run `engine     :` line. `-EngineExe` names the launcher of
+    // the SELECTED non-codex engine (`Resolve-EngineExeBinding`, D3): bound once the roster is
+    // read; the binding refusals fire here, and the resolved launcher seeds the walk.
+    let mut engine_name = o.engine.clone();
+    let mut engine_from = if o.engine.is_empty() {
+        String::new()
+    } else {
+        "-Engine".to_string()
+    };
+    let engine_exe = o.engine_exe.trim().to_string();
+    let mut engine_exe_engine = String::new();
+    let mut engine_exe_launcher = String::new();
+    if !engine_exe.is_empty() {
+        engine_exe_engine = resolve_engine_exe_binding(&o.engine, &roster, &o.provider, &o.model)
+            .map_err(|m| (m, 1))?;
+        match providers::resolve_engine_launcher(&engine_exe_engine, &engine_exe) {
+            Ok(Some(l)) => engine_exe_launcher = l,
+            _ => {
+                return Err((
+                    format!(
+                        "-EngineExe '{engine_exe}' is not a file and not an application on PATH."
+                    ),
+                    1,
+                ))
+            }
+        }
+    }
+
     // This task's ledger (read before the lock; `Select-ParentThread` re-checks under it), used
     // by the `-Thread` roster rule to source the reviewer from the thread's own entry.
     let store = FilesStore::new(collab_root.clone());
@@ -574,15 +627,26 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
             roster_rule = "provider".into();
             roster_entry = providers::find_roster_entry(&roster, &o.provider, &o.model).cloned();
             if let Some(e) = &roster_entry {
+                let ee = entry_engine(e);
+                if !o.engine.is_empty() && ee != o.engine {
+                    return Err((format!(
+                        "-Engine {}: the roster entry {} for -Provider {} is engine {ee} (a provider label names one engine); drop -Engine, or use another label",
+                        o.engine, e.position, o.provider
+                    ), 1));
+                }
+                if o.engine.is_empty() {
+                    engine_name = ee;
+                    engine_from = "roster".into();
+                    if e.engine_declared {
+                        roster_applied.push("engine".into());
+                    }
+                }
                 if !o.model.is_empty() {
                     // model given: nothing applied from the roster's model
                 } else if !e.model.is_empty() {
                     identity_model = e.model.clone();
                     model_source_override = "roster".into();
                     roster_applied.push("model".into());
-                }
-                if e.engine_declared {
-                    roster_applied.push("engine".into());
                 }
                 let same = roster
                     .entries
@@ -609,6 +673,19 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
                 .find(|e| e.thread.trim() == o.thread.trim())
                 .map(|e| &e.reviewer)
             {
+                let rev_engine = if rev.engine.is_empty() {
+                    "codex".to_string()
+                } else {
+                    rev.engine.clone()
+                };
+                if !o.engine.is_empty() && rev_engine != o.engine {
+                    return Err((format!(
+                        "-Engine {}: thread {} belongs to engine {rev_engine} ({}); a thread never changes engine - drop -Engine, or use -Mode new",
+                        o.engine, o.thread, entry_reviewer_lineage(rev)
+                    ), 1));
+                }
+                engine_name = rev_engine;
+                engine_from = "-Thread".into();
                 identity_provider = rev.provider.clone();
                 provider_source_override = "-Thread".into();
                 if o.model.is_empty() {
@@ -628,7 +705,10 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
                 openai_base_url.clone(),
                 utc_now,
             );
-            let walk = walk_ctx.walk_full(&o.model, o.skip_preflight);
+            if !engine_exe_engine.is_empty() {
+                walk_ctx.seed_engine_launcher(&engine_exe_engine, &engine_exe_launcher);
+            }
+            let walk = walk_ctx.walk_full(&o.model, &o.engine, o.skip_preflight);
             if !walk.error.is_empty() {
                 return Err((walk.error, 1));
             }
@@ -636,8 +716,12 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
             roster_skipped = walk.skipped;
             identity_provider = e.provider.clone();
             provider_source_override = "roster".into();
-            if e.engine_declared {
-                roster_applied.push("engine".into());
+            engine_name = entry_engine(&e);
+            if o.engine.is_empty() {
+                engine_from = "roster".into();
+                if e.engine_declared {
+                    roster_applied.push("engine".into());
+                }
             }
             if o.model.is_empty() && !e.model.is_empty() {
                 identity_model = e.model.clone();
@@ -656,13 +740,48 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         }
     }
 
+    // Finalize the engine (`codex-consult.ps1:2798`): default codex, its spec, its launcher and
+    // harness. The engine launcher is the codex launcher for codex; otherwise the resolved
+    // engine launcher (the `-EngineExe` seed when it bound this engine, else PATH/install).
+    if engine_name.is_empty() {
+        engine_name = "codex".into();
+    }
+    if engine_from.is_empty() {
+        engine_from = "default".into();
+    }
+    let is_codex = engine_name == "codex";
+    let spec = c3_core::lineage::engine_spec(&engine_name)
+        .ok_or_else(|| (format!("unknown engine '{engine_name}'"), 1))?;
+    let engine_launcher = if is_codex {
+        launcher.clone()
+    } else if !engine_exe_engine.is_empty() && engine_exe_engine == engine_name {
+        engine_exe_launcher.clone()
+    } else {
+        providers::resolve_engine_launcher(&engine_name, "")
+            .unwrap_or(None)
+            .unwrap_or_default()
+    };
+    let harness = if is_codex {
+        format!(
+            "codex-cli {}",
+            get_codex_version(&launcher).replace("codex-cli ", "")
+        )
+    } else {
+        providers::engine_harness(&engine_name, &engine_launcher)
+    };
+    let sandbox_record = if is_codex {
+        sandbox_label(&o)
+    } else {
+        spec.sandbox_record.to_string()
+    };
+
     let mut identity = resolve_reviewer_identity(
         &config,
         &identity_provider,
         &identity_model,
         &openai_base_url,
-        "codex",
-        &launcher,
+        &engine_name,
+        &engine_launcher,
     );
     if !provider_source_override.is_empty() {
         identity.provider_source = provider_source_override.clone();
@@ -699,32 +818,101 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         ));
     }
 
+    // What a non-codex engine does not support is refused with one message each, after the
+    // identity is resolved (`codex-consult.ps1:2804-2830`). The effective mode carries the agy/
+    // muse default (`new`, or `resume` with a thread) so the parent walk never forks an engine.
+    let mut mode = o.mode.clone();
+    if !is_codex {
+        if o.mode == "fork" {
+            return Err((
+                format!("the {engine_name} engine has no fork; use -Mode resume or new."),
+                1,
+            ));
+        }
+        if !o.sandbox.is_empty() && o.sandbox != "read-only" {
+            return Err((format!(
+                "-Sandbox {} is refused for the {engine_name} engine: consultations are read-only there ({}).",
+                o.sandbox, spec.read_only_note
+            ), 1));
+        }
+        if o.codex_config.iter().any(|c| !c.trim().is_empty()) {
+            return Err((format!(
+                "-CodexConfig does not apply to the {engine_name} engine (it configures codex exec).",
+            ), 1));
+        }
+        if !r.transport_override.is_empty()
+            && !spec.transports.contains(&r.transport_override.as_str())
+        {
+            return Err((format!(
+                "-SchemaTransport {} is refused for the {engine_name} engine: it takes {} (native = the schema is passed as {}).",
+                r.transport_override, spec.transports.join(" or "), spec.schema_flag
+            ), 1));
+        }
+        if o.mode.is_empty() {
+            mode = if !o.thread.trim().is_empty() {
+                "resume".to_string()
+            } else {
+                spec.default_mode.to_string()
+            };
+        }
+    } else if !r.transport_override.is_empty()
+        && !spec.transports.contains(&r.transport_override.as_str())
+    {
+        return Err((format!(
+            "-SchemaTransport {} is for the agy and muse engines; codex takes output-schema or prompt-only.",
+            r.transport_override
+        ), 1));
+    }
+    // -MaxModelSteps: only an engine with a model-step cap (muse, D9).
+    if o.max_model_steps > 0 && spec.steps_flag.is_empty() {
+        return Err((format!(
+            "-MaxModelSteps is for the muse engine (--max-model-steps); the {engine_name} engine has no model-step cap.",
+        ), 1));
+    }
+    // -EngineExe bound to one engine (D3): a run of another non-codex engine is refused.
+    if !engine_exe_engine.is_empty() && !is_codex && engine_exe_engine != engine_name {
+        return Err((format!(
+            "-EngineExe names the {engine_exe_engine} launcher, but this run's engine is {engine_name} (from {engine_from}); pass -Engine {engine_name} with -EngineExe.",
+        ), 1));
+    }
+    // The engine launch invariant (muse billing guard, D4): never bypassed by -SkipPreflight,
+    // refused for a dry run too (nothing started).
+    if engine_name == "muse" {
+        let block = providers::get_muse_launch_block();
+        if !block.is_empty() {
+            return Err((
+                format!("the {engine_name} engine is refused: {block}; nothing was started."),
+                1,
+            ));
+        }
+    }
+
     // Preflight (M2c: credentials only, no recorded endpoint-health/24h block). openai runs
     // `codex login status`; a non-openai provider's credential check is deferred (its
     // preflight is left unevaluated and never refuses). `-SkipPreflight` bypasses the check.
-    let (preflight, mut preflight_refusal, preflight_warning, mut preflight_label) = if o
-        .skip_preflight
-    {
-        // The check is skipped, but an active quota record still earns a warning (the plugin's
-        // `Format-QuotaWarning`), printed before launch and recorded in the ledger.
-        let warning = if identity.resolved {
-            let consults = providers::read_all_task_consults(&collab_root);
-            let health =
-                c3_core::health::endpoint_health(&consults, &identity.fingerprint, utc_now);
-            format_quota_warning(&identity, &health)
+    let (preflight, mut preflight_refusal, preflight_warning, mut preflight_label) =
+        if o.skip_preflight {
+            // The check is skipped, but an active quota record still earns a warning (the plugin's
+            // `Format-QuotaWarning`), printed before launch and recorded in the ledger.
+            let warning = if identity.resolved {
+                let consults = providers::read_all_task_consults(&collab_root);
+                let health =
+                    c3_core::health::endpoint_health(&consults, &identity.fingerprint, utc_now);
+                format_quota_warning(&identity, &health)
+            } else {
+                String::new()
+            };
+            (
+                "skipped".to_string(),
+                None,
+                warning,
+                "skipped (-SkipPreflight)".to_string(),
+            )
         } else {
-            String::new()
+            let (p, refusal, label) =
+                resolve_preflight(&identity, &engine_launcher, &config, &collab_root);
+            (p, refusal, String::new(), label)
         };
-        (
-            "skipped".to_string(),
-            None,
-            warning,
-            "skipped (-SkipPreflight)".to_string(),
-        )
-    } else {
-        let (p, refusal, label) = resolve_preflight(&identity, &launcher, &config, &collab_root);
-        (p, refusal, String::new(), label)
-    };
 
     // When a `-Thread` run's endpoint is unavailable, name the reviewer a new thread would get
     // (`codex-consult.ps1:2910`).
@@ -738,11 +926,11 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
                 openai_base_url.clone(),
                 utc_now,
             )
-            .walk_full("", false);
+            .walk_full("", "", false);
             let hint = if let Some(aid) = &alt.identity {
                 format!(
                     "; to continue with another reviewer, start a new thread: -Mode new; the roster would select {}",
-                    c3_core::lineage::format_reviewer_lineage(&aid.provider, &aid.model, "codex")
+                    c3_core::lineage::format_reviewer_lineage(&aid.provider, &aid.model, &aid.engine)
                 )
             } else {
                 "; the roster has no available reviewer for a new thread either".to_string()
@@ -810,7 +998,7 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
     // by lineage + provenance, or resolve the automatic parent (the newest verified thread of
     // this lineage) for `-Mode fork|resume`. A refusal here happens before the lock (nothing
     // started). `-Thread needs -Mode fork or resume` is already refused in `args::validate`.
-    let parent = match select_parent_thread(&ledger_entries, &identity, &o.mode, &o.thread) {
+    let parent = match select_parent_thread(&ledger_entries, &identity, &mode, &o.thread) {
         Ok(p) => p,
         Err(refusal) => return Err((refusal, 1)),
     };
@@ -827,7 +1015,9 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         o.reply_name.clone()
     };
     let handoffs_dir = collab_root.join(task.as_str()).join("handoffs");
-    let stem = format!("{:02}-codex-{}", nn, reply_name);
+    // The handoff file prefix is the engine's (`capabilities(kind).file_prefix` / the spec).
+    let file_prefix = spec.prefix;
+    let stem = format!("{:02}-{}-{}", nn, file_prefix, reply_name);
     let reply_path = handoffs_dir.join(format!("{stem}.md"));
     let reply_json_path = handoffs_dir.join(format!("{stem}.reply.json"));
     let events_path = handoffs_dir.join(format!("{stem}.events.jsonl"));
@@ -838,6 +1028,13 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
     let tmp_root = std::env::temp_dir();
     let last_msg_path = tmp_root.join(format!("codex-consult-last-{tmp_id}.md"));
     let stderr_path = tmp_root.join(format!("codex-consult-stderr-{tmp_id}.txt"));
+    // muse takes its prompt through `--prompt-file` (D1): a temp file named exactly like the
+    // plugin (`<temp>/codex-consult-prompt-<guidN>.txt`); other engines read stdin.
+    let prompt_file: Option<PathBuf> = if spec.prompt_by_file {
+        Some(tmp_root.join(format!("codex-consult-prompt-{tmp_id}.txt")))
+    } else {
+        None
+    };
 
     // Brief ref (repo-relative) + existence check.
     let mut brief_ref = String::new();
@@ -939,9 +1136,12 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         schema_text: &schema_text,
         max_words: r.max_words,
         consult_id: &consult_id,
+        tools_line: spec.tools_line,
     });
 
-    // The argv (byte-identical to the core plan): build the Request and plan it.
+    // The argv (byte-identical to the core plan): build the Request and plan it for the
+    // selected engine.
+    let engine_kind = engine_kind_of(&engine_name);
     let request = make_request(
         &o,
         &r,
@@ -952,10 +1152,12 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         &schema_path,
         &last_msg_path,
         resolved_mode(&effective_mode, &parent_thread, &identity),
+        engine_kind,
+        prompt_file.as_deref(),
     );
-    let argv = match c3_core::engine::SubprocessEngine::new(EngineKind::Codex).plan(&request) {
+    let argv = match c3_core::engine::SubprocessEngine::new(engine_kind).plan(&request) {
         Ok(c3_core::engine::LaunchPlan::Subprocess(a)) => a,
-        _ => return Err(("could not plan the codex argv".into(), 1)),
+        _ => return Err((format!("could not plan the {engine_name} argv"), 1)),
     };
     let argv_display = argv.to_command_string();
 
@@ -985,8 +1187,11 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         } else {
             format!("{} applied", roster_applied.join(", "))
         };
-        let lineage_shown =
-            c3_core::lineage::format_reviewer_lineage(&identity.provider, &identity.model, "codex");
+        let lineage_shown = c3_core::lineage::format_reviewer_lineage(
+            &identity.provider,
+            &identity.model,
+            &engine_name,
+        );
         roster_line = match roster_rule.as_str() {
             "walk" => {
                 let mut l = format!(
@@ -1069,6 +1274,12 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         transport,
         launcher,
         codex_version,
+        engine: engine_name,
+        engine_from,
+        engine_launcher,
+        harness,
+        sandbox_record,
+        prompt_file,
         prompt_text,
         argv_display,
         argv: argv.args,
@@ -1159,14 +1370,18 @@ fn make_request(
     schema_path: &Option<PathBuf>,
     last_msg_path: &Path,
     mode: Mode,
+    engine: EngineKind,
+    prompt_file: Option<&Path>,
 ) -> Request {
     let sandbox = if o.sandbox.is_empty() {
         "read-only".to_string()
     } else {
         o.sandbox.clone()
     };
-    // --output-schema only when the transport is output-schema (codex).
-    let schema_arg = if transport.transport == "output-schema" {
+    // The schema flag is passed when the transport carries the schema natively: codex
+    // `--output-schema`, agy `--json-schema` and muse `--output-schema` all key off a
+    // non-`prompt-only`, non-raw transport (`output-schema` for codex, `native` for the engines).
+    let schema_arg = if transport.transport == "output-schema" || transport.transport == "native" {
         schema_path.clone()
     } else {
         None
@@ -1184,16 +1399,103 @@ fn make_request(
         } else {
             id.provider.clone()
         },
-        engine: EngineKind::Codex,
+        engine,
         effort: effort.sent.clone(),
         timeout_sec: r.timeout_sec as f64,
         mode,
         sandbox,
         schema_path: schema_arg,
         extra_config: r.extra_config.clone(),
-        output_last_message: Some(last_msg_path.to_path_buf()),
-        prompt_file: None,
-        max_model_steps: None,
+        output_last_message: if engine == EngineKind::Codex {
+            Some(last_msg_path.to_path_buf())
+        } else {
+            None
+        },
+        prompt_file: prompt_file.map(|p| p.to_path_buf()),
+        max_model_steps: if o.max_model_steps > 0 {
+            Some(o.max_model_steps as u32)
+        } else {
+            None
+        },
+    }
+}
+
+/// Map the engine name to its [`EngineKind`] (unknown → codex; unknown is refused earlier).
+fn engine_kind_of(engine: &str) -> EngineKind {
+    match engine {
+        "agy" => EngineKind::Agy,
+        "muse" => EngineKind::Muse,
+        "http" => EngineKind::Http,
+        _ => EngineKind::Codex,
+    }
+}
+
+/// The consult-path `-EngineExe` binding (`Resolve-EngineExeBinding`, D3): the engine it names —
+/// `-Engine`'s, else the `-Provider` roster entry's, else the roster's only non-codex engine.
+fn resolve_engine_exe_binding(
+    engine: &str,
+    roster: &c3_core::roster::Roster,
+    provider: &str,
+    model: &str,
+) -> Result<String, String> {
+    let others: Vec<&str> = c3_core::lineage::ENGINE_NAMES
+        .iter()
+        .copied()
+        .filter(|e| *e != "codex")
+        .collect();
+    if !engine.is_empty() {
+        if engine == "codex" {
+            return Err(format!(
+                "-EngineExe names the launcher of an engine other than codex ({}); codex takes -CodexExe.",
+                others.join(", ")
+            ));
+        }
+        return Ok(engine.to_string());
+    }
+    if !provider.is_empty() {
+        if let Some(pe) = providers::find_roster_entry(roster, provider, model) {
+            let pe_engine = entry_engine(pe);
+            if pe_engine != "codex" {
+                return Ok(pe_engine);
+            }
+            return Err(format!(
+                "-EngineExe: the roster entry {} for -Provider {provider} is engine codex, which takes -CodexExe.",
+                pe.position
+            ));
+        }
+    }
+    let mut used: Vec<String> = Vec::new();
+    if roster.exists {
+        for e in &roster.entries {
+            let ee = entry_engine(e);
+            if ee != "codex" && !used.contains(&ee) {
+                used.push(ee);
+            }
+        }
+    }
+    if used.len() == 1 {
+        return Ok(used[0].clone());
+    }
+    if used.len() > 1 {
+        Err(format!(
+            "-EngineExe is ambiguous: the reviewer roster has entries of the engines {}; pass -Engine <{}> to name the one it launches.",
+            used.join(" and "),
+            others.join("|")
+        ))
+    } else {
+        Err(format!(
+            "-EngineExe names the launcher of an engine other than codex: pass -Engine <{}> with it.",
+            others.join("|")
+        ))
+    }
+}
+
+/// A roster entry's engine, defaulting an absent one to `codex`.
+fn entry_engine(e: &c3_core::roster::RosterEntry) -> String {
+    if e.engine.is_empty() {
+        "codex".to_string()
+    } else {
+        e.engine.clone()
     }
 }
 
@@ -1204,7 +1506,14 @@ fn resolved_mode(effective_mode: &str, parent_thread: &str, id: &ReviewerIdentit
     if parent_thread.is_empty() {
         return Mode::New;
     }
-    let lineage = c3_core::engine::Lineage(id.lineage.clone());
+    // The Mode's lineage must equal `Request::lineage()` (the core's `check_lineage`), which is
+    // the reviewer lineage `provider :: model [engine]` — not the plain `id.lineage` (identical
+    // for codex, but the engine suffix matters for agy/muse).
+    let lineage = c3_core::engine::Lineage(c3_core::lineage::format_reviewer_lineage(
+        &id.provider,
+        &id.model,
+        &id.engine,
+    ));
     if effective_mode == "resume" {
         Mode::Resume {
             thread: parent_thread.to_string(),
@@ -3543,7 +3852,7 @@ fn render_handoff(
         tokens,
         events_rel: events_rel.clone(),
         further_turns: sec.continue_events_rel.iter().cloned().collect(),
-        reviewer_line: reviewer_line(&ctx.identity, &ctx.codex_version),
+        reviewer_line: reviewer_line(&ctx.identity, &ctx.harness),
         preflight_line: if ctx.preflight.is_empty() {
             "Preflight: not recorded (non-openai credential check deferred to M2c+).".into()
         } else {
@@ -3740,8 +4049,7 @@ pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
     format!("endpoint {audit}, wire_api: {wire_label}")
 }
 
-pub(crate) fn reviewer_line(id: &ReviewerIdentity, codex_version: &str) -> String {
-    let harness = format!("codex-cli {}", codex_version.replace("codex-cli ", ""));
+pub(crate) fn reviewer_line(id: &ReviewerIdentity, harness: &str) -> String {
     let mut line = format!(
         "Reviewer: {} (provider from {}, model from {}; {}",
         id.lineage,
@@ -3908,7 +4216,7 @@ fn build_entry(
         usage: usage.clone(),
         wall_seconds: wall,
         finished_at: iso_now(),
-        reviewer: build_reviewer(&ctx.identity, &ctx.codex_version),
+        reviewer: build_reviewer(&ctx.identity, &ctx.harness),
         ..Default::default()
     };
     if let Some(s) = structured {
@@ -3924,13 +4232,23 @@ fn build_entry(
     e
 }
 
-pub(crate) fn build_reviewer(id: &ReviewerIdentity, codex_version: &str) -> Reviewer {
+pub(crate) fn build_reviewer(id: &ReviewerIdentity, harness: &str) -> Reviewer {
     // provider_config is the echo `Resolve-ReviewerIdentity` recorded: `{builtin:"openai"}`
-    // (with `base_url`/`base_url_source` when `OPENAI_BASE_URL` is set) for the built-in
-    // endpoint, or the raw provider-table echo (`Get-ProviderEndpoint`'s `Config`) for a user
-    // table - only the declared keys, secrets dropped, so an absent `wire_api` leaves no key.
+    // (with `base_url`/`base_url_source` when `OPENAI_BASE_URL` is set) for the built-in codex
+    // endpoint, the raw provider-table echo for a user table, or `{engine, launcher[,
+    // credential_mechanism]}` for a CLI engine (`Resolve-EngineIdentity`). Only for a codex
+    // built-in run with a null config is the `{builtin:"openai"}` default applied.
+    let engine = if id.engine.is_empty() {
+        "codex".to_string()
+    } else {
+        id.engine.clone()
+    };
     let provider_config = if id.provider_config.is_null() {
-        serde_json::json!({ "builtin": "openai" })
+        if engine == "codex" {
+            serde_json::json!({ "builtin": "openai" })
+        } else {
+            serde_json::Value::Null
+        }
     } else {
         id.provider_config.clone()
     };
@@ -3939,8 +4257,8 @@ pub(crate) fn build_reviewer(id: &ReviewerIdentity, codex_version: &str) -> Revi
         provider_source: id.provider_source.clone(),
         model: id.model.clone(),
         model_source: id.model_source.clone(),
-        engine: "codex".into(),
-        harness: format!("codex-cli {}", codex_version.replace("codex-cli ", "")),
+        engine,
+        harness: harness.to_string(),
         provider_fingerprint: id.fingerprint.clone(),
         provider_config,
         identity_note: id.note.clone(),

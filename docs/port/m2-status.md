@@ -97,16 +97,16 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 
 | harness | status | note |
 |---|---|---|
-| harness-engines.ps1 (agy) | n/a | agy engine, milestone 2d. `--engine agy`/`--engine-exe`/`--denial-retry` are parsed and refused with a "milestone 2d" message. |
-| harness-muse.ps1 (muse) | n/a | muse engine, milestone 2d. `--max-model-steps` refused with a "milestone 2d" message. |
+| harness-engines.ps1 (agy) | partial | M2d pass 1: the agy DRY-RUN path is wired (engine selection, identity + `provider_config {engine, launcher}`, model-tier effort, native transport, capability refusals, `NN-agy-*` naming, `engine_run`/reviewer preview, the per-engine dry-run block). `-Only UNIT,ROSTER,DRYRUN,LISTING` → **31/3** (the 3 fails are the schema-path exact-command match — c3 ships its schema under `CODEX_HOME`). A **non-dry** `--engine agy` run is refused `the agy engine runs at milestone 2d pass 2; use --dry-run`. The live turns (denial retry, tree check, secondary turns, RUN/RESUME/DENIAL/FAIL) are pass 2. |
+| harness-muse.ps1 (muse) | partial | M2d pass 1: the muse DRY-RUN path is wired (engine default provider `meta`, `provider_config {engine, launcher, credential_mechanism: "oauth"}`, `muse-v1` effort, native transport, `--prompt-file` argv + prompt-file dry-run line, `--max-model-steps` gate, the billing/oauth launch guard, `muse-cli <version>` harness, `NN-muse-*` naming). `-Only UNIT,ROSTER,DRYRUN,ENGINEEXE` → **30/3** (schema-path match; the `UNIT D2` structural check that reads the shim text is N/A to c3; the ENGINEEXE `noLauncher` leg is a pass-2 live run). A non-dry `--engine muse` run is refused with the same pass-2 message. |
 | PANEL rows | n/a | `--panel`/`--panel-all` refused with a "milestone 4" message. |
 
 ## Counts
 
 - **verified:** 28
-- **partial:** 11
+- **partial:** 13 (agy + muse dry-run paths now landed as pass 1)
 - **not yet:** 8
-- **n/a:** 3 (agy / muse / panel groups)
+- **n/a:** 1 (panel group)
 
 ## M2d progress (this pass)
 
@@ -408,3 +408,60 @@ clean **except** one pre-existing `op_ref` error in the index worker's in-progre
 `crates/c3/src/index/extract.rs:560` (not owned by this task). The `--no-default-features` scope
 avoids the SurrealDB build the index worker's dependency triggers while the shared `target` disk
 is full.
+
+## M2d pass 1 progress — agy/muse engines wired into the dry-run path
+
+Everything for `c3 consult --engine agy|muse` that does **not** launch a live engine turn now
+lands; a non-dry engine run is refused `codex-consult: the <engine> engine runs at milestone 2d
+pass 2; use --dry-run` (pass 2 owns the live turns).
+
+Landed:
+
+- **Engine selection** (`orchestrate::build_context`, `codex-consult.ps1:2662-2840`): `-Engine`,
+  else the roster entry's engine (walk / `-Provider` / `-Thread`), else codex; `engine_from`
+  labels the dry-run `engine :` line. The walk (`Ctx::walk_full`) takes an `-Engine` filter; the
+  `-Engine`-vs-entry and `-Engine`-vs-thread contradictions refuse; `roster.applied` gains `engine`
+  only when the roster chose it. `-EngineExe` binds to the selected non-codex engine
+  (`resolve_engine_exe_binding`, ambiguity / `-Engine codex` / no-roster / not-a-file refusals) and
+  seeds the walk launcher.
+- **Identity + `provider_config`** (`c3-core::lineage::resolve_engine_identity`): agy →
+  `{engine, launcher}`, muse → `{engine, launcher, credential_mechanism: "oauth"}` (insertion order
+  preserved). `EngineSpec` gained the display fields (label, prefix, schema_flag, reply_source,
+  thread_flag/noun, read_only_note, sandbox_record, tools_line, steps_flag, denial_retry, has_usage,
+  prompt_by_file, transports, default_mode).
+- **Effort / transport**: `engine:agy` → model-tier (nothing sent); `engine:muse` → `muse-v1`
+  (low/medium/high/xhigh; an undeclared model refuses unless `-NativeEffort`). Transport defaults to
+  `native`; `-SchemaTransport prompt-only` drops the schema flag; `output-schema` is refused for an
+  engine, and `native` is refused for codex — each with the plugin's wording.
+- **Capability refusals** (after identity resolution): fork, `-Sandbox` != read-only,
+  `-CodexConfig`, transport, `-MaxModelSteps` on a non-muse engine (and `-MaxModelSteps` negative,
+  with `allow_hyphen_values` so clap forwards `-3` to the validator), the muse billing/oauth launch
+  guard.
+- **File naming**: `NN-<prefix>-<reply>.{md,reply.json,events.jsonl,...}` from the engine prefix.
+- **Ledger / preview**: `reviewer` carries the engine, the engine harness (`agy-cli
+  (version unknown)` / `muse-cli <version>` from `.muse-version` / `.muse-release-info.json` /
+  `--version`) and `provider_config`; the dry-run preview gained `reply`/`reply_json`/`events`,
+  `denial_retry` (null), `usage` (null for muse) and `engine_run` (`{turns, max_model_steps,
+  msp_schema_version}`).
+- **Per-engine dry-run block** (`dryrun.rs`): the `engine`/`launcher`/`harness`/`config` lines, the
+  `native` transport line, `denial retry` / `max steps` / `sandbox` lines, the `stdin` (agy) /
+  `prompt file` (muse) lines, the `reply source` line, and the engine `Tools:` prompt line
+  (`prompt.rs`, after the ask/brief/range).
+- **Preflight**: a CLI engine checks its own sign-in (`agy models` 45 s / muse `auth.json`) with the
+  recorded endpoint-health short-circuit (`providers::engine_consult_credential`).
+- **Roster reader** (`c3-core::roster`): accepts (and ignores, this pass) the wave-26 keys —
+  top-level `require`/`ext`, entry-level `lab`/`roles`/`ext`; `roster_version` stays 1.
+
+Measured (pass-1 sections, ONE harness at a time, `-Only`): harness-engines **31/3**, harness-muse
+**30/3** (Run 5 in `harness-results.md`). The remaining fails are the schema-path exact-command
+match (c3 ships its schema under `CODEX_HOME`, not the plugin's on-disk path — the same divergence
+codex has), one `UNIT D2` structural check that reads the shim text (N/A to c3), and one ENGINEEXE
+leg that is a pass-2 live run. `cargo test` 256/0, `cargo clippy --all-targets -- -D warnings`
+clean, `rustfmt` clean.
+
+Pass 2 hand-off (the live agy/muse turns): the denial-retry turn (agy F11), the read-only tree
+check (`engines::tree_check`), the timeout continuation and format-repair turns through the engine
+adapters, the RUN/RESUME/DENIAL/FAIL ledger + handoff (`engine_run.turns`, agy usage mapping, the
+`Tokens: not reported by muse.` handoff line), and the muse LISTING/SIGNIN/SCOREBOARD rows. The
+engine adapters (`engines::agy`/`muse`) and the core argv/effort/caps are already in place; pass 2
+removes the non-dry refusal in `run_inner` and drives `run_live` per engine.
