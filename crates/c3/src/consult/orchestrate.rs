@@ -19,6 +19,7 @@
 //! ingestion (retained blockers / verdict-vs-blocker), and the agy/muse engines (M2d).
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use c3_core::effort::{caps, Models};
 use c3_core::engine::{
@@ -26,7 +27,7 @@ use c3_core::engine::{
     TurnRequest,
 };
 use c3_core::handoff::{Author, HandoffHeader, OptionalRecords, TokenReport};
-use c3_core::ledger::{FindingCounts, LedgerEntry, Reviewer, Usage};
+use c3_core::ledger::{FindingCounts, LedgerEntry, RangeRecord, Reviewer, Usage};
 use c3_core::lineage::{resolve_reviewer_identity, ReviewerIdentity};
 use c3_core::store::{
     CommitRequest, EvidenceStore, FilesStore, FindingsDelta, LockRecord, PendingRecord, PendingRef,
@@ -37,6 +38,7 @@ use c3_core::verdict::{verdict_pre_credential, verdict_with_credential};
 
 use crate::engines::codex::{CodexEngine, TurnFiles};
 use crate::providers;
+use crate::telemetry;
 
 use super::args::{self, Options, Resolved};
 use super::ingest::{self, Ingestion};
@@ -47,10 +49,24 @@ use super::summary;
 
 const TOOL: &str = "c3 consult";
 
+/// `-Range` size-warning thresholds (`$rangeWarnLines` / `$rangeWarnTimeout`).
+const RANGE_WARN_LINES: i64 = 1500;
+const RANGE_WARN_TIMEOUT: i64 = 2400;
+
 /// Print a refusal (`Stop-WithError`) and return the usage exit code (1).
 fn refuse(msg: &str) -> i32 {
     eprintln!("{TOOL}: {msg}");
     1
+}
+
+/// The after-run drift (`Compare-TreeContent`, the brief/artifact re-hash).
+struct Drift {
+    tree_sha256_after: String,
+    tree_changed: bool,
+    /// `"<old> -> <new>"` when HEAD moved with identical content, else `""`.
+    revision_moved: String,
+    brief_sha_after: String,
+    brief_changed: bool,
 }
 
 /// The effort plan for a run (`Resolve-EffortPlan`).
@@ -271,6 +287,8 @@ pub(crate) struct Context {
     pub(crate) argv: Vec<String>,
     pub(crate) brief_ref: String,
     pub(crate) brief_path: Option<PathBuf>,
+    /// The brief's sha256 hex taken before the run (`$briefSha`); empty when no brief.
+    pub(crate) brief_sha: String,
     pub(crate) schema_path: Option<PathBuf>,
     pub(crate) open_findings_count: usize,
     /// The preflight string recorded in the ledger / handoff (`""` when not evaluated).
@@ -278,6 +296,25 @@ pub(crate) struct Context {
     /// A preflight refusal `(message, exit_code)` for a real run; `None` = available/skipped.
     pub(crate) preflight_refusal: Option<(String, i32)>,
     pub(crate) revision: RevisionInfo,
+    /// The measured `-Range` record for the ledger; `None` when no range was given.
+    pub(crate) range_record: Option<RangeRecord>,
+    /// The reviewer note text (`the range changes N files, N lines`); empty when no range.
+    pub(crate) range_text: String,
+    /// Run warnings (`$runWarnings`): the range size warning, roster ambiguity, drift, etc.
+    pub(crate) run_warnings: Vec<String>,
+    /// The provider whose peak schedule is evaluated (`""` when the identity is unresolved).
+    pub(crate) peak_provider: String,
+    /// The peak-window state and its record fields (evaluated at launch for a live run).
+    pub(crate) peak: Option<bool>,
+    pub(crate) peak_schedule: String,
+    pub(crate) peak_source: String,
+    pub(crate) peak_evaluated_at: String,
+    /// The `WARNING: ... peak window ...` line (empty when off-peak/unknown).
+    pub(crate) peak_warning: String,
+    /// The dry-run `peak` label (`PEAK (...)` / `off-peak (...)` / `unknown (...)`).
+    pub(crate) peak_label: String,
+    /// Whether telemetry is enabled for this run (`--telemetry`/env switch).
+    pub(crate) telemetry_enabled: bool,
     // paths
     pub(crate) handoffs_dir: PathBuf,
     pub(crate) reply_path: PathBuf,
@@ -287,8 +324,32 @@ pub(crate) struct Context {
     pub(crate) stderr_path: PathBuf,
 }
 
-/// Run one consultation; return the exit code.
+/// Run one consultation; return the exit code. Wraps [`run_inner`] with the telemetry
+/// background flush and the one-time notice (a real run only — a dry run does nothing), and
+/// joins the flush (capped at 3 s) at every exit path.
 pub fn run(o: Options) -> i32 {
+    let cfg = telemetry::Config {
+        telemetry: o.telemetry,
+    };
+    let real = telemetry::is_enabled(&cfg) && !o.dry_run;
+    let bg = if real {
+        Some(telemetry::flush_in_background())
+    } else {
+        None
+    };
+    if real {
+        if let Some(notice) = telemetry::first_run_notice() {
+            println!("{notice}");
+        }
+    }
+    let code = run_inner(o);
+    if let Some(bg) = bg {
+        bg.join_with_cap(Duration::from_secs(3));
+    }
+    code
+}
+
+fn run_inner(o: Options) -> i32 {
     let codex_home = std::env::var("CODEX_HOME").ok();
     let home = codex_home.as_deref();
     let r = match args::validate(&o, home) {
@@ -320,6 +381,7 @@ pub fn run(o: Options) -> i32 {
 }
 
 fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
+    let o_telemetry = o.telemetry; // captured before `o` moves into the Context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
     let collab_root = providers::resolve_collab_root(&repo_root, &o.collab_dir);
@@ -379,6 +441,45 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     }
     let transport = resolve_transport(&identity, &r);
 
+    // Peak window (evaluated once now — the early check). A malformed schedule refuses (naming
+    // the variable and the bad token); `-OffPeakOnly` refuses with no schedule or inside the
+    // window. The status that the LEDGER records is re-evaluated right before launch
+    // (`run_live`), which may cross a window boundary. `peakProvider` is the resolved provider,
+    // or `""` when the identity is unresolved.
+    let peak_provider = if identity.provider_source.is_empty() {
+        String::new()
+    } else {
+        identity.provider.clone()
+    };
+    let peak = c3_core::peak::peak_status_now(&peak_provider, 0);
+    if !peak.error.is_empty() {
+        return Err((peak.error, 1));
+    }
+    if o.off_peak_only {
+        if peak_provider.is_empty() {
+            return Err((format!(
+                "no schedule for provider unknown (the reviewer identity is unresolved: {}); -OffPeakOnly needs a known provider and its CODEX_CONSULT_PEAK_<PROVIDER>.",
+                identity.note
+            ), 1));
+        }
+        if peak.peak.is_none() {
+            return Err((
+                format!(
+                    "no schedule for provider {peak_provider}; -OffPeakOnly needs {}.",
+                    peak.variable
+                ),
+                1,
+            ));
+        }
+        if peak.peak == Some(true) {
+            return Err((format!(
+                "-OffPeakOnly: {peak_provider} is inside its peak window ({}; now {}); nothing was started.",
+                peak.schedule, peak.local
+            ), 1));
+        }
+    }
+    let (peak_warning, peak_label) = peak_display(&peak_provider, &peak);
+
     // Numbering.
     let store = FilesStore::new(collab_root.clone());
     let nn_n = store.next_numbers(&task).map_err(|e| (e.to_string(), 1))?;
@@ -394,8 +495,13 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
     let reply_path = handoffs_dir.join(format!("{stem}.md"));
     let reply_json_path = handoffs_dir.join(format!("{stem}.reply.json"));
     let events_path = handoffs_dir.join(format!("{stem}.events.jsonl"));
-    let last_msg_path = handoffs_dir.join(format!("{stem}.last.txt"));
-    let stderr_path = handoffs_dir.join(format!("{stem}.stderr.txt"));
+    // The `-o` last-message file and the stderr sidecar are system-temp files named exactly
+    // like the plugin (`<temp>/codex-consult-last-<guidN>.md` / `-stderr-<guidN>.txt`), not
+    // handoff files: they are transient and removed after the run.
+    let tmp_id = uuid::Uuid::new_v4().simple().to_string();
+    let tmp_root = std::env::temp_dir();
+    let last_msg_path = tmp_root.join(format!("codex-consult-last-{tmp_id}.md"));
+    let stderr_path = tmp_root.join(format!("codex-consult-stderr-{tmp_id}.txt"));
 
     // Brief ref (repo-relative) + existence check.
     let mut brief_ref = String::new();
@@ -419,15 +525,21 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
             c3_core::paths::repo_relative(&repo_root, &bp).unwrap_or_else(|| o.brief.clone());
         brief_path = Some(bp);
     }
+    let brief_sha = brief_path
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .map(|b| c3_core::sha256_hex(&b))
+        .unwrap_or_default();
 
     // The reply schema path (shipped with the tool; in prompt-only its text is inlined).
     let schema_path = if r.raw { None } else { schema_file(&repo_root) };
     let schema_text = if transport.transport == "prompt-only" {
-        schema_path
-            .as_ref()
-            .and_then(|p| std::fs::read_to_string(p).ok())
-            .map(|s| s.trim().replace("\r\n", "\n").replace('\n', "\r\n"))
-            .unwrap_or_default()
+        // The embedded schema, trimmed and normalised to CRLF exactly as the plugin inlines
+        // its on-disk file (`.Trim() -replace "`r`n","`n" -replace "`n", $nl`).
+        c3_core::schema::REPLY_SCHEMA_V1
+            .trim()
+            .replace("\r\n", "\n")
+            .replace('\n', "\r\n")
     } else {
         String::new()
     };
@@ -437,16 +549,47 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
 
     let consult_id = uuid::Uuid::new_v4().to_string();
 
-    // Range (measured once). M2c: the record/measurement is deferred; the prompt line uses
-    // the spec text only when a range was given (already validated as a pair).
-    let range = None;
+    // Range (`git diff --shortstat <spec> --`, measured once, before the lock). An unknown
+    // range refuses here (nothing started). The counts go to the prompt, the ledger `range{}`
+    // record and — over 1500 lines under a sub-2400 s timeout — a size warning.
+    let mut run_warnings: Vec<String> = Vec::new();
+    let mut range_record: Option<RangeRecord> = None;
+    let mut range_text = String::new();
+    let mut prompt_range: Option<prompt::Range> = None;
+    if !o.range.is_empty() {
+        let rs = revision::range_stat(&repo_root, &o.range);
+        if !rs.error.is_empty() {
+            return Err((format!("{}; nothing was started.", rs.error), 1));
+        }
+        range_text = revision::range_text(rs.files, rs.lines);
+        if rs.lines > RANGE_WARN_LINES && r.timeout_sec < RANGE_WARN_TIMEOUT {
+            run_warnings.push(format!(
+                "a range of {} lines with a {} s timeout: pass -TimeoutSec or a reading plan in the brief",
+                rs.lines, r.timeout_sec
+            ));
+        }
+        prompt_range = Some(prompt::Range {
+            spec: o.range.clone(),
+            text: range_text.clone(),
+            insertions: rs.insertions,
+            deletions: rs.deletions,
+        });
+        range_record = Some(RangeRecord {
+            spec: o.range.clone(),
+            files: rs.files,
+            insertions: rs.insertions,
+            deletions: rs.deletions,
+            lines: rs.lines,
+            ..Default::default()
+        });
+    }
 
     let prompt_text = prompt::assemble(&PromptInputs {
         raw: r.raw,
         purpose: &o.purpose,
         prompt: &o.prompt,
         brief_ref: &brief_ref,
-        range,
+        range: prompt_range.as_ref(),
         open_findings: &open_findings,
         schema_transport: &transport.transport,
         schema_text: &schema_text,
@@ -494,11 +637,25 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
         argv: argv.args,
         brief_ref,
         brief_path,
+        brief_sha,
         schema_path,
         open_findings_count,
         preflight,
         preflight_refusal,
         revision,
+        range_record,
+        range_text,
+        run_warnings,
+        peak_provider,
+        peak: peak.peak,
+        peak_schedule: peak.schedule.clone(),
+        peak_source: peak.source.clone(),
+        peak_evaluated_at: peak.evaluated_at.clone(),
+        peak_warning,
+        peak_label,
+        telemetry_enabled: telemetry::is_enabled(&telemetry::Config {
+            telemetry: o_telemetry,
+        }),
         handoffs_dir,
         reply_path,
         reply_json_path,
@@ -506,6 +663,33 @@ fn build_context(o: Options, r: Resolved) -> Result<Context, (String, i32)> {
         last_msg_path,
         stderr_path,
     })
+}
+
+/// `($peakWarning, $peakLabel)` for a peak status (`codex-consult.ps1:2625-2627`).
+fn peak_display(provider: &str, st: &c3_core::peak::PeakStatus) -> (String, String) {
+    let warning = if st.peak == Some(true) {
+        format!(
+            "{provider} peak window ({}) - this consultation runs at peak tariff.",
+            st.schedule
+        )
+    } else {
+        String::new()
+    };
+    let label = match st.peak {
+        None => {
+            if st.variable.is_empty() {
+                "unknown (provider unknown)".to_string()
+            } else {
+                format!("unknown ({} not set)", st.variable)
+            }
+        }
+        Some(true) => format!("PEAK ({}; now {})", st.schedule, st.local),
+        Some(false) => format!(
+            "off-peak ({}; now {}; {})",
+            st.schedule, st.local, st.detail
+        ),
+    };
+    (warning, label)
 }
 
 fn effort_requested(o: &Options, _r: &Resolved) -> String {
@@ -580,18 +764,21 @@ fn mode_of(o: &Options) -> Mode {
     }
 }
 
-fn schema_file(repo_root: &Path) -> Option<PathBuf> {
-    // The reply schema shipped with the plugin; in C3 it is looked up relative to the repo.
-    for cand in [
-        repo_root.join("schemas/consult-reply.schema.json"),
-        repo_root.join("crates/c3/schemas/consult-reply.schema.json"),
-    ] {
-        if cand.is_file() {
-            return Some(cand);
-        }
+fn schema_file(_repo_root: &Path) -> Option<PathBuf> {
+    // The reply schema is embedded in the binary (`c3_core::schema::REPLY_SCHEMA_V1`, the
+    // plugin's file byte-for-byte). Materialise it under `<CODEX_HOME>/c3/schemas/
+    // consult-reply.v1.json` (rewritten only when missing/different) and pass THAT path to
+    // `--output-schema`, mirroring the plugin passing its own on-disk schema file. With no
+    // resolvable codex home, name the would-be path without writing (a dry run still shows it).
+    let home = providers::get_codex_home();
+    if home.is_empty() {
+        return None;
     }
-    // Fall back to a stable path even when absent (dry run still names it).
-    Some(repo_root.join("schemas/consult-reply.schema.json"))
+    let home = PathBuf::from(&home);
+    match c3_core::schema::materialize(&home) {
+        Ok(p) => Some(p),
+        Err(_) => Some(c3_core::schema::materialized_path(&home)),
+    }
 }
 
 fn get_codex_version(launcher: &str) -> String {
@@ -702,6 +889,32 @@ fn run_live(mut ctx: Context) -> i32 {
     // `.consult.*` files under the collab dir are counted among the excluded entries
     // (`fingerprint_note`). Re-fingerprint here to match (`$revBefore` in the plugin flow).
     ctx.revision = revision::revision_info(&ctx.repo_root, Some(&ctx.collab_root));
+
+    // Peak status AT LAUNCH (the one the ledger records; the early check was call 0, this is
+    // call 1). Preparation between the two may cross a window boundary: under `-OffPeakOnly` a
+    // window entered since the early check stops the run here — the reservation is withdrawn
+    // (nothing written under its numbers), no ledger entry.
+    let launch_peak = c3_core::peak::peak_status_now(&ctx.peak_provider, 1);
+    if !launch_peak.error.is_empty() {
+        let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+        return refuse(&launch_peak.error);
+    }
+    if ctx.o.off_peak_only && launch_peak.peak != Some(false) {
+        let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+        return refuse(&format!(
+            "-OffPeakOnly: {} entered its peak window before launch ({}; now {}); nothing was started.",
+            ctx.peak_provider, launch_peak.schedule, launch_peak.local
+        ));
+    }
+    let (launch_warning, _) = peak_display(&ctx.peak_provider, &launch_peak);
+    ctx.peak = launch_peak.peak;
+    ctx.peak_schedule = launch_peak.schedule.clone();
+    ctx.peak_source = launch_peak.source.clone();
+    ctx.peak_evaluated_at = launch_peak.evaluated_at.clone();
+    ctx.peak_warning = launch_warning;
+    if !ctx.peak_warning.is_empty() {
+        println!("WARNING: {}", ctx.peak_warning);
+    }
 
     // Run the primary turn.
     let engine_files = TurnFiles {
@@ -851,6 +1064,26 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
         }
     }
 
+    // Live drift (`Compare-TreeContent` + brief re-hash). The turn ran in `run_live` before
+    // this; re-fingerprint the tree and re-hash the brief now. A file's CONTENT changing is a
+    // tree change (warning); HEAD moving with identical content is only a `revision_moved`
+    // note. The brief changing during the review is a warning too.
+    let rev_after = revision::revision_info(&ctx.repo_root, Some(&ctx.collab_root));
+    let tree_cmp = revision::compare_tree_content(&ctx.revision, &rev_after);
+    let brief_sha_after = ctx
+        .brief_path
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .map(|b| c3_core::sha256_hex(&b))
+        .unwrap_or_default();
+    let drift = Drift {
+        tree_sha256_after: rev_after.tree_sha256.clone(),
+        tree_changed: tree_cmp.changed,
+        revision_moved: tree_cmp.revision_moved.clone(),
+        brief_sha_after: brief_sha_after.clone(),
+        brief_changed: !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after,
+    };
+
     // Build the finding delta + ids for a structured reply.
     let mut finding_ids: Vec<String> = Vec::new();
     let mut delta = FindingsDelta::default();
@@ -880,21 +1113,25 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
         &validation_error,
         provider_failure.as_ref(),
         &raw_text,
+        &drift,
     );
     let handoff_rel = format!("handoffs/{:02}-codex-{}.md", ctx.nn, ctx.reply_name);
     let events_rel = format!(
         "handoffs/{:02}-codex-{}.events.jsonl",
         ctx.nn, ctx.reply_name
     );
-    // The plugin writes `.reply.json` (the byte-for-byte raw reply) at the handoff path for
-    // every non-raw run. M2c commits it via the commit `files` list; the store's
-    // `write_raw_reply` staging path (`.consult.reply.json`) is not used, so no stray staging
-    // file is left (the F04-11 "raw reply before the lock" crash-safety nuance is deferred).
+    // The plugin writes `.reply.json` (the byte-for-byte raw reply) at the handoff path
+    // BEFORE the write lock is taken (README "Write order": `.reply.json` first), so a crash
+    // during the commit still leaves the raw reply recoverable. C3 writes it here, before the
+    // lock, at the handoff path — not staged under `.consult.reply.json`.
     let reply_json_rel = if !ctx.r.raw && !raw_text.is_empty() {
         format!("handoffs/{:02}-codex-{}.reply.json", ctx.nn, ctx.reply_name)
     } else {
         String::new()
     };
+    if !reply_json_rel.is_empty() {
+        let _ = c3_core::store::write_text_atomic(&ctx.reply_json_path, raw_text.as_bytes());
+    }
 
     // Build the ledger entry.
     let entry = build_entry(
@@ -912,14 +1149,19 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
         &handoff_rel,
         &reply_json_rel,
         &events_rel,
+        &drift,
     );
 
-    // Commit under the write lock: the handoff `.md` and, for a non-raw run, the raw
-    // `.reply.json` at the handoff path (byte-for-byte).
-    let mut files = vec![(handoff_rel.clone(), handoff_md.clone().into_bytes())];
-    if !reply_json_rel.is_empty() {
-        files.push((reply_json_rel.clone(), raw_text.clone().into_bytes()));
-    }
+    // Keep a copy for telemetry (the entry is moved into the commit below).
+    let entry_for_telemetry = if ctx.telemetry_enabled {
+        Some(entry.clone())
+    } else {
+        None
+    };
+
+    // Commit under the write lock: the handoff `.md`. The raw `.reply.json` was already
+    // written above, before the lock (crash-safety), so it is not in the commit `files` list.
+    let files = vec![(handoff_rel.clone(), handoff_md.clone().into_bytes())];
     let write_lock = match store.take_write_lock(&ctx.task) {
         Ok(l) => l,
         Err(e) => return refuse(&format!("could not take the write lock: {e}")),
@@ -939,6 +1181,12 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
     };
     drop(write_lock);
     let _ = receipt;
+
+    // Telemetry: record this consultation to the spool (errors ignored). The env switch is
+    // re-checked inside `record_consultation`; a dry run never reaches this point.
+    if let Some(entry) = &entry_for_telemetry {
+        let _ = telemetry::record_consultation(entry, None);
+    }
 
     // Summary.
     let reply_body = structured
@@ -1002,6 +1250,10 @@ fn finish(ctx: Context, store: FilesStore, pending: PendingRef, outcome: Attempt
         section,
         ..Default::default()
     };
+    // Run warnings print before the summary block (`foreach ($rw in $runWarnings)`).
+    for w in &ctx.run_warnings {
+        println!("WARNING: {w}");
+    }
     for line in summary::render_summary(&s) {
         println!("{line}");
     }
@@ -1136,6 +1388,7 @@ fn render_handoff(
     validation_error: &str,
     provider_failure: Option<&c3_core::ledger::ProviderFailure>,
     raw_text: &str,
+    drift: &Drift,
 ) -> String {
     let events_rel = format!(
         "handoffs/{:02}-codex-{}.events.jsonl",
@@ -1154,6 +1407,45 @@ fn render_handoff(
         },
     };
     let mut records = OptionalRecords::default();
+    if !ctx.peak_warning.is_empty() {
+        // The handoff records the past tense ('ran at') of the console warning, with the
+        // same `WARNING: ` prefix the console line carries.
+        records.peak_warning = Some(format!(
+            "WARNING: {}",
+            ctx.peak_warning
+                .replace("this consultation runs at", "this consultation ran at")
+        ));
+    }
+    // Drift lines (`$driftLines`): tree, HEAD move, brief, artifacts — in that order.
+    if drift.tree_changed {
+        records.drift_lines.push(
+            "WARNING: working tree changed during the review (fingerprint before/after differ)."
+                .to_string(),
+        );
+    }
+    if !drift.revision_moved.is_empty() {
+        records.drift_lines.push(revision::revision_moved_note(
+            &drift.revision_moved,
+            drift.tree_changed,
+        ));
+    }
+    if drift.brief_changed {
+        records.drift_lines.push(format!(
+            "WARNING: the brief changed during the review (sha256 {} before, {} after).",
+            short_hash(&ctx.brief_sha),
+            short_hash(&drift.brief_sha_after)
+        ));
+    }
+    if !ctx.run_warnings.is_empty() {
+        records.warnings = Some(format!(
+            "Warnings: {}.",
+            ctx.run_warnings
+                .iter()
+                .map(|w| c3_core::one_line(w))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
     if let Some(pf) = provider_failure {
         let code = if pf.code.is_empty() {
             String::new()
@@ -1255,20 +1547,29 @@ fn render_handoff(
             thread, thread_source
         ),
         brief_reviewed_line: brief_reviewed_line(ctx),
-        timeout_line: format!(
-            "Timeout: {} s ({}); continuation after a timeout kill: {}.",
-            ctx.r.timeout_sec,
-            if ctx.r.timeout_source == "purpose" {
-                format!("the default of purpose {}", ctx.r.purpose_label)
-            } else {
-                "-TimeoutSec".to_string()
-            },
-            if ctx.r.continue_sec > 0 {
-                format!("up to {} s", ctx.r.continue_sec)
-            } else {
-                "off (-ContinueSec 0)".to_string()
+        timeout_line: {
+            let mut t = format!(
+                "Timeout: {} s ({}); continuation after a timeout kill: {}.",
+                ctx.r.timeout_sec,
+                if ctx.r.timeout_source == "purpose" {
+                    format!("the default of purpose {}", ctx.r.purpose_label)
+                } else {
+                    "-TimeoutSec".to_string()
+                },
+                if ctx.r.continue_sec > 0 {
+                    format!("up to {} s", ctx.r.continue_sec)
+                } else {
+                    "off (-ContinueSec 0)".to_string()
+                }
+            );
+            if let Some(rr) = &ctx.range_record {
+                t.push_str(&format!(
+                    " Range: `{}` - {} ({} insertions, {} deletions).",
+                    rr.spec, ctx.range_text, rr.insertions, rr.deletions
+                ));
             }
-        ),
+            t
+        },
         verdict_line: verdict_line.or(structured_status),
         records,
     };
@@ -1318,7 +1619,7 @@ fn short_hash(h: &str) -> String {
 
 /// `Reviewer: <lineage> (provider from <src>, model from <src>; endpoint <host>; provider
 /// fingerprint <short>[; <note>]; harness <harness>).` (`$reviewerLine`).
-fn reviewer_line(id: &ReviewerIdentity, codex_version: &str) -> String {
+pub(crate) fn reviewer_line(id: &ReviewerIdentity, codex_version: &str) -> String {
     let harness = format!("codex-cli {}", codex_version.replace("codex-cli ", ""));
     let host = if id.host.is_empty() {
         "builtin:openai"
@@ -1363,13 +1664,11 @@ fn brief_reviewed_line(ctx: &Context) -> String {
     let brief_line = if ctx.brief_ref.is_empty() {
         "Brief: (none, prompt only).".to_string()
     } else {
-        let sha = ctx
-            .brief_path
-            .as_ref()
-            .and_then(|p| std::fs::read(p).ok())
-            .map(|b| short_hash(&c3_core::sha256_hex(&b)))
-            .unwrap_or_default();
-        format!("Brief: `{}` (sha256 {}).", ctx.brief_ref, sha)
+        format!(
+            "Brief: `{}` (sha256 {}).",
+            ctx.brief_ref,
+            short_hash(&ctx.brief_sha)
+        )
     };
     let tree = if ctx.revision.tree_sha256.is_empty() {
         "(none)".to_string()
@@ -1399,6 +1698,7 @@ fn build_entry(
     handoff_rel: &str,
     reply_json_rel: &str,
     events_rel: &str,
+    drift: &Drift,
 ) -> LedgerEntry {
     let mut e = LedgerEntry {
         n: ctx.consult_n,
@@ -1434,11 +1734,11 @@ fn build_entry(
             .iter()
             .map(|s| serde_json::Value::String(s.clone()))
             .collect(),
-        // No peak evaluation in M2c: no declared window → the plugin's
-        // `peak: null, peak_source: "none", peak_evaluated_at: <iso>` shape.
-        peak: None,
-        peak_source: "none".into(),
-        peak_evaluated_at: iso_now(),
+        // Peak status evaluated at launch (`run_live` re-evaluated it as call 1).
+        peak: ctx.peak,
+        peak_schedule: ctx.peak_schedule.clone(),
+        peak_source: ctx.peak_source.clone(),
+        peak_evaluated_at: ctx.peak_evaluated_at.clone(),
         schema: if ctx.r.raw {
             String::new()
         } else {
@@ -1447,10 +1747,26 @@ fn build_entry(
         schema_transport: ctx.transport.transport.clone(),
         schema_transport_source: ctx.transport.source.clone(),
         validation_error: validation_error.to_string(),
+        range: ctx.range_record.clone(),
+        warnings: ctx
+            .run_warnings
+            .iter()
+            .map(|w| serde_json::Value::String(w.clone()))
+            .collect(),
         base_commit: ctx.revision.base_commit.clone(),
         reviewed_revision: ctx.revision.reviewed_revision.clone(),
         tree_sha256: ctx.revision.tree_sha256.clone(),
+        tree_sha256_after: drift.tree_sha256_after.clone(),
+        tree_changed_during_review: drift.tree_changed,
+        revision_moved: Some(if drift.revision_moved.is_empty() {
+            None
+        } else {
+            Some(drift.revision_moved.clone())
+        }),
         changed_files: ctx.revision.changed_files,
+        brief_sha256: ctx.brief_sha.clone(),
+        brief_sha256_after: drift.brief_sha_after.clone(),
+        brief_changed_during_review: drift.brief_changed,
         fingerprint_note: ctx.revision.fingerprint_note.clone(),
         bridge_outcome: bridge_outcome.to_string(),
         provider_failure,
@@ -1463,7 +1779,6 @@ fn build_entry(
         usage: usage.clone(),
         wall_seconds: wall,
         finished_at: iso_now(),
-        revision_moved: Some(None),
         reviewer: build_reviewer(&ctx.identity, &ctx.codex_version),
         ..Default::default()
     };
@@ -1514,5 +1829,66 @@ fn build_reviewer(id: &ReviewerIdentity, codex_version: &str) -> Reviewer {
         provider_config,
         identity_note: id.note.clone(),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod telemetry_tests {
+    use super::*;
+    use c3_core::ledger::LedgerEntry;
+    use std::sync::Mutex;
+
+    // Serialises the env-mutating part of this file's tests against itself.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn spool_pending(home: &Path) -> usize {
+        let p = home.join("c3").join("telemetry").join("spool.ndjson");
+        std::fs::read_to_string(p)
+            .map(|t| t.lines().filter(|l| !l.trim().is_empty()).count())
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn telemetry_gates_govern_enqueue() {
+        let _g = ENV_LOCK.lock().unwrap();
+
+        // The consult flow enqueues only inside `finish()`, gated by `ctx.telemetry_enabled`
+        // (= `is_enabled`), and `finish()` runs only for a real (non-dry) run. `run()` gates
+        // the background flush by `is_enabled(cfg) && !dry_run`.
+        let on = telemetry::Config {
+            telemetry: Some(true),
+        };
+        // A dry run never flushes and never reaches the enqueue site.
+        let dry_run = true;
+        assert!(!(telemetry::is_enabled(&on) && !dry_run));
+        // `--telemetry off` disables the enqueue gate regardless of the environment.
+        assert!(!telemetry::is_enabled(&telemetry::Config {
+            telemetry: Some(false),
+        }));
+
+        // env `CODEX_CONSULT_TELEMETRY=off`: `is_enabled` false AND `record_consultation`
+        // enqueues nothing (observed on an isolated spool).
+        let home = std::env::temp_dir().join(format!("c3-tele-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::env::set_var("CODEX_HOME", &home);
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "off");
+        let off_cfg = telemetry::Config::default();
+        assert!(!telemetry::is_enabled(&off_cfg));
+        let entry = LedgerEntry {
+            n: 7,
+            ..Default::default()
+        };
+        let _ = telemetry::record_consultation(&entry, None);
+        assert_eq!(spool_pending(&home), 0, "env off must enqueue nothing");
+
+        // Control: with the switch on, the same record DOES enqueue one event (proves the
+        // guard suppresses, rather than the path being a no-op).
+        std::env::remove_var("CODEX_CONSULT_TELEMETRY");
+        assert!(telemetry::is_enabled(&telemetry::Config::default()));
+        let _ = telemetry::record_consultation(&entry, None);
+        assert_eq!(spool_pending(&home), 1, "switch on enqueues one event");
+
+        std::env::remove_var("CODEX_HOME");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

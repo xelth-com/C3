@@ -58,7 +58,14 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             config_path
         }
     ));
-    out.push(format!("reviewer    : {}", reviewer_shown(&ctx.identity)));
+    // The full reviewer line, minus the `Reviewer: ` prefix (`$reviewerLine -replace ...`).
+    let reviewer_full = super::orchestrate::reviewer_line(&ctx.identity, &ctx.codex_version);
+    out.push(format!(
+        "reviewer    : {}",
+        reviewer_full
+            .strip_prefix("Reviewer: ")
+            .unwrap_or(&reviewer_full)
+    ));
     out.push(format!("lineage     : {}", ctx.identity.lineage));
     let preflight_line = if ctx.o.skip_preflight {
         "skipped (-SkipPreflight)".to_string()
@@ -70,6 +77,9 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         format!("available ({})", ctx.preflight)
     };
     out.push(format!("preflight   : {preflight_line}"));
+    for w in &ctx.run_warnings {
+        out.push(format!("WARNING: {w}"));
+    }
     out.push(format!("model       : {}", model_label(ctx)));
     out.push(format!(
         "purpose     : {} (effort {}, max words {})",
@@ -105,6 +115,16 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             "off (-ContinueSec 0)".to_string()
         }
     ));
+    if let Some(rr) = &ctx.range_record {
+        out.push(format!(
+            "range       : {} - {} ({} insertions, {} deletions)",
+            rr.spec, ctx.range_text, rr.insertions, rr.deletions
+        ));
+    }
+    out.push(format!("peak        : {}", ctx.peak_label));
+    if !ctx.peak_warning.is_empty() {
+        out.push(format!("WARNING: {}", ctx.peak_warning));
+    }
     if ctx.r.raw {
         out.push(format!(
             "reply format: raw text ({}: no schema, no findings bookkeeping)",
@@ -173,9 +193,21 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             out.push(format!("brief sha256: {}", c3_core::sha256_hex(&bytes)));
         }
     }
+    // Telemetry status (C3's addition per README; the plugin has no such line). The plugin's
+    // dry-run block would place it after the `peak` line, but peak is not implemented yet, so
+    // it goes last in the label block to avoid disturbing the existing console-parity lines.
+    {
+        let cfg = crate::telemetry::Config {
+            telemetry: ctx.o.telemetry,
+        };
+        let st = crate::telemetry::status(&cfg);
+        let body = st.strip_prefix("telemetry: ").unwrap_or(&st);
+        out.push(format!("telemetry   : {body}"));
+    }
     out.push(String::new());
     out.push("argv        :".into());
-    out.push("    codex".to_string());
+    // The argv block lists the launcher's arguments only (starting with `exec`); the launcher
+    // itself is shown on the `command` line, matching the plugin's `foreach ($a in $argv)`.
     for a in &ctx.argv {
         out.push(format!("    {a}"));
     }
@@ -226,6 +258,7 @@ fn preview(ctx: &Context) -> Value {
         "mode": mode_str(ctx),
         "command": format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
         "brief": ctx.brief_ref,
+        "range": ctx.range_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
         "prompt_chars": ctx.prompt_text.chars().count(),
         "model": model_label(ctx),
         "effort": effort_sent,
@@ -238,6 +271,10 @@ fn preview(ctx: &Context) -> Value {
         "timeout_sec": ctx.r.timeout_sec,
         "timeout_source": ctx.r.timeout_source,
         "continue_sec": ctx.r.continue_sec,
+        "peak": ctx.peak,
+        "peak_schedule": ctx.peak_schedule,
+        "peak_source": ctx.peak_source,
+        "peak_evaluated_at": ctx.peak_evaluated_at,
         "schema": if ctx.r.raw { "" } else { "consult-reply v1" },
         "schema_transport": ctx.transport.transport,
         "schema_transport_source": ctx.transport.source,
@@ -251,6 +288,7 @@ fn preview(ctx: &Context) -> Value {
         "changed_files": ctx.revision.changed_files,
         "fingerprint_note": ctx.revision.fingerprint_note,
         "bridge_outcome": "<usable reply | failed: ...>",
+        "warnings": ctx.run_warnings.clone(),
         "wall_seconds": 0,
         "finished_at": "<written at the commit>",
         "commit_wait_ms": "<ms the commit waited for the write lock>"
@@ -279,18 +317,6 @@ fn mode_str(ctx: &Context) -> String {
     } else {
         ctx.o.mode.clone()
     }
-}
-
-fn reviewer_shown(id: &c3_core::lineage::ReviewerIdentity) -> String {
-    format!(
-        "{} ({})",
-        id.lineage,
-        if id.provider_source.is_empty() {
-            "codex default".to_string()
-        } else {
-            id.provider_source.clone()
-        }
-    )
 }
 
 // Keep fmt_wall referenced (used by summary/orchestrate); silences an unused import if the

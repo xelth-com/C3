@@ -28,9 +28,9 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 | EVENTS (thread source from the event stream) | verified | `engines::codex::parse_thread_id` (primary + `session_configured`/`session.started` drift nets, foreign non-uuid ignored) — unit-tested. |
 | F02-4 (effort vocabulary mapping) | verified | `orchestrate::effort_plan` maps through caps-v1 + the vocabulary table; undeclared host/model → refusal; `-NativeEffort` verbatim. Effort line byte-matches in dry-run. |
 | F02-4 (ledger effort fields) | verified | `effort`/`effort_requested`/`effort_sent`/`effort_mapping`/`effort_caps` match in the live `sessions.json` diff; `effort_confirmed` null. |
-| F02-9 (peak windows) | not yet | peak evaluation deferred; ledger records `peak: null, peak_source: "none"`. |
-| F06-3 (peak re-evaluated at launch) | not yet | deferred with peak. |
-| F06-4 (peak exception ranges) | not yet | deferred with peak. |
+| F02-9 (peak windows) | verified | `c3_core::peak` ports `ConvertFrom-PeakSpec`/`ConvertFrom-PeakExceptions`/`Get-PeakStatus`/`Get-ConsultClock`/`Get-PeakStatusNow` (M2d). `CODEX_CONSULT_PEAK_<PROVIDER>`/`_EXCEPT`, the `-OffPeakOnly` refusals (no provider / no schedule / inside window, before the lock), the warning, the `peak`/`peak_schedule`/`peak_source`/`peak_evaluated_at` ledger fields and the dry-run `peak` line — unit-tested (7 tests) and **live-verified**: the dry-run `peak` line and the `-OffPeakOnly` refusal message are byte-identical to the plugin under `CODEX_CONSULT_NOW`. |
+| F06-3 (peak re-evaluated at launch) | verified | `run_live` re-evaluates the peak at launch (call index 1; the early check is call 0), refuses `-OffPeakOnly` on a boundary crossing (pending record withdrawn, nothing written), and the ledger records the launch-time value. |
+| F06-4 (peak exception ranges) | verified | `parse_peak_exceptions` keeps ranges of any length (never expanded); only end-before-start refuses (`a range must not run backwards`) — unit-tested. |
 | KILL (process-tree kill) | partial | `engines::subprocess` kills the tree on timeout (Windows `taskkill /T`, verified: a 60 s hang is killed at the 3 s / 2 s timeout, exit 1); survivor **detection** is best-effort (empty list), the 5×-race and survivor-recording are deferred. |
 | OPENAI+WIRE (built-in vs user table) | verified | reused core; built-in `provider_config {builtin:openai}` matches in the live diff. |
 | F06-1/F06-2 (construct scoping) | verified | reused `c3-core::config` (M1). |
@@ -54,9 +54,9 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 | F04-6 (verdict fits the purpose) | not yet | per-purpose verdict-vocabulary validation deferred; the verdict is recorded as the reply gives it. |
 | F04-7 (file mode in the tree hash) | verified | `consult::revision` reads modes via `git diff --raw` (mode-transition `a>b`), part of the manifest; `tree_sha256` byte-identical to the plugin in the dry-run diff. |
 | F04-8 (case-sensitive paths) | partial | manifest keys are the git paths ordinal-sorted (matches on a case-sensitive tree); not separately exercised on Windows. |
-| F04-9 (brief/artifact drift) | not yet | the after-run re-hash of the brief/artifacts and the drift flags are deferred; `brief_sha256` (before) is recorded. |
-| F04-10 (surviving child keeps the task locked) | not yet | pending-record liveness/recovery is deferred (M2c+). |
-| F04-11 (raw-reply preservation on downstream failure) | not yet | the "raw reply before the lock" crash-safety path is deferred; M2c writes `.reply.json` via the commit `files` list instead of `store::write_raw_reply` (documented in `orchestrate::finish`). |
+| F04-9 (brief/artifact drift) | partial | tree drift (`tree_sha256_after`, `tree_changed_during_review`, `revision_moved` + the `Note: HEAD moved ...` line) and brief drift (`brief_sha256`, `brief_sha256_after`, `brief_changed_during_review`) implemented in `orchestrate::finish` via `revision::compare_tree_content` (content-only) — the false-drift path is live-verified byte-identical in `sessions.json`. **Artifact** drift (`-Artifact` hashing, `artifacts[]`, `artifacts_changed_during_review`, per-file WARNING) is still deferred: `-Artifact` is parsed but not hashed. |
+| F04-10 (surviving child keeps the task locked) | not yet | pending-record liveness/recovery is deferred (M2d-2). The liveness code (`process_start_iso`/`pid_alive`/`Test-PendingActive`) is now a shared `crates/c3/src/liveness/` module (moved out of `findings_tool`) ready for the consult recovery path. |
+| F04-11 (raw-reply preservation on downstream failure) | partial | the raw `.reply.json` is now written to the handoff path **before the write lock** (crash-safety; `orchestrate::finish`, not the commit `files` list), matching the plugin's write order — live-verified byte-identical. The "preserving the raw reply itself fails → outcome names the kept path" nuance is still deferred. |
 
 ## harness-format.ps1 (structured/prose ingestion, format repair)
 
@@ -82,7 +82,7 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 | check id | status | note |
 |---|---|---|
 | DEFAULTS (per-purpose timeout/continue) | verified | `args::validate` — the purpose timeout table, `timeout_source`, and `continue_sec = min(timeout, 900)` (0 = off, negative refused) — unit-tested; dry-run `timeout` line matches. |
-| RANGE (`-Range`) | partial | the `-Range` refusals (purpose gate, single-revision) are in `args::validate` (unit-tested); the `git diff --shortstat` measurement, the `range{}` ledger record, the prompt/handoff range line and the size warning are deferred. |
+| RANGE (`-Range`) | verified | `revision::range_stat` runs `git diff --shortstat <spec> --` once before the lock (unknown range refuses with the plugin's wording), records `range{spec,files,insertions,deletions,lines}`, adds the prompt line, the dry-run `range` line and the handoff `Range:` suffix, and the >1500-lines-under-2400 s size warning to `warnings[]` — unit-tested and **live-verified** byte-identical (dry-run `range` line + prompt `Review range:` line). |
 | CONT (codex timeout continuation) | not yet | the continuation turn, `timeout_continue` record, `.partial.md` salvage and the printed resume command are deferred; a killed main turn is a failed run (exit 1) with `bridge_outcome: "failed: timeout ..."`. |
 | GATES-F08-* / F07-1 | not yet | the continuation gates (tree/quota/survivor/short-reply) and prompt-only re-send are deferred with CONT. |
 
@@ -102,10 +102,44 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 
 ## Counts
 
-- **verified:** 15
-- **partial:** 10
-- **not yet:** 22
+- **verified:** 19
+- **partial:** 11
+- **not yet:** 17
 - **n/a:** 3 (agy / muse / panel groups)
+
+## M2d progress (this pass)
+
+Landed and verified (unit tests + live fake-codex parity where the plugin has one):
+
+1. **Peak windows** (F02-9 / F06-3 / F06-4) — `c3_core::peak`; dry-run line and `-OffPeakOnly`
+   refusal byte-identical to the plugin.
+2. **`-Range`** (RANGE) — `revision::range_stat`; range line + prompt line byte-identical.
+3. **Live drift** (part of F04-9) — tree + brief drift via `revision::compare_tree_content`;
+   `sessions.json` byte-identical (false-drift path). Artifact drift still deferred.
+4. **Bundled schema + raw-reply-before-lock** (item 10 / part of F04-11) — the reply schema is
+   embedded in `c3_core::schema` (`REPLY_SCHEMA_V1`, the plugin's file verbatim) and materialised
+   under `<CODEX_HOME>/c3/schemas/consult-reply.v1.json`; `.reply.json` is written before the
+   write lock. `reply.json` is byte-identical to the plugin; the recorded `command`'s schema path
+   is a `CODEX_HOME`-relative C3 path (environmental, like `cwd`). The `-o` last-message and stderr
+   sidecars are now system-temp files (`codex-consult-last-<guidN>.md`) exactly like the plugin.
+5. **Liveness module** — the plugin's process-liveness / pending-record code moved from
+   `findings_tool/{proc,pending}.rs` to a shared `crates/c3/src/liveness/` module (findings_tool
+   re-imports it, tests stay green), ready for the consult pending-recovery path.
+6. **Dry-run parity fixes** — the dry-run `reviewer` line now shows the full reviewer line (was a
+   reduced form); the argv block no longer prints a spurious leading `codex` line. The full
+   pre-preview dry-run console is byte-identical to the plugin except random uuids, the C3 schema
+   path, and C3's added `telemetry` line.
+7. **Telemetry wiring** (C3 addition, per coordinator) — `--telemetry on|off`
+   (env `CODEX_CONSULT_TELEMETRY=off` also disables), background spool flush + join at every exit
+   (real run only), the one-time notice, `record_consultation` at the commit point, and the
+   dry-run `telemetry` line via `telemetry::status`.
+
+Still deferred to M2d-2 / later: format repair (REPAIR/TWICE/DRIFT/ORPHAN), timeout continuation
+(CONT/GATES), pending/lock recovery (pending a–g, 3b, F04-10, F04-11 residual), preflight endpoint
+health (F09-2/4), the roster walk (WALK/QUOTA/RULES/AUTH), the prior-finding lifecycle (F04-4),
+`-Artifact` hashing + artifact drift, and the full live summary-block console (the plugin's
+`warning    :`/verdict/drift summary lines) — the persisted stores are byte-parity, the summary
+console block is partial.
 
 ## Wave-24c items (coordinator course-correction) — where verified
 

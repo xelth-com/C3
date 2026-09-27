@@ -10,9 +10,9 @@
 //! for the gated transition. The refusal wording, the `-List`/`-Stats` layout and the
 //! ratings-replace semantics are reproduced here to match the plugin exactly.
 
-mod pending;
-mod proc;
 mod revision;
+
+use crate::liveness::{pending, proc};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

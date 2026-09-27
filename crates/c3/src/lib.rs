@@ -6,11 +6,17 @@
 //! the other modules are named here so the crate's shape matches the design and
 //! later milestones drop in without moving code.
 
+// The dry-run `sessions.json` entry preview is one large `json!{...}` literal whose macro
+// expansion needs more than the default 128-deep recursion budget.
+#![recursion_limit = "256"]
+
 pub mod providers;
 
 pub mod cli;
 
 pub mod engines;
+
+pub mod liveness;
 
 pub mod consult;
 
@@ -40,7 +46,4 @@ pub mod pack {
     //! packs from one discovery/redaction/budget pipeline. Milestone 7.
 }
 
-pub mod telemetry {
-    //! The T-hub client: a typed payload allowlist, an NDJSON spool, background send
-    //! with retry, `complain`, `forget_me` and prior download. Milestone 5.
-}
+pub mod telemetry;

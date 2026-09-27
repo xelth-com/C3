@@ -44,6 +44,9 @@ pub struct Options {
     pub skip_preflight: bool,
     pub codex_config: Vec<String>,
     pub schema_transport: String,
+    /// Telemetry `--telemetry on|off`: `Some(false)` for off, `Some(true)` for on, `None`
+    /// when the flag was absent (env `CODEX_CONSULT_TELEMETRY=off` disables regardless).
+    pub telemetry: Option<bool>,
     /// `--format-retry` as an integer 0|1 (default 1).
     pub format_retry: i64,
     pub dry_run: bool,

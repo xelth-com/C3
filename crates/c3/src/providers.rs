@@ -1347,7 +1347,7 @@ fn print_short_json(
 
 // --------------------------------------------------------------------------- runtime helpers
 
-fn get_codex_home() -> String {
+pub(crate) fn get_codex_home() -> String {
     if let Ok(h) = std::env::var("CODEX_HOME") {
         if !h.is_empty() {
             return win_sep(h);

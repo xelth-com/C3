@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "codex-consult reply v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "verdict", "verdict_reason", "reply_markdown", "findings", "prior_findings", "unproven", "first_run_checklist"],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["1"] },
+    "verdict": { "type": "string", "enum": ["ACCEPT", "HOLD", "REJECT", "ADVISE"] },
+    "verdict_reason": { "type": "string" },
+    "reply_markdown": { "type": "string" },
+    "findings": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+      "required": ["severity", "locations", "claim", "trigger", "evidence", "verification", "remedy", "supersedes"],
+      "properties": {
+        "severity": { "type": "string", "enum": ["blocker", "major", "minor", "note"] },
+        "locations": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+          "required": ["path", "line"],
+          "properties": { "path": { "type": "string" }, "line": { "type": ["integer", "null"] } } } },
+        "claim": { "type": "string" },
+        "trigger": { "type": "string" },
+        "evidence": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+          "required": ["kind", "reference", "observation"],
+          "properties": {
+            "kind": { "type": "string", "enum": ["read-code", "ran-command", "inferred", "assumed"] },
+            "reference": { "type": "string" },
+            "observation": { "type": "string" } } } },
+        "verification": { "type": "string" },
+        "remedy": { "type": "string" },
+        "supersedes": { "type": "array", "items": { "type": "string" } } } } },
+    "prior_findings": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+      "required": ["id", "status", "note"],
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string", "enum": ["fixed", "still-open", "not-checked", "unknown-id"] },
+        "note": { "type": "string" } } } },
+    "unproven": { "type": "array", "items": { "type": "string" } },
+    "first_run_checklist": { "type": "array", "items": { "type": "string" } }
+  }
+}

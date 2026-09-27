@@ -63,13 +63,16 @@ strictly more expressive and is what the shims parse the comma-separated plugin 
 Exit-code table — `c3 consult` (from `codex-consult.ps1`'s own conventions, `docs/DESIGN.md` and
 the classifier rules; see `m2-acceptance.md` for the harness rows this is derived from):
 
+The plugin is the contract, and the plugin has exactly two outcomes: a usable reply (exit 0)
+and `Stop-WithError` (exit 1). There is **no** exit 2/3/130/143 — every refusal and every
+failed run is exit 1 (`Stop-WithError` writes the message and exits 1). C3 matches this. The
+`provider_failure.class` (`auth`/`quota`/`capability`/`transport`/`unknown`) and the
+timeout-continuation salvage are recorded in the ledger and the summary, not in the exit code.
+
 | exit | meaning |
 |---|---|
-| 0 | usable reply ingested (single run), or every panel member produced a usable reply (`-Panel`/`-PanelAll`) |
-| 1 | usage error (bad/missing parameter, a validated refusal such as `-CodexConfig` naming an identity key, an unknown `-Provider`) *or* a panel run where at least one member did not produce a usable reply (member-level failure recorded, not a run failure) |
-| 2 | preflight refusal (credentials, endpoint health, peak window with `-OffPeakOnly`, usage limit) — class `auth`/`quota` |
-| 3 | unresolved/unusable identity or roster (`unknown` verdict class) |
-| 130 / 143 | class `transport` — the engine process was killed/terminated (SIGINT/SIGTERM-equivalent signal codes, matching the plugin's own transport class for the codex/agy/muse subprocess) |
+| 0 | usable reply ingested (single run), or every panel member produced a usable reply (`-Panel`/`-PanelAll`); a `--dry-run` always exits 0 |
+| 1 | every `Stop-WithError` path: a usage error (bad/missing parameter, a validated refusal such as `-CodexConfig` naming an identity key, an unknown `-Provider`), a **preflight refusal** (credentials, endpoint health, `-OffPeakOnly` inside a peak window, usage limit), an unresolved/unusable identity or roster, a **failed run** (timeout kill, provider failure of any class, launch failure), *or* a panel run where at least one member did not produce a usable reply |
 | 4 | RESERVED (R12 `--status <ambiguous-prefix>` only) |
 
 ## 2. `c3 findings` (fronts `codex-findings.ps1`)

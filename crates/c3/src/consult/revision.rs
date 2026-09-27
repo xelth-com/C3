@@ -44,6 +44,84 @@ fn git_bytes(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
     Some(out.stdout)
 }
 
+/// The measured `-Range` (`Get-RangeStat`, `codex-consult-common.ps1:355`). `git diff
+/// --shortstat <spec> --` run once from `root`; the counts feed the prompt, the ledger
+/// `range{}` record and the size warning. `error` (non-empty) is a refusal produced before
+/// anything is started — a range git does not know, or git that could not be started. The
+/// syntactic refusals (single revision, spaces) are already enforced by `args::validate`;
+/// this reproduces the plugin's git-side error wording for a range git rejects.
+#[derive(Debug, Clone, Default)]
+pub struct RangeStat {
+    pub files: i64,
+    pub insertions: i64,
+    pub deletions: i64,
+    pub lines: i64,
+    pub error: String,
+}
+
+pub fn range_stat(root: &Path, spec: &str) -> RangeStat {
+    let mut r = RangeStat::default();
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["diff", "--shortstat", spec, "--"])
+        .output();
+    let out = match out {
+        Ok(o) => o,
+        Err(_) => {
+            r.error = format!(
+                "-Range '{spec}': git could not be started in {}",
+                root.display()
+            );
+            return r;
+        }
+    };
+    if !out.status.success() {
+        let why = String::from_utf8_lossy(&out.stderr)
+            .split(['\r', '\n'])
+            .map(|l| l.trim())
+            .find(|l| !l.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("exit {}", out.status.code().unwrap_or(-1)));
+        r.error = format!(
+            "-Range '{spec}' is not a revision range git knows in {} (git diff --shortstat: {why})",
+            root.display()
+        );
+        return r;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    if let Some(c) = capture_int(&text, r"(\d+) files? changed") {
+        r.files = c;
+    }
+    if let Some(c) = capture_int(&text, r"(\d+) insertions?\(\+\)") {
+        r.insertions = c;
+    }
+    if let Some(c) = capture_int(&text, r"(\d+) deletions?\(-\)") {
+        r.deletions = c;
+    }
+    r.lines = r.insertions + r.deletions;
+    r
+}
+
+fn capture_int(text: &str, pat: &str) -> Option<i64> {
+    regex::Regex::new(pat)
+        .ok()?
+        .captures(text)?
+        .get(1)?
+        .as_str()
+        .parse()
+        .ok()
+}
+
+/// The reviewer note text `the range changes N file(s), N line(s)` (`$rangeText`).
+pub fn range_text(files: i64, lines: i64) -> String {
+    format!(
+        "the range changes {files} file{}, {lines} line{}",
+        if files == 1 { "" } else { "s" },
+        if lines == 1 { "" } else { "s" }
+    )
+}
+
 fn git_line(root: &Path, args: &[&str]) -> String {
     git_bytes(root, args)
         .map(|b| {
@@ -439,6 +517,44 @@ mod tests {
             note,
             "Note: HEAD moved during the review (1234567 -> abcdef1) - no file content changed: not a tree change."
         );
+    }
+
+    #[test]
+    fn range_text_pluralization() {
+        assert_eq!(range_text(1, 1), "the range changes 1 file, 1 line");
+        assert_eq!(range_text(3, 42), "the range changes 3 files, 42 lines");
+        assert_eq!(range_text(0, 0), "the range changes 0 files, 0 lines");
+    }
+
+    #[test]
+    fn range_capture_parses_shortstat() {
+        assert_eq!(
+            capture_int(
+                " 3 files changed, 12 insertions(+), 4 deletions(-)",
+                r"(\d+) files? changed"
+            ),
+            Some(3)
+        );
+        assert_eq!(
+            capture_int(
+                " 1 file changed, 1 insertion(+)",
+                r"(\d+) insertions?\(\+\)"
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            capture_int(" 1 file changed, 1 insertion(+)", r"(\d+) deletions?\(-\)"),
+            None
+        );
+    }
+
+    #[test]
+    fn range_stat_unknown_range_errors() {
+        // A repo path with no such revision range yields the git-side refusal wording.
+        let dir = std::env::temp_dir();
+        let rs = range_stat(&dir, "deadbeef..cafebabe");
+        assert!(!rs.error.is_empty());
+        assert!(rs.error.contains("deadbeef..cafebabe"));
     }
 
     #[test]

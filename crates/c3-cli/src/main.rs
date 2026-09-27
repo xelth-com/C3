@@ -46,6 +46,12 @@ enum Commands {
     Scoreboard(c3::cli::scoreboard::ScoreboardArgs),
     /// The one-line SessionStart availability summary (milestone 3).
     Hook(c3::cli::hook::HookArgs),
+    /// File a complaint to the maintainer's intake, with a public reference (milestone 5).
+    Complain(c3::cli::telemetry::ComplainArgs),
+    /// Delete every event and complaint this installation ever sent (milestone 5).
+    ForgetMe(c3::cli::telemetry::ForgetMeArgs),
+    /// Telemetry on/off status and the instance id (milestone 5).
+    Telemetry(c3::cli::telemetry::TelemetryArgs),
     /// Build a reviewer pack or a project snapshot (milestone 7).
     Pack,
     /// Build an explainer pack for one claim (milestone 7).
@@ -105,6 +111,9 @@ fn main() {
         Some(Commands::Findings(a)) => c3::cli::findings::run(a),
         Some(Commands::Scoreboard(a)) => c3::cli::scoreboard::run(a),
         Some(Commands::Hook(a)) => c3::cli::hook::run(a),
+        Some(Commands::Complain(a)) => c3::cli::telemetry::run_complain(a),
+        Some(Commands::ForgetMe(a)) => c3::cli::telemetry::run_forget_me(a),
+        Some(Commands::Telemetry(a)) => c3::cli::telemetry::run_telemetry(a),
         Some(Commands::Pack) => stub("pack", 7),
         Some(Commands::Explain) => stub("explain", 7),
         Some(Commands::Snapshot) => stub("snapshot", 7),

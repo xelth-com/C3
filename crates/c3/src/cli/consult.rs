@@ -88,6 +88,9 @@ pub struct ConsultArgs {
     /// Print the plan and exit; a dry run writes nothing.
     #[arg(long)]
     pub dry_run: bool,
+    /// Telemetry: on | off (default on; env CODEX_CONSULT_TELEMETRY=off also disables).
+    #[arg(long, default_value = "on")]
+    pub telemetry: String,
 
     // --- parsed-but-refused (engine scope M2d / panel M4 / detach R12) ---
     /// codex | agy | muse (only codex runs in M2c).
@@ -157,6 +160,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         skip_preflight: args.skip_preflight,
         codex_config: args.codex_config,
         schema_transport: args.schema_transport,
+        telemetry: Some(!args.telemetry.trim().eq_ignore_ascii_case("off")),
         format_retry: args.format_retry,
         dry_run: args.dry_run,
         engine: args.engine,

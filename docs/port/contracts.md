@@ -64,6 +64,7 @@ draft left open. The changes, by area:
 | Handoff header | `src/handoff.rs` | `$headerLines` (`codex-consult.ps1:3675-3742`) |
 | Evidence store, locks, pending, write order | `src/store.rs` | `Enter/Exit-TaskLock`, `Enter-WriteLock`, `Enter/Complete/Exit-StoreCommit`, `New-PendingRecord`, `Get-NextNumbers` (`codex-consult-common.ps1:5992-6340`); write order in `README.md` "Write order and atomic stores" (~794) |
 | Engine trait + argv + v1 reply schema | `src/engine.rs` | `$script:Engines` (`codex-consult-common.ps1:3106`), `New-AgyArgv` (:3422), `New-MuseArgv` (:3825), codex synopsis (`codex-consult.ps1:1-13`), `schemas/consult-reply.schema.json`; DESIGN §4 |
+| Bundled reply schema + materialisation | `src/schema.rs` (`schemas/consult-reply.schema.json`, embedded) | `$schemaPath` (`codex-consult.ps1:2667-2671`), `--output-schema` (:3021), prompt-only inline (:2983) |
 
 ## The JSON formatter (the acceptance mechanism)
 
@@ -140,6 +141,20 @@ provider_fingerprint, provider_config, identity_note`.
   M2, not yet a type here.
 - **http never receives tools** (DESIGN §3 invariant 2): `capabilities(Http).sandbox =
   false`, `threads = false`, and `plan()` returns `LaunchPlan::Http`, never a subprocess argv.
+- **Bundled reply schema** (`schema.rs`): the plugin ships `schemas/consult-reply.schema.json`
+  next to its scripts and passes that on-disk path to `--output-schema`. C3 has no plugin
+  directory, so it embeds the same file byte-for-byte (`include_str!`, `REPLY_SCHEMA_V1`,
+  LF-locked via `.gitattributes`) and `schema::materialize` writes it to
+  `<CODEX_HOME>/c3/schemas/consult-reply.v1.json` (rewritten only when missing/different),
+  passing THAT path to `--output-schema`; the prompt-only transport inlines the embedded text
+  (trimmed, CRLF-normalised) instead. The schema *content* is identical to the plugin's; the
+  *path* in the recorded `command` differs (a `CODEX_HOME`-relative C3 path vs. the plugin dir),
+  an environmental difference like `cwd`.
+- **Raw reply before the lock** (write order, now implemented): a non-raw run writes the
+  byte-for-byte `.reply.json` to its handoff path (`handoffs/NN-codex-<slug>.reply.json`)
+  *before* taking the write lock, so a crash during the commit still leaves the raw reply on
+  disk; it is therefore not part of the commit `files` list (which writes only the handoff
+  `.md`, then `findings.json`, then `sessions.json`).
 
 ## Questions still open after the core-contract review
 

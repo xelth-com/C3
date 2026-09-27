@@ -6,3 +6,4 @@ pub mod consult;
 pub mod findings;
 pub mod hook;
 pub mod scoreboard;
+pub mod telemetry;
