@@ -157,6 +157,10 @@ pub struct ReviewerIdentity {
     pub base_url: String,
     pub wire_api: String,
     pub engine: String,
+    /// The ledger's `reviewer.provider_config`: `{builtin:"openai"}` (built-in, optionally with
+    /// `base_url`/`base_url_source` when `OPENAI_BASE_URL` is set), or the raw provider-table
+    /// echo for a user table (`Get-ProviderEndpoint`'s `Config`). `Null` until resolved.
+    pub provider_config: serde_json::Value,
 }
 
 impl ReviewerIdentity {
@@ -177,6 +181,7 @@ impl ReviewerIdentity {
             base_url: String::new(),
             wire_api: String::new(),
             engine: "codex".into(),
+            provider_config: serde_json::Value::Null,
         }
     }
 }
@@ -328,12 +333,21 @@ pub fn resolve_reviewer_identity(
             compat = "cc-provider-v1|builtin:openai".into();
             id.host = "builtin:openai".into();
             id.wire_api = "(built in)".into();
+            let mut pc = serde_json::Map::new();
+            pc.insert("builtin".into(), serde_json::Value::String("openai".into()));
             if !openai_base_url.trim().is_empty() {
                 let (curl, chost) = canonical_base_url(openai_base_url);
+                let audit = config::audit_base_url(&curl);
                 compat.push_str(&format!("|base_url={curl}"));
                 id.host = chost;
                 id.base_url = curl;
+                pc.insert("base_url".into(), serde_json::Value::String(audit));
+                pc.insert(
+                    "base_url_source".into(),
+                    serde_json::Value::String("OPENAI_BASE_URL".into()),
+                );
             }
+            id.provider_config = serde_json::Value::Object(pc);
         } else if !config.exists {
             err = format!("unknown provider '{name}': there is no Codex config at {where_}, so there is no {table_name} table (built in: openai)");
         } else if !config.ok {
@@ -362,6 +376,7 @@ pub fn resolve_reviewer_identity(
                 id.host = ep.host;
                 id.base_url = ep.base_url;
                 id.wire_api = ep.wire_api;
+                id.provider_config = ep.provider_config;
                 if name == "openai" {
                     infos.push(
                         "user-defined [model_providers.openai] table used for the identity".into(),

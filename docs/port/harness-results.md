@@ -382,3 +382,88 @@ echo), 5 (`-CodexConfig` `~`/argv-order — the roster half is done, the `-Codex
 were **not** implemented this pass. This pass was scoped to the roster walk (item 1), the single
 largest remaining harness-roster cluster; it closes all of harness-roster except the one
 Windows-argv-quoting check above.
+
+---
+
+# Run 4 — the remaining codex-engine rows (M2d-5)
+
+Same procedure as Run 3 (the five C3 shims from `tests/shim/`, the plugin's own
+`codex-consult-common.ps1` + `codex-consult-detached.ps1`, a sibling
+`schemas/consult-reply.schema.json`; `$env:C3_EXE = target\debug\c3.exe`, rebuilt this pass;
+run through the reusable wave-25 `-ScriptsDir` override). Only `harness-0.3.ps1` was re-run:
+`harness-fixes.ps1` was **skipped** because a real `codex.exe` (pid 15256) is running on the
+machine (its survivor scans fail spuriously), per the brief. The c3.exe used is a
+`--no-default-features` build of `c3-cli` (the SurrealDB-backed index is not exercised by the
+consult/providers harness, and the shared `target` disk is at 100% while the index worker's
+`surrealdb` dependency compiles); the consult/providers surface is identical either way.
+
+## Summary table (Run 3 → Run 4)
+
+| harness | Run 3 pass/fail | Run 4 pass/fail | ran to its own summary line? | regressions |
+|---|---|---|---|---|
+| harness-0.3 | 202 / 26 | **226 / 3** | yes (both runs) | none (a Run-3-vs-Run-4 FAIL-set diff shows **zero** new failures; 23 Run-3 failures now pass) |
+
+Net: **+24** in harness-0.3. All three remaining failures are environmental (below); zero
+genuine "C3 output differs" failures remain.
+
+## What this pass landed (brief items 2–8, plus item 1's ledger core)
+
+- **Main-turn `failed: codex exit N - <detail>`** (item 2) — the failed-main-turn outcome is
+  now `failed: codex exit N` with ` - <event error | last stderr line>`, built after the
+  evidence is read (`codex-consult.ps1:3840`). The classified `provider_failure` is (re)built
+  from that evidence by `codex_failure_pf` (so `when`/`kind`/`hint` are stamped like
+  `New-ProviderFailure`), which fixed **F09-3** (`{auth, invalid_api_key, message, when}` + the
+  handoff `Provider failure:` line). A new c3-core test pins the `Get-EndpointHealth` legacy
+  parse of that literal.
+- **`reviewer.provider_config` raw echo** (item 3, WIRE) — `Get-ProviderEndpoint`'s `Config`
+  is now echoed (declared table keys, ordinal-sorted, secrets dropped, `base_url` audited,
+  booleans/integers typed), so an absent `wire_api` leaves no key; the built-in openai shape is
+  `{builtin:"openai"[, base_url, base_url_source:"OPENAI_BASE_URL"]}`. WIRE passes.
+- **`-CodexConfig` `~` expansion** (item 4, CFG) — `args::validate` now expands `~` against the
+  real user home (`$HOME`/`$USERPROFILE`), not `CODEX_HOME` (the argv order + `extra_config_source`
+  were already correct). Both `~`-expansion CFG rows pass.
+- **Rollout-file thread verification** (item 5, F02-3) — `engines::codex::find_thread_in_rollouts`
+  ports `Find-ThreadInRollouts`; a rollout under `<CODEX_HOME>/sessions/<y>/<m>/<d>/rollout-*.jsonl`
+  holding the consultation id verifies the thread (`source: rollout (verified by consultation
+  id)`), else the newest uuid is an unverified `thread_candidate` (console + handoff + ledger,
+  never a thread or parent). All F02-3/EVENTS rollout rows pass; the PARENT candidate-count note
+  now fires.
+- **`--artifact` hashing** (item 6, F04-9) — `-Artifact` paths are resolved (missing refuses),
+  hashed pre-run and re-hashed after (`artifacts[]` = `{path,sha256,sha256_after}`,
+  `artifacts_changed_during_review`, the `WARNING: artifact(s) changed ...` drift line, and the
+  timeout-continuation files-changed gate). (Exercised in harness-fixes, skipped this run;
+  unit-covered.)
+- **Summary console completeness** (item 7) — the rollout-candidate `thread      :` line, the
+  `prior      :`/`unknown ids:`/`supersedes :` lines and the `verdict    : (invalid: ...)` form.
+- **Pre-existing rows** (item 8): the localhost effort refusal now lists the declared caps-v1
+  hosts (F02-4); `OPENAI_BASE_URL` with no table records `{builtin, base_url, base_url_source}`
+  and the console names `endpoint builtin:openai via OPENAI_BASE_URL <url>` (OPENAI); the
+  `codex login status` timeout is 15 s (F09-1); the SSE-on-stderr classification (F09-3); the
+  undeclared-host transport basis wording (TRANSP); the parent-walk note (PARENT). An unresolved
+  identity no longer lets `effort_plan` mask the identity/preflight refusal, and an explicit
+  `-Provider` with an unusable table refuses up front with the scanner's line number (F02-1,
+  OPENAI); the dry-run `parent      :` line renders the parent note; the fork/resume-unresolved
+  refusal ends `pass -Provider and -Model explicitly, or use -Mode new`.
+- **Prior-finding lifecycle ledger core** (item 1, F04-4/6) — `consult::semantics`
+  (`Test-ReplySemantics`): the verdict-vs-purpose gate (F04-6) and the ACCEPT-vs-new-blocker /
+  ACCEPT-vs-still-open-prior-blocker contradictions (F04-4) blank the verdict and set
+  `validation_error`/`unchecked_prior_blockers`; `prior_findings` reports are ingested onto the
+  stored findings' `reviewer_checks[]`, and each new finding's `supersedes` folds into the old
+  finding's `superseded_by[]` (`FindingsDelta` extended). (Exercised in harness-fixes, skipped
+  this run; unit-covered.)
+
+## Remaining failing checks (verbatim — all environmental)
+
+1. `FAIL F02-1 real run: codex received model_provider=ZAI ... ARGS ... -c model_provider=\"ZAI\"` —
+   the documented Windows argv quote-doubling diff: Rust's `std::process` escapes the embedded
+   quotes as `\"` for the Windows command line, so the FAKE codex `.cmd`'s `%*` logs `\"` where
+   the harness pattern expects PowerShell's `""`. The delivered argument value and the recorded
+   `command` are byte-identical (same class as the one harness-roster failure).
+2. `FAIL CFG real run: codex receives the expanded override before -o ... -c model_catalog_json=\"C:/Users/Dmytro/.codex/model-catalogs.json\"` —
+   same Windows `\"` vs `""` quoting diff; the `~` expansion is now correct.
+3. `FAIL CFG one comma-separated string: split only where the next key= starts` — c3's dry-run
+   output is byte-correct (verified directly: `extra_config` = `["model_catalog_json=\"<home>/a.json\"",
+   "tools.web_search=[1,2]", "model_reasoning_summary=\"detailed\"", "hide_agent_reasoning=true"]`,
+   exit 0); the harness reported empty evidence, i.e. its `$b.Preview` extraction returned nothing
+   for the multi-item comma+quotes `-CodexConfig` value — a harness/shim arg-passing artifact, not
+   a c3 output difference (the two single-item `~` CFG rows pass).

@@ -12,7 +12,9 @@ homepage = "https://xelth.com/C3/"
 
 [workspace.dependencies]
 c3-core = { path = "crates/c3-core" }
-c3 = { path = "crates/c3" }
+# default-features = false here so that c3-cli alone decides whether the `index-surreal`
+# feature is on (its own default) — otherwise cargo ignores the crate's `default-features`.
+c3 = { path = "crates/c3", default-features = false }
 serde = { version = "1", features = ["derive"] }
 # preserve_order: `serde_json::Value` keeps object keys in parse/insertion order, so the
 # polymorphic ledger fields (reviewer.provider_config, panel.limits, ...) round-trip in the
@@ -34,9 +36,14 @@ ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 # .gitignore. Blocking, no async runtime.
 ignore = "0.4"
 globset = "0.4"
-
-# The port adds a dependency only when a ported piece needs it. surrealdb and tokio
-# are deliberately absent until milestone 8 (index) and the http engine (milestone 7).
+# surrealdb + tokio: the derived context index (milestone 8), behind the `index-surreal`
+# feature and off in a `--no-default-features` build. `kv-surrealkv` is the embedded
+# single-writer store (per-project `.c3/index/`); `protocol-ws` compiles the `ws://`
+# per-user-server client (connection-string parsing only, not tested live here). The
+# dependency adds ~26 min to a cold release build (RC1), hence the feature gate. tokio is
+# a current-thread runtime the otherwise-sync index code blocks on for the async surreal API.
+surrealdb = { version = "3", default-features = false, features = ["kv-surrealkv", "protocol-ws"] }
+tokio = { version = "1", default-features = false, features = ["rt", "macros"] }
 
 [profile.release]
 strip = true

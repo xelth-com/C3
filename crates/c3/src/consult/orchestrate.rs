@@ -110,6 +110,19 @@ struct Drift {
     revision_moved: String,
     brief_sha_after: String,
     brief_changed: bool,
+    /// The `artifacts[]` ledger records after the run (`{path, sha256, sha256_after}`).
+    artifacts: Vec<serde_json::Value>,
+    /// The `path`s whose sha256 changed during the review (drives the WARNING + the flag).
+    artifacts_changed_paths: Vec<String>,
+}
+
+/// One resolved artifact bound to the review (`Resolve-ArtifactPaths` + `Get-ArtifactHashes`):
+/// the path as given, the absolute path the after-run rehash reads, and the pre-run sha256.
+#[derive(Debug, Clone)]
+pub(crate) struct ArtifactHash {
+    pub(crate) path: String,
+    pub(crate) full: PathBuf,
+    pub(crate) sha256: String,
 }
 
 /// The effort plan for a run (`Resolve-EffortPlan`).
@@ -174,8 +187,9 @@ fn effort_plan(id: &ReviewerIdentity, requested: &str, native: &str) -> EffortPl
                 caps: caps_v,
                 basis: String::new(),
                 error: format!(
-                    "no effort vocabulary declared for {host_label} ({}); pass -NativeEffort <value> to send a value verbatim",
-                    c3_core::effort::CAPS_VERSION
+                    "no effort vocabulary declared for {host_label} ({} declares {}); pass -NativeEffort <value> to send a value verbatim",
+                    c3_core::effort::CAPS_VERSION,
+                    c3_core::effort::DECLARED_HOSTS.join(", ")
                 ),
             };
         }
@@ -274,10 +288,12 @@ fn resolve_preflight(
     };
     // The credential check: openai runs `codex login status`; a third-party provider checks its
     // `env_key` (`env X not set`) / bearer token. `-SkipPreflight` bypasses this whole function.
+    // The `codex login status` timeout is 15 s (`codex-consult-common.ps1:3035`); the refusal
+    // names it, so the default must be 15, not a safer-looking rounder value.
     let timeout = std::env::var("CODEX_CONSULT_TEST_LOGIN_TIMEOUT")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(20);
+        .unwrap_or(15);
     let cred = providers::identity_credential(config, id, launcher, false, timeout);
     let v = verdict_with_credential(id, health.as_ref(), cred, false);
     if v.state == "available" {
@@ -350,8 +366,13 @@ fn resolve_transport(id: &ReviewerIdentity, r: &Resolved) -> Transport {
             transport: "prompt-only".into(),
             source: c3_core::effort::CAPS_VERSION.to_string(),
             basis: format!(
-                "{} default: no vocabulary for the endpoint",
-                c3_core::effort::CAPS_VERSION
+                "default for an endpoint {} does not declare: {}",
+                c3_core::effort::CAPS_VERSION,
+                if host.is_empty() {
+                    "unknown-host"
+                } else {
+                    host
+                }
             ),
         },
     }
@@ -380,6 +401,8 @@ pub(crate) struct Context {
     pub(crate) brief_path: Option<PathBuf>,
     /// The brief's sha256 hex taken before the run (`$briefSha`); empty when no brief.
     pub(crate) brief_sha: String,
+    /// The `-Artifact` files bound to the review, resolved + pre-run-hashed (`[]` when none).
+    pub(crate) artifacts: Vec<ArtifactHash>,
     pub(crate) schema_path: Option<PathBuf>,
     pub(crate) open_findings_count: usize,
     /// The effective mode after the parent-thread walk (`new`|`fork`|`resume`), recorded in the
@@ -464,9 +487,13 @@ pub fn run(o: Options) -> i32 {
 }
 
 fn run_inner(o: Options) -> i32 {
-    let codex_home = std::env::var("CODEX_HOME").ok();
-    let home = codex_home.as_deref();
-    let r = match args::validate(&o, home) {
+    // `-CodexConfig` `~` expansion uses the real user home ($HOME / $USERPROFILE), exactly like
+    // the plugin (`codex-consult-common.ps1:2576`), NOT CODEX_HOME.
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty()));
+    let r = match args::validate(&o, home.as_deref()) {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
@@ -644,11 +671,17 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         identity.model_source = model_source_override.clone();
     }
 
+    // An EXPLICIT `-Provider` whose table is unusable is refused up front with the scanner's
+    // reason (`Resolve-ReviewerIdentity`'s `Stop-WithError`), for a dry run too - the reviewer
+    // the caller named cannot be used (`identity.error` is only set for an explicit -Provider).
+    if !identity.error.is_empty() {
+        return Err((identity.error.clone(), 1));
+    }
     // A resolved identity is required for fork/resume (F02-1).
     if !identity.resolved && (o.mode == "fork" || o.mode == "resume") {
         return Err((
             format!(
-                "provider identity could not be resolved ({}); only -Mode new is allowed.",
+                "provider identity could not be resolved ({}); pass -Provider and -Model explicitly, or use -Mode new",
                 if identity.note.is_empty() {
                     identity.error.clone()
                 } else {
@@ -724,7 +757,12 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         effort_requested(&o, &r).as_str(),
         &o.native_effort,
     );
-    if !effort.error.is_empty() {
+    // An effort-vocabulary refusal is a real error only for a RESOLVED identity (an undeclared
+    // host, F02-4). When the identity itself is unresolved (a bad config, an unusable provider
+    // table), the identity/preflight refusal — or, on a dry run, the rendered plan — must
+    // surface instead of the effort error (which would just report the unknown host). The
+    // plugin plans effort only after the identity is confirmed usable.
+    if !effort.error.is_empty() && identity.resolved {
         return Err((effort.error, 1));
     }
     let transport = resolve_transport(&identity, &r);
@@ -828,6 +866,15 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         .and_then(|p| std::fs::read(p).ok())
         .map(|b| c3_core::sha256_hex(&b))
         .unwrap_or_default();
+
+    // -Artifact: resolve each path (absolute, or relative to the cwd / repo root), refuse a
+    // missing one (`Resolve-ArtifactPaths`; a review cannot be bound to a file that is not
+    // there), and hash it now (`Get-ArtifactHashes`). The after-run rehash reads `full` (never
+    // a lookup by name, so case-distinct paths stay two files).
+    let artifacts = match resolve_artifacts(&o.artifacts, &cwd, &repo_root) {
+        Ok(a) => a,
+        Err(msg) => return Err((msg, 1)),
+    };
 
     // The reply schema path (shipped with the tool; in prompt-only its text is inlined).
     let schema_path = if r.raw { None } else { schema_file(&repo_root) };
@@ -1028,6 +1075,7 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         brief_ref,
         brief_path,
         brief_sha,
+        artifacts,
         schema_path,
         open_findings_count,
         effective_mode,
@@ -1451,6 +1499,62 @@ fn get_codex_version(launcher: &str) -> String {
         .unwrap_or_else(|| "codex (version unknown)".to_string())
 }
 
+/// Resolve + hash the `-Artifact` paths (`Resolve-ArtifactPaths` + `Get-ArtifactHashes`). Each
+/// path is used as given if absolute (must exist), else looked up under `cwd` then `repo_root`.
+/// A missing artifact refuses (the review is bound to it). Returns the pre-run hashes.
+fn resolve_artifacts(
+    paths: &[String],
+    cwd: &Path,
+    repo_root: &Path,
+) -> Result<Vec<ArtifactHash>, String> {
+    let mut out = Vec::new();
+    let bases = [cwd.to_path_buf(), repo_root.to_path_buf()];
+    for raw in paths {
+        if raw.is_empty() {
+            continue;
+        }
+        let resolved: Option<PathBuf> = if Path::new(raw).is_absolute() {
+            let p = PathBuf::from(raw);
+            if p.is_file() {
+                Some(p)
+            } else {
+                None
+            }
+        } else {
+            bases.iter().map(|b| b.join(raw)).find(|c| c.is_file())
+        };
+        let full = match resolved {
+            Some(p) => p.canonicalize().unwrap_or(p),
+            None => {
+                let looked = if Path::new(raw).is_absolute() {
+                    raw.clone()
+                } else {
+                    let mut seen: Vec<String> = Vec::new();
+                    for b in &bases {
+                        let s = b.to_string_lossy().to_string();
+                        if !seen.contains(&s) {
+                            seen.push(s);
+                        }
+                    }
+                    seen.join(", ")
+                };
+                return Err(format!(
+                    "artifact '{raw}' not found (looked in: {looked}); a review cannot be bound to a missing artifact."
+                ));
+            }
+        };
+        let sha256 = std::fs::read(&full)
+            .map(|b| c3_core::sha256_hex(&b))
+            .unwrap_or_else(|_| "missing".into());
+        out.push(ArtifactHash {
+            path: raw.clone(),
+            full,
+            sha256,
+        });
+    }
+    Ok(out)
+}
+
 fn read_open_findings(store: &FilesStore, task: &TaskSlug) -> (Vec<OpenFinding>, usize) {
     let findings = match store.read_findings(task) {
         Ok(Some(f)) => f,
@@ -1730,7 +1834,7 @@ fn store_pending_path(store: &FilesStore, pending: &PendingRef) -> PathBuf {
 
 /// Ingest the outcome, render, commit and print the summary.
 fn finish(
-    ctx: Context,
+    mut ctx: Context,
     store: FilesStore,
     pending: PendingRef,
     outcome: AttemptOutcome,
@@ -1747,6 +1851,10 @@ fn finish(
     let mut provider_failure = None;
     let mut usable = false;
     let mut main_timed_out = false;
+    // A failed MAIN codex turn: its `failed: codex exit N - <detail>` outcome is built AFTER the
+    // event/stderr evidence is read (`codex-consult.ps1:3840`), so remember the exit code here.
+    let mut main_provider_failure = false;
+    let mut main_pf_exit: Option<i32> = None;
     // Pids that survived a timeout kill: their recovery record is kept (`survivors`) so the
     // next run for this task is refused until they exit.
     let mut timeout_survivors: Vec<u32> = Vec::new();
@@ -1800,15 +1908,47 @@ fn finish(
             };
             timeout_survivors = survivors;
         }
-        AttemptOutcome::ProviderFailure { failure: pf, .. } => {
+        AttemptOutcome::ProviderFailure {
+            failure: pf,
+            exit_code,
+        } => {
+            main_provider_failure = true;
+            main_pf_exit = exit_code;
+            // Provisional; rebuilt below once the event/stderr evidence has been read so the
+            // detail matches the plugin's `codex exit N - <event error | last stderr line>`.
+            // The classified `provider_failure` itself is (re)built from that same evidence by
+            // `codex_failure_pf` at commit time (it stamps `when`/`kind`/`hint`, like the
+            // plugin's `New-ProviderFailure`), so it is left `None` here.
             bridge_outcome = format!("failed: {} - {}", pf.class, pf.message);
-            provider_failure = Some(pf);
         }
         AttemptOutcome::LaunchFailed { message, .. } => {
             bridge_outcome = format!("failed: could not start codex - {message}");
         }
         AttemptOutcome::Cancelled => {
             bridge_outcome = "failed: cancelled".to_string();
+        }
+    }
+
+    // Rollout-file thread verification (`Find-ThreadInRollouts`): when the event stream named
+    // no thread, look at codex's rollout files written since the run started. A rollout whose
+    // name carries a uuid AND whose content holds this run's consultation id verifies the
+    // thread; a newer unrelated rollout is only an unverified `thread_candidate` (never a
+    // thread or a parent).
+    let mut thread_candidate = String::new();
+    if thread.is_empty() && usable {
+        let started_at = chrono::DateTime::parse_from_rfc3339(&base_record.started)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+        let (t, cand) = crate::engines::codex::find_thread_in_rollouts(
+            &providers::get_codex_home(),
+            started_at,
+            &ctx.consult_id,
+        );
+        if !t.is_empty() {
+            thread = t;
+            thread_source = "rollout (verified by consultation id)".into();
+        } else {
+            thread_candidate = cand;
         }
     }
 
@@ -1824,12 +1964,31 @@ fn finish(
         .and_then(|p| std::fs::read(p).ok())
         .map(|b| c3_core::sha256_hex(&b))
         .unwrap_or_default();
+    // Artifact drift: rehash each bound artifact from its absolute path and compare
+    // (`codex-consult.ps1:4429`). A changed artifact is a WARNING and sets the ledger flag.
+    let mut artifact_records: Vec<serde_json::Value> = Vec::new();
+    let mut artifacts_changed_paths: Vec<String> = Vec::new();
+    for a in &ctx.artifacts {
+        let after = std::fs::read(&a.full)
+            .map(|b| c3_core::sha256_hex(&b))
+            .unwrap_or_else(|_| "missing".into());
+        if after != a.sha256 {
+            artifacts_changed_paths.push(a.path.clone());
+        }
+        artifact_records.push(serde_json::json!({
+            "path": a.path,
+            "sha256": a.sha256,
+            "sha256_after": after,
+        }));
+    }
     let drift = Drift {
         tree_sha256_after: rev_after.tree_sha256.clone(),
         tree_changed: tree_cmp.changed,
         revision_moved: tree_cmp.revision_moved.clone(),
         brief_sha_after: brief_sha_after.clone(),
         brief_changed: !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after,
+        artifacts: artifact_records,
+        artifacts_changed_paths,
     };
 
     // ------------------------------------------------------------- secondary turns
@@ -1841,6 +2000,29 @@ fn finish(
     let main_events_text = std::fs::read_to_string(&ctx.events_path).unwrap_or_default();
     let main_stderr = std::fs::read_to_string(&ctx.stderr_path).unwrap_or_default();
     let main_event_error = crate::engines::codex::parse_error(&main_events_text);
+
+    // A failed main turn's outcome (`codex-consult.ps1:3840-3847`): `failed: codex exit N`, with
+    // ` - <detail>` where detail is the event error, else the last non-empty stderr line.
+    if main_provider_failure {
+        if let Some(n) = main_pf_exit.filter(|n| *n != 0) {
+            let detail = if !main_event_error.is_empty() {
+                main_event_error.clone()
+            } else {
+                main_stderr
+                    .split(['\r', '\n'])
+                    .map(|l| l.trim())
+                    .rfind(|l| !l.is_empty())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let tail = if detail.is_empty() {
+                String::new()
+            } else {
+                format!(" - {detail}")
+            };
+            bridge_outcome = format!("failed: codex exit {n}{tail}");
+        }
+    }
 
     if main_timed_out {
         run_timeout_continuation(
@@ -1932,6 +2114,83 @@ fn finish(
         }
     }
 
+    // Prior-finding lifecycle (`Add-ReplyFindings` + `Test-ReplySemantics`): ingest the reply's
+    // `prior_findings` reports onto the stored findings' `reviewer_checks[]`, fold each new
+    // finding's `supersedes` into the old finding's `superseded_by[]`, run the verdict-vs-purpose
+    // (F04-6) and ACCEPT-vs-blocker/still-open-prior-blocker (F04-4) semantics.
+    let mut semantics = super::semantics::Semantics::default();
+    let mut prior_ledger: Vec<c3_core::ledger::PriorFindingRef> = Vec::new();
+    let mut unknown_prior_ids: Vec<String> = Vec::new();
+    let mut unknown_supersedes: Vec<String> = Vec::new();
+    if let Some(s) = &structured {
+        // The findings store as it stands (read fresh; the commit re-reads under the lock).
+        let existing = store.read_findings(&ctx.task).ok().flatten();
+        let known: std::collections::HashSet<String> = existing
+            .as_ref()
+            .map(|f| f.findings.iter().map(|fd| fd.id.clone()).collect())
+            .unwrap_or_default();
+        let open_priors: Vec<super::semantics::OpenPrior> = existing
+            .as_ref()
+            .map(|f| {
+                f.findings
+                    .iter()
+                    .map(|fd| super::semantics::OpenPrior {
+                        id: fd.id.clone(),
+                        severity: fd.severity.clone(),
+                        status: fd.status().as_str().to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let now = iso_now();
+        for p in &s.prior_findings {
+            let status = match p.status {
+                c3_core::engine::PriorStatus::Fixed => "fixed",
+                c3_core::engine::PriorStatus::StillOpen => "still-open",
+                c3_core::engine::PriorStatus::NotChecked => "not-checked",
+                c3_core::engine::PriorStatus::UnknownId => "unknown-id",
+            };
+            prior_ledger.push(c3_core::ledger::PriorFindingRef {
+                id: p.id.clone(),
+                status: status.to_string(),
+                ..Default::default()
+            });
+            if known.contains(&p.id) {
+                delta.reviewer_checks.push((
+                    p.id.clone(),
+                    c3_core::findings::ReviewerCheck {
+                        consult: ctx.consult_n,
+                        when: now.clone(),
+                        status: status.to_string(),
+                        note: p.note.clone(),
+                        base_commit: ctx.revision.base_commit.clone(),
+                        tree_sha256: ctx.revision.tree_sha256.clone(),
+                        ..Default::default()
+                    },
+                ));
+            } else {
+                unknown_prior_ids.push(p.id.clone());
+            }
+        }
+        // supersedes: each NEW finding names old ids; the old finding gains this new id.
+        for (k, rf) in s.findings.iter().enumerate() {
+            let new_id = c3_core::findings::finding_id(ctx.nn, k + 1);
+            for old in &rf.supersedes {
+                if known.contains(old) {
+                    delta.superseded_by.push((old.clone(), new_id.clone()));
+                } else if !unknown_supersedes.contains(old) {
+                    unknown_supersedes.push(old.clone());
+                }
+            }
+        }
+        semantics = super::semantics::test_reply_semantics(s, &ctx.o.purpose, &open_priors);
+    }
+    // ACCEPT that leaves prior blockers unchecked keeps its verdict but earns an operator
+    // WARNING - shown on the console and in the handoff (a run warning, before it is rendered).
+    if let Some(w) = &semantics.warning {
+        ctx.run_warnings.push(w.clone());
+    }
+
     // Render the handoff markdown (and the salvaged partial file, when a turn was killed).
     let (handoff_md, partial_md) = render_handoff(
         &ctx,
@@ -1940,6 +2199,7 @@ fn finish(
         &usage,
         &thread,
         &thread_source,
+        &thread_candidate,
         structured.as_ref(),
         &finding_ids,
         &base_validation_error,
@@ -1969,7 +2229,7 @@ fn finish(
     }
 
     // Build the ledger entry.
-    let entry = build_entry(
+    let mut entry = build_entry(
         &ctx,
         &bridge_outcome,
         wall_seconds,
@@ -1987,6 +2247,24 @@ fn finish(
         &drift,
         &sec,
     );
+    entry.thread_candidate = thread_candidate.clone();
+    // Prior-finding lifecycle records (F04-4): this reply's `prior_findings` reports, the
+    // unchecked prior blockers, and — when the semantics contradict the verdict — the blanked
+    // verdict and the `validation_error` naming the contradiction (the findings stay ingested).
+    let prior_ledger_for_summary: Vec<(String, String)> = prior_ledger
+        .iter()
+        .map(|p| (p.id.clone(), p.status.clone()))
+        .collect();
+    entry.prior_findings = prior_ledger;
+    entry.unchecked_prior_blockers = semantics
+        .unchecked
+        .iter()
+        .map(|s| serde_json::Value::String(s.clone()))
+        .collect();
+    if structured.is_some() && semantics.verdict_invalid() {
+        entry.verdict = String::new();
+        entry.validation_error = semantics.validation_error();
+    }
 
     // Keep a copy for telemetry (the entry is moved into the commit below).
     let entry_for_telemetry = if ctx.telemetry_enabled {
@@ -2068,6 +2346,11 @@ fn finish(
         .unwrap_or_default();
 
     let verdict_line = structured.as_ref().map(|s| {
+        // A verdict the semantics invalidated (F04-4/6) shows `(invalid: <reason>)`, not the
+        // reviewer's token (`codex-consult.ps1:4989`).
+        if semantics.verdict_invalid() {
+            return format!("verdict    : (invalid: {})", semantics.validation_error());
+        }
         let v = match s.verdict {
             c3_core::engine::Verdict::Accept => "ACCEPT",
             c3_core::engine::Verdict::Hold => "HOLD",
@@ -2080,6 +2363,35 @@ fn finish(
             c3_core::one_line(&s.verdict_reason)
         )
     });
+    // The `prior      :`/`unknown ids:`/`supersedes :` lines (`codex-consult.ps1:4995-5004`).
+    let prior_line = if prior_ledger_for_summary.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "prior      : {}",
+            prior_ledger_for_summary
+                .iter()
+                .map(|(id, st)| format!("{id} {st}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let unknown_ids_line = if unknown_prior_ids.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "unknown ids: {} (not in findings.json; ignored)",
+            unknown_prior_ids.join(", ")
+        )
+    };
+    let supersedes_line = if unknown_supersedes.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "supersedes : {} not in findings.json (kept on the new finding only)",
+            unknown_supersedes.join(", ")
+        )
+    };
     let findings_line = structured.as_ref().map(|_| {
         if finding_ids.is_empty() {
             "findings   : none".to_string()
@@ -2129,6 +2441,8 @@ fn finish(
         mode: ctx.effective_mode.clone(),
         thread: thread.clone(),
         thread_source: thread_source.clone(),
+        thread_candidate: thread_candidate.clone(),
+        consult_id: ctx.consult_id.clone(),
         continue_line: continue_line.unwrap_or_default(),
         repair_console: sec.repair_console.clone(),
         repair_drift: sec.drift_notes.clone(),
@@ -2137,6 +2451,9 @@ fn finish(
         resume_command: sec.resume_command.clone(),
         verdict_line: verdict_line.unwrap_or_default(),
         findings_line: findings_line.unwrap_or_default(),
+        prior_line,
+        unknown_ids_line,
+        supersedes_line,
         structured_invalid,
         reply_path: ctx.reply_path.to_string_lossy().to_string(),
         reply_json_path: if reply_json_rel.is_empty() {
@@ -2350,6 +2667,9 @@ fn run_timeout_continuation(
         }
         if drift.brief_changed {
             moved.push("the brief");
+        }
+        if !drift.artifacts_changed_paths.is_empty() {
+            moved.push("an artifact");
         }
         if !moved.is_empty() {
             skip = format!("files changed during the run ({})", moved.join(", "));
@@ -2992,6 +3312,7 @@ fn render_handoff(
     usage: &Option<Usage>,
     thread: &str,
     thread_source: &str,
+    thread_candidate: &str,
     structured: Option<&StructuredReply>,
     finding_ids: &[String],
     validation_error: &str,
@@ -3053,6 +3374,12 @@ fn render_handoff(
             "WARNING: the brief changed during the review (sha256 {} before, {} after).",
             short_hash(&ctx.brief_sha),
             short_hash(&drift.brief_sha_after)
+        ));
+    }
+    if !drift.artifacts_changed_paths.is_empty() {
+        records.drift_lines.push(format!(
+            "WARNING: artifact(s) changed during the review: {}.",
+            drift.artifacts_changed_paths.join(", ")
         ));
     }
     if !ctx.run_warnings.is_empty() {
@@ -3240,7 +3567,14 @@ fn render_handoff(
             } else {
                 format!("`{thread}`")
             };
-            format!("{parent_line} Result thread: {result_thread} (source: {thread_source}).")
+            let source = if thread.is_empty() && !thread_candidate.is_empty() {
+                format!(
+                    "unknown; unverified rollout candidate `{thread_candidate}` did not contain this run's consultation id - not used as a thread or a parent"
+                )
+            } else {
+                thread_source.to_string()
+            };
+            format!("{parent_line} Result thread: {result_thread} (source: {source}).")
         },
         brief_reviewed_line: brief_reviewed_line(ctx),
         timeout_line: {
@@ -3386,6 +3720,14 @@ fn short_hash(h: &str) -> String {
 /// the full canonical base_url with the query redacted (`(default)` when the endpoint is
 /// Codex's own default), and the wire_api label (`(default)` when the table declares none).
 pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
+    // The built-in openai endpoint honouring OPENAI_BASE_URL (no user table): the plugin's
+    // Display is `endpoint builtin:openai via OPENAI_BASE_URL <audit>` (no wire_api clause).
+    if !id.base_url.trim().is_empty() && id.provider_config.get("builtin").is_some() {
+        return format!(
+            "endpoint builtin:openai via OPENAI_BASE_URL {}",
+            c3_core::config::audit_base_url(&id.base_url)
+        );
+    }
     let audit = if id.base_url.trim().is_empty() {
         "(default)".to_string()
     } else {
@@ -3552,6 +3894,8 @@ fn build_entry(
         brief_sha256: ctx.brief_sha.clone(),
         brief_sha256_after: drift.brief_sha_after.clone(),
         brief_changed_during_review: drift.brief_changed,
+        artifacts: drift.artifacts.clone(),
+        artifacts_changed_during_review: !drift.artifacts_changed_paths.is_empty(),
         fingerprint_note: ctx.revision.fingerprint_note.clone(),
         bridge_outcome: bridge_outcome.to_string(),
         provider_failure,
@@ -3581,27 +3925,14 @@ fn build_entry(
 }
 
 pub(crate) fn build_reviewer(id: &ReviewerIdentity, codex_version: &str) -> Reviewer {
-    // provider_config: `{builtin:"openai"}` for the built-in endpoint (no base_url), else the
-    // user provider table's `{base_url,name,wire_api}` (`Resolve-ReviewerIdentity`).
-    let provider_config = if id.base_url.is_empty() {
+    // provider_config is the echo `Resolve-ReviewerIdentity` recorded: `{builtin:"openai"}`
+    // (with `base_url`/`base_url_source` when `OPENAI_BASE_URL` is set) for the built-in
+    // endpoint, or the raw provider-table echo (`Get-ProviderEndpoint`'s `Config`) for a user
+    // table - only the declared keys, secrets dropped, so an absent `wire_api` leaves no key.
+    let provider_config = if id.provider_config.is_null() {
         serde_json::json!({ "builtin": "openai" })
     } else {
-        let mut m = serde_json::Map::new();
-        m.insert(
-            "base_url".into(),
-            serde_json::Value::String(id.base_url.clone()),
-        );
-        m.insert(
-            "name".into(),
-            serde_json::Value::String(id.provider.clone()),
-        );
-        if !id.wire_api.is_empty() {
-            m.insert(
-                "wire_api".into(),
-                serde_json::Value::String(id.wire_api.clone()),
-            );
-        }
-        serde_json::Value::Object(m)
+        id.provider_config.clone()
     };
     Reviewer {
         provider: id.provider.clone(),
@@ -3699,6 +4030,7 @@ mod parent_walk_tests {
             base_url: String::new(),
             wire_api: String::new(),
             engine: "codex".into(),
+            provider_config: serde_json::Value::Null,
         }
     }
 

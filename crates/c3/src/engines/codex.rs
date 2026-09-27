@@ -242,6 +242,92 @@ pub fn parse_thread_id(events_text: &str) -> String {
     String::new()
 }
 
+/// Verify (or nominate) a thread from codex's rollout files when the event stream named none
+/// (`Find-ThreadInRollouts`, `codex-consult.ps1:1289`). Rollouts live at
+/// `<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-*.jsonl`; consider the ones written since
+/// the run started (a 5 s slack), newest first. A file whose name carries a uuid AND whose
+/// content contains this run's consultation id verifies that uuid as the thread; otherwise the
+/// newest uuid becomes an (unverified) candidate. Returns `(thread, candidate)` - at most one
+/// is non-empty.
+pub fn find_thread_in_rollouts(
+    codex_home: &str,
+    started_at: chrono::DateTime<chrono::Utc>,
+    consult_id: &str,
+) -> (String, String) {
+    use chrono::Datelike;
+    if codex_home.is_empty() {
+        return (String::new(), String::new());
+    }
+    let root = Path::new(codex_home).join("sessions");
+    if !root.is_dir() {
+        return (String::new(), String::new());
+    }
+    // The day directories for the run's start and now (the run may cross midnight).
+    let now = chrono::Utc::now();
+    let mut days: Vec<PathBuf> = Vec::new();
+    for d in [started_at, now] {
+        let p = root
+            .join(format!("{:04}", d.year()))
+            .join(format!("{:02}", d.month()))
+            .join(format!("{:02}", d.day()));
+        if !days.contains(&p) {
+            days.push(p);
+        }
+    }
+    let uuid_in_name = regex::Regex::new(
+        r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})",
+    )
+    .unwrap();
+    let cutoff = started_at - chrono::Duration::seconds(5);
+    // Collect rollout files with their modified time, then sort newest-first.
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    for day in &days {
+        let rd = match std::fs::read_dir(day) {
+            Ok(rd) => rd,
+            Err(_) => continue,
+        };
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !(name.starts_with("rollout-") && name.ends_with(".jsonl")) {
+                continue;
+            }
+            let meta = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            let mtime_utc: chrono::DateTime<chrono::Utc> = mtime.into();
+            if mtime_utc < cutoff {
+                continue;
+            }
+            files.push((mtime, entry.path()));
+        }
+    }
+    files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
+    let mut candidate = String::new();
+    for (_, path) in files {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let uuid = match uuid_in_name.captures(&name) {
+            Some(c) => c.get(1).unwrap().as_str().to_string(),
+            None => continue,
+        };
+        if candidate.is_empty() {
+            candidate = uuid.clone();
+        }
+        if !consult_id.is_empty() {
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                if text.to_lowercase().contains(&consult_id.to_lowercase()) {
+                    return (uuid, String::new());
+                }
+            }
+        }
+    }
+    (String::new(), candidate)
+}
+
 /// The failure text from the event stream (`Get-ErrorFromEvents`): the last `error`
 /// message or `turn.failed` error message, whitespace-collapsed.
 pub fn parse_error(events_text: &str) -> String {

@@ -169,6 +169,11 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         out.push("format retry : 0 (off)".into());
     }
     out.push(format!("mode        : {}", ctx.effective_mode));
+    // The parent-thread note (`Select-ParentThread`'s note): why this run is a new thread, or
+    // which thread it forks/resumes. Printed only when there is a note (`if ($parentNote)`).
+    if !ctx.parent_note.is_empty() {
+        out.push(format!("parent      : {}", ctx.parent_note));
+    }
     if ctx.effective_mode == "new" {
         out.push("thread      : (a new thread will be created)".into());
     } else {

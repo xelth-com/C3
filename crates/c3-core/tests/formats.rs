@@ -383,6 +383,37 @@ fn health_later_success_clears_earlier_failure() {
     );
 }
 
+#[test]
+fn health_legacy_codex_exit_outcome_classifies_like_get_endpoint_health() {
+    // An entry with NO provider_failure object (the legacy path `Get-EndpointHealth` takes for
+    // an older entry): its `bridge_outcome` is classified by `ConvertFrom-ProviderErrorText` +
+    // `Get-ProviderFailureClass "$($parsed.Code) $outcome"`. The plugin's main-turn outcome is
+    // literally `failed: codex exit N - <detail>` (codex-consult.ps1:3847); a 401 detail must
+    // classify as an auth failure and block a later run on the same endpoint.
+    let now: DateTime<Utc> = Utc.with_ymd_and_hms(2026, 9, 26, 12, 0, 0).unwrap();
+    let consults = vec![consult(
+        "2026-09-26T13:50:00+02:00", // 11:50 UTC, 10 min ago
+        "failed: codex exit 1 - 401 Unauthorized: invalid API key",
+        None, // no provider_failure -> the legacy bridge_outcome parse
+    )];
+    let h = endpoint_health(&consults, FP, now);
+    assert!(
+        h.auth.is_some(),
+        "a legacy `failed: codex exit 1 - 401 ...` outcome is an auth failure and blocks"
+    );
+    // A reset-less quota framed the same way is a quota block, not auth.
+    let quota = vec![consult(
+        "2026-09-26T13:50:00+02:00",
+        "failed: codex exit 1 - 429 Too Many Requests: usage limit reached",
+        None,
+    )];
+    let hq = endpoint_health(&quota, FP, now);
+    assert!(
+        hq.quota.is_some(),
+        "a 429/usage-limit exit is a quota block"
+    );
+}
+
 fn mk_identity() -> c3_core::lineage::ReviewerIdentity {
     // A resolved identity via the built-in openai path.
     let cfg = scan_config_text("", "model = \"gpt-5.1\"\n");

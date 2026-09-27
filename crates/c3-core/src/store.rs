@@ -49,7 +49,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::findings::{Finding, FindingStatus, FindingsFile, Rating, TransitionError};
+use crate::findings::{
+    Finding, FindingStatus, FindingsFile, Rating, ReviewerCheck, TransitionError,
+};
 use crate::ledger::{AddEntryError, LedgerBook, LedgerEntry, SessionsFile};
 use crate::ps_json;
 use crate::task_slug::{self, TaskSlug};
@@ -288,12 +290,23 @@ pub struct FindingsDelta {
     pub new: Vec<Finding>,
     pub status_changes: Vec<StatusChange>,
     pub ratings: Vec<Rating>,
+    /// `(existing finding id, reviewer_check)`: a later reply's report on a prior finding,
+    /// appended to that finding's `reviewer_checks[]` (`Add-ReplyFindings`). An unknown id is
+    /// dropped here (the caller reports it separately).
+    pub reviewer_checks: Vec<(String, ReviewerCheck)>,
+    /// `(old finding id, new finding id)`: the new finding supersedes the old, so the old
+    /// finding gains the new id in its `superseded_by[]` (deduplicated).
+    pub superseded_by: Vec<(String, String)>,
 }
 
 impl FindingsDelta {
     /// Nothing to apply (a ledger-only commit).
     pub fn is_empty(&self) -> bool {
-        self.new.is_empty() && self.status_changes.is_empty() && self.ratings.is_empty()
+        self.new.is_empty()
+            && self.status_changes.is_empty()
+            && self.ratings.is_empty()
+            && self.reviewer_checks.is_empty()
+            && self.superseded_by.is_empty()
     }
 }
 
@@ -1003,6 +1016,20 @@ fn apply_findings_delta(f: &mut FindingsFile, delta: &FindingsDelta) -> Result<(
         let ratings = f.ratings.get_or_insert_with(Vec::new);
         for r in &delta.ratings {
             ratings.push(r.clone());
+        }
+    }
+    // A later reply's report on a prior finding (`reviewer_checks[]`); an unknown id is dropped.
+    for (id, rc) in &delta.reviewer_checks {
+        if let Some(target) = f.findings.iter_mut().find(|fd| &fd.id == id) {
+            target.reviewer_checks.push(rc.clone());
+        }
+    }
+    // A new finding supersedes an old one: the old finding gains the new id (deduplicated).
+    for (old, new_id) in &delta.superseded_by {
+        if let Some(target) = f.findings.iter_mut().find(|fd| &fd.id == old) {
+            if !target.superseded_by.iter().any(|x| x == new_id) {
+                target.superseded_by.push(new_id.clone());
+            }
         }
     }
     Ok(())

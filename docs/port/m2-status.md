@@ -343,3 +343,68 @@ N`), 4 (`provider_config` raw echo — WIRE), 5 (`-CodexConfig` `~`/argv-order �
 half is done), 6 (rollout-file thread verification — F02-3), 7 (`--artifact` hashing/drift), 8 (the
 full summary console), plus the pre-existing base-identity dry-run ordering rows (F02-1/OPENAI/F06-1
 error-before-plan), F09-1 login-hang timeout, and F09-3 SSE classification.
+
+## M2d-5 progress — the remaining codex-engine rows (this pass)
+
+Brief items 2–8 plus item 1's ledger core. **harness-0.3: 202/26 → 226/3**
+(`docs/port/harness-results.md` "Run 4"); the 3 remaining are environmental (two are the
+documented Windows `\"` vs `""` argv-quoting diff; one is a harness-side Preview-extraction
+artifact — c3's actual `-CodexConfig` split output is byte-correct). Zero regressions.
+`harness-fixes.ps1` was skipped (a real `codex.exe` is running); its rows (F04-4/5/6, F04-9)
+are unit-covered here, not re-measured.
+
+Row updates (supersede the tables above):
+
+- **F02-1 (identity resolution, refused paths)** → verified. An explicit `-Provider` with an
+  unusable table refuses up front with the scanner's line number (dry run too); an unresolved
+  identity no longer lets `effort_plan` mask the identity/preflight refusal; the dry-run
+  `parent      :` line renders the parent note; the fork/resume-unresolved refusal ends `pass
+  -Provider and -Model explicitly, or use -Mode new`.
+- **F02-3 (thread verified by consultation id)** → verified. `engines::codex::find_thread_in_rollouts`
+  (`Find-ThreadInRollouts`): a rollout under `<CODEX_HOME>/sessions/<y>/<m>/<d>/rollout-*.jsonl`
+  holding the consultation id verifies the thread (`thread_source = "rollout (verified by
+  consultation id)"`); a newer unrelated rollout is an unverified `thread_candidate` (console
+  `thread      :` line, handoff `Result thread: ... unverified rollout candidate ...`, ledger
+  `thread_candidate`, never a thread or parent). The PARENT candidate-count note now fires.
+- **F09-1 (login-hang timeout)** → verified. The `codex login status` timeout default is 15 s
+  (`resolve_preflight`), matching the refusal wording.
+- **F09-3 (provider_failure classification)** → verified. The main-turn failure is now
+  `failed: codex exit N - <detail>` and its `provider_failure` is rebuilt from the evidence at
+  commit time (SSE `data:{...}` on stderr → `{class:auth, code:invalid_api_key, message, when}`);
+  the handoff `Provider failure:` line matches. A c3-core test pins the `Get-EndpointHealth`
+  legacy parse of the `failed: codex exit N` literal.
+- **OPENAI+WIRE** → verified. `reviewer.provider_config` echoes the raw provider table
+  (`Get-ProviderEndpoint`'s `Config`: declared keys, ordinal-sorted, secrets dropped, `base_url`
+  audited, booleans/integers typed — no `wire_api` key when the table declares none); the
+  built-in openai + `OPENAI_BASE_URL` shape is `{builtin, base_url, base_url_source}` and the
+  console names `endpoint builtin:openai via OPENAI_BASE_URL <url>`.
+- **CODEXCFG (`-CodexConfig`)** → verified. `~` now expands against the real user home
+  (`$HOME`/`$USERPROFILE`), not `CODEX_HOME`; the argv order and `extra_config_source` were
+  already correct.
+- **F04-9 (artifact drift)** → verified (unit-covered; harness-fixes skipped). `-Artifact`
+  paths are resolved (missing refuses with the plugin's wording), hashed pre-run and re-hashed
+  after (`artifacts[]` = `{path,sha256,sha256_after}`, `artifacts_changed_during_review`, the
+  `WARNING: artifact(s) changed during the review: ...` drift line, the timeout-continuation
+  files-changed gate).
+- **F04-4 (verdict vs open prior blocker)** → verified (ledger core; unit-covered). New
+  `consult::semantics` (`Test-ReplySemantics`): the verdict-vs-purpose gate (F04-6) and the
+  ACCEPT-vs-new-blocker / ACCEPT-vs-still-open-prior-blocker contradictions blank the verdict and
+  set `validation_error`/`unchecked_prior_blockers`; ACCEPT that leaves prior blockers unchecked
+  keeps its verdict with a WARNING. `prior_findings` reports are ingested onto the stored
+  findings' `reviewer_checks[]`, and each new finding's `supersedes` folds into the old finding's
+  `superseded_by[]` (`FindingsDelta` extended). The console `prior      :`/`unknown ids:`/
+  `supersedes :`/`verdict    : (invalid: ...)` lines land.
+  **Still deferred:** the rendered handoff "### Prior findings" / "### Blockers" (retained
+  blocker) markdown sections (checked only in harness-fixes' `$blk`).
+- **F04-6 (verdict fits the purpose)** → verified (see F04-4).
+- **F04-5 (finding `line` bounds)** → still not yet. The `1..2147483647` local validation error
+  is deferred: it needs the PowerShell-specific `1E+30` float rendering for an out-of-range
+  `line` (the RawLocation `line` would have to accept a non-`i64` number), a fiddly edge only
+  exercised in the skipped harness-fixes.
+
+Tests: workspace `cargo test -p c3 -p c3-core --no-default-features` green (c3 131 lib + integ,
+c3-core 87); `cargo clippy -p c3 -p c3-core --no-default-features --all-targets -- -D warnings`
+clean **except** one pre-existing `op_ref` error in the index worker's in-progress
+`crates/c3/src/index/extract.rs:560` (not owned by this task). The `--no-default-features` scope
+avoids the SurrealDB build the index worker's dependency triggers while the shared `target` disk
+is full.

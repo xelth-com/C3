@@ -13,6 +13,12 @@ name = "c3"
 path = "src/main.rs"
 
 [dependencies]
-c3.workspace = true
+# default-features = false so `--no-default-features` on the binary turns the index off;
+# the `index-surreal` feature below forwards to c3 and is on by default.
+c3 = { workspace = true, default-features = false }
 c3-core.workspace = true
 clap.workspace = true
+
+[features]
+default = ["index-surreal"]
+index-surreal = ["c3/index-surreal"]

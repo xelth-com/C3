@@ -36,10 +36,7 @@ pub mod router {
     //! sampling and brief similarity as new versions). Milestone 9.
 }
 
-pub mod index {
-    //! The derived code index (`ContextIndex`): embedded surrealkv per project or a
-    //! per-user SurrealDB server, behind the `index-surreal` feature. Milestone 8.
-}
+pub mod index;
 
 pub mod pack;
 

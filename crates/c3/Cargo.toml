@@ -20,3 +20,19 @@ uuid.workspace = true
 ureq.workspace = true
 ignore = { workspace = true }
 globset = { workspace = true }
+surrealdb = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+
+[features]
+# ON by default so the release library carries the index; a `--no-default-features` build
+# drops surrealdb/tokio entirely and every ContextIndex call becomes `Index: none`. This is
+# the documented fast development loop (DESIGN §7). `c3-cli` re-exposes the same feature and
+# forwards it, and turns it off by depending on c3 with `default-features = false`.
+default = ["index-surreal"]
+index-surreal = ["dep:surrealdb", "dep:tokio"]
+
+# The embedded index lock (`<collab>/.c3/index.lock`) uses the same exclusive share-mode
+# open as c3-core's TaskLock on Windows; Unix has no share mode, so it takes an advisory
+# flock via fs4 (the same crate c3-core uses), target-scoped so Windows pulls nothing extra.
+[target.'cfg(unix)'.dependencies]
+fs4 = { version = "1", default-features = false, features = ["sync"] }

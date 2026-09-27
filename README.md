@@ -93,7 +93,12 @@ cargo build --release          # target/release/c3
 ./target/release/c3 --version
 ./target/release/c3 providers --short   # the reviewer availability line
 cargo test && cargo clippy --all-targets -- -D warnings
+cargo build --no-default-features   # fast dev loop: drops SurrealDB (`c3 index` reports `none`)
 ```
+
+The `index-surreal` feature (on by default) pulls in SurrealDB, which adds ~26 min to a
+cold release build; `--no-default-features` compiles it out for a fast development loop and
+CI builds both variants.
 
 A cargo workspace of three crates: `crates/c3-core` (contracts and file formats),
 `crates/c3` (runtime modules), `crates/c3-cli` (the binary). Each ported piece brings its

@@ -152,6 +152,12 @@ pub struct SummaryInputs {
     pub mode: String,
     pub thread: String,
     pub thread_source: String,
+    /// An unverified rollout candidate (`Find-ThreadInRollouts`): the newest rollout uuid that
+    /// did NOT contain this run's consultation id. Renders the `thread      : unknown - rollout
+    /// candidate ...` line (usable codex run only). Empty otherwise.
+    pub thread_candidate: String,
+    /// This run's consultation id (for the rollout-candidate line).
+    pub consult_id: String,
     /// A failure's operator hint (context-window etc.), when the bridge can explain it.
     pub failure_hint: String,
     /// The `continued  : ...` line when a timeout continuation ran (empty otherwise).
@@ -168,6 +174,12 @@ pub struct SummaryInputs {
     pub verdict_line: String,
     /// The findings line (`findings   : ...`).
     pub findings_line: String,
+    /// The `prior      : <id status>, ...` line (empty when no prior findings reported).
+    pub prior_line: String,
+    /// The `unknown ids: ...` line (prior ids not in findings.json).
+    pub unknown_ids_line: String,
+    /// The `supersedes : ...` line (supersedes targets not in findings.json).
+    pub supersedes_line: String,
     /// The `structured : INVALID (...)` line when a reply was ingested but is not structured
     /// (prose kept); empty otherwise. Replaces the verdict/findings lines.
     pub structured_invalid: String,
@@ -240,11 +252,26 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
             out.push(format!("  drift: {d}"));
         }
     }
+    if !s.thread_candidate.is_empty() {
+        out.push(format!(
+            "thread     : unknown - rollout candidate {} did not contain consultation id {} (not used as a thread or a parent)",
+            s.thread_candidate, s.consult_id
+        ));
+    }
     if !s.verdict_line.is_empty() {
         out.push(s.verdict_line.clone());
     }
     if !s.findings_line.is_empty() {
         out.push(s.findings_line.clone());
+    }
+    if !s.prior_line.is_empty() {
+        out.push(s.prior_line.clone());
+    }
+    if !s.unknown_ids_line.is_empty() {
+        out.push(s.unknown_ids_line.clone());
+    }
+    if !s.supersedes_line.is_empty() {
+        out.push(s.supersedes_line.clone());
     }
     if !s.structured_invalid.is_empty() {
         out.push(s.structured_invalid.clone());

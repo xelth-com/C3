@@ -8,7 +8,12 @@
 //! subprocess launcher ([`subprocess`]); agy/muse reuse the same launcher and land next,
 //! http at milestone 7.
 
+pub mod agy;
 pub mod codex;
+pub mod muse;
 pub mod subprocess;
+pub mod tree_check;
 
+pub use agy::AgyEngine;
 pub use codex::CodexEngine;
+pub use muse::MuseEngine;

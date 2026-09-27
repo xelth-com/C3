@@ -988,6 +988,59 @@ pub struct ProviderEndpoint {
     pub base_url: String,
     pub wire_api: String,
     pub error: String,
+    /// The raw provider-table echo (`Get-ProviderEndpoint`'s `Config`): the table's declared
+    /// keys, ordinal-sorted, secret keys dropped, `base_url` audited (`?...`), booleans/integers
+    /// typed. This is what the ledger's `reviewer.provider_config` carries for a user table.
+    pub provider_config: serde_json::Value,
+}
+
+/// The audited form of a base_url for the provider_config echo / console display: the query
+/// string is replaced with `?...` (`-replace '\?.*$', '?...'`).
+pub fn audit_base_url(url: &str) -> String {
+    match url.find('?') {
+        Some(i) => format!("{}?...", &url[..i]),
+        None => url.to_string(),
+    }
+}
+
+/// `Get-ProviderEndpoint`'s `Config`: echo the table's declared keys, ordinal-sorted, secrets
+/// dropped, `base_url` audited, booleans/integers typed.
+fn provider_config_echo(table: Option<&Table>, audited_base_url: &str) -> serde_json::Value {
+    let secret = Regex::new(r"(?i)env_key|api_key|bearer|token|secret|password").unwrap();
+    let mut keys: Vec<&str> = table
+        .map(|t| t.entries.iter().map(|e| e.key.as_str()).collect())
+        .unwrap_or_default();
+    keys.sort_unstable(); // ordinal (byte) sort, matching [StringComparer]::Ordinal
+    let mut m = serde_json::Map::new();
+    if let Some(t) = table {
+        for key in keys {
+            if secret.is_match(key) {
+                continue;
+            }
+            let e = match t.entry(key) {
+                Some(e) => e,
+                None => continue,
+            };
+            let val = if key == "base_url" {
+                serde_json::Value::String(audited_base_url.to_string())
+            } else if e.kind == "boolean" {
+                serde_json::Value::Bool(e.value.as_deref() == Some("true"))
+            } else if e.kind == "integer" {
+                match e
+                    .value
+                    .as_deref()
+                    .and_then(|v| v.replace('_', "").parse::<i64>().ok())
+                {
+                    Some(n) => serde_json::Value::Number(n.into()),
+                    None => serde_json::Value::String(e.value.clone().unwrap_or_default()),
+                }
+            } else {
+                serde_json::Value::String(e.value.clone().unwrap_or_default())
+            };
+            m.insert(key.to_string(), val);
+        }
+    }
+    serde_json::Value::Object(m)
 }
 
 pub fn provider_endpoint(
@@ -1005,6 +1058,7 @@ pub fn provider_endpoint(
         base_url: String::new(),
         wire_api: String::new(),
         error: String::new(),
+        provider_config: serde_json::Value::Null,
     };
     if !bu.reason.is_empty() {
         r.error = format!("{table_name} in {where_} is not usable - {}", bu.reason);
@@ -1023,6 +1077,7 @@ pub fn provider_endpoint(
     }
     r.compat = format!("cc-provider-v1|base_url={curl}|wire_api={wire}");
     r.host = chost;
+    r.provider_config = provider_config_echo(table, &audit_base_url(&curl));
     r.base_url = curl;
     r.wire_api = wire_label;
     r

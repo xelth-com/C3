@@ -59,7 +59,7 @@ enum Commands {
     /// Take a repository snapshot, optionally as a git delta (milestone 7).
     Snapshot(c3::cli::snapshot::SnapshotArgs),
     /// Build or query the code index (milestone 8).
-    Index,
+    Index(c3::cli::index::IndexArgs),
     /// Run the stdio MCP server (milestone 10).
     Mcp,
 }
@@ -117,7 +117,7 @@ fn main() {
         Some(Commands::Pack(a)) => c3::cli::pack::run(a),
         Some(Commands::Explain(a)) => c3::cli::explain::run(a),
         Some(Commands::Snapshot(a)) => c3::cli::snapshot::run(a),
-        Some(Commands::Index) => stub("index", 8),
+        Some(Commands::Index(a)) => c3::cli::index::run(a),
         Some(Commands::Mcp) => c3::cli::mcp::run(),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).

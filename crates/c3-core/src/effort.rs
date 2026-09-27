@@ -75,6 +75,21 @@ const ALIBABA_MODELS: &[&str] = &[
 ];
 const MUSE_MODELS: &[&str] = &["muse-spark-1.3", "muse-spark-1.3-contributor"];
 
+/// The declared caps-v1 host keys (excluding `engine:*`), ordinal-sorted — for the "no effort
+/// vocabulary declared for <host>" refusal (`codex-consult-common.ps1:2718`). Kept in sorted
+/// order literally so it needs no runtime sort.
+pub const DECLARED_HOSTS: &[&str] = &[
+    "api.kimi.ai",
+    "api.xiaomimimo.com",
+    "api.z.ai",
+    "ark.ap-southeast.bytepluses.com",
+    "builtin:openai",
+    "open.bigmodel.cn",
+    "token-plan-ams.xiaomimimo.com",
+    "token-plan-cn.xiaomimimo.com",
+    "token-plan.ap-southeast-1.maas.aliyuncs.com",
+];
+
 /// The caps-v1 row for a caps key (a host name, or `engine:<name>`), or `None`.
 pub fn caps(key: &str) -> Option<Caps> {
     let row = match key {
