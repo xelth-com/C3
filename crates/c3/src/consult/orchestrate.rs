@@ -100,12 +100,34 @@ struct Secondary {
     partial_body: String,
     /// The `resume     :` summary command (the plugin's `$resumeCommand`).
     resume_command: String,
+    // --- engine (agy/muse) ---
+    /// The agy denial-retry record (`entry.denial_retry`); `None` when no retry ran.
+    denial_retry: Option<c3_core::ledger::DenialRetry>,
+    /// The `denial retry: succeeded|failed in N s` summary line (empty when none).
+    denial_console: String,
+    /// The engine turns started (1 + a denial retry + a continuation + a format repair).
+    engine_turns: i64,
+    /// The MSP schema version of a muse stream (`None` for agy/codex).
+    msp_version: Option<i64>,
+    /// The read-only tree-check problem (agy failure); empty when clean/warned.
+    tree_problem: String,
+    /// The tree-check outcome (`clean`/`warned`/`failed`) for the `tree_check{}` ledger record.
+    tree_check_outcome: String,
+    /// The changed files the tree check named (for `tree_check{}`).
+    tree_check_files: Vec<String>,
+    /// The engine turn warnings (denial notices, engine stderr warnings) — the ledger `warnings`
+    /// of an engine run and the `warning    : ...` summary lines.
+    engine_warnings: Vec<String>,
+    /// The repair turn's kept event-stream (engine repair keeps a real file, unlike codex).
+    repair_events_rel: Option<String>,
 }
 
 /// The after-run drift (`Compare-TreeContent`, the brief/artifact re-hash).
 struct Drift {
     tree_sha256_after: String,
     tree_changed: bool,
+    /// The working-tree paths that changed (for the engine tree-check message).
+    tree_changed_paths: Vec<String>,
     /// `"<old> -> <new>"` when HEAD moved with identical content, else `""`.
     revision_moved: String,
     brief_sha_after: String,
@@ -402,6 +424,9 @@ pub(crate) struct Context {
     pub(crate) codex_version: String,
     /// The selected engine (`codex`/`agy`/`muse`) and where it came from (dry-run `engine :`).
     pub(crate) engine: String,
+    /// The engine's handoff-file name prefix (`codex`/`agy`/`muse`), used for every primary and
+    /// secondary turn file name (`NN-<prefix>-<reply>.*`).
+    pub(crate) file_prefix: String,
     pub(crate) engine_from: String,
     /// The resolved launcher of the selected engine (codex uses [`launcher`]).
     pub(crate) engine_launcher: String,
@@ -478,6 +503,28 @@ pub(crate) struct Context {
     pub(crate) stderr_path: PathBuf,
 }
 
+impl Context {
+    /// `handoffs/NN-<prefix>-<reply>.<ext>` — the engine-prefixed handoff file (repo-relative).
+    fn hf(&self, ext: &str) -> String {
+        format!(
+            "handoffs/{:02}-{}-{}.{}",
+            self.nn, self.file_prefix, self.reply_name, ext
+        )
+    }
+
+    /// The absolute path of a handoff file with the given extension.
+    fn hpath(&self, ext: &str) -> PathBuf {
+        self.handoffs_dir.join(format!(
+            "{:02}-{}-{}.{}",
+            self.nn, self.file_prefix, self.reply_name, ext
+        ))
+    }
+
+    fn is_codex(&self) -> bool {
+        self.engine == "codex"
+    }
+}
+
 /// Run one consultation; return the exit code. Wraps [`run_inner`] with the telemetry
 /// background flush and the one-time notice (a real run only — a dry run does nothing), and
 /// joins the flush (capped at 3 s) at every exit path.
@@ -519,11 +566,14 @@ fn run_inner(o: Options) -> i32 {
             if ctx.o.dry_run {
                 super::dryrun::render(&ctx);
                 0
-            } else if ctx.engine != "codex" {
-                // Pass 1 wires the agy/muse dry-run path only; a live turn (denial retry, tree
-                // check, secondary turns) lands in pass 2. Refuse a real run for now.
+            } else if !ctx.is_codex() && ctx.engine_launcher.is_empty() {
+                // A non-dry engine run with no resolved launcher is refused up front, exactly
+                // like the codex `-CodexExe` case (`codex-consult.ps1:3044`).
+                let exe_env = c3_core::lineage::engine_spec(&ctx.engine)
+                    .map(|s| s.exe_env)
+                    .unwrap_or("");
                 refuse(&format!(
-                    "the {} engine runs at milestone 2d pass 2; use --dry-run",
+                    "{} CLI not found on PATH (set -EngineExe <path> or the {exe_env} environment variable).",
                     ctx.engine
                 ))
             } else if let Some((msg, code)) = ctx.preflight_refusal.clone() {
@@ -1275,6 +1325,7 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         launcher,
         codex_version,
         engine: engine_name,
+        file_prefix: file_prefix.to_string(),
         engine_from,
         engine_launcher,
         harness,
@@ -1964,7 +2015,7 @@ fn run_live(mut ctx: Context) -> i32 {
 
     // Reserve the recovery record (`New-PendingRecord -State reserved`): this bridge's pid and
     // start time (the writer-pid liveness rule), the host and this run's numbers/reply.
-    let reply_rel = format!("handoffs/{:02}-codex-{}.md", ctx.nn, ctx.reply_name);
+    let reply_rel = ctx.hf("md");
     let mut rec = new_pending_record(PendingState::Reserved, &ctx, &reply_rel);
     let _ = store.write_pending(&pending, &rec);
 
@@ -1972,6 +2023,14 @@ fn run_live(mut ctx: Context) -> i32 {
     // `.consult.*` files under the collab dir are counted among the excluded entries
     // (`fingerprint_note`). Re-fingerprint here to match (`$revBefore` in the plugin flow).
     ctx.revision = revision::revision_info(&ctx.repo_root, Some(&ctx.collab_root));
+    // The collab-directory snapshot (`$collabBefore`), taken after the reserved record and the
+    // tree fingerprint, before launch — the read-only tree check compares it after the last turn
+    // (agy/muse only; `.consult.*` control files are excluded). `codex-consult.ps1:3661`.
+    let collab_before = if ctx.is_codex() {
+        std::collections::HashMap::new()
+    } else {
+        crate::engines::tree_check::collab_snapshot(&ctx.collab_root)
+    };
 
     // Peak status AT LAUNCH (the one the ledger records; the early check was call 0, this is
     // call 1). Preparation between the two may cross a window boundary: under `-OffPeakOnly` a
@@ -2002,8 +2061,32 @@ fn run_live(mut ctx: Context) -> i32 {
     // (3) launching — from here on a crash may leave a codex process whose pid is not yet
     // recorded; the next run then scans the tree (`codex-consult.ps1:3299`).
     rec.state = PendingState::Launching;
-    rec.note = "codex is being started; its pid is not recorded yet".into();
+    rec.note = format!(
+        "{} is being started; its pid is not recorded yet",
+        ctx.engine
+    );
     let _ = store.write_pending(&pending, &rec);
+
+    // muse takes its prompt through `--prompt-file`: write it (UTF-8, no BOM) before launch.
+    if let Some(pf) = &ctx.prompt_file {
+        if let Err(e) = c3_core::store::write_text_atomic(pf, ctx.prompt_text.as_bytes()) {
+            let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+            return refuse(&format!("could not write the prompt file: {e}"));
+        }
+    }
+
+    // The cmd.exe `%`-argument hazard (F02-14): a `.cmd`/`.bat` engine launcher with a `%` in any
+    // argument would have cmd.exe expand `%VAR%`. Refuse before launch (nothing started).
+    if !ctx.is_codex() {
+        let hazard = cmd_argv_hazard(&ctx.engine_launcher, &ctx.argv);
+        if !hazard.is_empty() {
+            let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+            return refuse(&format!(
+                "the {} run is refused before launch: {hazard}; nothing was started.",
+                ctx.engine
+            ));
+        }
+    }
 
     // (4) running — the callback flips the record to `running` right after the child spawns,
     // recording its pid and start time so the next run detects an interrupted-run process.
@@ -2027,38 +2110,262 @@ fn run_live(mut ctx: Context) -> i32 {
         })
     };
 
-    // Run the primary turn.
-    let engine_files = TurnFiles {
-        events: ctx.events_path.clone(),
-        stderr: ctx.stderr_path.clone(),
-    };
-    let codex = CodexEngine {
-        launcher: ctx.launcher.clone(),
-        cwd: ctx.repo_root.clone(),
-        primary: engine_files,
-        secondary: TurnFiles::default(),
-        on_running: Some(on_running),
-    };
-    let request = make_live_request(&ctx);
-    let turn = TurnRequest {
-        request,
-        consultation: ConsultationId(ctx.consult_id.clone()),
-        attempt: c3_core::engine::AttemptId(ctx.consult_id.clone()),
-        kind: TurnKind::Primary,
-        continuation: None,
-    };
-
-    use c3_core::engine::Engine;
-    let outcome = match codex.run(&turn) {
-        Ok(o) => o,
+    // Run the primary turn through the selected engine adapter.
+    let (outcome, detail) = match run_primary_turn(&ctx, Some(on_running)) {
+        Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_file(store_pending_path(&store, &pending));
-            return refuse(&format!("the codex run could not be planned: {e}"));
+            return refuse(&e);
         }
     };
 
     let base_record = rec_arc.lock().map(|r| r.clone()).unwrap_or_default();
-    finish(ctx, store, pending, outcome, base_record)
+    finish(
+        ctx,
+        store,
+        pending,
+        outcome,
+        base_record,
+        detail,
+        collab_before,
+    )
+}
+
+/// Engine-turn detail carried out of the primary turn (empty/false for codex). The agy/muse
+/// finish path uses it for the denial-retry gate, the bridge-outcome text, the forced failure
+/// class, the engine warnings and the MSP schema version.
+#[derive(Default, Clone)]
+struct EngineDetail {
+    /// The turn's own outcome string (`AgyTurn`/`MuseTurn` `.outcome`), the engine bridge-outcome.
+    turn_outcome: String,
+    /// The forced `provider_failure` class (`''` = classify the texts).
+    forced_class: String,
+    /// A tool was auto-denied and the turn produced nothing (run the agy denial retry).
+    denied_empty: bool,
+    denial_line: String,
+    permission: String,
+    tool_name: String,
+    denied_action: String,
+    /// A conversation id observed but not verified (never a thread/parent).
+    thread_candidate: String,
+    /// A verified thread the turn named even on a failure (e.g. agy status ERROR).
+    thread: String,
+    /// The reply text the turn produced, even on a failure (kept as `.reply.json`).
+    reply: String,
+    /// The turn's warnings (denial notices, engine warnings).
+    warnings: Vec<String>,
+    /// The MSP schema version of a muse stream (`None` for agy).
+    msp_schema_version: Option<i64>,
+}
+
+/// Build the request for a live primary/secondary turn of the selected engine.
+fn make_live_request_engine(ctx: &Context, mode: Mode) -> Request {
+    let sandbox = sandbox_label(&ctx.o);
+    let engine = engine_kind_of(&ctx.engine);
+    // The schema flag rides a non-prompt-only, non-raw transport: codex `output-schema`, agy/muse
+    // `native`.
+    let schema_arg = if !ctx.r.raw
+        && (ctx.transport.transport == "output-schema" || ctx.transport.transport == "native")
+    {
+        ctx.schema_path.clone()
+    } else {
+        None
+    };
+    Request {
+        prompt: ctx.prompt_text.clone(),
+        brief_path: ctx.brief_path.clone(),
+        model: if ctx.identity.model_source == "unknown" {
+            String::new()
+        } else {
+            ctx.identity.model.clone()
+        },
+        provider: if ctx.identity.provider_source.is_empty() {
+            String::new()
+        } else {
+            ctx.identity.provider.clone()
+        },
+        engine,
+        effort: ctx.effort.sent.clone(),
+        timeout_sec: ctx.r.timeout_sec as f64,
+        mode,
+        sandbox,
+        schema_path: schema_arg,
+        extra_config: ctx.r.extra_config.clone(),
+        output_last_message: if engine == EngineKind::Codex {
+            Some(ctx.last_msg_path.clone())
+        } else {
+            None
+        },
+        prompt_file: ctx.prompt_file.clone(),
+        max_model_steps: if ctx.o.max_model_steps > 0 {
+            Some(ctx.o.max_model_steps as u32)
+        } else {
+            None
+        },
+    }
+}
+
+/// Run the primary turn through the selected engine (codex/agy/muse) and normalize the outcome
+/// plus the engine detail.
+fn run_primary_turn(
+    ctx: &Context,
+    on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+) -> Result<(AttemptOutcome, EngineDetail), String> {
+    let primary = TurnFiles {
+        events: ctx.events_path.clone(),
+        stderr: ctx.stderr_path.clone(),
+    };
+    match ctx.engine.as_str() {
+        "agy" => {
+            let eng = crate::engines::agy::AgyEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary,
+                secondary: TurnFiles::default(),
+                no_network: false,
+                models_timeout_sec: 45,
+                on_running,
+            };
+            let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
+            let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
+            let run = eng
+                .run_detailed(&turn)
+                .map_err(|e| format!("the agy run could not be planned: {e:?}"))?;
+            let mut d = agy_detail(&run.turn);
+            // The denied tool / action come from the events (the retry prompt names them).
+            let ev = crate::engines::agy::read_agy_events(
+                &std::fs::read_to_string(&ctx.events_path).unwrap_or_default(),
+                true,
+            );
+            d.tool_name = ev.tool_name;
+            d.denied_action = ev.denied_action;
+            Ok((run.outcome, d))
+        }
+        "muse" => {
+            let eng = crate::engines::muse::MuseEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary,
+                secondary: TurnFiles::default(),
+                on_running,
+            };
+            let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
+            let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
+            let run = eng
+                .run_detailed(&turn)
+                .map_err(|e| format!("the muse run could not be planned: {e:?}"))?;
+            let msp = muse_msp_version(&ctx.events_path);
+            let mut d = muse_detail(&run.turn);
+            d.msp_schema_version = msp;
+            Ok((run.outcome, d))
+        }
+        _ => {
+            let eng = CodexEngine {
+                launcher: ctx.launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary,
+                secondary: TurnFiles::default(),
+                on_running,
+            };
+            let request = make_live_request(ctx);
+            let turn = TurnRequest {
+                request,
+                consultation: ConsultationId(ctx.consult_id.clone()),
+                attempt: c3_core::engine::AttemptId(ctx.consult_id.clone()),
+                kind: TurnKind::Primary,
+                continuation: None,
+            };
+            use c3_core::engine::Engine;
+            let outcome = eng
+                .run(&turn)
+                .map_err(|e| format!("the codex run could not be planned: {e}"))?;
+            Ok((outcome, EngineDetail::default()))
+        }
+    }
+}
+
+/// Assemble a `TurnRequest` for an engine turn (agy/muse). The continuation is the native thread
+/// resume when the request's mode names one.
+fn engine_turn(ctx: &Context, request: Request, kind: TurnKind) -> TurnRequest {
+    let continuation = match &request.mode {
+        Mode::Resume { thread, .. } | Mode::Fork { thread, .. } => Some(
+            c3_core::engine::Continuation::Native(c3_core::engine::ConversationId(thread.clone())),
+        ),
+        _ => None,
+    };
+    TurnRequest {
+        request,
+        consultation: ConsultationId(ctx.consult_id.clone()),
+        attempt: c3_core::engine::AttemptId(ctx.consult_id.clone()),
+        kind,
+        continuation,
+    }
+}
+
+fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
+    EngineDetail {
+        turn_outcome: t.outcome.clone(),
+        forced_class: t.class.clone(),
+        denied_empty: t.denied_empty,
+        denial_line: t.denial_line.clone(),
+        permission: t.permission.clone(),
+        tool_name: String::new(),
+        denied_action: String::new(),
+        thread_candidate: t.thread_candidate.clone(),
+        thread: t.thread.clone(),
+        reply: t.reply.clone(),
+        warnings: t.warnings.clone(),
+        msp_schema_version: None,
+    }
+}
+
+fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
+    EngineDetail {
+        turn_outcome: t.outcome.clone(),
+        forced_class: t.class.clone(),
+        denied_empty: false,
+        denial_line: String::new(),
+        permission: String::new(),
+        tool_name: String::new(),
+        denied_action: String::new(),
+        thread_candidate: t.thread_candidate.clone(),
+        thread: t.thread.clone(),
+        reply: t.reply.clone(),
+        warnings: t.warnings.clone(),
+        msp_schema_version: None,
+    }
+}
+
+/// The MSP `schema_version` of a muse event stream (`None` when unreadable).
+fn muse_msp_version(events_path: &Path) -> Option<i64> {
+    let text = std::fs::read_to_string(events_path).unwrap_or_default();
+    crate::engines::muse::read_muse_events(&text, true).schema_version
+}
+
+/// `Get-CmdArgvHazard` (F02-14): a `.cmd`/`.bat` launcher with a `%` in any argument. Returns the
+/// hazard note (empty when safe).
+pub(crate) fn cmd_argv_hazard(launcher: &str, argv: &[String]) -> String {
+    let ext = Path::new(launcher)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if launcher.is_empty() || (ext != "cmd" && ext != "bat") {
+        return String::new();
+    }
+    let bad: Vec<&String> = argv.iter().filter(|a| a.contains('%')).collect();
+    if bad.is_empty() {
+        return String::new();
+    }
+    let first2 = bad
+        .iter()
+        .take(2)
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "the launcher {launcher} is a cmd.exe script and {} argument(s) contain '%' ({first2}): cmd.exe would expand %VAR% in them; set TEMP and TMP to a directory without '%', or point -EngineExe at the CLI's .exe",
+        bad.len()
+    )
 }
 
 /// A fresh recovery record for this run (`New-PendingRecord`): this bridge's pid/start/host
@@ -2075,8 +2382,12 @@ fn new_pending_record(state: PendingState, ctx: &Context, reply_rel: &str) -> Pe
         pid,
         start_time: crate::liveness::proc::process_start_iso(pid).unwrap_or_default(),
         host: pending_host(),
-        launcher: ctx.launcher.clone(),
-        engine: "codex".into(),
+        launcher: if ctx.is_codex() {
+            ctx.launcher.clone()
+        } else {
+            ctx.engine_launcher.clone()
+        },
+        engine: ctx.engine.clone(),
         ..Default::default()
     }
 }
@@ -2142,13 +2453,17 @@ fn store_pending_path(store: &FilesStore, pending: &PendingRef) -> PathBuf {
 }
 
 /// Ingest the outcome, render, commit and print the summary.
+#[allow(clippy::too_many_arguments)]
 fn finish(
     mut ctx: Context,
     store: FilesStore,
     pending: PendingRef,
     outcome: AttemptOutcome,
     base_record: PendingRecord,
+    detail: EngineDetail,
+    collab_before: std::collections::HashMap<String, String>,
 ) -> i32 {
+    let is_engine = !ctx.is_codex();
     let mut bridge_outcome;
     let mut structured: Option<StructuredReply> = None;
     let mut raw_text = String::new();
@@ -2160,6 +2475,10 @@ fn finish(
     let mut provider_failure = None;
     let mut usable = false;
     let mut main_timed_out = false;
+    let mut thread_candidate = String::new();
+    // The engine adapter's classified failure (correct class/code/message from the turn's
+    // evidence); finalized at commit time with retry_after/kind/when and the forced class.
+    let mut engine_pf: Option<c3_core::ledger::ProviderFailure> = None;
     // A failed MAIN codex turn: its `failed: codex exit N - <detail>` outcome is built AFTER the
     // event/stderr evidence is read (`codex-consult.ps1:3840`), so remember the exit code here.
     let mut main_provider_failure = false;
@@ -2188,15 +2507,23 @@ fn finish(
         } => {
             wall_seconds = w;
             main_timed_out = true;
-            // A killed main turn still emitted `thread.started`, so its events file carries the
-            // thread; take it as the resume target (source `events`, like the plugin).
-            if let c3_core::engine::ConversationTrust::Verified(c)
-            | c3_core::engine::ConversationTrust::Candidate(c) = &conversation
-            {
-                if !c.0.is_empty() {
+            // A killed codex turn still emitted `thread.started`, so its events file carries the
+            // thread; take it as the resume target (source `events`). A killed ENGINE turn never
+            // verifies a thread (no clean result), so its conversation id is only a candidate.
+            match &conversation {
+                c3_core::engine::ConversationTrust::Verified(c) if !c.0.is_empty() => {
                     thread = c.0.clone();
                     thread_source = "events".into();
                 }
+                c3_core::engine::ConversationTrust::Candidate(c) if !c.0.is_empty() => {
+                    if is_engine {
+                        thread_candidate = c.0.clone();
+                    } else {
+                        thread = c.0.clone();
+                        thread_source = "events".into();
+                    }
+                }
+                _ => {}
             }
             bridge_outcome = if survivors.is_empty() {
                 format!(
@@ -2221,17 +2548,33 @@ fn finish(
             failure: pf,
             exit_code,
         } => {
-            main_provider_failure = true;
-            main_pf_exit = exit_code;
-            // Provisional; rebuilt below once the event/stderr evidence has been read so the
-            // detail matches the plugin's `codex exit N - <event error | last stderr line>`.
-            // The classified `provider_failure` itself is (re)built from that same evidence by
-            // `codex_failure_pf` at commit time (it stamps `when`/`kind`/`hint`, like the
-            // plugin's `New-ProviderFailure`), so it is left `None` here.
-            bridge_outcome = format!("failed: {} - {}", pf.class, pf.message);
+            if is_engine {
+                // The engine adapter already framed the outcome (`AgyTurn`/`MuseTurn` `.outcome`):
+                // `failed: agy exit N - ...`, `failed: muse terminal ...`, etc. The classified
+                // provider_failure is (re)built after the tree check so its forced class (D12)
+                // can outrank the turn's own class.
+                bridge_outcome = detail.turn_outcome.clone();
+                thread = detail.thread.clone();
+                if !thread.is_empty() {
+                    thread_source = "events".into();
+                }
+                // A failing engine turn may still have produced a reply (e.g. a resume that
+                // landed on a new conversation): keep it so `.reply.json` is written and named,
+                // though nothing is ingested from a failed run.
+                raw_text = detail.reply.clone();
+                // The adapter classified the failure from the turn's evidence (its first failure
+                // text): the correct class/code/message (verbatim reason for a quota terminal).
+                engine_pf = Some(pf);
+            } else {
+                main_provider_failure = true;
+                main_pf_exit = exit_code;
+                // Provisional; rebuilt below once the event/stderr evidence has been read so the
+                // detail matches the plugin's `codex exit N - <event error | last stderr line>`.
+                bridge_outcome = format!("failed: {} - {}", pf.class, pf.message);
+            }
         }
         AttemptOutcome::LaunchFailed { message, .. } => {
-            bridge_outcome = format!("failed: could not start codex - {message}");
+            bridge_outcome = format!("failed: could not start {} - {message}", ctx.engine);
         }
         AttemptOutcome::Cancelled => {
             bridge_outcome = "failed: cancelled".to_string();
@@ -2243,8 +2586,14 @@ fn finish(
     // name carries a uuid AND whose content holds this run's consultation id verifies the
     // thread; a newer unrelated rollout is only an unverified `thread_candidate` (never a
     // thread or a parent).
-    let mut thread_candidate = String::new();
-    if thread.is_empty() && usable {
+    if is_engine {
+        // An engine turn's thread comes only from its own event stream; a failure that observed
+        // a conversation id keeps it as an unverified candidate (never a thread/parent). A timed
+        // -out engine turn already set `thread_candidate` above.
+        if thread.is_empty() && thread_candidate.is_empty() {
+            thread_candidate = detail.thread_candidate.clone();
+        }
+    } else if thread.is_empty() && usable {
         let started_at = chrono::DateTime::parse_from_rfc3339(&base_record.started)
             .map(|d| d.with_timezone(&chrono::Utc))
             .unwrap_or_else(|_| chrono::Utc::now());
@@ -2293,6 +2642,7 @@ fn finish(
     let drift = Drift {
         tree_sha256_after: rev_after.tree_sha256.clone(),
         tree_changed: tree_cmp.changed,
+        tree_changed_paths: tree_cmp.paths.clone(),
         revision_moved: tree_cmp.revision_moved.clone(),
         brief_sha_after: brief_sha_after.clone(),
         brief_changed: !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after,
@@ -2309,6 +2659,54 @@ fn finish(
     let main_events_text = std::fs::read_to_string(&ctx.events_path).unwrap_or_default();
     let main_stderr = std::fs::read_to_string(&ctx.stderr_path).unwrap_or_default();
     let main_event_error = crate::engines::codex::parse_error(&main_events_text);
+    // The forced provider_failure class for an engine run: the D12 tree check forces `permission`,
+    // outranking a turn's own class; else the turn's class.
+    let mut engine_forced_class = detail.forced_class.clone();
+    sec.msp_version = detail.msp_schema_version;
+
+    // Engine (agy/muse) read-only tree check + denial retry, after the main turn and before the
+    // secondary turns. A write to the working tree or the collab dir fails the run
+    // (`Get-EngineTreeProblem`, D12): forced class `permission`, the reply discarded.
+    if is_engine {
+        sec.engine_turns = 1;
+        // The engine warnings of a usable primary turn (denial notices, engine stderr warnings).
+        if usable {
+            sec.engine_warnings.extend(detail.warnings.clone());
+        }
+        let collab_after = crate::engines::tree_check::collab_snapshot(&ctx.collab_root);
+        let check = engine_tree_check(&ctx, &drift, &collab_before, &collab_after);
+        sec.tree_check_outcome = check.outcome.clone();
+        sec.tree_check_files = check.files.clone();
+        // A write-disabled engine (muse) WARNS: the reply stays usable, the change is recorded as
+        // a warning (D9). agy FAILS: forced class `permission`, the reply discarded (D12).
+        for w in &check.warnings {
+            sec.engine_warnings.push(w.clone());
+        }
+        let tree_problem = check.problem;
+        if !tree_problem.is_empty() {
+            engine_forced_class = "permission".to_string();
+            if bridge_outcome == "usable reply" {
+                bridge_outcome = format!("failed: {tree_problem}");
+                usable = false;
+                structured = None;
+            } else {
+                bridge_outcome = format!("{bridge_outcome}; also: {tree_problem}");
+            }
+        }
+        sec.tree_problem = tree_problem;
+        run_engine_denial_retry(
+            &ctx,
+            &detail,
+            &sec.tree_problem.clone(),
+            &mut sec,
+            &mut bridge_outcome,
+            &mut raw_text,
+            &mut thread,
+            &mut thread_source,
+            &mut usable,
+            &mut engine_forced_class,
+        );
+    }
 
     // A failed main turn's outcome (`codex-consult.ps1:3840-3847`): `failed: codex exit N`, with
     // ` - <detail>` where detail is the event error, else the last non-empty stderr line.
@@ -2382,14 +2780,40 @@ fn finish(
         );
     }
 
-    // A failed codex run records a classified provider_failure derived from its evidence
-    // (`codex-consult.ps1:4093`), unless a continuation already supplied one.
+    // Count the secondary engine turns that ran (the base primary + a denial retry counted in
+    // `run_engine_denial_retry`; here the continuation and the format repair).
+    if is_engine {
+        if sec.continue_ran {
+            sec.engine_turns += 1;
+        }
+        if sec.format_retry.is_some() {
+            sec.engine_turns += 1;
+        }
+    }
+
+    // A failed run records a classified provider_failure derived from its evidence
+    // (`codex-consult.ps1:4093`), unless a continuation already supplied one. An engine failure
+    // keeps the adapter's classified failure (verbatim reason/class from the turn), with the
+    // tree check's forced `permission` (D12) outranking it, and a parsed reset time.
     if !usable && provider_failure.is_none() {
-        provider_failure = Some(codex_failure_pf(
-            &bridge_outcome,
-            &main_event_error,
-            &main_stderr,
-        ));
+        provider_failure = Some(if is_engine {
+            let base = engine_pf.take().unwrap_or_else(|| {
+                let reason = bridge_outcome
+                    .strip_prefix("failed: ")
+                    .unwrap_or(&bridge_outcome);
+                let (code, message) = c3_core::health::convert_from_provider_error_text(reason);
+                let class = c3_core::health::provider_failure_class(&format!("{code} {message}"));
+                c3_core::ledger::ProviderFailure {
+                    class,
+                    code,
+                    message,
+                    ..Default::default()
+                }
+            });
+            finalize_engine_pf(base, &engine_forced_class)
+        } else {
+            codex_failure_pf(&bridge_outcome, &main_event_error, &main_stderr)
+        });
     }
 
     // (`codex-consult.ps1:4106`) a usable reply produced by the continuation says so everywhere.
@@ -2413,7 +2837,7 @@ fn finish(
     let mut counts = FindingCounts::default();
     if let Some(s) = &structured {
         counts = render::severity_counts(s);
-        let handoff_rel = format!("handoffs/{:02}-codex-{}.md", ctx.nn, ctx.reply_name);
+        let handoff_rel = ctx.hf("md");
         for (k, rf) in s.findings.iter().enumerate() {
             let id = c3_core::findings::finding_id(ctx.nn, k + 1);
             finding_ids.push(id.clone());
@@ -2519,17 +2943,14 @@ fn finish(
         &main_event_error,
         &main_stderr,
     );
-    let handoff_rel = format!("handoffs/{:02}-codex-{}.md", ctx.nn, ctx.reply_name);
-    let events_rel = format!(
-        "handoffs/{:02}-codex-{}.events.jsonl",
-        ctx.nn, ctx.reply_name
-    );
+    let handoff_rel = ctx.hf("md");
+    let events_rel = ctx.hf("events.jsonl");
     // The plugin writes `.reply.json` (the byte-for-byte raw reply) at the handoff path
     // BEFORE the write lock is taken (README "Write order": `.reply.json` first), so a crash
     // during the commit still leaves the raw reply recoverable. C3 writes it here, before the
     // lock, at the handoff path — not staged under `.consult.reply.json`.
     let reply_json_rel = if !ctx.r.raw && !raw_text.is_empty() {
-        format!("handoffs/{:02}-codex-{}.reply.json", ctx.nn, ctx.reply_name)
+        ctx.hf("reply.json")
     } else {
         String::new()
     };
@@ -2735,18 +3156,22 @@ fn finish(
         }
     });
     let partial_abs = if sec.partial_needed {
-        ctx.handoffs_dir
-            .join(format!("{:02}-codex-{}.partial.md", ctx.nn, ctx.reply_name))
-            .to_string_lossy()
-            .to_string()
+        ctx.hpath("partial.md").to_string_lossy().to_string()
     } else {
         String::new()
     };
+    // The summary/handoff show the reviewer lineage with the engine tag (`... [agy]`); the ledger
+    // `lineage` field stays bare.
+    let lineage_shown = c3_core::lineage::format_reviewer_lineage(
+        &ctx.identity.provider,
+        &ctx.identity.model,
+        &ctx.engine,
+    );
     let s = summary::SummaryInputs {
         bridge_outcome: bridge_outcome.clone(),
         usable,
         wall_seconds: fmt_wall(wall_seconds),
-        lineage_shown: ctx.identity.lineage.clone(),
+        lineage_shown,
         mode: ctx.effective_mode.clone(),
         thread: thread.clone(),
         thread_source: thread_source.clone(),
@@ -2773,6 +3198,8 @@ fn finish(
         events_path: ctx.events_path.to_string_lossy().to_string(),
         reply_body,
         section,
+        engine_warnings: sec.engine_warnings.clone(),
+        denial_retry_line: sec.denial_console.clone(),
         ..Default::default()
     };
     // Run warnings print before the summary block (`foreach ($rw in $runWarnings)`).
@@ -2858,7 +3285,8 @@ fn schema_text_crlf() -> String {
         .replace('\n', "\r\n")
 }
 
-/// Run one codex secondary turn (`resume <thread>`) and return its outcome and measured wall.
+/// Run one secondary turn (`resume <thread>`) through the selected engine and return its outcome
+/// and measured wall. For a muse turn the prompt is written to a fresh temp `--prompt-file`.
 #[allow(clippy::too_many_arguments)]
 fn run_codex_secondary(
     ctx: &Context,
@@ -2873,7 +3301,19 @@ fn run_codex_secondary(
     stderr_path: &Path,
     timeout_sec: f64,
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
-) -> (AttemptOutcome, f64) {
+) -> (AttemptOutcome, f64, String) {
+    let engine = engine_kind_of(&ctx.engine);
+    // muse takes its prompt through a fresh `--prompt-file` per turn (distinct from the main one).
+    let prompt_file = if ctx.prompt_file.is_some() {
+        let pf = std::env::temp_dir().join(format!(
+            "codex-consult-prompt-{}.txt",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let _ = c3_core::store::write_text_atomic(&pf, prompt_text.as_bytes());
+        Some(pf)
+    } else {
+        None
+    };
     let mut request = Request {
         prompt: prompt_text.to_string(),
         brief_path: None,
@@ -2887,16 +3327,24 @@ fn run_codex_secondary(
         } else {
             ctx.identity.provider.clone()
         },
-        engine: EngineKind::Codex,
+        engine,
         effort,
         timeout_sec,
         mode: Mode::New,
         sandbox: sandbox.to_string(),
         schema_path: schema_arg,
         extra_config: ctx.r.extra_config.clone(),
-        output_last_message: Some(last_path.to_path_buf()),
-        prompt_file: None,
-        max_model_steps: None,
+        output_last_message: if engine == EngineKind::Codex {
+            Some(last_path.to_path_buf())
+        } else {
+            None
+        },
+        prompt_file,
+        max_model_steps: if ctx.o.max_model_steps > 0 {
+            Some(ctx.o.max_model_steps as u32)
+        } else {
+            None
+        },
     };
     // The resume must carry the request's own lineage (the core refuses a cross-lineage resume).
     let lineage = request.lineage();
@@ -2904,15 +3352,9 @@ fn run_codex_secondary(
         thread: thread.to_string(),
         lineage,
     };
-    let codex = CodexEngine {
-        launcher: ctx.launcher.clone(),
-        cwd: ctx.repo_root.clone(),
-        primary: TurnFiles::default(),
-        secondary: TurnFiles {
-            events: events_path.to_path_buf(),
-            stderr: stderr_path.to_path_buf(),
-        },
-        on_running,
+    let files = TurnFiles {
+        events: events_path.to_path_buf(),
+        stderr: stderr_path.to_path_buf(),
     };
     let turn = TurnRequest {
         request,
@@ -2923,14 +3365,59 @@ fn run_codex_secondary(
             c3_core::engine::ConversationId(thread.to_string()),
         )),
     };
+    let plan_err = |e: c3_core::engine::EngineError| AttemptOutcome::LaunchFailed {
+        child_exists: false,
+        message: format!("the secondary turn could not be planned ({e:?})"),
+    };
     let start = std::time::Instant::now();
-    let outcome = codex
-        .run(&turn)
-        .unwrap_or_else(|e| AttemptOutcome::LaunchFailed {
-            child_exists: false,
-            message: format!("the secondary turn could not be planned ({e:?})"),
-        });
-    (outcome, round1(start.elapsed().as_secs_f64()))
+    // `engine_outcome` is the engine turn's own framed outcome text (`AgyTurn`/`MuseTurn`
+    // `.outcome`), used to frame an engine repair/continuation failure exactly; empty for codex.
+    let (outcome, engine_outcome) = match ctx.engine.as_str() {
+        "agy" => {
+            let eng = crate::engines::agy::AgyEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                no_network: false,
+                models_timeout_sec: 45,
+                on_running,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, r.turn.outcome),
+                Err(e) => (plan_err(e), String::new()),
+            }
+        }
+        "muse" => {
+            let eng = crate::engines::muse::MuseEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                on_running,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, r.turn.outcome),
+                Err(e) => (plan_err(e), String::new()),
+            }
+        }
+        _ => {
+            use c3_core::engine::Engine;
+            let eng = CodexEngine {
+                launcher: ctx.launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                on_running,
+            };
+            (eng.run(&turn).unwrap_or_else(plan_err), String::new())
+        }
+    };
+    (
+        outcome,
+        round1(start.elapsed().as_secs_f64()),
+        engine_outcome,
+    )
 }
 
 /// The timeout continuation (`codex-consult.ps1:3626`): after a killed main turn, ONE
@@ -2954,12 +3441,8 @@ fn run_timeout_continuation(
 ) {
     let continue_thread = thread.clone();
     sec.continue_thread = continue_thread.clone();
-    let continue_events_name = format!(
-        "{:02}-codex-{}.continue.events.jsonl",
-        ctx.nn, ctx.reply_name
-    );
-    let continue_events_rel = format!("handoffs/{continue_events_name}");
-    let continue_events_path = ctx.handoffs_dir.join(&continue_events_name);
+    let continue_events_rel = ctx.hf("continue.events.jsonl");
+    let continue_events_path = ctx.hpath("continue.events.jsonl");
 
     // Gate (the plugin's `$continueSkip`).
     let mut skip = String::new();
@@ -3030,7 +3513,11 @@ fn run_timeout_continuation(
     let id = uuid::Uuid::new_v4().simple().to_string();
     let continue_last = tmp.join(format!("codex-consult-continue-last-{id}.md"));
     let continue_stderr = tmp.join(format!("codex-consult-continue-stderr-{id}.txt"));
-    let schema_arg = if !ctx.r.raw && ctx.transport.transport == "output-schema" {
+    // The schema flag rides a native (agy/muse) or output-schema (codex) transport; prompt-only
+    // re-sends the schema in the prompt instead.
+    let schema_arg = if !ctx.r.raw
+        && (ctx.transport.transport == "output-schema" || ctx.transport.transport == "native")
+    {
         ctx.schema_path.clone()
     } else {
         None
@@ -3047,7 +3534,7 @@ fn run_timeout_continuation(
     // The continuation event stream is a further turn (added before the run, like the plugin).
     sec.continue_events_rel = Some(continue_events_rel.clone());
 
-    let (outcome, wall) = run_codex_secondary(
+    let (outcome, wall, engine_outcome) = run_codex_secondary(
         ctx,
         TurnKind::TimeoutContinuation,
         &sandbox_label(&ctx.o),
@@ -3061,6 +3548,7 @@ fn run_timeout_continuation(
         ctx.r.continue_sec as f64,
         None,
     );
+    let is_engine = !ctx.is_codex();
     sec.continue_wall = wall;
     let events_field = if continue_events_path.is_file() {
         Some(continue_events_rel.clone())
@@ -3114,15 +3602,20 @@ fn run_timeout_continuation(
             failure: pf,
             exit_code,
         } => {
-            // The plugin frames a non-clean continuation exit as `codex exit N - <err>` (a bare
-            // `codex exit N` when no error text), surfacing the raw process exit code.
-            let n = exit_code.unwrap_or(-1);
-            continue_problem = if pf.message.trim().is_empty() {
-                format!("codex exit {n}")
+            // An engine frames the failure with its own turn outcome; codex frames a non-clean
+            // continuation exit as `codex exit N - <err>` (bare `codex exit N` with no error text).
+            if is_engine {
+                continue_problem = engine_outcome.trim_start_matches("failed: ").to_string();
+                *provider_failure = Some(finalize_pf(pf));
             } else {
-                format!("codex exit {n} - {}", pf.message)
-            };
-            *provider_failure = Some(finalize_pf(pf));
+                let n = exit_code.unwrap_or(-1);
+                continue_problem = if pf.message.trim().is_empty() {
+                    format!("codex exit {n}")
+                } else {
+                    format!("codex exit {n} - {}", pf.message)
+                };
+                *provider_failure = Some(finalize_pf(pf));
+            }
         }
         AttemptOutcome::LaunchFailed { message, .. } => {
             continue_problem = format!("could not start codex - {message}");
@@ -3190,10 +3683,9 @@ fn run_format_repair(
     sec.repair_reason = repair_reason;
 
     // The original prose, byte for byte, kept next to the handoff BEFORE the repair process.
-    let original_name = format!("{:02}-codex-{}.original.md", ctx.nn, ctx.reply_name);
-    let original_full = ctx.handoffs_dir.join(&original_name);
+    let original_full = ctx.hpath("original.md");
     let _ = c3_core::store::write_text_atomic(&original_full, original_prose.as_bytes());
-    sec.original_rel = format!("handoffs/{original_name}");
+    sec.original_rel = ctx.hf("original.md");
     sec.original_prose = original_prose;
 
     // The recovery record names the saved prose BEFORE the repair process exists (state
@@ -3228,8 +3720,23 @@ fn run_format_repair(
     let tmp = std::env::temp_dir();
     let id = uuid::Uuid::new_v4().simple().to_string();
     let repair_last = tmp.join(format!("codex-consult-repair-last-{id}.md"));
-    let repair_events = tmp.join(format!("codex-consult-repair-events-{id}.jsonl"));
+    // codex keeps the repair event stream in a temp file (removed → the ledger `events` is null);
+    // an engine keeps it next to the handoff (`NN-<prefix>-<reply>.repair.events.jsonl`).
+    let is_engine = !ctx.is_codex();
+    let repair_events = if is_engine {
+        ctx.hpath("repair.events.jsonl")
+    } else {
+        tmp.join(format!("codex-consult-repair-events-{id}.jsonl"))
+    };
+    let repair_events_rel = ctx.hf("repair.events.jsonl");
     let repair_stderr = tmp.join(format!("codex-consult-repair-stderr-{id}.txt"));
+    // An engine on a native transport passes the schema flag on the repair turn too (codex is
+    // always prompt-only on a repair turn — no schema flag).
+    let repair_schema = if is_engine && ctx.transport.transport == "native" {
+        ctx.schema_path.clone()
+    } else {
+        None
+    };
 
     let repair_prompt = format!(
         "Your last message was prose, not the required JSON. Reply with exactly one bare JSON object satisfying the JSON Schema below - no fence, nothing before or after it. Convert, do not re-answer: copy your previous content unchanged (the same Q1..Qn answers verbatim inside reply_markdown, the same findings, the same Requested checks, the same prior-finding statuses and the same verdict); add or omit nothing.\r\n\r\nJSON Schema of the reply:\r\n{}\r\n\r\nConsultation id: {}",
@@ -3237,12 +3744,12 @@ fn run_format_repair(
         ctx.consult_id
     );
 
-    let (outcome, wall) = run_codex_secondary(
+    let (outcome, wall, engine_outcome) = run_codex_secondary(
         ctx,
         TurnKind::FormatRepair,
         "read-only",
         repair_effort(ctx),
-        None, // never --output-schema on a codex repair turn (prompt-only)
+        repair_schema,
         thread,
         &repair_prompt,
         &repair_last,
@@ -3285,12 +3792,25 @@ fn run_format_repair(
             repair_problem = format!("timeout after {repair_timeout} s (process tree killed)");
             sec.repair_killed = true;
         }
-        AttemptOutcome::ProviderFailure { exit_code, .. } => {
-            // The plugin frames a non-clean repair exit as a bare `codex exit N`.
-            repair_problem = format!("codex exit {}", exit_code.unwrap_or(-1));
+        AttemptOutcome::ProviderFailure { failure, exit_code } => {
+            if is_engine {
+                // An engine repair failure keeps the turn's own framed outcome (e.g. a resume that
+                // landed on a new conversation: `parent conversation X not found, agy started Y`).
+                let framed = engine_outcome.trim_start_matches("failed: ").to_string();
+                repair_problem = if !framed.is_empty() {
+                    framed
+                } else if failure.message.trim().is_empty() {
+                    format!("{} exit {}", ctx.engine, exit_code.unwrap_or(-1))
+                } else {
+                    failure.message.clone()
+                };
+            } else {
+                // The plugin frames a non-clean codex repair exit as a bare `codex exit N`.
+                repair_problem = format!("codex exit {}", exit_code.unwrap_or(-1));
+            }
         }
         AttemptOutcome::LaunchFailed { message, .. } => {
-            repair_problem = format!("could not start codex - {message}");
+            repair_problem = format!("could not start {} - {message}", ctx.engine);
         }
         AttemptOutcome::Cancelled => {
             repair_problem = "cancelled".to_string();
@@ -3330,10 +3850,23 @@ fn run_format_repair(
             .map(|d| serde_json::Value::String(d.clone()))
             .collect(),
         original: sec.original_rel.clone(),
-        events: None, // codex's repair event stream is a temp file, removed → null
-        schema_transport: "prompt-only".to_string(),
+        // codex's repair event stream is a temp file (removed → null); an engine keeps it at the
+        // handoff path.
+        events: if is_engine && repair_events.is_file() {
+            Some(repair_events_rel.clone())
+        } else {
+            None
+        },
+        schema_transport: if is_engine {
+            ctx.transport.transport.clone()
+        } else {
+            "prompt-only".to_string()
+        },
         ..Default::default()
     });
+    if is_engine {
+        sec.repair_events_rel = Some(repair_events_rel);
+    }
     sec.repair_wall = wall;
     sec.repair_console = format!(
         "format repair: {} in {} s; drift: {} note(s)",
@@ -3346,9 +3879,11 @@ fn run_format_repair(
         drift_notes.len()
     );
 
-    // temp cleanup
+    // temp cleanup (an engine's kept repair events file is NOT removed).
     let _ = std::fs::remove_file(&repair_last);
-    let _ = std::fs::remove_file(&repair_events);
+    if !is_engine {
+        let _ = std::fs::remove_file(&repair_events);
+    }
     let _ = std::fs::remove_file(&repair_stderr);
 }
 
@@ -3368,6 +3903,417 @@ fn repair_effort(ctx: &Context) -> Option<String> {
     ctx.effort.sent.clone()
 }
 
+// ------------------------------------------------------------------- engine (agy/muse) turns
+
+/// How the prompt reached the engine, for the handoff `Argv: ... (<prompt_via>)` clause
+/// (`EngineSpec.PromptVia`).
+fn engine_prompt_via(engine: &str) -> &'static str {
+    match engine {
+        "agy" => "prompt on stdin as one NDJSON line",
+        "muse" => "prompt from a file: --prompt-file",
+        _ => "prompt on stdin",
+    }
+}
+
+/// The per-engine `TreeNote` appended to the tree-check problem (`EngineSpec.TreeNote`).
+fn engine_tree_note(engine: &str) -> String {
+    match engine {
+        "muse" => {
+            "muse ran with --disable-write --disable-shell (the check cannot tell who changed it)"
+                .to_string()
+        }
+        other => format!("{other}'s sandbox does not block writes"),
+    }
+}
+
+/// `.collab/`-style prefix prepended to the collab-relative changed names in the tree problem.
+fn collab_shown(ctx: &Context) -> String {
+    let rel = c3_core::paths::repo_relative(&ctx.repo_root, &ctx.collab_root)
+        .unwrap_or_else(|| ctx.o.collab_dir.clone());
+    if rel.ends_with('/') {
+        rel
+    } else {
+        format!("{rel}/")
+    }
+}
+
+/// `<N> file(s): a, b, c, d, e, ...` (the plugin's `$cut`).
+fn cut_files(names: &[String]) -> String {
+    let n = names.len();
+    let mut list = names.iter().take(5).cloned().collect::<Vec<_>>().join(", ");
+    if n > 5 {
+        list.push_str(", ...");
+    }
+    format!("{n} file{}: {list}", if n != 1 { "s" } else { "" })
+}
+
+/// Whether the engine ran write-disabled (muse `--disable-write --disable-shell`): its own tools
+/// cannot have made a change, so the tree check WARNS instead of failing (D9).
+fn engine_write_disabled(engine: &str) -> bool {
+    engine == "muse"
+}
+
+/// The structured read-only tree check (`Get-EngineTreeCheck`, wave 26b D9). Compares the working
+/// tree, the collab directory (this run's own handoff prefix ignored), the brief and the
+/// artifacts. A write-disabled engine (muse) WARNS (`outcome = "warned"`, the reply stays usable);
+/// agy FAILS (`outcome = "failed"`, `problem` set, forced class `permission`). `outcome = "clean"`
+/// when nothing changed.
+struct EngineTreeCheck {
+    outcome: String,
+    problem: String,
+    warnings: Vec<String>,
+    files: Vec<String>,
+}
+
+fn engine_tree_check(
+    ctx: &Context,
+    drift: &Drift,
+    collab_before: &std::collections::HashMap<String, String>,
+    collab_after: &std::collections::HashMap<String, String>,
+) -> EngineTreeCheck {
+    let mut why: Vec<String> = Vec::new();
+    let mut warn: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    let not_mine = format!(
+        "{} ran write-disabled, the change is not the reviewer's",
+        ctx.engine
+    );
+    if drift.tree_changed {
+        files.extend(drift.tree_changed_paths.iter().cloned());
+        let cut = cut_files(&drift.tree_changed_paths);
+        why.push(format!(
+            "the working tree changed during the run (by the reviewer or anyone else): {cut}"
+        ));
+        warn.push(format!(
+            "the working tree changed during the run ({cut}) - {not_mine}"
+        ));
+    }
+    let own = format!(
+        "{}/handoffs/{:02}-{}-{}.",
+        ctx.task, ctx.nn, ctx.file_prefix, ctx.reply_name
+    );
+    let collab_changed =
+        crate::engines::tree_check::compare_collab(collab_before, collab_after, &[own]);
+    if !collab_changed.is_empty() {
+        let shown = collab_shown(ctx);
+        let names: Vec<String> = collab_changed
+            .iter()
+            .map(|n| format!("{shown}{n}"))
+            .collect();
+        files.extend(names.iter().cloned());
+        let cut = cut_files(&names);
+        why.push(format!(
+            "the collab directory changed during the run (by the reviewer or anyone else): {cut}"
+        ));
+        warn.push(format!(
+            "the collab directory changed during the run ({cut}) - {not_mine}"
+        ));
+    }
+    if drift.brief_changed {
+        files.push("brief".to_string());
+        why.push("the brief changed during the run (by the reviewer or anyone else)".to_string());
+        warn.push(format!("the brief changed during the run - {not_mine}"));
+    }
+    if !drift.artifacts_changed_paths.is_empty() {
+        files.extend(drift.artifacts_changed_paths.iter().cloned());
+        let list = drift.artifacts_changed_paths.join(", ");
+        why.push(format!(
+            "artifact(s) changed during the run (by the reviewer or anyone else): {list}"
+        ));
+        warn.push(format!(
+            "artifact(s) changed during the run ({list}) - {not_mine}"
+        ));
+    }
+    if why.is_empty() {
+        return EngineTreeCheck {
+            outcome: "clean".into(),
+            problem: String::new(),
+            warnings: Vec::new(),
+            files,
+        };
+    }
+    if engine_write_disabled(&ctx.engine) {
+        EngineTreeCheck {
+            outcome: "warned".into(),
+            problem: String::new(),
+            warnings: warn,
+            files,
+        }
+    } else {
+        EngineTreeCheck {
+            outcome: "failed".into(),
+            problem: format!("{} - {}", why.join("; "), engine_tree_note(&ctx.engine)),
+            warnings: Vec::new(),
+            files,
+        }
+    }
+}
+
+/// Run one engine secondary turn (currently the agy denial retry) and return the outcome, the
+/// engine detail, the wall seconds and the kept events-file rel path.
+fn run_engine_secondary(
+    ctx: &Context,
+    kind: TurnKind,
+    thread: &str,
+    prompt_text: &str,
+    events_suffix: &str,
+    timeout_sec: f64,
+) -> (AttemptOutcome, EngineDetail, f64, String) {
+    let events_path = ctx.hpath(events_suffix);
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let stderr_path =
+        std::env::temp_dir().join(format!("codex-consult-{}-stderr-{id}.txt", ctx.file_prefix));
+    let prompt_file = if ctx.prompt_file.is_some() {
+        let pf = std::env::temp_dir().join(format!("codex-consult-prompt-{id}.txt"));
+        let _ = c3_core::store::write_text_atomic(&pf, prompt_text.as_bytes());
+        Some(pf)
+    } else {
+        None
+    };
+    let mut request = make_live_request_engine(ctx, Mode::New);
+    request.prompt = prompt_text.to_string();
+    request.prompt_file = prompt_file;
+    request.timeout_sec = timeout_sec;
+    let lineage = request.lineage();
+    request.mode = Mode::Resume {
+        thread: thread.to_string(),
+        lineage,
+    };
+    let files = TurnFiles {
+        events: events_path.clone(),
+        stderr: stderr_path.clone(),
+    };
+    let turn = TurnRequest {
+        request,
+        consultation: ConsultationId(ctx.consult_id.clone()),
+        attempt: c3_core::engine::AttemptId(ctx.consult_id.clone()),
+        kind,
+        continuation: Some(c3_core::engine::Continuation::Native(
+            c3_core::engine::ConversationId(thread.to_string()),
+        )),
+    };
+    let start = std::time::Instant::now();
+    let (outcome, detail) = match ctx.engine.as_str() {
+        "agy" => {
+            let eng = crate::engines::agy::AgyEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                no_network: false,
+                models_timeout_sec: 45,
+                on_running: None,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, agy_detail(&r.turn)),
+                Err(e) => (
+                    AttemptOutcome::LaunchFailed {
+                        child_exists: false,
+                        message: format!("{e:?}"),
+                    },
+                    EngineDetail::default(),
+                ),
+            }
+        }
+        _ => {
+            let eng = crate::engines::muse::MuseEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                on_running: None,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, muse_detail(&r.turn)),
+                Err(e) => (
+                    AttemptOutcome::LaunchFailed {
+                        child_exists: false,
+                        message: format!("{e:?}"),
+                    },
+                    EngineDetail::default(),
+                ),
+            }
+        }
+    };
+    let wall = round1(start.elapsed().as_secs_f64());
+    let events_rel = if events_path.is_file() {
+        ctx.hf(events_suffix)
+    } else {
+        String::new()
+    };
+    let _ = std::fs::remove_file(&stderr_path);
+    (outcome, detail, wall, events_rel)
+}
+
+/// The agy denial retry (F11): a tool was auto-denied and the turn produced nothing → one more
+/// `--conversation <thread>` turn telling the model not to call it. Gated by the engine's
+/// denial-retry capability, `--denial-retry 1`, a verified thread and no tree problem.
+#[allow(clippy::too_many_arguments)]
+fn run_engine_denial_retry(
+    ctx: &Context,
+    detail: &EngineDetail,
+    tree_problem: &str,
+    sec: &mut Secondary,
+    bridge_outcome: &mut String,
+    raw_text: &mut String,
+    thread: &mut String,
+    thread_source: &mut String,
+    usable: &mut bool,
+    forced_class: &mut String,
+) {
+    let denial_ok = c3_core::lineage::engine_spec(&ctx.engine)
+        .map(|s| s.denial_retry)
+        .unwrap_or(false);
+    if !(denial_ok
+        && ctx.o.denial_retry == 1
+        && detail.denied_empty
+        && !thread.is_empty()
+        && tree_problem.is_empty())
+    {
+        return;
+    }
+    let mut reason = detail.denial_line.clone();
+    if reason.chars().count() > 200 {
+        reason = reason.chars().take(200).collect();
+    }
+    let denied_tool = if !detail.tool_name.is_empty() {
+        detail.tool_name.clone()
+    } else {
+        detail.denied_action.clone()
+    };
+    let tool_text = if denied_tool.is_empty() {
+        "a tool".to_string()
+    } else {
+        format!("the tool {denied_tool}")
+    };
+    let perm_text = if detail.permission.is_empty() {
+        "(headless print mode cannot grant its permission)".to_string()
+    } else {
+        format!(
+            "(headless print mode has no \"{}\" permission)",
+            detail.permission
+        )
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if !ctx.r.raw {
+        parts.push(prompt::FINAL_OUTPUT_CONTRACT.to_string());
+        parts.push(format!(
+            "Your previous turn produced no output: {tool_text} was auto-denied {perm_text}. Do NOT call it again; answer from what you have read, as the JSON object."
+        ));
+        parts.push(prompt::schema_lines(
+            &ctx.o.purpose,
+            ctx.open_findings_count > 0,
+            true,
+        ));
+        if ctx.transport.transport == "prompt-only" {
+            parts.push(format!(
+                "JSON Schema of the reply:\r\n{}",
+                schema_text_crlf()
+            ));
+        }
+    } else {
+        parts.push(format!(
+            "Your previous turn produced no output: {tool_text} was auto-denied {perm_text}. Do NOT call it again; answer from what you have read."
+        ));
+    }
+    parts.push(format!("Consultation id: {}", ctx.consult_id));
+    let retry_prompt = parts.join("\r\n\r\n");
+
+    let thread_id = thread.clone();
+    let timeout = ctx.r.timeout_sec.min(300);
+    let (outcome, det, wall, events_rel) = run_engine_secondary(
+        ctx,
+        TurnKind::DenialRetry,
+        &thread_id,
+        &retry_prompt,
+        "denial-retry.events.jsonl",
+        timeout as f64,
+    );
+    sec.engine_turns += 1;
+
+    let mut succeeded = false;
+    // Default to the failure thread (the turn's observed thread); a usable retry overrides it.
+    let mut retry_thread = det.thread.clone();
+    let mut retry_usage: Option<Usage> = None;
+    match outcome {
+        AttemptOutcome::Completed(reply) => {
+            succeeded = true;
+            *bridge_outcome = "usable reply".to_string();
+            *usable = true;
+            *forced_class = String::new();
+            *raw_text = reply.raw_text.clone();
+            retry_usage = reply.usage.clone();
+            retry_thread = match &reply.conversation {
+                c3_core::engine::ConversationTrust::Verified(c)
+                | c3_core::engine::ConversationTrust::Candidate(c) => c.0.clone(),
+                _ => String::new(),
+            };
+            if !retry_thread.is_empty() {
+                *thread = retry_thread.clone();
+            }
+            *thread_source = "events".to_string();
+            sec.engine_warnings.push(format!(
+                "denial notice (the first turn produced nothing; the denial-retry turn answered): {}",
+                c3_core::one_line(&detail.denial_line)
+            ));
+            for w in &det.warnings {
+                sec.engine_warnings.push(w.clone());
+            }
+        }
+        _ => {
+            let stripped = det.turn_outcome.trim_start_matches("failed: ");
+            *bridge_outcome = format!(
+                "{} (denial retry failed: {})",
+                bridge_outcome,
+                c3_core::one_line(stripped)
+            );
+        }
+    }
+
+    sec.denial_retry = Some(c3_core::ledger::DenialRetry {
+        attempted: true,
+        reason,
+        succeeded,
+        thread: retry_thread,
+        wall_seconds: wall,
+        usage: retry_usage,
+        events: if events_rel.is_empty() {
+            None
+        } else {
+            Some(events_rel)
+        },
+        ..Default::default()
+    });
+    sec.denial_console = format!(
+        "denial retry: {} in {} s",
+        if succeeded { "succeeded" } else { "failed" },
+        fmt_wall(wall)
+    );
+}
+
+/// An engine run's `provider_failure`: the forced class (D12 tree check / a turn's own class)
+/// outranks the classified evidence.
+fn finalize_engine_pf(
+    mut pf: c3_core::ledger::ProviderFailure,
+    forced_class: &str,
+) -> c3_core::ledger::ProviderFailure {
+    // The tree check's forced class (D12, `permission`) outranks the adapter's class.
+    if forced_class == "permission" {
+        pf.class = "permission".to_string();
+    }
+    pf.kind = Some(c3_core::health::failure_kind(
+        &pf.class,
+        &format!("{} {}", pf.code, pf.message),
+    ));
+    // Parse a reset hint out of the message (`Please retry in 32s`, `Try again in 2 hours`).
+    if pf.retry_after.is_none() {
+        let reference = chrono::Local::now().fixed_offset();
+        pf.retry_after = c3_core::health::retry_after_ref(&pf.message, reference)
+            .map(c3_core::health::format_offset_iso);
+    }
+    finalize_pf(pf)
+}
+
 /// Build the salvaged `.partial.md` body, footer and resume command when a killed turn had no
 /// usable continuation (`codex-consult.ps1:4108`).
 fn build_partial_reply(
@@ -3383,7 +4329,7 @@ fn build_partial_reply(
         return;
     }
     sec.partial_needed = true;
-    sec.partial_rel = format!("handoffs/{:02}-codex-{}.partial.md", ctx.nn, ctx.reply_name);
+    sec.partial_rel = ctx.hf("partial.md");
 
     let mut turns: Vec<super::secondary::PartialTurn> = Vec::new();
     let mut killed_at: Vec<String> = Vec::new();
@@ -3408,10 +4354,7 @@ fn build_partial_reply(
         ));
     }
     if sec.continue_ran {
-        let cont_events = ctx.handoffs_dir.join(format!(
-            "{:02}-codex-{}.continue.events.jsonl",
-            ctx.nn, ctx.reply_name
-        ));
+        let cont_events = ctx.hpath("continue.events.jsonl");
         let cont_text = std::fs::read_to_string(&cont_events).unwrap_or_default();
         let note = if sec.continue_killed {
             format!(
@@ -3632,21 +4575,26 @@ fn render_handoff(
     main_event_error: &str,
     main_stderr: &str,
 ) -> (String, Option<String>) {
-    let events_rel = format!(
-        "handoffs/{:02}-codex-{}.events.jsonl",
-        ctx.nn, ctx.reply_name
-    );
+    let events_rel = ctx.hf("events.jsonl");
+    let spec = c3_core::lineage::engine_spec(&ctx.engine);
+    let has_usage = spec.as_ref().map(|s| s.has_usage).unwrap_or(true);
     let effort_sent = ctx.effort.sent.clone().unwrap_or_else(|| "nothing".into());
-    // codex reports usage; a turn that produced none (a killed main turn) is `unknown`, matching
-    // `Format-Usage $null` — never "not reported by codex" (that is for agy/muse).
-    let tokens = match usage {
-        Some(u) => TokenReport::Reported {
-            input: u.input_tokens,
-            cached: u.cached_input_tokens,
-            output: u.output_tokens,
-            reasoning: u.reasoning_output_tokens,
-        },
-        None => TokenReport::Unknown,
+    // codex/agy report usage; a turn that produced none is `unknown` (`Format-Usage $null`); an
+    // engine that reports none (muse) renders `not reported by <engine>`.
+    let tokens = if !has_usage {
+        TokenReport::NotReported {
+            engine: ctx.engine.clone(),
+        }
+    } else {
+        match usage {
+            Some(u) => TokenReport::Reported {
+                input: u.input_tokens,
+                cached: u.cached_input_tokens,
+                output: u.output_tokens,
+                reasoning: u.reasoning_output_tokens,
+            },
+            None => TokenReport::Unknown,
+        }
     };
     let mut records = OptionalRecords {
         recovery_lines: ctx
@@ -3691,15 +4639,53 @@ fn render_handoff(
             drift.artifacts_changed_paths.join(", ")
         ));
     }
-    if !ctx.run_warnings.is_empty() {
+    // The handoff `Warnings:` line: engine turn warnings for an engine run (denial notices,
+    // engine stderr warnings), else the run warnings.
+    let warn_source: &[String] = if !ctx.is_codex() {
+        &sec.engine_warnings
+    } else {
+        &ctx.run_warnings
+    };
+    if !warn_source.is_empty() {
         records.warnings = Some(format!(
             "Warnings: {}.",
-            ctx.run_warnings
+            warn_source
                 .iter()
                 .map(|w| c3_core::one_line(w))
                 .collect::<Vec<_>>()
                 .join("; ")
         ));
+    }
+    // (14) Engine turns line (agy/muse only, always rendered — even a single turn).
+    if !ctx.is_codex() {
+        let mut l = format!("Engine turns: {}", sec.engine_turns);
+        if ctx.engine == "muse" {
+            l.push_str(" (each one a Muse Code subscription prompt)");
+        }
+        if ctx.o.max_model_steps > 0 {
+            l.push_str(&format!("; --max-model-steps {}", ctx.o.max_model_steps));
+        }
+        if let Some(v) = sec.msp_version {
+            l.push_str(&format!("; MSP schema_version {v}"));
+        }
+        l.push('.');
+        records.engine_turns = Some(l);
+    }
+    // (16) Denial retry line (agy).
+    if let Some(dr) = &sec.denial_retry {
+        records.denial_retry = Some(if dr.succeeded {
+            format!(
+                "Denial retry: succeeded in {} s - the first turn produced nothing (a tool was auto-denied); one more turn on conversation `{}` answered without it. Tokens of that turn: {}.",
+                fmt_wall(dr.wall_seconds),
+                dr.thread,
+                usage_clause(&dr.usage),
+            )
+        } else {
+            format!(
+                "Denial retry: failed in {} s - the first turn produced nothing (a tool was auto-denied) and the retry turn did not answer either.",
+                fmt_wall(dr.wall_seconds),
+            )
+        });
     }
     if let Some(pf) = provider_failure {
         let code = if pf.code.is_empty() {
@@ -3772,7 +4758,7 @@ fn render_handoff(
         });
     }
     let reply_json_rel = if !ctx.r.raw && !raw_text.is_empty() {
-        format!("handoffs/{:02}-codex-{}.reply.json", ctx.nn, ctx.reply_name)
+        ctx.hf("reply.json")
     } else {
         String::new()
     };
@@ -3827,16 +4813,56 @@ fn render_handoff(
         None
     };
 
-    let header = HandoffHeader {
-        nn: ctx.nn,
-        engine_label: "Codex".into(),
-        slug: ctx.reply_name.clone(),
-        date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
-        author: Author::Codex {
+    // Engine-aware header parts: the title label, the author, the argv and how the prompt was
+    // delivered.
+    let engine_label = spec
+        .as_ref()
+        .map(|s| s.label)
+        .unwrap_or("Codex")
+        .to_string();
+    let author = if ctx.is_codex() {
+        Author::Codex {
             model: model_label(&ctx.identity),
             effort: effort_sent.clone(),
             cli_version: ctx.codex_version.replace("codex-cli ", ""),
-        },
+        }
+    } else {
+        // agy's effort is the model tier; muse's is the sent effort value.
+        let effort_desc = ctx
+            .effort
+            .sent
+            .clone()
+            .unwrap_or_else(|| "tier in the model id".to_string());
+        Author::Engine {
+            label: engine_label.clone(),
+            model: model_label(&ctx.identity),
+            effort_desc,
+            harness: ctx.harness.clone(),
+        }
+    };
+    let argv_line = if ctx.is_codex() {
+        format!("codex {}", ctx.argv_display.trim_start_matches("codex "))
+    } else {
+        ctx.argv_display.clone()
+    };
+    let prompt_via = engine_prompt_via(&ctx.engine).to_string();
+    // Further-turn event streams (denial retry / continuation / repair) for an engine run.
+    let mut further_turns: Vec<String> = Vec::new();
+    if let Some(dr) = &sec.denial_retry {
+        if let Some(e) = &dr.events {
+            further_turns.push(e.clone());
+        }
+    }
+    further_turns.extend(sec.continue_events_rel.iter().cloned());
+    if let Some(e) = &sec.repair_events_rel {
+        further_turns.push(e.clone());
+    }
+    let header = HandoffHeader {
+        nn: ctx.nn,
+        engine_label,
+        slug: ctx.reply_name.clone(),
+        date: chrono::Local::now().format("%Y-%m-%d %H:%M").to_string(),
+        author,
         effort_sent: effort_sent.clone(),
         effort_requested: ctx.effort.requested.clone(),
         effort_mapping: ctx.effort.mapping.clone(),
@@ -3845,14 +4871,14 @@ fn render_handoff(
         mode: ctx.effective_mode.clone(),
         sandbox: sandbox_label(&ctx.o),
         purpose: ctx.r.purpose_label.clone(),
-        argv: format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
-        prompt_via: "prompt on stdin".into(),
+        argv: argv_line,
+        prompt_via,
         bridge_outcome: bridge_outcome.to_string(),
         wall_seconds: fmt_wall(wall),
         tokens,
         events_rel: events_rel.clone(),
-        further_turns: sec.continue_events_rel.iter().cloned().collect(),
-        reviewer_line: reviewer_line(&ctx.identity, &ctx.harness),
+        further_turns,
+        reviewer_line: reviewer_line(&ctx.identity, &ctx.engine, &ctx.harness),
         preflight_line: if ctx.preflight.is_empty() {
             "Preflight: not recorded (non-openai credential check deferred to M2c+).".into()
         } else {
@@ -3968,8 +4994,10 @@ fn render_handoff(
     let partial_md = if sec.partial_needed {
         let mut lines: Vec<String> = Vec::new();
         lines.push(format!(
-            "# Handoff {:02} - Codex: {} - partial reply (a turn was killed on its timeout)",
-            ctx.nn, ctx.reply_name
+            "# Handoff {:02} - {}: {} - partial reply (a turn was killed on its timeout)",
+            ctx.nn,
+            spec.as_ref().map(|s| s.label).unwrap_or("Codex"),
+            ctx.reply_name
         ));
         for l in header_str.lines().skip(1) {
             if l == "Verbatim reply follows." {
@@ -4049,10 +5077,17 @@ pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
     format!("endpoint {audit}, wire_api: {wire_label}")
 }
 
-pub(crate) fn reviewer_line(id: &ReviewerIdentity, harness: &str) -> String {
+pub(crate) fn reviewer_line(id: &ReviewerIdentity, engine: &str, harness: &str) -> String {
+    // The reviewer line shows the engine-tagged lineage (`... [agy]`); a codex run keeps the
+    // identity's own lineage byte-for-byte (an unresolved codex identity has a special form).
+    let lineage = if engine.is_empty() || engine == "codex" {
+        id.lineage.clone()
+    } else {
+        c3_core::lineage::format_reviewer_lineage(&id.provider, &id.model, engine)
+    };
     let mut line = format!(
         "Reviewer: {} (provider from {}, model from {}; {}",
-        id.lineage,
+        lineage,
         if id.provider_source.is_empty() {
             "codex default"
         } else {
@@ -4141,7 +5176,11 @@ fn build_entry(
         thread: thread.to_string(),
         thread_source: thread_source.to_string(),
         mode: ctx.effective_mode.clone(),
-        command: format!("codex {}", ctx.argv_display.trim_start_matches("codex ")),
+        command: if ctx.is_codex() {
+            format!("codex {}", ctx.argv_display.trim_start_matches("codex "))
+        } else {
+            ctx.argv_display.clone()
+        },
         brief: ctx.brief_ref.clone(),
         prompt_chars: ctx.prompt_text.chars().count() as i64,
         reply: handoff_rel.to_string(),
@@ -4181,13 +5220,36 @@ fn build_entry(
         schema_transport_source: ctx.transport.source.clone(),
         validation_error: validation_error.to_string(),
         format_retry: sec.format_retry.clone(),
+        denial_retry: sec.denial_retry.clone(),
         timeout_continue: sec.timeout_continue.clone(),
+        engine_run: if ctx.is_codex() {
+            None
+        } else {
+            Some(c3_core::ledger::EngineRun {
+                turns: sec.engine_turns,
+                max_model_steps: if ctx.o.max_model_steps > 0 {
+                    Some(ctx.o.max_model_steps)
+                } else {
+                    None
+                },
+                msp_schema_version: sec.msp_version,
+                ..Default::default()
+            })
+        },
         range: ctx.range_record.clone(),
-        warnings: ctx
-            .run_warnings
-            .iter()
-            .map(|w| serde_json::Value::String(w.clone()))
-            .collect(),
+        // An engine run records its engine turn warnings (denial notices etc.); a codex run
+        // records the run warnings (range size, roster ambiguity, semantics).
+        warnings: if ctx.is_codex() {
+            ctx.run_warnings
+                .iter()
+                .map(|w| serde_json::Value::String(w.clone()))
+                .collect()
+        } else {
+            sec.engine_warnings
+                .iter()
+                .map(|w| serde_json::Value::String(w.clone()))
+                .collect()
+        },
         base_commit: ctx.revision.base_commit.clone(),
         reviewed_revision: ctx.revision.reviewed_revision.clone(),
         tree_sha256: ctx.revision.tree_sha256.clone(),
@@ -4228,6 +5290,19 @@ fn build_entry(
         }
         .to_string();
         e.verdict_reason = s.verdict_reason.clone();
+    }
+    // The engine tree-check record (wave 26b, D9): `{outcome, files[]}`, written when a change
+    // was detected (warned/failed). c3-core has no named `tree_check` field yet, so it rides the
+    // flattened `extra` map (serialized at the entry's end rather than after
+    // `artifacts_changed_during_review`); the harness reads `$e.tree_check` regardless of order.
+    if !ctx.is_codex() && !sec.tree_check_outcome.is_empty() && sec.tree_check_outcome != "clean" {
+        e.extra.insert(
+            "tree_check".to_string(),
+            serde_json::json!({
+                "outcome": sec.tree_check_outcome,
+                "files": sec.tree_check_files,
+            }),
+        );
     }
     e
 }
@@ -4324,6 +5399,77 @@ mod telemetry_tests {
 
         std::env::remove_var("CODEX_HOME");
         let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[cfg(test)]
+mod engine_tests {
+    use super::*;
+
+    #[test]
+    fn cmd_argv_hazard_only_for_cmd_launcher_with_percent() {
+        // A .exe launcher never triggers the hazard.
+        assert_eq!(
+            cmd_argv_hazard(
+                "C:/x/muse.exe",
+                &["--prompt-file".into(), "C:/T%MP/p.txt".into()]
+            ),
+            ""
+        );
+        // A .cmd launcher with a '%' argument is refused; the note names the count and launcher.
+        let h = cmd_argv_hazard(
+            "C:/x/fake-muse.cmd",
+            &["exec".into(), "C:/T%MP/prompt.txt".into()],
+        );
+        assert!(
+            h.contains("fake-muse.cmd is a cmd.exe script and 1 argument(s) contain '%'"),
+            "{h}"
+        );
+        // A .cmd launcher with no '%' is safe.
+        assert_eq!(
+            cmd_argv_hazard("C:/x/f.cmd", &["exec".into(), "clean".into()]),
+            ""
+        );
+    }
+
+    #[test]
+    fn engine_tree_note_per_engine() {
+        assert_eq!(
+            engine_tree_note("agy"),
+            "agy's sandbox does not block writes"
+        );
+        assert_eq!(
+            engine_tree_note("muse"),
+            "muse ran with --disable-write --disable-shell (the check cannot tell who changed it)"
+        );
+    }
+
+    #[test]
+    fn engine_prompt_via_per_engine() {
+        assert_eq!(
+            engine_prompt_via("agy"),
+            "prompt on stdin as one NDJSON line"
+        );
+        assert_eq!(
+            engine_prompt_via("muse"),
+            "prompt from a file: --prompt-file"
+        );
+        assert_eq!(engine_prompt_via("codex"), "prompt on stdin");
+    }
+
+    #[test]
+    fn cut_files_shape() {
+        assert_eq!(cut_files(&["a.txt".into()]), "1 file: a.txt");
+        assert_eq!(cut_files(&["a".into(), "b".into()]), "2 files: a, b");
+        let many: Vec<String> = (1..=7).map(|n| format!("f{n}")).collect();
+        assert_eq!(cut_files(&many), "7 files: f1, f2, f3, f4, f5, ...");
+    }
+
+    #[test]
+    fn engine_kind_mapping() {
+        assert_eq!(engine_kind_of("agy"), EngineKind::Agy);
+        assert_eq!(engine_kind_of("muse"), EngineKind::Muse);
+        assert_eq!(engine_kind_of("codex"), EngineKind::Codex);
     }
 }
 

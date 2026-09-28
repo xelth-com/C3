@@ -90,17 +90,18 @@ and `findings.json` (183,726 B):
 `format_retry.events`, `provider_failure.retry_after` (both `null` in some entries) and
 `usage.total_tokens` (present only for agy, always last).
 
-The asserted ledger field-order string encoded verbatim in `LedgerEntry` (wave 24):
+The asserted ledger field-order string encoded verbatim in `LedgerEntry` (wave 24, with the
+wave-26 `topics,role` after `purpose`; `tests/harness-0.3.ps1` `$order`):
 
 ```
-n,when,purpose,consult_id,reviewer,lineage,preflight,preflight_warning,roster,panel,
-parent_thread,thread,thread_source,thread_candidate,mode,command,brief,range,prompt_chars,
+n,when,purpose,topics,role,consult_id,reviewer,lineage,preflight,preflight_warning,roster,
+panel,parent_thread,thread,thread_source,thread_candidate,mode,command,brief,range,prompt_chars,
 reply,reply_json,events,partial_reply,model,effort,effort_requested,effort_sent,
 effort_mapping,effort_caps,effort_confirmed,max_words,sandbox,timeout_sec,timeout_source,
 continue_sec,extra_config,extra_config_source,peak,peak_schedule,peak_source,
 peak_evaluated_at,structured,schema,schema_transport,schema_transport_source,
 validation_error,format_retry,denial_retry,timeout_continue,base_commit,reviewed_revision,
-tree_sha256,tree_sha256_after,tree_changed_during_review,changed_files,brief_sha256,
+tree_sha256,tree_sha256_after,tree_changed_during_review,revision_moved,changed_files,brief_sha256,
 brief_sha256_after,brief_changed_during_review,fingerprint_note,artifacts,
 artifacts_changed_during_review,bridge_outcome,provider_failure,warnings,verdict,
 verdict_reason,findings,finding_ids,prior_findings,unchecked_prior_blockers,usage,
@@ -109,6 +110,38 @@ engine_run,wall_seconds,finished_at,commit_wait_ms
 
 `reviewer`: `provider, provider_source, model, model_source, engine, harness,
 provider_fingerprint, provider_config, identity_note`.
+
+### Wave 26 (companions) format additions
+
+The 0.5.0 wave-26 schema adds four record extensions; all are omittable on read so a
+pre-wave-26 store round-trips byte-identical (the `.collab` fixtures have none of them yet):
+
+- **Ledger `topics` / `role`** (`LedgerEntry`, after `purpose`): `topics` the `-Topic` slugs
+  (`[]` by default), `role` the reviewer's role (`""` by default). Present-tri-state
+  `Option`s, skipped on rewrite when absent.
+- **Ledger `panel.asked` / `.started` / `.usable`** and **`panel.routing`** (`Panel`, after
+  `limits`): the seat/started/usable counts, and the routing record `PanelRouting {mode,
+  order, fallback, seed, nonce, nonce_source, size, size_source, eligible[{position, lineage,
+  lab, lab_source, score, basis, ratings, required}], picked[{slot, position, lineage, lab,
+  rule}], explored[], required[]}`. C3 does not write panels (the consult flow does); these
+  are typed so a wave-26 store round-trips and the panel milestone can read them.
+- **Findings `Rating`** now `{n, consult_id, lineage, provider, model, engine, purpose,
+  topics, consult_when, useful, note, when}` (`engine`/`topics`/`consult_when` omittable). A
+  mark is keyed by `consult_id` (a pre-wave-26 mark without one, by `n` within its task);
+  `codex-findings.ps1 -Rate` maps `-Rate <n>` to the entry's `consult_id`, refuses a
+  malformed one, and replaces-or-appends by that key. The scoreboard and the routing score
+  join marks by `consult_id`, and still read and count a legacy `n`-keyed mark.
+- **Roster** gains per-entry `lab` (canonical lowercase - `RosterEntry::lab`) and `roles`
+  (slug array - `RosterEntry::roles`), the top-level `require` (`{purpose: [matchers]}` -
+  `Roster::require`, each matcher `#n` | provider label | `provider :: model [engine]`,
+  resolved to an entry at load), and the `ext` extension point (top level and per entry,
+  validated as an object only). The bridge and C3 now agree on `ext` (it left the unknown-key
+  list in wave 26).
+- **Scoreboard** (`codex-scoreboard.ps1`) gains `--by purpose|topic`, the `SCORE` routing
+  column (`score`; `-` on a topic row and the grand total) and `UNIQ` (`unique`/`panel_raised`,
+  the panel-uniqueness measure). The routing score (`scoreboard::routing`) reads every task's
+  marks over a 90-day window at the consult clock: `w = (yes + 0.5·partly + 1)/(n + 2)` scaled
+  into `[0.25, 2]`, neutral `1.125` below three marks.
 
 ## Invariants encoded
 

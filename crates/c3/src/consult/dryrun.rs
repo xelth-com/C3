@@ -86,7 +86,7 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         ));
     }
     // The full reviewer line, minus the `Reviewer: ` prefix (`$reviewerLine -replace ...`).
-    let reviewer_full = super::orchestrate::reviewer_line(&ctx.identity, &ctx.harness);
+    let reviewer_full = super::orchestrate::reviewer_line(&ctx.identity, &ctx.engine, &ctx.harness);
     out.push(format!(
         "reviewer    : {}",
         reviewer_full
@@ -241,6 +241,13 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             }
         }
         out.push(format!("sandbox     : {}", ctx.sandbox_record));
+        // The cmd.exe `%`-argument hazard (F02-14): a real run would be refused before launch.
+        let hazard = super::orchestrate::cmd_argv_hazard(&ctx.engine_launcher, &ctx.argv);
+        if !hazard.is_empty() {
+            out.push(format!(
+                "launch      : a real run is refused before launch - {hazard}"
+            ));
+        }
     }
     out.push(format!("mode        : {}", ctx.effective_mode));
     // The parent-thread note (`Select-ParentThread`'s note): why this run is a new thread, or
@@ -250,6 +257,14 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
     }
     if ctx.effective_mode == "new" {
         out.push("thread      : (a new thread will be created)".into());
+    } else if !is_codex && ctx.effective_mode == "resume" {
+        // An engine resume shows how it continues (`--session-id`/`--conversation`).
+        let noun = spec.as_ref().map(|s| s.thread_noun).unwrap_or("thread");
+        let flag = spec.as_ref().map(|s| s.thread_flag).unwrap_or("");
+        out.push(format!(
+            "thread      : {} ({noun} resumed with {flag})",
+            ctx.parent_thread
+        ));
     } else {
         out.push(format!(
             "thread      : {} (parent for {})",

@@ -338,6 +338,103 @@ pub struct Panel {
     /// Per-provider concurrency caps: a `provider -> count` map whose keys vary per run.
     #[serde(default)]
     pub limits: Value,
+    /// (wave 26) The seats the panel asked for (= `of`); the members started; the members
+    /// that gave a usable reply. Written into every member's entry when the panel ends, so a
+    /// pre-wave-26 panel record (and one whose run died before the end) has neither. Omittable
+    /// so those older records round-trip byte-identical: absent (`None`) is skipped on rewrite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usable: Option<i64>,
+    /// (wave 26) The routing record of a routed panel; absent in a pre-wave-26 store. Omittable
+    /// like the counts above so an older panel record round-trips byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routing: Option<PanelRouting>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `entry.panel.routing` (wave 26): how a routed panel drew its seats. Field order is the
+/// plugin literal `{mode, order, fallback, seed, nonce, nonce_source, size, size_source,
+/// eligible[], picked[], explored[], required[]}` (`Add-PanelRouting`, D2-D5) and MUST NOT
+/// change. C3 does not write panels (the consult flow does); this types the record so a
+/// wave-26 store round-trips byte-identically and the panel milestone can read it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct PanelRouting {
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub order: String,
+    #[serde(default)]
+    pub fallback: String,
+    #[serde(default)]
+    pub seed: String,
+    #[serde(default)]
+    pub nonce: String,
+    #[serde(default)]
+    pub nonce_source: String,
+    #[serde(default)]
+    pub size: i64,
+    #[serde(default)]
+    pub size_source: String,
+    #[serde(default)]
+    pub eligible: Vec<RoutingEligible>,
+    #[serde(default)]
+    pub picked: Vec<RoutingPicked>,
+    /// The lineages explored (a uniform draw), in seat order.
+    #[serde(default)]
+    pub explored: Vec<Value>,
+    /// The required lineages (`-Require`/roster `require`), in roster order.
+    #[serde(default)]
+    pub required: Vec<Value>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `panel.routing.eligible[]`: one eligible entry with its routing basis. Field order:
+/// `{position, lineage, lab, lab_source, score, basis, ratings, required}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RoutingEligible {
+    #[serde(default)]
+    pub position: i64,
+    #[serde(default)]
+    pub lineage: String,
+    #[serde(default)]
+    pub lab: String,
+    #[serde(default)]
+    pub lab_source: String,
+    /// The routing score (a number scaled into `[0.25, 2]`); a whole value is written without
+    /// a decimal point by [`crate::ps_json`].
+    #[serde(default)]
+    pub score: f64,
+    #[serde(default)]
+    pub basis: String,
+    /// The rating count behind the basis (topic credit pooled, so it may be fractional).
+    #[serde(default)]
+    pub ratings: f64,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `panel.routing.picked[]`: one seat with the rule that filled it. Field order:
+/// `{slot, position, lineage, lab, rule}` (`rule`: `required` | `roster` | `lab-draw` |
+/// `lab-explore` | `rank-draw` | `rank-explore`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RoutingPicked {
+    #[serde(default)]
+    pub slot: i64,
+    #[serde(default)]
+    pub position: i64,
+    #[serde(default)]
+    pub lineage: String,
+    #[serde(default)]
+    pub lab: String,
+    #[serde(default)]
+    pub rule: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

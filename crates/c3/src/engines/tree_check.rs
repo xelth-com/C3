@@ -15,6 +15,7 @@
 //! tracked+untracked working-tree half, exactly as the plugin's tree check reuses
 //! `Compare-TreeContent` for it.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::consult::revision::{self, RevisionInfo, TreeComparison};
@@ -38,6 +39,85 @@ pub fn changed(before: &RevisionInfo, after: &RevisionInfo) -> bool {
     compare(before, after).changed
 }
 
+/// `Get-CollabSnapshot`: a map of `<'/'-separated relative path> -> "<length>|<sha256>"` for every
+/// file under `dir`, recursively. The bridge's own control files (`.consult.*` / `..consult.*`,
+/// case-insensitive) and the `.git` directory are excluded; symlinks/junctions are not followed.
+/// An absent directory yields an empty map. `sessions.json`, `findings.json`, `state.md` and the
+/// handoffs ARE included (the caller ignores this run's own handoff prefix in the comparison).
+pub fn collab_snapshot(dir: &Path) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    if !dir.is_dir() {
+        return out;
+    }
+    walk_collab(dir, dir, &mut out);
+    out
+}
+
+fn walk_collab(root: &Path, cur: &Path, out: &mut HashMap<String, String>) {
+    let rd = match std::fs::read_dir(cur) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for entry in rd.flatten() {
+        let meta = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let name = entry.file_name().to_string_lossy().to_string();
+        if meta.file_type().is_symlink() {
+            continue; // never follow a reparse point (junction/symlink)
+        }
+        if meta.is_dir() {
+            if name == ".git" {
+                continue;
+            }
+            walk_collab(root, &entry.path(), out);
+            continue;
+        }
+        // Skip the bridge's own control files (lock, recovery records, atomic-write temps).
+        let low = name.to_ascii_lowercase();
+        if low.starts_with(".consult.") || low.starts_with("..consult.") {
+            continue;
+        }
+        let path = entry.path();
+        let rel = match path.strip_prefix(root) {
+            Ok(p) => p.to_string_lossy().replace('\\', "/"),
+            Err(_) => continue,
+        };
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        let sha = c3_core::sha256_hex(&bytes);
+        out.insert(rel, format!("{}|{}", bytes.len(), sha));
+    }
+}
+
+/// `Compare-DirectorySnapshot`: the collab-relative paths whose `length|sha256` differs (or which
+/// appeared/disappeared) between `before` and `after`, ignoring any path that starts with one of
+/// `ignore_prefixes` (case-insensitive). Ordinal-sorted.
+pub fn compare_collab(
+    before: &HashMap<String, String>,
+    after: &HashMap<String, String>,
+    ignore_prefixes: &[String],
+) -> Vec<String> {
+    let mut keys: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
+    keys.extend(before.keys());
+    keys.extend(after.keys());
+    let mut changed: Vec<String> = Vec::new();
+    for k in keys {
+        if ignore_prefixes
+            .iter()
+            .any(|p| k.to_ascii_lowercase().starts_with(&p.to_ascii_lowercase()))
+        {
+            continue;
+        }
+        match (before.get(k), after.get(k)) {
+            (Some(a), Some(b)) if a == b => {}
+            _ => changed.push(k.clone()),
+        }
+    }
+    changed.sort();
+    changed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,6 +138,40 @@ mod tests {
         b.content_sha256 = "h2".into();
         assert!(changed(&a, &b));
         assert_eq!(compare(&a, &b).revision_moved, "");
+    }
+
+    #[test]
+    fn collab_compare_detects_writes_and_honours_ignore_prefix() {
+        let mut before = HashMap::new();
+        before.insert("t/handoffs/01-agy-run.md".to_string(), "10|aaa".to_string());
+        before.insert("t/state.md".to_string(), "5|bbb".to_string());
+        let mut after = before.clone();
+        // The reviewer wrote a new file into the collab dir.
+        after.insert("t/handoffs/99-agy-note.md".to_string(), "3|ccc".to_string());
+        // This run's own handoff prefix changed (ignored).
+        after.insert("t/handoffs/01-agy-run.md".to_string(), "20|zzz".to_string());
+        let own = vec!["t/handoffs/01-agy-run.".to_string()];
+        let changed = compare_collab(&before, &after, &own);
+        assert_eq!(changed, vec!["t/handoffs/99-agy-note.md".to_string()]);
+        // A content change to a non-ignored file is caught.
+        after.insert("t/state.md".to_string(), "6|ddd".to_string());
+        let changed = compare_collab(&before, &after, &own);
+        assert!(changed.contains(&"t/state.md".to_string()));
+        assert_eq!(changed.len(), 2);
+    }
+
+    #[test]
+    fn collab_snapshot_excludes_control_files() {
+        let dir = std::env::temp_dir().join(format!("c3-collab-{}", std::process::id()));
+        let task = dir.join("t");
+        std::fs::create_dir_all(&task).unwrap();
+        std::fs::write(task.join("sessions.json"), b"{}").unwrap();
+        std::fs::write(task.join(".consult.lock"), b"x").unwrap();
+        std::fs::write(task.join(".consult.pending.json"), b"x").unwrap();
+        let snap = collab_snapshot(&dir);
+        assert!(snap.contains_key("t/sessions.json"));
+        assert!(!snap.keys().any(|k| k.contains(".consult.")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

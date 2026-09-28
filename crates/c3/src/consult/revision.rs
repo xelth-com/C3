@@ -28,6 +28,9 @@ pub struct RevisionInfo {
     pub changed_files: i64,
     pub fingerprint_note: String,
     pub content_sha256: String,
+    /// The per-path content blob map (wave 24c), so a before/after comparison can name the
+    /// changed files (the engine tree check's `Get-EngineTreeProblem` reason). Not serialized.
+    pub content: std::collections::BTreeMap<String, String>,
 }
 
 /// Run a git command from `root`, returning its stdout bytes on exit 0, else `None`.
@@ -352,6 +355,7 @@ pub fn revision_info(root: &Path, collab_root: Option<&Path>) -> RevisionInfo {
             csb.push_str(&format!("{} {}\n", v, manifest_path(k)));
         }
         info.content_sha256 = c3_core::sha256_hex(csb.as_bytes());
+        info.content = content;
     }
 
     info.tree_sha256 = c3_core::sha256_hex(manifest.as_bytes());
@@ -373,6 +377,9 @@ pub struct TreeComparison {
     pub changed: bool,
     /// `"<old> -> <new>"` when HEAD moved but no content changed; empty otherwise.
     pub revision_moved: String,
+    /// The paths whose content appeared, disappeared or changed (ordinal-sorted); the engine
+    /// tree check names them. Empty unless `changed`.
+    pub paths: Vec<String>,
 }
 
 /// Compare two fingerprints by content: HEAD moving or a `git add` with identical file
@@ -381,6 +388,17 @@ pub fn compare_tree_content(before: &RevisionInfo, after: &RevisionInfo) -> Tree
     let mut r = TreeComparison::default();
     if !before.content_sha256.is_empty() && !after.content_sha256.is_empty() {
         r.changed = before.content_sha256 != after.content_sha256;
+        if r.changed {
+            // Name the paths whose blob differs or which appeared/disappeared (ordinal-sorted).
+            let mut keys: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
+            keys.extend(before.content.keys());
+            keys.extend(after.content.keys());
+            for k in keys {
+                if before.content.get(k) != after.content.get(k) {
+                    r.paths.push(k.clone());
+                }
+            }
+        }
     } else {
         // Fallback: the tree fingerprints decide (as before wave 24c).
         r.changed = before.tree_sha256 != after.tree_sha256;

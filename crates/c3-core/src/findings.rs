@@ -269,6 +269,16 @@ pub struct ReviewerCheck {
 }
 
 /// A coordinator usefulness mark, copied from the ledger entry so it survives pruning.
+///
+/// Field order is the plugin's wave-26 literal `{n, consult_id, lineage, provider, model,
+/// engine, purpose, topics, consult_when, useful, note, when}` (`codex-findings.ps1 -Rate`,
+/// D2) and MUST NOT change. `engine`, `topics` and `consult_when` are the wave-26 additions
+/// (D2); a mark recorded before wave 26 has none of them, so they are omittable (`Option`
+/// with `skip_serializing_if`): absent (`None`) is skipped on rewrite, keeping a pre-wave-26
+/// store byte-identical, while a fresh mark writes `engine` (a string), `topics` (an array,
+/// possibly empty) and `consult_when` (the consultation's own time). A rating that carries a
+/// `consult_id` is keyed by it (the routing score joins by `consult_id`); a pre-wave-26 mark
+/// without one is keyed by `n` within its task.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Rating {
     #[serde(default)]
@@ -281,8 +291,25 @@ pub struct Rating {
     pub provider: String,
     #[serde(default)]
     pub model: String,
+    /// (wave 26) the engine that carried the consultation (`codex` | `agy` | `muse`); absent
+    /// in a pre-wave-26 mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
     #[serde(default)]
     pub purpose: String,
+    /// (wave 26) the consultation's `-Topic` slugs (a fresh mark writes an array, possibly
+    /// empty); absent in a pre-wave-26 mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topics: Option<Vec<Value>>,
+    /// (wave 26) the consultation's own time (the ledger entry's `when`); `when` is the time
+    /// of the mark. Absent in a pre-wave-26 mark; a tri-state so a present `null` (the entry
+    /// had no time) round-trips distinct from an absent key.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_string"
+    )]
+    pub consult_when: Option<Option<String>>,
     /// `yes | partly | no`.
     #[serde(default)]
     pub useful: String,
@@ -292,6 +319,16 @@ pub struct Rating {
     pub when: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// Deserialize an optional string so a *present* value (including `null`) becomes `Some(..)`
+/// and an *absent* key stays `None` (the [`Rating::consult_when`] tri-state). With
+/// `#[serde(default)]`, an absent key never calls this and defaults to `None`.
+fn deserialize_present_string<'de, D>(d: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<String>::deserialize(d)?))
 }
 
 /// Why a status change was refused.

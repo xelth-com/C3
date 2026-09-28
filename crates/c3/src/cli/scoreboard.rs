@@ -17,9 +17,14 @@ pub struct ScoreboardArgs {
     /// An array of row objects instead of the printed table.
     #[arg(long)]
     pub json: bool,
+
+    /// `purpose` (the default): one row per (lineage, purpose); `topic`: one row per
+    /// (lineage, topic) of the consultations' topics (wave 26).
+    #[arg(long, default_value = "purpose")]
+    pub by: String,
 }
 
 /// Print the scoreboard and return the process exit code.
 pub fn run(args: ScoreboardArgs) -> i32 {
-    crate::scoreboard::run(&args.collab_dir, &args.task, args.json)
+    crate::scoreboard::run(&args.collab_dir, &args.task, args.json, &args.by)
 }

@@ -191,6 +191,10 @@ pub struct SummaryInputs {
     pub section: String,
     /// stderr tail (failed only).
     pub stderr_tail: String,
+    /// Engine turn warnings, each rendered as `warning    : <w>` (agy/muse only).
+    pub engine_warnings: Vec<String>,
+    /// The `denial retry: succeeded|failed in N s` line (agy only; empty otherwise).
+    pub denial_retry_line: String,
 }
 
 /// Render the ordered console lines of a finished run (no colour).
@@ -223,6 +227,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
             out.push(format!("reply json : {}", s.reply_json_path));
         }
         out.push(format!("events file: {}", s.events_path));
+        for w in &s.engine_warnings {
+            out.push(format!("warning    : {w}"));
+        }
         if !s.stderr_tail.trim().is_empty() {
             out.push("--- codex stderr (tail) ---".into());
             out.push(s.stderr_tail.trim().to_string());
@@ -245,6 +252,12 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
         if !s.resume_command.is_empty() {
             out.push(format!("resume     : {}", s.resume_command));
         }
+    }
+    for w in &s.engine_warnings {
+        out.push(format!("warning    : {w}"));
+    }
+    if !s.denial_retry_line.is_empty() {
+        out.push(s.denial_retry_line.clone());
     }
     if !s.repair_console.is_empty() {
         out.push(s.repair_console.clone());

@@ -97,8 +97,8 @@ Reference read at `claude-codex-consult` HEAD `c4cb428` (wave 24c, past `50dbddd
 
 | harness | status | note |
 |---|---|---|
-| harness-engines.ps1 (agy) | partial | M2d pass 1: the agy DRY-RUN path is wired (engine selection, identity + `provider_config {engine, launcher}`, model-tier effort, native transport, capability refusals, `NN-agy-*` naming, `engine_run`/reviewer preview, the per-engine dry-run block). `-Only UNIT,ROSTER,DRYRUN,LISTING` → **31/3** (the 3 fails are the schema-path exact-command match — c3 ships its schema under `CODEX_HOME`). A **non-dry** `--engine agy` run is refused `the agy engine runs at milestone 2d pass 2; use --dry-run`. The live turns (denial retry, tree check, secondary turns, RUN/RESUME/DENIAL/FAIL) are pass 2. |
-| harness-muse.ps1 (muse) | partial | M2d pass 1: the muse DRY-RUN path is wired (engine default provider `meta`, `provider_config {engine, launcher, credential_mechanism: "oauth"}`, `muse-v1` effort, native transport, `--prompt-file` argv + prompt-file dry-run line, `--max-model-steps` gate, the billing/oauth launch guard, `muse-cli <version>` harness, `NN-muse-*` naming). `-Only UNIT,ROSTER,DRYRUN,ENGINEEXE` → **30/3** (schema-path match; the `UNIT D2` structural check that reads the shim text is N/A to c3; the ENGINEEXE `noLauncher` leg is a pass-2 live run). A non-dry `--engine muse` run is refused with the same pass-2 message. |
+| harness-engines.ps1 (agy) | verified | M2d **pass 2**: the live agy turns run end to end — the primary turn, the resolved parent-thread resume (`--conversation`), the denial-retry turn (F11), the read-only tree check (fails, class `permission`), the timeout continuation + format repair through the adapter, `engine_run`/`denial_retry`/usage/handoff/summary. **FULL run 70/8** (`harness-results.md` "Run 6"): the 8 are 3 schema-path (environmental), 1 newline-in-arg shim artifact (A8), RUN+DENIAL field-order (blocked on c3-core `mode_fallback`/`stall`/`tree_check`), RECOVER (spans `findings_tool`), PANEL (M4 crash). All agy BEHAVIOUR passes. |
+| harness-muse.ps1 (muse) | verified | M2d **pass 2**: the live muse turns run end to end — the primary `exec --json --prompt-file` turn, the `--session-id` resume, the wave-26b **D9** tree check (muse WARNS, `tree_check{outcome,files}`), the format repair (fresh `--prompt-file`, native schema), `--max-model-steps`, `usage: null` + `Tokens: not reported by muse.`, the quota `retry_after`. **FULL run 63/11, ran to its own summary line for the first time** ("Run 6"): 4 schema-path (environmental), RUN field-order (c3-core fields), `UNIT D2` (shim-introspection, N/A), 2 BILLING + 3 PANEL (all M4 panel). All muse BEHAVIOUR passes. |
 | PANEL rows | n/a | `--panel`/`--panel-all` refused with a "milestone 4" message. |
 
 ## Counts
@@ -465,3 +465,51 @@ adapters, the RUN/RESUME/DENIAL/FAIL ledger + handoff (`engine_run.turns`, agy u
 `Tokens: not reported by muse.` handoff line), and the muse LISTING/SIGNIN/SCOREBOARD rows. The
 engine adapters (`engines::agy`/`muse`) and the core argv/effort/caps are already in place; pass 2
 removes the non-dry refusal in `run_inner` and drives `run_live` per engine.
+
+## M2d pass 2 progress — the live agy/muse turns (this pass)
+
+Pass 1 wired the agy/muse dry-run path and refused a non-dry engine run. Pass 2 removes that
+refusal and drives the live turns per engine through the `Engine` trait, generalizing the codex
+live path (`run_live`/`finish`/`render_handoff`/`build_entry` and the secondary-turn helpers) so
+every primary AND secondary file name carries the engine's prefix (`NN-<agy|muse>-*`, no more
+hardcoded `-codex-`).
+
+Landed (`harness-results.md` "Run 6": harness-engines **70/8**, harness-muse **63/11** — first full
+completion; all engine BEHAVIOUR passes):
+
+1. **Per-engine turn dispatch** (`run_primary_turn`, `run_codex_secondary` generalized,
+   `run_engine_secondary`) — `AgyEngine`/`MuseEngine`/`CodexEngine` run the primary and secondary
+   turns; the primary uses the resolved parent-thread mode so a RESUME resumes `--conversation`
+   (agy) / `--session-id` (muse). The muse prompt is written to a fresh `--prompt-file` per turn.
+2. **agy denial retry (F11)** (`run_engine_denial_retry`) — the gate
+   (`denied_empty && thread && !tree_problem && DenialRetry==1`), the `min(timeout,300)` cap, the
+   `.denial-retry.events.jsonl` file, the exact retry prompt, the `denial_retry{}` record, the
+   success warning and the ` (denial retry failed: ...)` suffix.
+3. **Read-only tree check (wave 26b D9)** (`engine_tree_check` + `tree_check::collab_snapshot`/
+   `compare_collab`) — a **write-disabled** engine (muse) WARNS (the reply stays usable, a
+   `warnings[]` note, `tree_check.outcome = warned`); **agy** FAILS (forced class `permission`, the
+   reply discarded). The collab-directory snapshot excludes `.consult.*` and ignores this run's own
+   handoff prefix. `revision::TreeComparison` gained the changed-file `paths`.
+4. **Timeout continuation + format repair through the adapters** — the resume forms, native schema
+   where the engine has it (prompt-only re-sends the schema in the prompt), the kept
+   `.repair.events.jsonl`, effort `low` for muse; the engine repair failure keeps the turn's framed
+   outcome (e.g. `parent conversation X not found`).
+5. **Ledger/handoff/summary per engine** — `engine_run{turns, max_model_steps, msp_schema_version}`,
+   `denial_retry{}`, agy usage mapping + muse `usage: null` and the `Tokens: not reported by muse.`
+   line, the `Engine turns:` header, engine warnings as `warning    :` summary lines and in the
+   ledger `warnings`, the `Gemini (agy)`/`Meta Muse (muse)` title + author, the `[agy]`/`[muse]`
+   reviewer lineage, the engine prompt-via clause, and the quota `retry_after` parse.
+6. **`--max-model-steps`** into the muse argv + `engine_run` + header; the `<engine> CLI not found
+   on PATH` non-dry refusal; the F02-14 cmd.exe `%`-argument hazard (dry + real).
+
+Unit tests: +6 (`cmd_argv_hazard`, `engine_tree_note`, `engine_prompt_via`, `cut_files`,
+`engine_kind_of`, collab snapshot/compare). `cargo test -p c3 -p c3-core --no-default-features` all
+green; `cargo clippy ... -D warnings` clean; `rustfmt` on the changed files.
+
+**Hand-off / open (needs c3-core `ledger.rs`, owned by the sync worker):** the wave-26 harness
+field-order asserts three fields c3-core's `LedgerEntry` does not yet have — **`mode_fallback`**
+(after `mode`), **`stall`** (after `timeout_continue`) and **`tree_check`** `{outcome, files[]}`
+(after `artifacts_changed_during_review`). This task populates `tree_check` through the flattened
+`extra` map (so the behavioural muse TREE checks pass), but the RUN/DENIAL field-order rows need the
+named fields at those positions. Once c3-core adds them, move the `tree_check` write from `extra` to
+the named field. The `RECOVER A18` recovery-note wording spans `findings_tool` (also not owned).

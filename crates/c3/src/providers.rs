@@ -2493,6 +2493,7 @@ mod roster_walk_tests {
             panel: "always".into(),
             engine: "codex".into(),
             engine_declared: false,
+            ..Default::default()
         }
     }
 

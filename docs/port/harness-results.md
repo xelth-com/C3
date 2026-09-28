@@ -547,3 +547,119 @@ sections are pass 2 (live turns) and were not measured.
   same section (`-EngineExe` binding, ambiguity, `-Engine codex` → `-CodexExe`, no-roster/no-Engine,
   a launcher that does not exist, the vendor install location) pass. Lands in pass 2 with the live
   path.
+
+# Run 6 — agy/muse live turns wired into `c3 consult` (M2d pass 2)
+
+This pass drives the agy and muse engines through their live turns: the primary turn per engine
+(`run_primary_turn` -> `AgyEngine`/`MuseEngine`), the resolved parent-thread resume
+(`--conversation` / `--session-id`), the agy denial-retry turn (F11), the read-only tree check
+(wave 26b **D9**), the timeout continuation and format-repair turns through the engine adapters, and
+the per-engine ledger/handoff/summary lines (`engine_run`, `denial_retry`, the muse
+`Tokens: not reported by muse.` line, the usage mapping, the tree-check warnings). The pass-2
+refusal is gone; a non-dry `--engine agy|muse` run now executes.
+
+Same shim setup as Runs 2-5 (the C3 shims from `tests/shim/`, the plugin's own
+`codex-consult-common.ps1`, a sibling `schemas/consult-reply.schema.json`; `$env:C3_EXE` a fresh
+`--no-default-features` build of `target\debug\c3.exe`). Both harnesses were run **FULL** (no
+`-Only`), ONE AT A TIME (`run6-engines.ps1` / `run6-muse.ps1`).
+
+Local gates: `cargo build` (clean), `cargo test -p c3 -p c3-core --no-default-features` (**all
+green**, +6 new unit tests for the engine gates, the tree-check naming, and the collab
+snapshot/compare), `cargo clippy -p c3 -p c3-core --no-default-features --all-targets -- -D
+warnings` (**clean**), `rustfmt` on the changed files.
+
+## Summary table (Run 1 / Run 5 -> Run 6)
+
+| harness | Run 1 | Run 5 (pass-1 `-Only`) | Run 6 (FULL) | ran to its own summary line? |
+|---|---|---|---|---|
+| harness-engines | ~18 / ~18 (crashed) | 31 / 3 | **70 / 8** | no - crashes in PANEL (`$e1.panel.id` null; panel is M4, refused) |
+| harness-muse | 19 / 13 (crashed) | 30 / 3 | **63 / 11** | **yes** (first full completion) |
+
+harness-muse ran to its own summary line for the first time (`harness-muse (...): 63 passed, 11
+failure(s).`). harness-engines runs every section through SCOREBOARD and crashes only in PANEL (an
+`$e1.panel.id.Substring(0,8)` on a null panel id, because `--panel` is refused as a milestone-4
+feature - expected; pass 2 does not own panel).
+
+## What this pass landed
+
+- **Live turns per engine** - `run_primary_turn` builds `AgyEngine`/`MuseEngine`/`CodexEngine`; the
+  primary turn uses the resolved parent-thread mode (RESUME resumes `--conversation`/`--session-id`).
+  All engine RUN/RESUME/FAIL rows pass (usable/thread/usage/command/reviewer/harness, the failure
+  classes, the malformed/no-terminal/no-result/model-drift/session-mismatch cases, a timeout kill's
+  candidate-only thread, the reply kept on a failure that still produced one).
+- **agy denial retry (F11)** - the gate, the `min(timeout,300)` cap, the `.denial-retry.events.jsonl`
+  file, the exact retry prompt (the denied tool + permission wording + schema lines; prompt-only
+  re-sends the schema), the success path (`usable reply` + the `denial notice (...)` warning) and the
+  failure path (` (denial retry failed: ...)`). DENIAL rows pass except the entry field-order
+  conjunct (below).
+- **Read-only tree check (wave 26b D9)** - discovered this pass (the reference sweep had the older
+  `Get-EngineTreeProblem`). A write-disabled engine (muse) now **WARNS** (`tree_check.outcome=warned`,
+  the reply stays usable, `warnings[]` = "the working tree/collab directory changed during the run (N
+  file: ...) - muse ran write-disabled, the change is not the reviewer's"); **agy** keeps the
+  **failure** (forced class `permission`, "... - agy's sandbox does not block writes", the reply
+  discarded). The collab-directory snapshot excludes `.consult.*` and ignores this run's own handoff
+  prefix. All TREE rows pass.
+- **Timeout continuation + format repair through the engine adapters** - the resume forms, native
+  schema where the engine has it (prompt-only drops it and re-sends the schema in the prompt), the
+  engine repair keeps its `.repair.events.jsonl`, effort `low` for muse, a fresh `--prompt-file` per
+  muse turn. PROSE/REPAIR rows pass except the schema path (below).
+- **Ledger/handoff/summary per engine** - `engine_run{turns, max_model_steps, msp_schema_version}`,
+  the `denial_retry{}` record, agy usage mapping (`cache_read->cached_input`,
+  `thinking->reasoning_output`, `total_tokens`), muse `usage: null` + the `Tokens: not reported by
+  muse.` handoff line, the `Engine turns:` header line, engine warnings as `warning    :` summary
+  lines and in ledger `warnings`, the `Meta Muse (muse)`/`Gemini (agy)` title + author lines, the
+  `[agy]`/`[muse]` reviewer lineage, the muse `--prompt-file` prompt-via clause, and the retry_after
+  parse of a quota message.
+- **`--max-model-steps`** - appended after `--approval-mode never` for muse, into
+  `engine_run.max_model_steps` and the header; refused for agy/codex.
+- **`<engine> CLI not found on PATH`** refusal (non-dry, no launcher) and the F02-14 cmd.exe
+  `%`-argument hazard (dry-run `launch      :` line + the real-run "run is refused before launch").
+
+## Remaining differing checks, grouped
+
+### Blocked on c3-core ledger fields the wave-26 order requires (NOT owned by this task)
+
+`FAIL RUN ledger fields in the same order as a codex entry` (engines + muse) and
+`FAIL DENIAL ... denial_retry {...} right after format_retry` (engines). The wave-26 harness
+`$order` inserts three fields c3-core's `LedgerEntry` does not have: **`mode_fallback`** (after
+`mode`), **`stall`** (after `timeout_continue`) and **`tree_check`** (after
+`artifacts_changed_during_review`). The behaviour is correct (the evidence is `usable reply`, the
+`denial_retry` record and `engine_run` are right); only the entry field-order conjunct fails because
+those named fields are missing. This task populates `tree_check` through the flattened `extra` map
+(so the muse TREE checks that read `$e.tree_check.outcome` pass), but that serializes at the entry's
+end, not in order. **Reported to the supervisor:** c3-core `ledger.rs` (the sync worker's file)
+needs named `mode_fallback`, `stall`, `tree_check` fields at those positions.
+
+### Environmental - the documented schema-path divergence
+
+`FAIL DRYRUN argv ...` (x3 agy), `FAIL RUN D1` (muse, `[5]=$schemaPath`), `FAIL RUN F02-14/D15`
+(muse), `FAIL DRYRUN argv pinned` (muse), `FAIL REPAIR D1` (muse, the repair `--output-schema
+<path>`). Each compares c3's `<CODEX_HOME>/c3/schemas/consult-reply.v1.json` against the plugin's
+on-disk schema path. Same divergence codex has; the flag structure/order and the fresh per-turn
+`--prompt-file` are confirmed by the sibling passing checks.
+
+### A shim / PowerShell argument artifact
+
+`FAIL RUN A8: the ask with ", \, %APPDATA%, a newline and non-ASCII arrives byte for byte`
+(engines). Direct inspection of the delivered NDJSON stdin (a preserved sample) shows the ask
+arrives and is stored **byte-for-byte** (the sibling `A16` check - the same content's length and
+boundaries - passes every run); the failure is the embedded newline surviving the harness's
+`Start-Process` -> shim -> native-exe argument passing on Windows, not a c3 logic bug (the same class
+as the documented `\"` vs `""` argv-quoting divergences).
+
+### Not applicable / out of scope
+
+- `FAIL UNIT D2` (muse) - reads the C3 shim's text for `$engineSpec.Adapter` call sites; a shim has
+  none (same as Run 5).
+- `FAIL PANEL ...` (x1 engines, x3 muse) and `FAIL BILLING ... a panel member ...` (x2 muse) -
+  `--panel` is a milestone-4 feature (refused); these are panel rows.
+- `FAIL RECOVER A18` (engines) - the recovery-record note spans `codex-findings.ps1 -List` (the
+  `findings_tool`, not owned here) plus the dry-run/next-run recovery lines. The engine pending
+  record itself is correct (`RECOVER #1` passes). Deferred.
+
+## Hand-off
+
+- c3-core `LedgerEntry` needs the wave-26 named fields `mode_fallback`, `stall` and `tree_check`
+  (`{outcome, files[]}`) at their order positions; once present, this task's `tree_check`-via-`extra`
+  write moves to the named field and the RUN/DENIAL field-order rows pass.
+- `RECOVER A18`'s note wording lives partly in `findings_tool` (not owned here).

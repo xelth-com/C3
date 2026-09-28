@@ -66,6 +66,17 @@ fn pv_str(v: &Value, key: &str) -> String {
     }
 }
 
+/// A canonical `8-4-4-4-12` hex guid (`codex-findings.ps1`'s consult_id guard).
+fn is_uuid(s: &str) -> bool {
+    let parts: [usize; 5] = [8, 4, 4, 4, 12];
+    let segs: Vec<&str> = s.split('-').collect();
+    segs.len() == 5
+        && segs
+            .iter()
+            .zip(parts.iter())
+            .all(|(seg, &n)| seg.len() == n && seg.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
 fn pv_str_or(v: &Value, key: &str, default: &str) -> String {
     match pv(v, key) {
         Some(_) => pv_str(v, key),
@@ -981,6 +992,7 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
 
     let mut provider = String::new();
     let mut model = entry.model.clone();
+    let mut engine = "codex".to_string();
     let mut lineage = "unknown provenance".to_string();
     if !entry.reviewer.provider.is_empty()
         || !entry.reviewer.model.is_empty()
@@ -988,41 +1000,84 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
     {
         provider = entry.reviewer.provider.clone();
         model = entry.reviewer.model.clone();
-        lineage = format_reviewer_lineage(
-            &entry.reviewer.provider,
-            &entry.reviewer.model,
-            &entry.reviewer.engine,
-        );
+        engine = if entry.reviewer.engine.is_empty() {
+            "codex".to_string()
+        } else {
+            entry.reviewer.engine.clone()
+        };
+        lineage = format_reviewer_lineage(&provider, &model, &engine);
     }
+    // (wave 26, D2) the mark is keyed by the consultation's id; a non-empty id must be a guid.
+    let consult_id = entry.consult_id.clone();
+    if !consult_id.is_empty() && !is_uuid(&consult_id) {
+        return Err(format!(
+            "consultation n={rate} in {} has a malformed consult_id '{consult_id}'; nothing was changed.",
+            ctx.sessions_path.display()
+        ));
+    }
+    // (wave 26, D2) the mark copies everything the routing score needs from the ledger entry
+    // (no later join by n): the engine, the topics and the consultation's own time.
+    let topics: Vec<Value> = entry
+        .topics
+        .as_ref()
+        .map(|ts| {
+            ts.iter()
+                .filter(|t| !t.is_null() && !matches!(t, Value::String(s) if s.is_empty()))
+                .map(|t| match t {
+                    Value::String(s) => Value::String(s.clone()),
+                    Value::Bool(b) => Value::String((if *b { "True" } else { "False" }).into()),
+                    Value::Number(n) => Value::String(n.to_string()),
+                    other => Value::String(other.to_string()),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let mark = c3_core::findings::Rating {
         n: rate,
-        consult_id: entry.consult_id.clone(),
+        consult_id: consult_id.clone(),
         lineage: lineage.clone(),
         provider,
         model,
+        engine: Some(engine),
         purpose: entry.purpose.clone(),
+        topics: Some(topics),
+        consult_when: Some(Some(entry.when.clone())),
         useful: ctx.useful.clone(),
         note: ctx.args.note.trim().to_string(),
         when: iso_timestamp(),
         extra: Default::default(),
     };
 
-    // Re-read findings.json under the lock; replace-or-append the mark.
+    // Re-read findings.json under the lock; replace-or-append the mark. (wave 26, D2) the same
+    // consultation is matched by consult_id (case-insensitive) when both carry one, else by n
+    // (a mark recorded before wave 26 without a consult_id). The first match takes the new
+    // mark's position; any further duplicate of the same key is dropped.
     let mut findings = read_findings_typed(ctx)?;
     let mut replaced = false;
     let mut previous = String::new();
     {
         let ratings = findings.ratings.get_or_insert_with(Vec::new);
-        for r in ratings.iter_mut() {
-            if r.n == rate && !replaced {
-                previous = r.useful.clone();
-                *r = mark.clone();
-                replaced = true;
+        let mut kept: Vec<c3_core::findings::Rating> = Vec::with_capacity(ratings.len() + 1);
+        for old in ratings.drain(..) {
+            let same = if !consult_id.is_empty() && !old.consult_id.is_empty() {
+                old.consult_id.eq_ignore_ascii_case(&consult_id)
+            } else {
+                old.n == rate
+            };
+            if same {
+                if !replaced {
+                    previous = old.useful.clone();
+                    kept.push(mark.clone());
+                    replaced = true;
+                }
+                continue;
             }
+            kept.push(old);
         }
         if !replaced {
-            ratings.push(mark.clone());
+            kept.push(mark.clone());
         }
+        *ratings = kept;
     }
 
     write_text_atomic(

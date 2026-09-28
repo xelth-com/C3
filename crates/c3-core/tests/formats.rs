@@ -136,7 +136,13 @@ fn roster_rejects_unknown_entry_key() {
 fn roster_rejects_ext_that_is_not_an_object() {
     let text = r#"{ "roster_version": 1, "ext": 3, "reviewers": [{"provider":"openai"}] }"#;
     let r = validate_roster("/tmp/roster.json", text, None);
-    assert!(r.error.contains("ext must be a JSON object"), "{}", r.error);
+    assert!(
+        r.error.contains(
+            "ext must be an object (the extension point of other implementations; got 3)"
+        ),
+        "{}",
+        r.error
+    );
 }
 
 #[test]
