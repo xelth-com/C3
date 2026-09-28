@@ -162,6 +162,9 @@ pub struct SummaryInputs {
     pub failure_hint: String,
     /// The `continued  : ...` line when a timeout continuation ran (empty otherwise).
     pub continue_line: String,
+    /// The `write lock : waited N ms for another commit of this task` line when the commit waited
+    /// (empty when it won the lock at once, F11-3).
+    pub commit_wait_line: String,
     /// The `format repair: ...` console line when a repair ran (empty otherwise).
     pub repair_console: String,
     /// The repair drift notes, each rendered as `  drift: <note>`.
@@ -288,6 +291,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
     }
     if !s.structured_invalid.is_empty() {
         out.push(s.structured_invalid.clone());
+    }
+    if !s.commit_wait_line.is_empty() {
+        out.push(s.commit_wait_line.clone());
     }
     out.push(format!("reply file : {}", s.reply_path));
     if !s.reply_json_path.is_empty() {

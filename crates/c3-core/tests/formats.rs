@@ -146,6 +146,88 @@ fn roster_rejects_ext_that_is_not_an_object() {
 }
 
 #[test]
+fn roster_rejects_forbidden_delimiters_in_roster_strings() {
+    // (wave 26b, D3) `Get-RosterStringProblem`: none of '::', '[', ']', '|', ',', '#' may
+    // appear in a provider label, a model or an engine.
+    let cases = [
+        (
+            "provider",
+            "a::b",
+            "roster entry #1: provider must not contain '::'",
+        ),
+        (
+            "provider",
+            "a[b",
+            "roster entry #1: provider must not contain '['",
+        ),
+        (
+            "provider",
+            "a]b",
+            "roster entry #1: provider must not contain ']'",
+        ),
+        (
+            "provider",
+            "a|b",
+            "roster entry #1: provider must not contain '|'",
+        ),
+        (
+            "provider",
+            "a,b",
+            "roster entry #1: provider must not contain ','",
+        ),
+        (
+            "provider",
+            "a#1",
+            "roster entry #1: provider must not contain '#'",
+        ),
+        (
+            "model",
+            "glm|5",
+            "roster entry #1: model must not contain '|'",
+        ),
+        (
+            "model",
+            "glm,5",
+            "roster entry #1: model must not contain ','",
+        ),
+        (
+            "model",
+            "glm]5",
+            "roster entry #1: model must not contain ']'",
+        ),
+        (
+            "engine",
+            "co::dex",
+            "roster entry #1: engine must not contain '::'",
+        ),
+    ];
+    for (key, value, expected) in cases {
+        let text = format!(
+            r#"{{ "roster_version": 1, "reviewers": [{{"provider":"openai","model":"m","{key}":{value:?}}}] }}"#
+        );
+        let r = validate_roster("/tmp/roster.json", &text, None);
+        assert!(r.error.contains(expected), "{key}={value}: {}", r.error);
+    }
+}
+
+#[test]
+fn roster_accepts_provider_model_and_engine_with_no_forbidden_characters() {
+    // Edge whitespace (leading/trailing blanks) is refused by the provider/model
+    // "without surrounding blanks" checks; a clean value is accepted.
+    let text = r#"{ "roster_version": 1, "reviewers": [
+        {"provider":"gemini","engine":"agy","model":"gemini-3.8-flash-high"}
+    ] }"#;
+    let r = validate_roster("/tmp/roster.json", text, None);
+    assert!(r.error.is_empty(), "{}", r.error);
+    assert_eq!(r.entries[0].provider, "gemini");
+    assert_eq!(r.entries[0].engine, "agy");
+
+    let blank = r#"{ "roster_version": 1, "reviewers": [{"provider":"ZAI ","model":"glm-5.3"}] }"#;
+    let rb = validate_roster("/tmp/roster.json", blank, None);
+    assert!(rb.error.contains("surrounding blanks"), "{}", rb.error);
+}
+
+#[test]
 fn roster_rejects_duplicate_reviewer() {
     let text = r#"{ "roster_version": 1, "reviewers": [{"provider":"ZAI","model":"m"},{"provider":"ZAI","model":"m"}] }"#;
     let r = validate_roster("/tmp/roster.json", text, None);

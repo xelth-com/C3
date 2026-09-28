@@ -1,27 +1,34 @@
-//! The panel path of `c3 consult` (`--panel`/`--panel-all`): compute the plan the parent run
-//! would build (`codex-consult.ps1:1967-2588`) and either print the dry-run block byte-identical
-//! to the plugin, or refuse a real run — the panel runtime (launching the member children, the
-//! scheduler, the summary block) lands in the next chunk.
+//! The panel path of `c3 consult` (`--panel`/`--panel-all`): the parent scheduler that runs a
+//! whole panel end to end (`codex-consult.ps1:2350-2888`).
 //!
-//! The plan is: read the roster, resolve every entry's availability (`Select-PanelMembers`),
-//! resolve the required reviewers (`-Require`, else roster `require`; a required outage refuses
-//! before anything starts, exit 5), seat them (`Select-PanelRouting` — the seeded weighted draw
-//! or roster order), build the concurrency plan (`Get-PanelPlan`), assign the per-seat numbers,
-//! and render.
+//! `build` computes the plan the parent would run (read the roster, resolve availability, the
+//! required reviewers, the seeded seat draw, the roles, the concurrency plan) — everything that
+//! touches no disk. `schedule` then takes the task lock (a real run), reserves every seat's
+//! `.consult.pending-<NN>.json`, launches each seat as a child `c3 consult --task <t>
+//! --panel-spec <b64>` process (its console to `<temp>/codex-consult-panel-<id>/<NN>.out|.err`),
+//! polls them along the endpoint-group plan (parallel across groups up to the caps, one after
+//! another within a group unless the roster's `parallel` raises it, `-PanelConcurrency` caps the
+//! total), collects each member's outcome (its last `codex-consult: ` stdout line plus its
+//! committed ledger entry), patches every member's `panel.started`/`panel.usable` after all
+//! finish, prints the byte-identical summary block, and returns the exit code.
 //!
-//! Ratings for the routed draw are not yet wired (the all-task rating store is the scoreboard's,
-//! out of this chunk): the panel is fed an empty rating set, so a routed panel falls back to
-//! roster order (`fallback: "no ratings"`) exactly as it would with no rated reviewer. Wiring the
-//! rating reader is a follow-up.
+//! A **dry run** takes the same path with `dry_run=true` members and no lock/records: each seat's
+//! child prints its own single-run dry-run block, and the summary marks it `planned`/`refused`.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::time::Instant;
 
 use c3_core::lineage::format_reviewer_lineage;
-use c3_core::store::{EvidenceStore, FilesStore};
+use c3_core::store::{
+    EvidenceStore, FilesStore, LockRecord, PendingRecord, PendingRef, PendingState,
+};
 use c3_core::task_slug::TaskSlug;
+use serde_json::{json, Value};
 
 use crate::consult::args::{Options, Resolved};
+use crate::panel::member::{MemberBrief, MemberSpec};
 use crate::providers;
 
 use super::plan::{self, MemberInput, PanelPlan, PanelRoutingResult, RoutingRecord, Runner};
@@ -31,20 +38,8 @@ const TOOL: &str = "codex-consult";
 
 /// Run the panel path; return the process exit code.
 pub fn run(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
-    match plan_panel(&o) {
-        Ok(plan) => {
-            if o.dry_run {
-                for line in render_dry_run(&o, &r, &plan) {
-                    println!("{line}");
-                }
-                0
-            } else {
-                eprintln!(
-                    "{TOOL}: -Panel is planned but its runtime lands in the next chunk; run it with -DryRun to see the plan, or drop -Panel to consult one reviewer."
-                );
-                1
-            }
-        }
+    match build(&o, &r) {
+        Ok(built) => schedule(o, r, built),
         Err((msg, code)) => {
             eprintln!("{TOOL}: {msg}");
             code
@@ -52,47 +47,69 @@ pub fn run(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
     }
 }
 
-/// The computed panel plan (everything the dry-run block and, later, the scheduler need).
-struct Plan {
-    panel_id: String,
-    roster_path: String,
-    entry_count: usize,
-    /// Per roster-order entry: position, shown lineage, state, reason, required, and its seat
-    /// number/role (when seated).
-    rows: Vec<PlanRow>,
-    routing: RoutingRecord,
-    concurrency: PanelPlan,
-    warnings: Vec<String>,
-    topics: Vec<String>,
-    range_line: String,
-    range_warning: String,
-    /// The `pending     : ...` recovery lines a dry run reports (`codex-consult.ps1:2620`).
-    pending_lines: Vec<String>,
-    seated_count: usize,
-    verb: &'static str,
+/// A seated runner (seat order), as `build` resolves it (no disk yet).
+struct RunnerInfo {
+    position: i64,
+    entry: c3_core::roster::RosterEntry,
+    engine: String,
+    shown: String,
+    role: String,
+    required: bool,
+    group: usize,
 }
 
-struct PlanRow {
+/// A display row (roster order), for the plan block and the summary.
+struct DisplayRow {
     position: i64,
     shown: String,
     /// `run` | `not-picked` | `skipped`.
     state: String,
     reason: String,
     required: bool,
-    n: i64,
-    nn: u32,
     role: String,
+    /// The seated runner index (into `runners`) when `state == run` and picked.
+    runner: Option<usize>,
 }
 
-fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
+/// Everything `build` resolves before the lock; `schedule` consumes it.
+struct Built {
+    panel_id: String,
+    roster_path: String,
+    collab_root: PathBuf,
+    caller_cwd: PathBuf,
+    task: TaskSlug,
+    codex_launcher: String,
+    entry_count: usize,
+    seated_count: usize,
+    rows: Vec<DisplayRow>,
+    runners: Vec<RunnerInfo>,
+    routing_rec: RoutingRecord,
+    routing_value: Value,
+    concurrency: PanelPlan,
+    limits_value: Value,
+    warnings: Vec<String>,
+    topics: Vec<String>,
+    range_line: String,
+    range_warning: String,
+    size_asked: i64,
+    k: i64,
+    members_record: Vec<MemberBrief>,
+    skipped_record: Value,
+    roles_note: String,
+    parent_start: String,
+    verb: &'static str,
+}
+
+/// Resolve the whole plan (`Select-PanelMembers`, required reviewers, `Select-PanelRouting`, the
+/// roles, `Get-PanelPlan`) — everything before the lock.
+fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
     let collab_root = providers::resolve_collab_root(&repo_root, &o.collab_dir);
     let task = TaskSlug::new(o.task.clone()).map_err(|e| (e.to_string(), 1))?;
 
     let launcher = providers::resolve_codex_launcher(&o.codex_exe).map_err(|m| (m, 1))?;
-    let config_path = providers::get_codex_config_path();
-    let config = providers::read_codex_config(&config_path);
+    let config = providers::read_codex_config(&providers::get_codex_config_path());
     let openai_base_url = std::env::var("OPENAI_BASE_URL").unwrap_or_default();
 
     let roster = providers::read_reviewer_roster().map_err(|m| (m, 1))?;
@@ -110,7 +127,6 @@ fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
         .map(|(u, _, _)| u)
         .unwrap_or_else(|_| chrono::Utc::now());
 
-    // Availability + the weighty gate (`Select-PanelMembers`).
     let ctx = providers::Ctx::for_consult(
         config.clone(),
         providers::read_all_task_consults(&collab_root),
@@ -127,8 +143,7 @@ fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
         o.skip_preflight,
     );
 
-    // Required reviewers (`-Require`, else roster `require.<purpose>`); a required outage refuses
-    // the whole panel before anything starts (exit 5), a dry run included.
+    // Required reviewers (exit 5 on an outage).
     let require_given = !o.require.is_empty();
     let required =
         plan::resolve_required_reviewers(&roster, &o.require, &o.purpose, require_given, true);
@@ -202,8 +217,7 @@ fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
         ));
     }
 
-    // The seats (`Select-PanelRouting`). Ratings are empty until the rating reader is wired, so a
-    // routed panel falls back to roster order (`fallback: "no ratings"`).
+    // The seats (`Select-PanelRouting`) — routed by the real ratings, else roster order.
     let members: Vec<MemberInput> = selection
         .members
         .iter()
@@ -212,7 +226,7 @@ fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
             provider: m.identity.provider.clone(),
             model: m.identity.model.clone(),
             engine: if m.entry.engine.is_empty() {
-                "codex".to_string()
+                "codex".into()
             } else {
                 m.entry.engine.clone()
             },
@@ -237,7 +251,8 @@ fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
     } else {
         o.panel_order.trim().to_lowercase()
     };
-    let ratings: Vec<Rating> = Vec::new();
+    // The all-task rating store, read for the routed draw (`Read-AllTaskRatings`).
+    let ratings: Vec<Rating> = super::routing::read_all_task_ratings(&collab_root);
 
     let route: PanelRoutingResult = plan::select_panel_routing(
         &members,
@@ -268,17 +283,70 @@ fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
         ));
     }
 
-    // Roles: `-Role` names one role for every seated member (`-Roles` rank matching lands with the
-    // scheduler). `role_of`: seat position -> role slug.
+    let mut warnings: Vec<String> = route.warnings.clone();
+
+    // Roles: `-Role` names one role for every seat; `-Roles` assigns by score rank + willingness.
     let mut role_of: HashMap<i64, String> = HashMap::new();
+    let mut roles_note = String::new();
     if !o.role.is_empty() {
         for p in &route.picked {
             role_of.insert(p.position, o.role.clone());
         }
+    } else if !o.roles.is_empty() {
+        let role_members: Vec<super::roles::RoleMember> = route
+            .picked
+            .iter()
+            .map(|p| {
+                let entry = selection
+                    .members
+                    .iter()
+                    .find(|m| m.entry.position as i64 == p.position);
+                super::roles::RoleMember {
+                    position: p.position,
+                    score: p.score.score,
+                    roles: entry.map(|m| m.entry.roles.clone()).unwrap_or_default(),
+                }
+            })
+            .collect();
+        let assign = super::roles::select_role_assignment(&role_members, &o.roles);
+        if !assign.error.is_empty() {
+            return Err((format!("{}; nothing was started.", assign.error), 1));
+        }
+        role_of = assign.of;
+        if !assign.note.is_empty() {
+            roles_note = assign.note.clone();
+            warnings.push(assign.note);
+        }
+    }
+
+    // -MaxModelSteps only when a seat runs an engine with a step cap (muse).
+    if o.max_model_steps > 0
+        && !route.picked.iter().any(|p| {
+            let e = selection
+                .members
+                .iter()
+                .find(|m| m.entry.position as i64 == p.position)
+                .map(|m| {
+                    if m.entry.engine.is_empty() {
+                        "codex".into()
+                    } else {
+                        m.entry.engine.clone()
+                    }
+                })
+                .unwrap_or_default();
+            c3_core::lineage::engine_spec(&e)
+                .map(|s| !s.steps_flag.is_empty())
+                .unwrap_or(false)
+        })
+    {
+        return Err((
+            "-MaxModelSteps applies to the muse members of a panel (--max-model-steps); no member of this panel runs the muse engine.".into(),
+            1,
+        ));
     }
 
     // The concurrency plan (`Get-PanelPlan`) over the seated runners.
-    let runners: Vec<Runner> = route
+    let plan_runners: Vec<Runner> = route
         .picked
         .iter()
         .map(|p| {
@@ -295,85 +363,1374 @@ fn plan_panel(o: &Options) -> Result<Plan, (String, i32)> {
             }
         })
         .collect();
-    let concurrency = plan::panel_plan(&runners, &roster.parallel, o.panel_concurrency);
+    let concurrency = plan::panel_plan(&plan_runners, &roster.parallel, o.panel_concurrency);
+    let group_of: HashMap<i64, usize> = concurrency.group_of.iter().copied().collect();
 
-    // Recovery records: a corrupt one refuses even the dry run (fail-closed); an inactive one is
-    // reported (`the real run recovers it`); an active one would refuse the real run.
-    let store = FilesStore::new(collab_root.clone());
-    let mut pending_lines: Vec<String> = Vec::new();
-    {
-        let assessed = crate::consult::recovery::assess(&store, &task);
-        if let Some(err) = assessed.error {
-            return Err((err, 1));
-        }
-        for item in &assessed.items {
-            let n_shown = if item.n > 0 {
-                item.n.to_string()
-            } else {
-                String::new()
-            };
-            if item.active {
-                pending_lines.push(format!(
-                    "pending     : the real run would be REFUSED - {}",
-                    item.message
-                ));
-            } else {
-                pending_lines.push(format!(
-                    "pending     : {} (state '{}', n={n_shown}, nn={}; {}): the real run recovers it; numbering continues past it.",
-                    item.path.display(),
-                    item.state,
-                    item.nn,
-                    item.check
+    // A launcher every member of an engine would miss is refused once, up front (a real run).
+    if !o.dry_run {
+        let mut seen: Vec<String> = Vec::new();
+        for p in &route.picked {
+            let m = selection
+                .members
+                .iter()
+                .find(|m| m.entry.position as i64 == p.position);
+            let eng = m
+                .map(|m| {
+                    if m.entry.engine.is_empty() {
+                        "codex".into()
+                    } else {
+                        m.entry.engine.clone()
+                    }
+                })
+                .unwrap_or_default();
+            if seen.contains(&eng) {
+                continue;
+            }
+            seen.push(eng.clone());
+            if eng == "codex" {
+                if launcher.is_empty() {
+                    return Err((
+                        "codex CLI not found on PATH (set -CodexExe <path> or the CODEX_CONSULT_EXE environment variable).".into(),
+                        1,
+                    ));
+                }
+            } else if providers::resolve_engine_launcher(&eng, "")
+                .unwrap_or(None)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                let exe_env = c3_core::lineage::engine_spec(&eng)
+                    .map(|s| s.exe_env)
+                    .unwrap_or("");
+                return Err((
+                    format!("{eng} CLI not found on PATH (set -EngineExe <path> or the {exe_env} environment variable)."),
+                    1,
                 ));
             }
         }
     }
 
-    // The per-seat numbers (`Get-NextNumbers` + `n0+k-1`/`nn0+k-1`, seat order).
-    let nn_n = store.next_numbers(&task).map_err(|e| (e.to_string(), 1))?;
-    let mut seat_of: HashMap<i64, (i64, u32)> = HashMap::new();
-    for (k, p) in route.picked.iter().enumerate() {
-        let n = nn_n.n + k as i64;
-        let nn = nn_n.nn + k as u32;
-        seat_of.insert(p.position, (n, nn));
+    let panel_id = uuid::Uuid::new_v4().to_string();
+
+    // The members / skipped records (roster order), the display rows and the runners.
+    let members_record: Vec<MemberBrief> = selection
+        .members
+        .iter()
+        .map(|m| MemberBrief {
+            provider: m.entry.provider.clone(),
+            model: m.identity.model.clone(),
+            state: m.state.clone(),
+            reason: m.reason.clone(),
+        })
+        .collect();
+    let skipped_record: Value = Value::Array(
+        selection
+            .members
+            .iter()
+            .filter(|m| m.state == "skipped")
+            .map(|m| {
+                json!({
+                    "provider": m.entry.provider,
+                    "model": m.identity.model,
+                    "engine": if m.entry.engine.is_empty() { "codex".to_string() } else { m.entry.engine.clone() },
+                    "reason": m.reason,
+                })
+            })
+            .collect(),
+    );
+
+    let mut runners: Vec<RunnerInfo> = Vec::new();
+    for p in &route.picked {
+        let m = selection
+            .members
+            .iter()
+            .find(|m| m.entry.position as i64 == p.position);
+        let engine = m
+            .map(|m| {
+                if m.entry.engine.is_empty() {
+                    "codex".into()
+                } else {
+                    m.entry.engine.clone()
+                }
+            })
+            .unwrap_or_else(|| "codex".into());
+        runners.push(RunnerInfo {
+            position: p.position,
+            entry: m.map(|m| m.entry.clone()).unwrap_or_default(),
+            engine,
+            shown: p.lineage.clone(),
+            role: role_of.get(&p.position).cloned().unwrap_or_default(),
+            required: p.required,
+            group: *group_of.get(&p.position).unwrap_or(&0),
+        });
     }
+    let runner_of: HashMap<i64, usize> = runners
+        .iter()
+        .enumerate()
+        .map(|(i, ru)| (ru.position, i))
+        .collect();
 
-    // Warnings (`panelRoute.Warnings`); `-Roles` note not modelled yet.
-    let warnings: Vec<String> = route.warnings.clone();
-
-    // The per-entry display rows (roster order).
-    let mut rows: Vec<PlanRow> = Vec::new();
+    let mut rows: Vec<DisplayRow> = Vec::new();
     for m in &route.members {
-        let (n, nn) = seat_of.get(&m.position).copied().unwrap_or((0, 0));
-        rows.push(PlanRow {
+        rows.push(DisplayRow {
             position: m.position,
             shown: m.lineage.clone(),
             state: m.state.clone(),
             reason: m.reason.clone(),
             required: m.required,
-            n,
-            nn,
             role: role_of.get(&m.position).cloned().unwrap_or_default(),
+            runner: runner_of
+                .get(&m.position)
+                .copied()
+                .filter(|_| m.state == "run"),
         });
     }
 
-    let panel_id = uuid::Uuid::new_v4().to_string();
+    let limits_value = {
+        let mut map = serde_json::Map::new();
+        for (label, limit) in &concurrency.limits {
+            map.insert(label.clone(), json!(limit));
+        }
+        Value::Object(map)
+    };
 
-    Ok(Plan {
+    let parent_start =
+        crate::liveness::proc::process_start_iso(std::process::id()).unwrap_or_default();
+
+    // The range dry-run line (a diff-review/acceptance panel).
+    let (range_line, range_warning) = range_lines(o, r, &repo_root);
+
+    Ok(Built {
         panel_id,
         roster_path: roster.path.clone(),
+        collab_root,
+        caller_cwd: cwd,
+        task,
+        codex_launcher: launcher,
         entry_count: selection.members.len(),
+        seated_count: route.picked.len(),
         rows,
-        routing: route.routing,
+        runners,
+        routing_value: routing_value(&route.routing),
+        routing_rec: route.routing,
         concurrency,
+        limits_value,
         warnings,
         topics,
-        range_line: String::new(),
-        range_warning: String::new(),
-        pending_lines,
-        seated_count: route.picked.len(),
+        range_line,
+        range_warning,
+        size_asked: route.size_asked,
+        k: route.k,
+        members_record,
+        skipped_record,
+        roles_note,
+        parent_start,
         verb: if o.dry_run { "would run" } else { "run" },
     })
+}
+
+/// A member's runtime state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SlotState {
+    Waiting,
+    Running,
+    Done,
+    Killed,
+    Blocked,
+    FailedStart,
+}
+
+/// One seat's runtime record.
+struct Slot {
+    runner: usize,
+    k: i64,
+    n: i64,
+    nn: u32,
+    engine: String,
+    reply_name: String,
+    reply_rel: String,
+    record_path: PathBuf,
+    consult_id: String,
+    group: usize,
+    guard: f64,
+    // runtime
+    state: SlotState,
+    child: Option<Child>,
+    watch: Option<Instant>,
+    exit: Option<i32>,
+    wall: f64,
+    out_path: PathBuf,
+    err_path: PathBuf,
+    lines: Vec<String>,
+    refusal: String,
+    entry: Option<c3_core::ledger::LedgerEntry>,
+    record_state: String,
+    record_kept: bool,
+    not_started: String,
+    start_error: String,
+}
+
+/// The scheduler proper: launch the members and print the whole panel block, dry or real.
+fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
+    let dry = o.dry_run;
+    let store = FilesStore::new(b.collab_root.clone());
+    let task_dir = store.task_dir(&b.task);
+    let short = &b.panel_id[..b.panel_id.len().min(8)];
+    let parent_pid = std::process::id();
+    let panel_tmp = std::env::temp_dir().join(format!("codex-consult-panel-{}", b.panel_id));
+
+    // A real run creates the handoffs dir and takes the task lock (held to the end).
+    let _task_lock = if dry {
+        None
+    } else {
+        let _ = std::fs::create_dir_all(task_dir.join("handoffs"));
+        let record = LockRecord::now(&b.task, Some(Value::String(b.panel_id.clone())));
+        match store.take_task_lock(&b.task, &record) {
+            Ok(l) => Some(l),
+            Err(_) => {
+                let lock_path = task_dir.join(".consult.lock");
+                eprintln!(
+                    "{TOOL}: {}",
+                    crate::consult::orchestrate::format_task_lock_refusal(
+                        &lock_path,
+                        b.task.as_str()
+                    )
+                );
+                return 1;
+            }
+        }
+    };
+
+    // Every recovery record of the task, judged before anything is written.
+    let assessed = crate::consult::recovery::assess(&store, &b.task);
+    if let Some(err) = assessed.error {
+        eprintln!("{TOOL}: {err}");
+        return 1;
+    }
+    let mut pending_refusal = String::new();
+    if let Some(msg) = assessed.active_message() {
+        if dry {
+            pending_refusal = msg;
+        } else {
+            eprintln!("{TOOL}: {msg}");
+            return 1;
+        }
+    }
+
+    // The numbers of every member, past everything on disk.
+    let nn_n = match store.next_numbers(&b.task) {
+        Ok(n) => n,
+        Err(e) => {
+            eprintln!("{TOOL}: {e}");
+            return 1;
+        }
+    };
+
+    // The findings every member is shown (open when the panel starts).
+    let listed_ids: Vec<String> = if r.raw {
+        Vec::new()
+    } else {
+        store
+            .read_findings(&b.task)
+            .ok()
+            .flatten()
+            .map(|f| {
+                f.findings
+                    .iter()
+                    .filter(|fd| matches!(fd.status().as_str(), "proposed" | "implemented"))
+                    .map(|fd| fd.id.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    // Build the slots (seat order).
+    let mut slots: Vec<Slot> = Vec::new();
+    let guard_hook: f64 = std::env::var("CODEX_CONSULT_TEST_PANEL_GUARD_SEC")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(0.0);
+    let reply_base = if o.reply_name.is_empty() {
+        "reply".to_string()
+    } else {
+        o.reply_name.clone()
+    };
+    for (k0, ru) in b.runners.iter().enumerate() {
+        let k = k0 as i64 + 1;
+        let n = nn_n.n + k0 as i64;
+        let nn = nn_n.nn + k0 as u32;
+        let slug = provider_slug(&ru.entry.provider);
+        let prefix = c3_core::lineage::engine_spec(&ru.engine)
+            .map(|s| s.prefix)
+            .unwrap_or("codex");
+        let reply_name = format!("{reply_base}-{slug}");
+        let reply_rel = format!("handoffs/{nn:02}-{prefix}-{reply_name}.md");
+        let denial = c3_core::lineage::engine_spec(&ru.engine)
+            .map(|s| s.denial_retry)
+            .unwrap_or(false)
+            && o.denial_retry == 1;
+        let guard = if guard_hook > 0.0 {
+            guard_hook
+        } else {
+            panel_member_guard(r.timeout_sec, r.continue_sec, r.repair_enabled, denial)
+        };
+        slots.push(Slot {
+            runner: k0,
+            k,
+            n,
+            nn,
+            engine: ru.engine.clone(),
+            reply_name,
+            reply_rel,
+            record_path: task_dir.join(format!(".consult.pending-{nn:02}.json")),
+            consult_id: uuid::Uuid::new_v4().to_string(),
+            group: ru.group,
+            guard,
+            state: SlotState::Waiting,
+            child: None,
+            watch: None,
+            exit: None,
+            wall: 0.0,
+            out_path: panel_tmp.join(format!("{nn:02}.out")),
+            err_path: panel_tmp.join(format!("{nn:02}.err")),
+            lines: Vec::new(),
+            refusal: String::new(),
+            entry: None,
+            record_state: String::new(),
+            record_kept: false,
+            not_started: String::new(),
+            start_error: String::new(),
+        });
+    }
+
+    let panel_watch = Instant::now();
+
+    // -------------------------------------------------------------------- the plan block
+    println!(
+        "Panel {short}{}: {} of {} roster entries {}, {} (roster {}; panel id {})",
+        if dry {
+            " (dry run - nothing is executed or written)"
+        } else {
+            ""
+        },
+        b.seated_count,
+        b.entry_count,
+        b.verb,
+        b.concurrency.text,
+        b.roster_path,
+        b.panel_id
+    );
+    for row in &b.rows {
+        let state_shown = if row.state == "run" {
+            let s = &slots[row.runner.unwrap()];
+            let role = if row.role.is_empty() {
+                String::new()
+            } else {
+                format!(", role {}", row.role)
+            };
+            let required = if row.required { ", required" } else { "" };
+            format!("member, n={}, handoff {:02}{role}{required}", s.n, s.nn)
+        } else if row.state == "not-picked" {
+            format!("not picked: {}", row.reason)
+        } else {
+            format!("skipped: {}", row.reason)
+        };
+        println!("  #{} {} - {state_shown}", row.position, row.shown);
+    }
+    for line in routing_lines(&b.routing_rec, &o.purpose) {
+        println!("{line}");
+    }
+    if !b.topics.is_empty() {
+        println!("Topics: {}", b.topics.join(", "));
+    }
+    for w in &b.warnings {
+        println!("WARNING: {w}");
+    }
+    println!("{}", concurrency_line(&o, &b.concurrency));
+    println!("{}", timeout_line(&r));
+    if !b.range_line.is_empty() {
+        println!("{}", b.range_line);
+    }
+    if !b.range_warning.is_empty() {
+        println!("WARNING: {}", b.range_warning);
+    }
+    if dry && !pending_refusal.is_empty() {
+        println!("pending     : the real run would be REFUSED - {pending_refusal}");
+    }
+
+    // -------------------------------------------------------------------- reserved records
+    if !dry {
+        let mut written: Vec<PathBuf> = Vec::new();
+        for s in &slots {
+            let ru = &b.runners[s.runner];
+            let launcher_k = if s.engine == "codex" {
+                b.codex_launcher.clone()
+            } else {
+                providers::resolve_engine_launcher(&s.engine, "")
+                    .unwrap_or(None)
+                    .unwrap_or_default()
+            };
+            let rec = reserved_record(&b, s, ru, launcher_k, parent_pid, short);
+            let pref = PendingRef::member(b.task.clone(), s.nn);
+            if let Err(e) = store.write_pending(&pref, &rec) {
+                for w in &written {
+                    let _ = std::fs::remove_file(w);
+                }
+                eprintln!("{TOOL}: could not write the recovery record '{}': {e}; no panel member was started.", s.record_path.display());
+                return 1;
+            }
+            written.push(s.record_path.clone());
+        }
+        // Consume the other pending records (numbering skipped past them already).
+        for item in &assessed.items {
+            let is_member_own = slots.iter().any(|s| {
+                s.record_path
+                    .file_name()
+                    .zip(item.path.file_name())
+                    .map(|(a, c)| {
+                        a.to_string_lossy()
+                            .eq_ignore_ascii_case(&c.to_string_lossy())
+                    })
+                    .unwrap_or(false)
+            });
+            if !is_member_own {
+                if let Err(e) = std::fs::remove_file(&item.path) {
+                    println!(
+                        "{TOOL}: could not remove the consumed recovery record {} ({e})",
+                        item.path.display()
+                    );
+                }
+            }
+            println!("{TOOL}: {}", crate::consult::recovery::run_line(item));
+        }
+    } else {
+        for item in &assessed.items {
+            if !item.active {
+                println!("pending     : {}", pending_dry_tail(item));
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------- launch + poll
+    let _ = std::fs::create_dir_all(&panel_tmp);
+    let mut blocked = String::new();
+    let mut required_failed = false;
+    loop {
+        let mut progress = false;
+        // Reap finished/killed members.
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..slots.len() {
+            if slots[i].state != SlotState::Running {
+                continue;
+            }
+            let exited = slots[i]
+                .child
+                .as_mut()
+                .map(|c| matches!(c.try_wait(), Ok(Some(_)) | Err(_)))
+                .unwrap_or(true);
+            let elapsed = slots[i]
+                .watch
+                .map(|w| w.elapsed().as_secs_f64())
+                .unwrap_or(0.0);
+            if exited {
+                let code = slots[i]
+                    .child
+                    .as_mut()
+                    .and_then(|c| c.wait().ok())
+                    .and_then(|st| st.code())
+                    .unwrap_or(-1);
+                slots[i].exit = Some(code);
+                slots[i].wall = round1(elapsed);
+                slots[i].state = SlotState::Done;
+            } else if elapsed > slots[i].guard {
+                if let Some(c) = slots[i].child.as_mut() {
+                    kill_tree(c);
+                }
+                slots[i].exit = Some(-1);
+                slots[i].wall = round1(elapsed);
+                slots[i].state = SlotState::Killed;
+            } else {
+                continue;
+            }
+            progress = true;
+            complete_member(&mut slots[i], &store, &b, dry);
+            let shown = b.runners[slots[i].runner].shown.clone();
+            let mut member_status = member_status(&slots[i], dry);
+            let chars: Vec<char> = member_status.chars().collect();
+            if chars.len() > 110 {
+                member_status = chars[..110].iter().collect::<String>() + "...";
+            }
+            println!(
+                "  panel member {} of {} finished: {shown} - {member_status} ({} s)",
+                slots[i].k,
+                b.seated_count,
+                fmt_ps(slots[i].wall, 1)
+            );
+            // Required-member propagation.
+            if !dry
+                && b.runners[slots[i].runner].required
+                && !required_failed
+                && !slot_usable(&slots[i])
+            {
+                required_failed = true;
+                if blocked.is_empty() {
+                    blocked = format!("not started: the required member {shown} produced no usable reply - the panel stops (exit 5)");
+                }
+            }
+            // F15-3: -PanelConcurrency 1 and a member that left survivors stops the rest.
+            if !dry && o.panel_concurrency == 1 && blocked.is_empty() {
+                let rd = crate::liveness::pending::read_pending_file(&slots[i].record_path);
+                if let Some(err) = rd.error {
+                    blocked = format!(
+                        "not started: the previous member's recovery record cannot be used ({})",
+                        c3_core::one_line(&err)
+                    );
+                } else if let Some(rec) = rd.record {
+                    let chk =
+                        crate::liveness::pending::test_pending_active(&rec, &slots[i].record_path);
+                    if chk.active {
+                        let file = slots[i]
+                            .record_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        let st = rec.get("state").and_then(|v| v.as_str()).unwrap_or("");
+                        blocked = format!("not started: the previous member ({shown}) left surviving processes ({file} state {st}); recover the task first");
+                    }
+                }
+            }
+        }
+        // Start waiting members along the plan.
+        let mut running = slots
+            .iter()
+            .filter(|s| s.state == SlotState::Running)
+            .count() as i64;
+        for i in 0..slots.len() {
+            if slots[i].state != SlotState::Waiting {
+                continue;
+            }
+            if !blocked.is_empty() {
+                slots[i].state = SlotState::Blocked;
+                slots[i].not_started = blocked.clone();
+                progress = true;
+                continue;
+            }
+            if o.panel_concurrency > 0 && running >= o.panel_concurrency {
+                break;
+            }
+            let grp = slots[i].group;
+            let limit = b.concurrency.groups.get(grp).map(|g| g.limit).unwrap_or(1);
+            if slots
+                .iter()
+                .filter(|s| s.group == grp && s.state == SlotState::Running)
+                .count() as i64
+                >= limit
+            {
+                continue;
+            }
+            // Roster order within an endpoint group.
+            let my_k = slots[i].k;
+            if slots
+                .iter()
+                .any(|s| s.group == grp && s.state == SlotState::Waiting && s.k < my_k)
+            {
+                continue;
+            }
+            start_member(
+                &mut slots,
+                i,
+                &o,
+                &r,
+                &b,
+                parent_pid,
+                &panel_tmp,
+                &listed_ids,
+            );
+            progress = true;
+            match slots[i].state {
+                SlotState::Running => running += 1,
+                SlotState::FailedStart
+                    if !dry && b.runners[slots[i].runner].required && !required_failed =>
+                {
+                    required_failed = true;
+                    let shown = b.runners[slots[i].runner].shown.clone();
+                    blocked = format!("not started: the required member {shown} could not be started - the panel stops (exit 5)");
+                }
+                _ => {}
+            }
+        }
+        if slots
+            .iter()
+            .all(|s| s.state != SlotState::Waiting && s.state != SlotState::Running)
+        {
+            break;
+        }
+        if !progress {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    let panel_wall = round1(panel_watch.elapsed().as_secs_f64());
+
+    // -------------------------------------------------------------------- console output
+    for s in &slots {
+        if s.state != SlotState::Done && s.state != SlotState::Killed {
+            continue;
+        }
+        println!();
+        println!(
+            "=== panel {short} member {} of {}: {} (roster #{}) ===",
+            s.k, b.seated_count, b.runners[s.runner].shown, b.runners[s.runner].position
+        );
+        for l in &s.lines {
+            println!("{l}");
+        }
+    }
+
+    // -------------------------------------------------------------------- unused records
+    if !dry {
+        for s in &mut slots {
+            let rd = crate::liveness::pending::read_pending_file(&s.record_path);
+            if rd.error.is_some() || rd.record.is_none() {
+                continue;
+            }
+            let st = rd
+                .record
+                .as_ref()
+                .and_then(|r| r.get("state"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let never = matches!(
+                s.state,
+                SlotState::Waiting | SlotState::Blocked | SlotState::FailedStart
+            );
+            if never || st == "reserved" {
+                if let Err(e) = std::fs::remove_file(&s.record_path) {
+                    s.record_kept = true;
+                    println!(
+                        "{TOOL}: could not remove the unused recovery record {} ({e})",
+                        s.record_path.display()
+                    );
+                }
+            } else {
+                s.record_kept = true;
+                s.record_state = st;
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------- summary + counts
+    let exit = render_summary(&o, &b, &slots, short, panel_wall, dry);
+
+    // Patch panel.started / panel.usable in every member's ledger entry (a real run).
+    if !dry {
+        let started = slots
+            .iter()
+            .filter(|s| matches!(s.state, SlotState::Done | SlotState::Killed))
+            .count() as i64;
+        let usable = slots.iter().filter(|s| slot_usable(s)).count() as i64;
+        patch_counts(&store, &b.task, &b.panel_id, started, usable);
+    }
+
+    // The task lock releases on drop; the temp dir is cleaned up.
+    if panel_tmp.exists() {
+        let _ = std::fs::remove_dir_all(&panel_tmp);
+    }
+    exit
+}
+
+/// One summary-table row (`$rows`).
+struct SummaryRow {
+    lineage: String,
+    status: String,
+    counts: String,
+    prior: String,
+    tail: String,
+    /// A wide row spans the columns (a skip / failure / not-started), not the padded grid.
+    wide: bool,
+}
+
+/// The summary table's member rows, laid out exactly like the plugin (`codex-consult.ps1:2838`):
+/// column widths come from the NARROW rows; a wide row pads its status only when `skipped`; each
+/// row is `"  " + fields.join("  ").TrimEnd()`.
+fn format_summary_rows(rows: &[SummaryRow]) -> Vec<String> {
+    let w_lineage = rows
+        .iter()
+        .map(|r| r.lineage.chars().count())
+        .max()
+        .unwrap_or(0);
+    let narrow: Vec<&SummaryRow> = rows.iter().filter(|r| !r.wide).collect();
+    let (mut w_status, mut w_counts, mut w_prior) = (7usize, 0usize, 0usize);
+    if !narrow.is_empty() {
+        w_status = narrow
+            .iter()
+            .map(|r| r.status.chars().count())
+            .max()
+            .unwrap_or(0)
+            .max(7);
+        w_counts = narrow
+            .iter()
+            .map(|r| r.counts.chars().count())
+            .max()
+            .unwrap_or(0);
+        w_prior = narrow
+            .iter()
+            .map(|r| r.prior.chars().count())
+            .max()
+            .unwrap_or(0);
+    }
+    let mut out: Vec<String> = Vec::new();
+    for row in rows {
+        let mut parts: Vec<String> = vec![pad_right(&row.lineage, w_lineage)];
+        if row.wide {
+            let w = if row.status == "skipped" { w_status } else { 0 };
+            parts.push(pad_right(&row.status, w));
+            if !row.counts.is_empty() {
+                parts.push(row.counts.clone());
+            }
+        } else {
+            parts.push(pad_right(&row.status, w_status));
+            if w_counts > 0 {
+                parts.push(pad_right(&row.counts, w_counts));
+            }
+            if w_prior > 0 {
+                parts.push(pad_right(&row.prior, w_prior));
+            }
+        }
+        if !row.tail.is_empty() {
+            parts.push(row.tail.clone());
+        }
+        out.push(format!("  {}", parts.join("  ").trim_end()));
+    }
+    out
+}
+
+/// Render the summary block and return the exit code.
+fn render_summary(
+    _o: &Options,
+    b: &Built,
+    slots: &[Slot],
+    short: &str,
+    panel_wall: f64,
+    dry: bool,
+) -> i32 {
+    let mut rows: Vec<SummaryRow> = Vec::new();
+    let mut all_usable = b.seated_count > 0;
+    let started = slots
+        .iter()
+        .filter(|s| matches!(s.state, SlotState::Done | SlotState::Killed))
+        .count();
+    let usable_count = slots.iter().filter(|s| slot_usable(s)).count();
+
+    for dr in b.rows.iter().filter(|r| r.state != "not-picked") {
+        let mut row = SummaryRow {
+            lineage: dr.shown.clone(),
+            status: String::new(),
+            counts: String::new(),
+            prior: String::new(),
+            tail: String::new(),
+            wide: false,
+        };
+        if dr.state != "run" {
+            row.status = "skipped".into();
+            row.counts = dr.reason.clone();
+            row.wide = true;
+        } else {
+            let s = &slots[dr.runner.unwrap()];
+            if matches!(s.state, SlotState::Waiting | SlotState::Blocked) {
+                row.status = "skipped".into();
+                row.counts = if s.not_started.is_empty() {
+                    "not started".into()
+                } else {
+                    s.not_started.clone()
+                };
+                row.wide = true;
+                all_usable = false;
+            } else if dry && s.state == SlotState::Done {
+                if s.exit == Some(0) {
+                    row.status = "planned".into();
+                } else {
+                    row.status = format!("refused: {}", c3_core::one_line(&s.refusal));
+                    row.wide = true;
+                    all_usable = false;
+                }
+            } else if let Some(me) = s.entry.as_ref() {
+                let outcome = me.bridge_outcome.clone();
+                let mut tail = format!("{} s  {}", me.wall_seconds, me.reply);
+                if outcome != "usable reply" && c3_core::health::is_usable_outcome(&outcome) {
+                    tail += "  (after a timeout continuation)";
+                }
+                if !me.partial_reply.is_empty() {
+                    tail += &format!("  partial {}", me.partial_reply);
+                }
+                if s.state == SlotState::Killed {
+                    row.status = member_status(s, dry);
+                    row.tail = tail;
+                    row.wide = true;
+                    all_usable = false;
+                } else if !c3_core::health::is_usable_outcome(&outcome) {
+                    let short_o = outcome.strip_prefix("failed: ").unwrap_or(&outcome);
+                    let chars: Vec<char> = short_o.chars().collect();
+                    let short_o = if chars.len() > 90 {
+                        chars[..90].iter().collect::<String>() + "..."
+                    } else {
+                        short_o.to_string()
+                    };
+                    row.status = format!("failed: {short_o}");
+                    row.tail = tail;
+                    row.wide = true;
+                    all_usable = false;
+                } else if !me.verdict.is_empty() && me.structured {
+                    row.status = me.verdict.clone();
+                    row.counts = format!(
+                        "{} blocker, {} major, {} minor",
+                        me.findings.blocker, me.findings.major, me.findings.minor
+                    );
+                    if me.findings.note > 0 {
+                        row.counts += &format!(", {} note", me.findings.note);
+                    }
+                    row.prior = format_prior_counts(&me.prior_findings);
+                    row.tail = tail;
+                } else {
+                    row.status = "prose (no verdict)".into();
+                    row.tail = tail;
+                }
+            } else {
+                // No committed ledger entry (refused/failed before its commit).
+                row.status = member_status(s, dry);
+                if !dry && !s.record_kept {
+                    row.status += &format!(" (n={} and handoff {:02} stay unused)", s.n, s.nn);
+                } else if !dry {
+                    let file = s
+                        .record_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    row.status += &format!(" ({file} kept, state {})", s.record_state);
+                }
+                row.wide = true;
+                all_usable = false;
+            }
+        }
+        rows.push(row);
+    }
+
+    println!();
+    let head = if dry {
+        format!(
+            "{} of {} entries would run (dry run) (wall clock {} s; {})",
+            b.seated_count,
+            b.entry_count,
+            fmt_ps(panel_wall, 1),
+            b.concurrency.text
+        )
+    } else {
+        format!(
+            "{} of {} entries ran (asked {}, started {}, usable {}; wall clock {} s; {})",
+            started,
+            b.entry_count,
+            b.size_asked,
+            started,
+            usable_count,
+            fmt_ps(panel_wall, 1),
+            b.concurrency.text
+        )
+    };
+    println!("Panel {short}: {head}");
+
+    for line in format_summary_rows(&rows) {
+        println!("{line}");
+    }
+
+    let not_picked: Vec<&DisplayRow> = b.rows.iter().filter(|r| r.state == "not-picked").collect();
+    if !not_picked.is_empty() {
+        let names: Vec<String> = not_picked.iter().map(|r| r.shown.clone()).collect();
+        println!("  not picked (panel size {}): {}", b.k, names.join(", "));
+    }
+
+    if !dry {
+        let missing: Vec<String> = slots
+            .iter()
+            .filter(|s| b.runners[s.runner].required && !slot_usable(s))
+            .map(|s| b.runners[s.runner].shown.clone())
+            .collect();
+        if !missing.is_empty() {
+            println!(
+                "  required member{} without a usable reply: {} - exit 5",
+                if missing.len() != 1 { "s" } else { "" },
+                missing.join(", ")
+            );
+            return 5;
+        }
+    }
+    if all_usable {
+        0
+    } else {
+        1
+    }
+}
+
+/// PowerShell `PadRight`: pad with spaces to `width` chars (no truncation).
+fn pad_right(s: &str, width: usize) -> String {
+    let len = s.chars().count();
+    if len >= width {
+        s.to_string()
+    } else {
+        format!("{s}{}", " ".repeat(width - len))
+    }
+}
+
+/// `Format-PriorCounts`: `prior: none` or `prior: <n fixed>, <n still-open>, ...`.
+fn format_prior_counts(prior: &[c3_core::ledger::PriorFindingRef]) -> String {
+    let prior: Vec<&c3_core::ledger::PriorFindingRef> = prior
+        .iter()
+        .filter(|p| !p.id.is_empty() || !p.status.is_empty())
+        .collect();
+    if prior.is_empty() {
+        return "prior: none".into();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for st in ["fixed", "still-open", "not-checked", "unknown-id"] {
+        let n = prior.iter().filter(|p| p.status == st).count();
+        if n > 0 {
+            parts.push(format!("{n} {st}"));
+        }
+    }
+    format!("prior: {}", parts.join(", "))
+}
+
+/// `Get-PanelMemberStatus`: one phrase for a member that ran/stopped.
+fn member_status(s: &Slot, dry: bool) -> String {
+    match s.state {
+        SlotState::Killed => format!(
+            "killed by the panel after {} s (its guard: {} s)",
+            fmt_ps(s.wall, 1),
+            fmt_ps(s.guard, 1)
+        ),
+        SlotState::FailedStart => format!(
+            "failed: could not start the member process - {}",
+            s.start_error
+        ),
+        _ => {
+            if dry {
+                if s.exit == Some(0) {
+                    return "planned".into();
+                }
+                return format!("refused: {}", c3_core::one_line(&s.refusal));
+            }
+            if let Some(e) = &s.entry {
+                return e.bridge_outcome.clone();
+            }
+            if s.record_state == "committing" {
+                if let Some(rest) = s.refusal.strip_prefix("commit blocked:") {
+                    return format!("commit blocked: {}", c3_core::one_line(rest.trim_start()));
+                }
+                return format!(
+                    "failed: stopped inside its commit (exit {}); findings it wrote have no ledger entry (ORPHAN)",
+                    s.exit.unwrap_or(-1)
+                );
+            }
+            format!("failed: {}", c3_core::one_line(&s.refusal))
+        }
+    }
+}
+
+/// `Test-PanelSlotUsable`.
+fn slot_usable(s: &Slot) -> bool {
+    if s.state != SlotState::Done {
+        return false;
+    }
+    s.entry
+        .as_ref()
+        .map(|e| c3_core::health::is_usable_outcome(&e.bridge_outcome))
+        .unwrap_or(false)
+}
+
+/// `Complete-PanelMember`: the member's console lines, its refusal, its ledger entry and record.
+fn complete_member(s: &mut Slot, store: &FilesStore, b: &Built, dry: bool) {
+    let mut lines: Vec<String> = Vec::new();
+    for f in [&s.out_path, &s.err_path] {
+        let t = std::fs::read(f)
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .unwrap_or_default();
+        if t.trim().is_empty() {
+            continue;
+        }
+        for l in t.trim_end().split('\n') {
+            lines.push(l.trim_end_matches('\r').to_string());
+        }
+    }
+    s.refusal = lines
+        .iter()
+        .rev()
+        .find(|l| l.starts_with("codex-consult: "))
+        .map(|l| l.trim_start_matches("codex-consult: ").to_string())
+        .unwrap_or_else(|| format!("exit {}", s.exit.unwrap_or(-1)));
+    s.lines = lines;
+    if !dry {
+        s.entry = find_panel_entry(store, &b.task, &b.panel_id, s.k);
+        let rd = crate::liveness::pending::read_pending_file(&s.record_path);
+        s.record_state = rd
+            .record
+            .as_ref()
+            .and_then(|r| r.get("state"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+    }
+}
+
+/// `Find-PanelEntry`: the ledger entry a member recorded (by panel id + seat position).
+fn find_panel_entry(
+    store: &FilesStore,
+    task: &TaskSlug,
+    panel_id: &str,
+    position: i64,
+) -> Option<c3_core::ledger::LedgerEntry> {
+    let sessions = store.read_sessions(task).ok().flatten()?;
+    sessions.codex.consults.into_iter().rfind(|c| {
+        c.panel
+            .as_ref()
+            .map(|p| p.id == panel_id && p.position == position)
+            .unwrap_or(false)
+    })
+}
+
+/// Launch one member as a child `c3 consult --task <t> --panel-spec <b64>` process.
+#[allow(clippy::too_many_arguments)]
+fn start_member(
+    slots: &mut [Slot],
+    i: usize,
+    o: &Options,
+    r: &Resolved,
+    b: &Built,
+    parent_pid: u32,
+    panel_tmp: &Path,
+    listed: &[String],
+) {
+    let spec = build_spec(&slots[..], i, o, r, b, parent_pid, listed);
+    let wire = match spec.to_wire() {
+        Ok(w) => w,
+        Err(e) => {
+            slots[i].state = SlotState::FailedStart;
+            slots[i].start_error = c3_core::one_line(&e.to_string());
+            return;
+        }
+    };
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            slots[i].state = SlotState::FailedStart;
+            slots[i].start_error = c3_core::one_line(&e.to_string());
+            return;
+        }
+    };
+    let out = std::fs::File::create(&slots[i].out_path);
+    let err = std::fs::File::create(&slots[i].err_path);
+    let (out, err) = match (out, err) {
+        (Ok(o), Ok(e)) => (o, e),
+        _ => {
+            slots[i].state = SlotState::FailedStart;
+            slots[i].start_error = format!(
+                "could not create the member output files under {}",
+                panel_tmp.display()
+            );
+            return;
+        }
+    };
+    let mut cmd = Command::new(&exe);
+    cmd.arg("consult")
+        .arg("--task")
+        .arg(&o.task)
+        .arg("--panel-spec")
+        .arg(&wire)
+        .current_dir(&b.caller_cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(out))
+        .stderr(Stdio::from(err));
+    match cmd.spawn() {
+        Ok(child) => {
+            slots[i].child = Some(child);
+            slots[i].watch = Some(Instant::now());
+            slots[i].state = SlotState::Running;
+        }
+        Err(e) => {
+            slots[i].state = SlotState::FailedStart;
+            slots[i].start_error = c3_core::one_line(&e.to_string());
+        }
+    }
+}
+
+/// The `MemberSpec` for seat `i` (`Start-PanelMember`'s `$spec`).
+#[allow(clippy::too_many_arguments)]
+fn build_spec(
+    slots: &[Slot],
+    i: usize,
+    o: &Options,
+    r: &Resolved,
+    b: &Built,
+    parent_pid: u32,
+    listed: &[String],
+) -> MemberSpec {
+    let s = &slots[i];
+    let ru = &b.runners[s.runner];
+    let siblings: Vec<i64> = if b.concurrency.effective > 1 {
+        slots
+            .iter()
+            .filter(|x| x.k != s.k)
+            .map(|x| x.nn as i64)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let args = json!({
+        "collab_dir": o.collab_dir,
+        "mode": o.mode,
+        "brief": o.brief,
+        "prompt": o.prompt,
+        "purpose": o.purpose,
+        "effort": o.effort,
+        "sandbox": o.sandbox,
+        "max_words": o.max_words,
+        "timeout_sec": r.timeout_sec,
+        "continue_sec": r.continue_sec,
+        "range": o.range,
+        "reply_name": s.reply_name,
+        "artifact": o.artifacts,
+        "raw": r.raw,
+        "codex_exe": o.codex_exe,
+        "native_effort": o.native_effort,
+        "off_peak_only": o.off_peak_only,
+        "skip_preflight": o.skip_preflight,
+        "codex_config": o.codex_config,
+        "schema_transport": r.transport_override,
+        "format_retry": o.format_retry,
+        "engine": o.engine,
+        "engine_exe": o.engine_exe,
+        "denial_retry": o.denial_retry,
+        "max_model_steps": o.max_model_steps,
+        "topics": b.topics,
+        "dry_run": o.dry_run,
+    });
+    MemberSpec {
+        id: b.panel_id.clone(),
+        position: s.k,
+        of: b.seated_count as i64,
+        members: b.members_record.clone(),
+        roster_position: ru.entry.position as i64,
+        provider: ru.entry.provider.clone(),
+        model: ru.entry.model.clone(),
+        engine: ru.entry.engine.clone(),
+        skipped: b.skipped_record.clone(),
+        listed_ids: listed.to_vec(),
+        n: s.n,
+        nn: s.nn as i64,
+        consult_id: s.consult_id.clone(),
+        parent_pid: parent_pid as i64,
+        parent_start_time: b.parent_start.clone(),
+        sibling_nns: siblings,
+        concurrency: b.concurrency.effective,
+        limits: b.limits_value.clone(),
+        asked: b.size_asked,
+        routing: Some(b.routing_value.clone()),
+        role: ru.role.clone(),
+        roles_note: b.roles_note.clone(),
+        panel_warnings: b.warnings.clone(),
+        args,
+    }
+}
+
+/// A seat's reserved recovery record (`New-PendingRecord -State reserved ... -Panel ...`).
+fn reserved_record(
+    b: &Built,
+    s: &Slot,
+    _ru: &RunnerInfo,
+    launcher: String,
+    parent_pid: u32,
+    short: &str,
+) -> PendingRecord {
+    PendingRecord {
+        state: PendingState::Reserved,
+        n: s.n,
+        nn: format!("{:02}", s.nn),
+        reply: s.reply_rel.clone(),
+        consult_id: s.consult_id.clone(),
+        started: iso_now(),
+        pid: parent_pid,
+        start_time: b.parent_start.clone(),
+        host: pending_host(),
+        launcher,
+        engine: s.engine.clone(),
+        note: format!(
+            "reserved by review panel {short} (pid {parent_pid}); the member has not started"
+        ),
+        panel: Some(json!({
+            "id": b.panel_id,
+            "position": s.k,
+            "of": b.seated_count,
+            "parent_pid": parent_pid,
+            "parent_start_time": b.parent_start,
+        })),
+        ..Default::default()
+    }
+}
+
+/// Patch `panel.started`/`panel.usable` in every member's committed entry after the panel ends.
+fn patch_counts(store: &FilesStore, task: &TaskSlug, panel_id: &str, started: i64, usable: i64) {
+    let lock = match store.take_write_lock(task) {
+        Ok(l) => l,
+        Err(e) => {
+            println!(
+                "{TOOL}: the panel's counts were not written to the ledger ({})",
+                c3_core::one_line(&e.to_string())
+            );
+            return;
+        }
+    };
+    let mut sessions = match store.read_sessions(task) {
+        Ok(Some(s)) => s,
+        _ => {
+            drop(lock);
+            return;
+        }
+    };
+    let mut changed = false;
+    for e in &mut sessions.codex.consults {
+        if let Some(p) = &mut e.panel {
+            if p.id == panel_id {
+                p.started = Some(Some(started));
+                p.usable = Some(Some(usable));
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        if let Ok(bytes) = sessions.to_bytes() {
+            let _ = c3_core::store::write_text_atomic(
+                &store.task_dir(task).join("sessions.json"),
+                &bytes,
+            );
+        }
+    }
+    drop(lock);
+}
+
+/// `Get-PanelMemberGuard`: timeout + 60 + 120, plus one repair turn, one denial-retry turn
+/// (min(timeout, 300) each) and the continuation budget.
+fn panel_member_guard(timeout: i64, continue_sec: i64, repair: bool, denial: bool) -> f64 {
+    let mut g = timeout + 60 + 120;
+    if repair {
+        g += timeout.min(300);
+    }
+    if denial {
+        g += timeout.min(300);
+    }
+    if continue_sec > 0 {
+        g += continue_sec;
+    }
+    g as f64
+}
+
+/// Kill a member's process tree (`Stop-ProcessTree`): `taskkill /F /T` on Windows, else a kill.
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let pid = child.id();
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// The dry-run `pending :` tail for an inactive record (`the real run recovers it`).
+fn pending_dry_tail(item: &crate::consult::recovery::RecoveryItem) -> String {
+    let n = if item.n > 0 {
+        item.n.to_string()
+    } else {
+        String::new()
+    };
+    format!(
+        "{} (state '{}', n={n}, nn={}; {}): the real run recovers it; numbering continues past it.",
+        item.path.display(),
+        item.state,
+        item.nn,
+        item.check
+    )
+}
+
+/// The routing record as the member's ledger `panel.routing` value (`Select-PanelRouting`'s
+/// object: mode, order, fallback, seed, nonce, nonce_source, size, size_asked, size_source,
+/// reserve, eligible[], picked[], explored[], required[]).
+fn routing_value(rt: &RoutingRecord) -> Value {
+    json!({
+        "mode": rt.mode,
+        "order": rt.order,
+        "fallback": rt.fallback,
+        "seed": rt.seed,
+        "nonce": rt.nonce,
+        "nonce_source": rt.nonce_source,
+        "size": rt.size,
+        "size_asked": rt.size_asked,
+        "size_source": rt.size_source,
+        "reserve": rt.reserve,
+        "eligible": rt.eligible.iter().map(|e| json!({
+            "position": e.position, "lineage": e.lineage, "lab": e.lab, "lab_source": e.lab_source,
+            "score": e.score, "basis": e.basis, "ratings": e.ratings, "required": e.required,
+        })).collect::<Vec<_>>(),
+        "picked": rt.picked.iter().map(|p| json!({
+            "slot": p.slot, "position": p.position, "lineage": p.lineage, "lab": p.lab, "rule": p.rule,
+        })).collect::<Vec<_>>(),
+        "explored": rt.explored,
+        "required": rt.required,
+    })
+}
+
+/// A provider label as a handoff slug (`$slug`): lowercase, non-`[a-z0-9._-]` → `-`, trimmed;
+/// empty → `reviewer`.
+fn provider_slug(provider: &str) -> String {
+    let mut s: String = provider
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    while s.starts_with('-') {
+        s.remove(0);
+    }
+    while s.ends_with('-') {
+        s.pop();
+    }
+    if s.is_empty() {
+        "reviewer".into()
+    } else {
+        s
+    }
+}
+
+fn iso_now() -> String {
+    chrono::Local::now()
+        .format("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string()
+}
+
+fn pending_host() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_default()
+}
+
+fn round1(x: f64) -> f64 {
+    (x * 10.0).round() / 10.0
 }
 
 /// The panel draw nonce and its source (`-PanelSeed`, else the env hook, else today's UTC date).
@@ -406,61 +1763,29 @@ fn brief_sha256(o: &Options, cwd: &Path) -> String {
         .unwrap_or_else(|_| "missing".into())
 }
 
-/// Render the whole panel dry-run block (`codex-consult.ps1:2562-2588`).
-fn render_dry_run(o: &Options, r: &Resolved, plan: &Plan) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let short = &plan.panel_id[..plan.panel_id.len().min(8)];
-    let dry = if o.dry_run {
-        " (dry run - nothing is executed or written)"
+/// The `Range:` dry-run line + a size warning (a diff-review/acceptance panel).
+fn range_lines(o: &Options, r: &Resolved, repo_root: &Path) -> (String, String) {
+    if o.range.is_empty() {
+        return (String::new(), String::new());
+    }
+    let rs = crate::consult::revision::range_stat(repo_root, &o.range);
+    if !rs.error.is_empty() {
+        return (String::new(), String::new());
+    }
+    let text = crate::consult::revision::range_text(rs.files, rs.lines);
+    let line = format!(
+        "Range: {} - {text} ({} insertions, {} deletions)",
+        o.range, rs.insertions, rs.deletions
+    );
+    let warning = if rs.lines > 1500 && r.timeout_sec < 2400 {
+        format!(
+            "a range of {} lines with a {} s timeout: pass -TimeoutSec or a reading plan in the brief",
+            rs.lines, r.timeout_sec
+        )
     } else {
-        ""
+        String::new()
     };
-    out.push(format!(
-        "Panel {short}{dry}: {} of {} roster entries {}, {} (roster {}; panel id {})",
-        plan.seated_count,
-        plan.entry_count,
-        plan.verb,
-        plan.concurrency.text,
-        plan.roster_path,
-        plan.panel_id
-    ));
-    for row in &plan.rows {
-        let state_shown = if row.state == "run" {
-            let role = if row.role.is_empty() {
-                String::new()
-            } else {
-                format!(", role {}", row.role)
-            };
-            let required = if row.required { ", required" } else { "" };
-            format!("member, n={}, handoff {:02}{role}{required}", row.n, row.nn)
-        } else if row.state == "not-picked" {
-            format!("not picked: {}", row.reason)
-        } else {
-            format!("skipped: {}", row.reason)
-        };
-        out.push(format!("  #{} {} - {state_shown}", row.position, row.shown));
-    }
-    for line in routing_lines(&plan.routing, &o.purpose) {
-        out.push(line);
-    }
-    if !plan.topics.is_empty() {
-        out.push(format!("Topics: {}", plan.topics.join(", ")));
-    }
-    for w in &plan.warnings {
-        out.push(format!("WARNING: {w}"));
-    }
-    out.push(concurrency_line(o, plan));
-    out.push(timeout_line(o, r, plan));
-    if !plan.range_line.is_empty() {
-        out.push(plan.range_line.clone());
-    }
-    if !plan.range_warning.is_empty() {
-        out.push(format!("WARNING: {}", plan.range_warning));
-    }
-    for line in &plan.pending_lines {
-        out.push(line.clone());
-    }
-    out
+    (line, warning)
 }
 
 /// `Format-RoutingLines`.
@@ -545,10 +1870,9 @@ fn routing_lines(rt: &RoutingRecord, purpose: &str) -> Vec<String> {
     lines
 }
 
-/// The `Concurrency:` line (`codex-consult.ps1:2576-2582`).
-fn concurrency_line(o: &Options, plan: &Plan) -> String {
+/// The `Concurrency:` line.
+fn concurrency_line(o: &Options, plan: &PanelPlan) -> String {
     let group_texts: Vec<String> = plan
-        .concurrency
         .groups
         .iter()
         .map(|g| {
@@ -573,14 +1897,13 @@ fn concurrency_line(o: &Options, plan: &Plan) -> String {
     };
     format!(
         "Concurrency: {} - endpoint groups: {}; -PanelConcurrency {cap}",
-        plan.concurrency.text,
+        plan.text,
         group_texts.join(", ")
     )
 }
 
-/// The `Timeout:` line (`codex-consult.ps1:2584-2585`). Per-member roster timeout exceptions are
-/// not modelled here (no roster `timeout_sec` in the port yet).
-fn timeout_line(_o: &Options, r: &Resolved, _plan: &Plan) -> String {
+/// The `Timeout:` line.
+fn timeout_line(r: &Resolved) -> String {
     let source = if r.timeout_source == "purpose" {
         let label = if r.purpose_label == "none" {
             "none".to_string()
@@ -602,13 +1925,135 @@ fn timeout_line(_o: &Options, r: &Resolved, _plan: &Plan) -> String {
     )
 }
 
-/// Format a number as PowerShell's `ToString('0.###'|'0.##')` would: fixed to `decimals`, then
-/// trailing zeros and a trailing dot trimmed.
+/// Format a number as PowerShell's `ToString('0.###')` would: fixed to `decimals`, trailing
+/// zeros and a trailing dot trimmed.
 fn fmt_ps(x: f64, decimals: usize) -> String {
     let s = format!("{:.1$}", x, decimals);
     if s.contains('.') {
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     } else {
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pad_right_pads_and_never_truncates() {
+        assert_eq!(pad_right("ab", 5), "ab   ");
+        assert_eq!(pad_right("abcdef", 3), "abcdef");
+    }
+
+    #[test]
+    fn provider_slug_sanitizes() {
+        assert_eq!(provider_slug("ZAI"), "zai");
+        assert_eq!(provider_slug("byteplus"), "byteplus");
+        assert_eq!(provider_slug("!!!"), "reviewer");
+    }
+
+    #[test]
+    fn guard_sums_the_budgets() {
+        // 1800 + 60 + 120 + min(1800,300) repair + min(1800,300) denial + 900 continue.
+        assert_eq!(
+            panel_member_guard(1800, 900, true, true),
+            (1800 + 60 + 120 + 300 + 300 + 900) as f64
+        );
+        // no repair / denial / continue.
+        assert_eq!(
+            panel_member_guard(600, 0, false, false),
+            (600 + 60 + 120) as f64
+        );
+    }
+
+    #[test]
+    fn prior_counts_none_and_some() {
+        assert_eq!(format_prior_counts(&[]), "prior: none");
+        let prior = vec![
+            c3_core::ledger::PriorFindingRef {
+                id: "F01-1".into(),
+                status: "fixed".into(),
+                ..Default::default()
+            },
+            c3_core::ledger::PriorFindingRef {
+                id: "F01-2".into(),
+                status: "still-open".into(),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(format_prior_counts(&prior), "prior: 1 fixed, 1 still-open");
+    }
+
+    #[test]
+    fn fmt_ps_trims_trailing_zeros() {
+        assert_eq!(fmt_ps(277.0, 1), "277");
+        assert_eq!(fmt_ps(243.4, 1), "243.4");
+        assert_eq!(fmt_ps(1.125, 3), "1.125");
+    }
+
+    fn row(
+        lineage: &str,
+        status: &str,
+        counts: &str,
+        prior: &str,
+        tail: &str,
+        wide: bool,
+    ) -> SummaryRow {
+        SummaryRow {
+            lineage: lineage.into(),
+            status: status.into(),
+            counts: counts.into(),
+            prior: prior.into(),
+            tail: tail.into(),
+            wide,
+        }
+    }
+
+    #[test]
+    fn summary_rows_match_the_panel_01_layout() {
+        // The ten member rows of the real panel-01.log (scratchpad), fed post-truncation.
+        let rows = vec![
+            row("ZAI :: glm-5.3", "ADVISE", "0 blocker, 4 major, 2 minor, 1 note", "prior: none", "243.4 s  handoffs/02-codex-merge-framing-zai.md", false),
+            row("mimo :: mimo-v2.6-pro", "prose (no verdict)", "", "", "405.7 s  handoffs/03-codex-merge-framing-mimo.md", false),
+            row("gemini :: gemini-3.8-flash-high [agy]", "failed: agy exit 3 - Individual quota reached. Please upgrade your subscription to increase your l...", "", "", "297.6 s  handoffs/04-agy-merge-framing-gemini.md", true),
+            row("gemini :: gemini-3.1-pro-high [agy]", "failed: provider gemini is not usable: its usage limit (hit at 2026-09-26T17:47:18+02:00: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 51h38m) lasts until 2026-09-28T21:30:50+02:00; nothing was started (pass -SkipPreflight to launch anyway) (n=4 and handoff 05 stay unused)", "", "", "", true),
+            row("byteplus :: deepseek-v4.1-flash", "failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 02179...", "", "", "34.7 s  handoffs/06-codex-merge-framing-byteplus.md", true),
+            row("byteplus :: dola-seed-2.0-pro", "failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 02179...", "", "", "44.3 s  handoffs/07-codex-merge-framing-byteplus.md", true),
+            row("byteplus :: kimi-k2.5", "failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 02179...", "", "", "56.9 s  handoffs/08-codex-merge-framing-byteplus.md", true),
+            row("kimi :: k3", "ADVISE", "0 blocker, 3 major, 2 minor, 1 note", "prior: none", "277 s  handoffs/09-codex-merge-framing-kimi.md", false),
+            row("alibaba :: qwen3.8-max", "ADVISE", "2 blocker, 6 major, 2 minor, 1 note", "prior: none", "763.1 s  handoffs/10-codex-merge-framing-alibaba.md", false),
+            row("meta :: muse-spark-1.3-contributor [muse]", "ADVISE", "1 blocker, 5 major, 0 minor", "prior: none", "103.6 s  handoffs/11-muse-merge-framing-meta.md", false),
+        ];
+        let out = format_summary_rows(&rows);
+        // w_lineage = 41 ("meta :: muse-spark-1.3-contributor [muse]"); w_status = 18
+        // ("prose (no verdict)"); w_counts = 35; w_prior = 11 (all from the narrow rows).
+        let expected0 = format!(
+            "  ZAI :: glm-5.3{}  ADVISE{}  0 blocker, 4 major, 2 minor, 1 note  prior: none  243.4 s  handoffs/02-codex-merge-framing-zai.md",
+            " ".repeat(27),
+            " ".repeat(12)
+        );
+        assert_eq!(out[0], expected0);
+        // The prose row: empty counts (35 spaces) and empty prior (11 spaces) survive as the gap.
+        let expected1 = format!(
+            "  mimo :: mimo-v2.6-pro{}  prose (no verdict)  {}  {}  405.7 s  handoffs/03-codex-merge-framing-mimo.md",
+            " ".repeat(20),
+            " ".repeat(35),
+            " ".repeat(11)
+        );
+        assert_eq!(out[1], expected1);
+        // A wide non-skipped row pads its status to 0 (no grid): just lineage(41) + status.
+        let expected3 = format!(
+            "  gemini :: gemini-3.1-pro-high [agy]{}  failed: provider gemini is not usable: its usage limit (hit at 2026-09-26T17:47:18+02:00: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 51h38m) lasts until 2026-09-28T21:30:50+02:00; nothing was started (pass -SkipPreflight to launch anyway) (n=4 and handoff 05 stay unused)",
+            " ".repeat(6)
+        );
+        assert_eq!(out[3], expected3);
+        // The muse row's shorter counts (27) pad to w_counts=35.
+        let expected9 = format!(
+            "  meta :: muse-spark-1.3-contributor [muse]  ADVISE{}  1 blocker, 5 major, 0 minor{}  prior: none  103.6 s  handoffs/11-muse-merge-framing-meta.md",
+            " ".repeat(12),
+            " ".repeat(8)
+        );
+        assert_eq!(out[9], expected9);
     }
 }

@@ -28,6 +28,201 @@ pub struct Rating {
     pub useful: String,
 }
 
+/// `Read-AllTaskRatings` (wave 26b, D2/D6): every rating of every task under `collab_root`,
+/// normalised into scorable [`Rating`] records (with the topics the panel's pooling needs, which
+/// the scoreboard's leaner reader drops). A `findings.json` that does not parse is left out; a
+/// rating without a provider or with an unknown `useful` is left out. A rating missing an identity
+/// field (`consult_when`/`engine`/`topics`/`purpose`/`provider`/`model`) is joined to its ledger
+/// entry by `consult_id`. The latest rating (by `when`) of a consultation wins.
+pub fn read_all_task_ratings(collab_root: &std::path::Path) -> Vec<Rating> {
+    use serde_json::Value;
+    let pv_str = |v: Option<&Value>, k: &str| -> String {
+        match v.and_then(|x| x.get(k)) {
+            Some(Value::String(s)) => s.clone(),
+            Some(Value::Number(n)) => n.to_string(),
+            _ => String::new(),
+        }
+    };
+    let has_key = |v: Option<&Value>, k: &str| -> bool {
+        v.and_then(|x| x.get(k))
+            .map(|x| !x.is_null())
+            .unwrap_or(false)
+    };
+    let parse_when = |v: Option<&Value>| -> Option<DateTime<FixedOffset>> {
+        v.and_then(|x| x.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s.trim()).ok())
+    };
+    let eng_re = regex::Regex::new(r"\s\[([a-z]+)\]$").unwrap();
+
+    let mut out: Vec<Rating> = Vec::new();
+    // key -> (index into out, its rated_when) for the "latest mark wins" dedup.
+    let mut by_key: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut rated_of: std::collections::HashMap<usize, Option<DateTime<FixedOffset>>> =
+        std::collections::HashMap::new();
+    let mut by_id: Option<std::collections::HashMap<String, Value>> = None;
+
+    let mut dirs: Vec<std::path::PathBuf> = match std::fs::read_dir(collab_root) {
+        Ok(rd) => rd
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .map(|e| e.path())
+            .collect(),
+        Err(_) => return out,
+    };
+    dirs.sort();
+
+    for d in &dirs {
+        let name = d
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let fpath = d.join("findings.json");
+        let store: Value = match std::fs::read(&fpath) {
+            Ok(b) => match serde_json::from_slice(&b) {
+                Ok(v) => v,
+                Err(_) => continue,
+            },
+            Err(_) => continue,
+        };
+        let ratings = match store.get("ratings").and_then(|v| v.as_array()) {
+            Some(a) => a.clone(),
+            None => continue,
+        };
+        for rt in &ratings {
+            if rt.is_null() {
+                continue;
+            }
+            let rt_ref = Some(rt);
+            let useful = pv_str(rt_ref, "useful");
+            if !["yes", "partly", "no"].contains(&useful.as_str()) {
+                continue;
+            }
+            let cid = pv_str(rt_ref, "consult_id");
+            let need_join = !cid.is_empty()
+                && (!has_key(rt_ref, "consult_when")
+                    || !has_key(rt_ref, "engine")
+                    || !has_key(rt_ref, "topics")
+                    || !has_key(rt_ref, "purpose")
+                    || pv_str(rt_ref, "provider").is_empty()
+                    || pv_str(rt_ref, "model").is_empty());
+            let mut entry: Option<Value> = None;
+            if need_join {
+                if by_id.is_none() {
+                    let mut map = std::collections::HashMap::new();
+                    for c in crate::providers::read_all_task_consults(collab_root) {
+                        let ci = pv_str(Some(&c), "consult_id");
+                        if !ci.is_empty() {
+                            map.entry(ci.to_lowercase()).or_insert(c);
+                        }
+                    }
+                    by_id = Some(map);
+                }
+                entry = by_id
+                    .as_ref()
+                    .and_then(|m| m.get(&cid.to_lowercase()))
+                    .cloned();
+            }
+            let rev = entry.as_ref().and_then(|e| e.get("reviewer").cloned());
+            let rev_ref = rev.as_ref();
+
+            let mut provider = pv_str(rt_ref, "provider");
+            if provider.is_empty() {
+                provider = pv_str(rev_ref, "provider");
+            }
+            if provider.is_empty() {
+                continue;
+            }
+            let mut model = pv_str(rt_ref, "model");
+            if model.is_empty() {
+                model = pv_str(rev_ref, "model");
+            }
+            let mut engine = pv_str(rt_ref, "engine");
+            if engine.is_empty() {
+                engine = pv_str(rev_ref, "engine");
+            }
+            if engine.is_empty() {
+                let lineage = pv_str(rt_ref, "lineage");
+                if let Some(caps) = eng_re.captures(&lineage) {
+                    engine = caps[1].to_string();
+                }
+            }
+            if engine.is_empty() {
+                engine = "codex".to_string();
+            }
+            let mut purpose = pv_str(rt_ref, "purpose");
+            if !has_key(rt_ref, "purpose") {
+                if let Some(e) = entry.as_ref() {
+                    purpose = pv_str(Some(e), "purpose");
+                }
+            }
+            let topics_raw: Vec<String> = if has_key(rt_ref, "topics") {
+                rt.get("topics")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else if let Some(e) = entry.as_ref() {
+                e.get("topics")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let (topics, _) = c3_core::roster::convert_to_slug_list(&topics_raw, "topic");
+            let mut consult_when = parse_when(rt.get("consult_when"));
+            if consult_when.is_none() {
+                if let Some(e) = entry.as_ref() {
+                    consult_when = parse_when(e.get("when"));
+                }
+            }
+            let rated_when = parse_when(rt.get("when"));
+            if consult_when.is_none() {
+                consult_when = rated_when;
+            }
+            let n = pv_str(rt_ref, "n");
+            let key = if !cid.is_empty() {
+                cid.to_lowercase()
+            } else {
+                format!("{name}#n{n}")
+            };
+            let rec = Rating {
+                provider,
+                model,
+                engine,
+                purpose,
+                topics,
+                consult_when,
+                useful,
+            };
+            if let Some(&idx) = by_key.get(&key) {
+                let newer = match (rated_when, rated_of.get(&idx).copied().flatten()) {
+                    (Some(new_w), Some(old_w)) => new_w >= old_w,
+                    (Some(_), None) => true,
+                    _ => false,
+                };
+                if newer {
+                    out[idx] = rec;
+                    rated_of.insert(idx, rated_when);
+                }
+                continue;
+            }
+            by_key.insert(key, out.len());
+            rated_of.insert(out.len(), rated_when);
+            out.push(rec);
+        }
+    }
+    out
+}
+
 /// `Get-RoutingScore`'s result: the score and the basis behind it.
 #[derive(Debug, Clone)]
 pub struct RoutingScore {
@@ -198,7 +393,9 @@ pub fn panel_seed(
     nonce: &str,
 ) -> (Vec<u8>, String, String) {
     let mut sorted: Vec<String> = lineages.to_vec();
-    sorted.sort(); // ordinal (byte) order — Rust String Ord is byte-lexicographic
+    // .NET ordinal comparison is by UTF-16 code units (`reference-draw.py`: `encode('utf-16-be')`);
+    // identical to byte order for the ASCII lineages here, but match it exactly.
+    sorted.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
     let joined = sorted
         .iter()
         .map(|s| length_prefixed(s))
@@ -545,6 +742,113 @@ mod tests {
             2,
             "the two seats are distinct labs (lab reserve)"
         );
+    }
+
+    // Parity with `tests/reference-draw.py` (35d4a32): the seed text/hash, the slot uniforms, the
+    // draw sequence, the explore rate and the ROUTED cases must match its golden values exactly.
+    #[test]
+    fn draw_matches_reference_draw_py() {
+        // DRAW: seed text + hash (lineages given unsorted; the seed sorts them).
+        let (sb, hex, text) = panel_seed(
+            "t",
+            "framing",
+            "abc",
+            &["b :: y".into(), "a :: x".into(), "c :: z".into()],
+            "42",
+        );
+        assert_eq!(
+            text,
+            "1:t|7:framing|3:abc|26:6:a :: x,6:b :: y,6:c :: z|2:42"
+        );
+        assert_eq!(
+            hex,
+            "7469dd588269f0ea17af01de6564223f99e6a84d4c4395b22c009e2fe2f0801a"
+        );
+        let (pick, explore) = slot_uniforms(&sb, 1);
+        assert_eq!(pick, 0.8404728740802851);
+        assert_eq!(explore, 0.5005193721267926);
+
+        // DRAW golden: four candidates, k=3, seeds from nonce 1..5.
+        let cand = |position: i64, lab: &str, weight: f64| Candidate {
+            position,
+            lab: lab.into(),
+            weight,
+            pinned: false,
+        };
+        let four = [
+            cand(1, "openai", 1.125),
+            cand(2, "zhipu", 1.9),
+            cand(3, "zhipu", 0.6),
+            cand(4, "xiaomi", 1.5),
+        ];
+        let picks = |seats: &[Seat]| {
+            seats
+                .iter()
+                .map(|s| format!("{}/{}", s.position, s.rule))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let golden = [
+            "1/lab-draw 4/lab-draw 2/lab-draw",
+            "1/lab-draw 2/lab-draw 4/lab-draw",
+            "1/lab-draw 2/lab-draw 4/lab-explore",
+            "4/lab-draw 2/lab-draw 1/lab-draw",
+            "2/lab-draw 4/lab-draw 1/lab-explore",
+        ];
+        for (i, want) in golden.iter().enumerate() {
+            let n = (i + 1).to_string();
+            let (sb, _, _) = panel_seed("t", "framing", "", &["x".into()], &n);
+            let seats = invoke_panel_draw(&four, 3, &sb, ROUTING_NEUTRAL, ROUTING_EXPLORE);
+            assert_eq!(&picks(&seats), want, "DRAW golden nonce {n}");
+        }
+
+        // DRAW explore: 408 of 2000 slot-1 second-uniforms below 0.2.
+        let mut exp = 0;
+        for n in 1..=2000 {
+            let (sb, _, _) = panel_seed("t", "x", "", &["x".into()], &n.to_string());
+            if slot_uniforms(&sb, 1).1 < ROUTING_EXPLORE {
+                exp += 1;
+            }
+        }
+        assert_eq!(exp, 408, "explore rate");
+
+        // ROUTED: the five harness reviewers, framing, task t, no brief; nonce 15 and 18.
+        let five = [
+            (1i64, "openai", ROUTING_NEUTRAL, "openai :: gpt-5.1"),
+            (2, "zhipu", routing_rate(4.0, 0.0, 4.0), "ZAI :: glm-5.3"),
+            (
+                3,
+                "xiaomi",
+                routing_rate(0.0, 0.0, 3.0),
+                "mimo :: mimo-v2.6-pro",
+            ),
+            (
+                4,
+                "moonshot",
+                routing_rate(3.0, 1.0, 4.0),
+                "byteplus :: kimi-k2.5",
+            ),
+            (5, "alibaba", ROUTING_NEUTRAL, "alibaba :: qwen3.8-max"),
+        ];
+        let lineages: Vec<String> = five.iter().map(|c| c.3.to_string()).collect();
+        let cands: Vec<Candidate> = five
+            .iter()
+            .map(|c| Candidate {
+                position: c.0,
+                lab: c.1.into(),
+                weight: c.2,
+                pinned: false,
+            })
+            .collect();
+        for (nonce, want_seed, want_picks) in [
+            ("15", "6ed796265174", "2/lab-draw 4/lab-explore 1/lab-draw"),
+            ("18", "142998a66606", "1/lab-explore 4/lab-draw 5/lab-draw"),
+        ] {
+            let (sb, hex, _) = panel_seed("t", "framing", "", &lineages, nonce);
+            assert_eq!(&hex[..12], want_seed, "ROUTED nonce {nonce} seed");
+            let seats = invoke_panel_draw(&cands, 3, &sb, ROUTING_NEUTRAL, ROUTING_EXPLORE);
+            assert_eq!(&picks(&seats), want_picks, "ROUTED nonce {nonce} picks");
+        }
     }
 
     #[test]

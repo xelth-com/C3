@@ -999,8 +999,22 @@ impl EvidenceStore for FilesStore {
 
 /// Apply a [`FindingsDelta`] to a re-read [`FindingsFile`] (B).
 fn apply_findings_delta(f: &mut FindingsFile, delta: &FindingsDelta) -> Result<(), StoreError> {
-    for nf in &delta.new {
-        f.findings.push(nf.clone());
+    // Insert this run's findings in id order (`Add-ReplyFindings`, wave 21): after every finding
+    // whose `F<NN>` is not greater than this run's NN — so a panel member that commits first still
+    // lands after the lower-NN members' findings, and a single run (the highest NN) appends as
+    // before. This run's findings all share one NN, kept in reply order within the block.
+    if !delta.new.is_empty() {
+        let mine = finding_nn(&delta.new[0].id).unwrap_or(0);
+        let mut at = f.findings.len();
+        for i in (0..f.findings.len()).rev() {
+            match finding_nn(&f.findings[i].id) {
+                Some(v) if v > mine => at = i,
+                _ => break,
+            }
+        }
+        for (k, nf) in delta.new.iter().enumerate() {
+            f.findings.insert(at + k, nf.clone());
+        }
     }
     for sc in &delta.status_changes {
         let target = f

@@ -38,13 +38,36 @@ Tracks the M4 panel port (`docs/port/m4-spec.md`) against the plugin's `harness-
   `started`/`usable` when `None`, so a member's committed record currently omits them rather than
   writing explicit `null` — reconcile when the parent patch lands.)
 
-## Chunk 2 — parent scheduler (next)
+## Chunk 2 — parent scheduler (landed; see harness-results.md Run 8)
 
-The parent run: reserve every member's `.consult.pending-<NN>.json` (state `reserved`, `panel{id,
-position, of, parent_pid, parent_start_time}`) before launching; launch each seat as
-`c3 consult --task <t> --panel-spec <b64>` (JSON compact, UTF-8, base64), redirecting stdout/stderr
-to `<temp>/codex-consult-panel-<id>/<NN>.out|.err`, stdin an empty file; poll with the endpoint-group
-concurrency plan + `-PanelConcurrency`; collect each member's **last `codex-consult: ` stdout line**
-as its outcome (`Read-PanelMemberOutput`); print the progress/summary block (`Write-Summary`); patch
-every member's `panel.started`/`panel.usable` after all finish; propagate a required-member failure
-or `-PanelConcurrency 1` survivors as exit 5 / blocked. See `docs/port/m4-spec.md` §2–§4.
+The parent run is `panel::run` → `build` (plan, no disk) + `schedule` (lock, records, launch, poll,
+summary). Landed and verified (harness-panel UNIT/DRY/RUN/NOLOSS/SEQ pass every run; companions 24/1;
+full `cargo test` + `--no-default-features` + clippy `-D warnings` green):
+
+| Area | State |
+|---|---|
+| Task lock + reserved `.consult.pending-<NN>.json` per seat (`panel{id, position, of, parent_pid, parent_start_time}`), consumed-record cleanup | done |
+| Launch each seat as `c3 consult --task <t> --panel-spec <b64>` (stdout/stderr to `<temp>/codex-consult-panel-<id>/<NN>.out|.err`, stdin null) | done |
+| Endpoint-group scheduling (parallel across groups to the caps, sequential within a group, `-PanelConcurrency`), F15-3 survivor stop | done |
+| Collect outcomes (last `codex-consult: ` stdout line + the committed ledger entry via `Find-PanelEntry`), progress lines, console output | done |
+| Byte-identical summary block (head + member column layout + not-picked + required-missing exit 5); unit-tested against panel-01 | done |
+| Patch `panel.started`/`panel.usable` under the write lock after all finish; exit codes 0/1/5 | done |
+| Per-member dry-run recursion (`dry_run=true` members, `planned`/`refused`) — the same scheduler | done |
+| Routed draw on real ratings (`read_all_task_ratings` with topic pooling); seed parity with `reference-draw.py` (35d4a32) | done |
+| `Select-RoleAssignment` (`-Roles`, Kuhn matching) + the `roles_note` | done |
+| Member lifecycle: rewrite reserved record + `CODEX_CONSULT_TEST_MEMBER_PAUSE_MS` pause + parent check BEFORE preflight (`member_early_accept`) | done (writer-liveness during the parent-death window still off — SPEC/PARENT#1/INFLIGHT#1) |
+| c3-core ledger: `panel.started`/`usable` explicit `null` + parent patch; `panel.roles_note`; `routing.size_asked`; `routing.reserve`; `apply_findings_delta` id-ordered insertion; ledger `when` = run start; `commit_wait_ms` + `write lock : waited` + `CODEX_CONSULT_TEST_COMMIT_PAUSE_MS`; the task-lock refusal names the panel holder | done |
+
+### Deferred to the detached follow-on (harness-results.md Run 8 hand-off)
+
+- **Commit-blocked (D3) + commit-interruption recovery** (member side): BLOCKED/ORPHAN/MEMBERKILL.
+- **Member-record writer-liveness during the parent-death/pause window**: SPEC/PARENT#1/INFLIGHT#1.
+- **agy-in-panel** specifics (summary `[agy]`, forced failure, tree-check sibling exclusion): AGY.
+- **Range on a panel**: the `Range:` line is computed, but the per-member range record is not passed.
+- **Not owned here**: `findings_tool` panel-holder lock refusal / member-record judging
+  (INFLIGHT/TIMEOUT codex-findings legs); c3-core `roster.rs` wave-26b string validation (`::`,
+  `[`, `]`, `|`, `,`, `#`, edge whitespace — ROSTER fail-closed); the wave-26b
+  `partial_reply`-on-any-failure rule; the machine-wide health file `~/.codex/codex-consult-health.json`.
+- **Environmental (documented, not bugs)**: TIMEOUT/GUARD (the fake's `HANG_ON` needs PowerShell
+  `""` quoting; Rust's Windows argv uses `\"`); muse PANEL command byte-match (the c3 schema path
+  under `<CODEX_HOME>`).

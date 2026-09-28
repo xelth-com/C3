@@ -425,14 +425,35 @@ pub struct Panel {
     /// so those older records round-trip byte-identical: absent (`None`) is skipped on rewrite.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asked: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub usable: Option<i64>,
+    /// `started`/`usable`: a tri-state so a member's committed entry writes explicit `null`
+    /// (the panel run patches them to the real counts after every member finishes), while a
+    /// pre-wave-26 panel record that has neither key round-trips byte-identical (absent →
+    /// `None`, skipped on rewrite). `Some(None)` → `null`; `Some(Some(n))` → the count.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub started: Option<Option<i64>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub usable: Option<Option<i64>>,
     /// (wave 26) The routing record of a routed panel; absent in a pre-wave-26 store. Omittable
     /// like the counts above so an older panel record round-trips byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routing: Option<PanelRouting>,
+    /// (wave 26b, D8) the panel-wide roles note (`Select-RoleAssignment`); written always (empty
+    /// string when no `-Roles` fallback note), after `routing`. Tri-state for byte-identity with a
+    /// pre-wave-26b record that has no key (absent → `None`, skipped on rewrite).
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub roles_note: Option<Option<String>>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -458,8 +479,16 @@ pub struct PanelRouting {
     pub nonce_source: String,
     #[serde(default)]
     pub size: i64,
+    /// (wave 26b, D2) the size as asked (`0` = the eligible count), before the pinned/eligible
+    /// clamp. Between `size` and `size_source`.
+    #[serde(default)]
+    pub size_asked: i64,
     #[serde(default)]
     pub size_source: String,
+    /// (wave 26b, D5) the seats the lab reserve filled (`rule` `lab-*`). Between `size_source`
+    /// and `eligible`.
+    #[serde(default)]
+    pub reserve: i64,
     #[serde(default)]
     pub eligible: Vec<RoutingEligible>,
     #[serde(default)]

@@ -85,6 +85,16 @@ fn compact(v: &Value) -> String {
     serde_json::to_string(v).unwrap_or_default()
 }
 
+/// `Get-RosterStringProblem` (wave 26b, D3): the first delimiter of the reviewer matcher
+/// (`::`, `[`, `]`) or of the seed text (`|`, `,`) - or `#` (a position matcher) - found in a
+/// roster string, quoted, else `None`. Blanks around the value are refused by the callers'
+/// own checks.
+fn roster_string_problem(value: &str) -> Option<&'static str> {
+    ["::", "[", "]", "|", ",", "#"]
+        .into_iter()
+        .find(|d| value.contains(d))
+}
+
 /// `ConvertTo-TomlBasicString`: escape backslash and double quote.
 fn to_toml_basic_string(v: &str) -> String {
     v.replace('\\', "\\\\").replace('"', "\\\"")
@@ -359,6 +369,21 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 }
             }
             if !why.is_empty() {
+                break;
+            }
+            // (wave 26b, D3 / F22-2, F22-4) the matcher's and the seed's delimiters never
+            // inside a provider label, a model or an engine: '::', '[', ']', '|', ',', '#'.
+            let mut d3_bad = false;
+            for sk in ["provider", "model", "engine"] {
+                if let Some(sv) = iobj.get(sk).and_then(|v| v.as_str()) {
+                    if let Some(bad) = roster_string_problem(sv) {
+                        why = format!("roster entry #{pos}: {sk} must not contain '{bad}'");
+                        d3_bad = true;
+                        break;
+                    }
+                }
+            }
+            if d3_bad {
                 break;
             }
             // ext (D12): validated as an object, otherwise ignored (checked first, matching the
@@ -789,6 +814,87 @@ mod tests {
             None,
         );
         assert!(entry.error.contains("entry 1: ext must be an object (the extension point of other implementations; got 5)"), "{}", entry.error);
+    }
+
+    #[test]
+    fn roster_string_problem_finds_each_forbidden_delimiter() {
+        assert_eq!(roster_string_problem("a::b"), Some("::"));
+        assert_eq!(roster_string_problem("a[b"), Some("["));
+        assert_eq!(roster_string_problem("a]b"), Some("]"));
+        assert_eq!(roster_string_problem("a|b"), Some("|"));
+        assert_eq!(roster_string_problem("a,b"), Some(","));
+        assert_eq!(roster_string_problem("a#1"), Some("#"));
+        assert_eq!(roster_string_problem("clean-value"), None);
+    }
+
+    #[test]
+    fn roster_rejects_forbidden_delimiters_in_provider_model_and_engine() {
+        let cases = [
+            (
+                "provider",
+                "a::b",
+                "roster entry #1: provider must not contain '::'",
+            ),
+            (
+                "provider",
+                "a[b",
+                "roster entry #1: provider must not contain '['",
+            ),
+            (
+                "provider",
+                "a]b",
+                "roster entry #1: provider must not contain ']'",
+            ),
+            (
+                "provider",
+                "a#1",
+                "roster entry #1: provider must not contain '#'",
+            ),
+            (
+                "model",
+                "glm|5",
+                "roster entry #1: model must not contain '|'",
+            ),
+            (
+                "model",
+                "glm,5",
+                "roster entry #1: model must not contain ','",
+            ),
+            (
+                "model",
+                "glm]5",
+                "roster entry #1: model must not contain ']'",
+            ),
+            (
+                "engine",
+                "co::dex",
+                "roster entry #1: engine must not contain '::'",
+            ),
+        ];
+        for (key, value, expected) in cases {
+            let text = format!(
+                r#"{{"roster_version":1,"reviewers":[{{"provider":"openai","model":"m","{key}":{value:?}}}]}}"#
+            );
+            let r = validate_roster("R.json", &text, None);
+            assert!(
+                r.error.contains(expected),
+                "{key}={value}: expected {expected:?} in {}",
+                r.error
+            );
+        }
+    }
+
+    #[test]
+    fn roster_accepts_clean_provider_model_and_engine_strings() {
+        let r = ok(r##"{
+            "roster_version": 1,
+            "reviewers": [
+                {"provider": "openai", "model": "gpt-6-astra"},
+                {"provider": "gemini", "engine": "agy", "model": "gemini-3.8-flash-high"}
+            ]
+        }"##);
+        assert_eq!(r.entries[0].provider, "openai");
+        assert_eq!(r.entries[1].engine, "agy");
     }
 
     #[test]

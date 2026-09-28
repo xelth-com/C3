@@ -604,7 +604,137 @@ fn run_member(o: Options, home: Option<&str>) -> i32 {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
+    // The member rewrites its reserved record as its own, waits the test-pause, and checks the
+    // parent is alive — all BEFORE its preflight (`codex-consult.ps1:2074-2113`), so the
+    // kill-after-rewrite window (F07-1/F11-6) is real and a parent that dies during the preflight
+    // is caught by the pre-launch check (in `run_live`) with "stopped before starting", not here.
+    // A dry-run member has no record.
+    if !mo.dry_run {
+        if let Err(msg) = member_early_accept(&mo, &spec) {
+            return refuse(&msg);
+        }
+    }
     dispatch(build_context(mo, r, Some(&spec)))
+}
+
+/// The member's record rewrite + pause hook + parent-alive check, done before its preflight
+/// (`codex-consult.ps1:2074-2113`). Rewrites the reserved record with this process's pid/host,
+/// keeping every other field (state stays `reserved`), then — after the optional test pause —
+/// refuses (and withdraws the record) if the parent is gone.
+fn member_early_accept(mo: &Options, m: &crate::panel::member::MemberSpec) -> Result<(), String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let repo_root = providers::resolve_repo_root(&cwd);
+    let collab_root = providers::resolve_collab_root(&repo_root, &mo.collab_dir);
+    let task = TaskSlug::new(mo.task.clone()).map_err(|e| e.to_string())?;
+    let store = FilesStore::new(collab_root);
+    let pending = PendingRef::member(task, m.nn as u32);
+    let path = store_pending_path(&store, &pending);
+    let started = "This panel member was not started.";
+    if !path.is_file() {
+        return Err(format!(
+            "this panel member's recovery record '{}' does not exist (the panel run writes it before it launches a member); this panel member was not started.",
+            path.display()
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| {
+        format!(
+            "could not read the recovery record '{}' ({e}). {started}",
+            path.display()
+        )
+    })?;
+    let val: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+        format!(
+            "the recovery record '{}' is unusable ({e}). {started}",
+            path.display()
+        )
+    })?;
+
+    let mut mism: Vec<String> = Vec::new();
+    match val.get("panel") {
+        None | Some(serde_json::Value::Null) => mism.push("the record names no panel".into()),
+        Some(p) => {
+            add_mismatch(&mut mism, "panel id", json_str(p, "id"), m.id.clone());
+            add_mismatch(
+                &mut mism,
+                "parent pid",
+                json_str(p, "parent_pid"),
+                m.parent_pid.to_string(),
+            );
+            add_mismatch(
+                &mut mism,
+                "parent start time",
+                json_str(p, "parent_start_time"),
+                m.parent_start_time.clone(),
+            );
+        }
+    }
+    add_mismatch(&mut mism, "n", json_str(&val, "n"), m.n.to_string());
+    add_mismatch(
+        &mut mism,
+        "nn",
+        json_str(&val, "nn"),
+        format!("{:02}", m.nn),
+    );
+    add_mismatch(
+        &mut mism,
+        "state",
+        json_str(&val, "state"),
+        "reserved".to_string(),
+    );
+    add_mismatch(
+        &mut mism,
+        "writer pid",
+        json_str(&val, "pid"),
+        m.parent_pid.to_string(),
+    );
+    if !mism.is_empty() {
+        return Err(format!(
+            "this panel member's recovery record '{}' does not match its spec ({}); this panel member was not started.",
+            path.display(),
+            mism.join("; ")
+        ));
+    }
+
+    let mut rec: PendingRecord = serde_json::from_value(val).unwrap_or_default();
+    let pid = std::process::id();
+    rec.pid = pid;
+    rec.start_time = crate::liveness::proc::process_start_iso(pid).unwrap_or_default();
+    rec.host = pending_host();
+    rec.note = format!(
+        "review panel member (the panel run is pid {})",
+        m.parent_pid
+    );
+    if let Err(e) = store.write_pending(&pending, &rec) {
+        return Err(format!(
+            "could not rewrite this panel member's recovery record '{}': {e}; this panel member was not started.",
+            path.display()
+        ));
+    }
+
+    // TEST HOOK: CODEX_CONSULT_TEST_MEMBER_PAUSE_MS - a pause between the rewrite and the parent
+    // check (the harness kills the parent inside it).
+    if let Ok(ms) = std::env::var("CODEX_CONSULT_TEST_MEMBER_PAUSE_MS") {
+        if let Ok(ms) = ms.trim().parse::<u64>() {
+            if ms > 0 {
+                std::thread::sleep(Duration::from_millis(ms));
+            }
+        }
+    }
+
+    if !crate::liveness::proc::pid_alive(m.parent_pid as u32, &m.parent_start_time) {
+        let withdrawn = std::fs::remove_file(&path).is_ok();
+        return Err(format!(
+            "the review panel run that launched this member (pid {}) is gone; this panel member was not started - nothing was started and its recovery record '{}' {}.",
+            m.parent_pid,
+            path.display(),
+            if withdrawn {
+                "was withdrawn".to_string()
+            } else {
+                "could not be withdrawn (the next run consumes it)".to_string()
+            }
+        ));
+    }
+    Ok(())
 }
 
 /// The shared build-context → run dispatch (single run and panel member).
@@ -2218,11 +2348,9 @@ fn run_live(mut ctx: Context) -> i32 {
         let lock_record = LockRecord::now(&ctx.task, None);
         match store.take_task_lock(&ctx.task, &lock_record) {
             Ok(l) => Some(l),
-            Err(e) => {
-                return refuse(&format!(
-                    "the task '{}' is locked by another run ({e}).",
-                    ctx.task
-                ))
+            Err(_) => {
+                let lock_path = store.task_dir(&ctx.task).join(".consult.lock");
+                return refuse(&format_task_lock_refusal(&lock_path, ctx.task.as_str()));
             }
         }
     };
@@ -2390,6 +2518,11 @@ fn run_live(mut ctx: Context) -> i32 {
         })
     };
 
+    // The consultation's start time (`$startedAt`, `codex-consult.ps1:3992`), captured just before
+    // the turn launches — the ledger's `when`. A panel member captures its OWN start here, so
+    // concurrent members share a close `when` while the slower one commits (`finished_at`) later.
+    let when_iso = iso_now();
+
     // Run the primary turn through the selected engine adapter.
     let (outcome, detail) = match run_primary_turn(&ctx, Some(on_running)) {
         Ok(r) => r,
@@ -2408,6 +2541,7 @@ fn run_live(mut ctx: Context) -> i32 {
         base_record,
         detail,
         collab_before,
+        when_iso,
     )
 }
 
@@ -2678,6 +2812,41 @@ fn pending_host() -> String {
         .unwrap_or_default()
 }
 
+/// `Enter-TaskLock`'s refusal (`codex-consult-common.ps1:7160`): the task lock is held. Re-read
+/// the informational lock record briefly and name a pid only while it is alive; a panel holder is
+/// named (`review panel <short>`). Byte-identical to the plugin's message.
+pub(crate) fn format_task_lock_refusal(lock_path: &Path, task: &str) -> String {
+    let mut who = "a live process".to_string();
+    for attempt in 0..8 {
+        if let Ok(bytes) = std::fs::read(lock_path) {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                let pid = v.get("pid").and_then(|x| x.as_i64()).unwrap_or(0);
+                let start = v.get("start_time").and_then(|x| x.as_str()).unwrap_or("");
+                if pid > 0 && crate::liveness::proc::pid_alive(pid as u32, start) {
+                    let host = v.get("host").and_then(|x| x.as_str()).unwrap_or("?");
+                    let started = v.get("started").and_then(|x| x.as_str()).unwrap_or("?");
+                    who = format!("pid {pid} on {host} since {started}");
+                    if let Some(panel) = v
+                        .get("panel")
+                        .and_then(|x| x.as_str())
+                        .filter(|s| !s.is_empty())
+                    {
+                        who += &format!(" (review panel {})", &panel[..panel.len().min(8)]);
+                    }
+                    break;
+                }
+            }
+        }
+        if attempt < 7 {
+            std::thread::sleep(Duration::from_millis(125));
+        }
+    }
+    format!(
+        "another consultation or status update for task '{task}' is running: {} is held open by {who}. Wait for it to finish; the lock is released when that process exits.",
+        lock_path.display()
+    )
+}
+
 /// Survivor entries `{pid, start_time, name}` for the pids a timeout kill left alive
 /// (`New-SurvivorEntries`); a pid already gone is left out so a reused pid is never mistaken
 /// for the survivor later.
@@ -2756,114 +2925,23 @@ fn json_str(v: &serde_json::Value, key: &str) -> String {
     }
 }
 
-/// The panel-member accept/rewrite guard (`codex-consult.ps1:2074-2113` + `3516-3524`): read the
-/// reserved record the panel run wrote for this member, refuse a missing/corrupt/mismatched one,
-/// rewrite it as this process's own, refuse (and withdraw) when the parent is gone, then record
-/// this run's reply/consult id/launcher/engine. Returns the accepted record.
+/// Phase B of the panel-member accept (`codex-consult.ps1:3516-3524`): the record was already
+/// rewritten as this process's own and its parent verified alive by [`member_early_accept`]
+/// (before the preflight); reopen it and stamp this run's reply/consult id/launcher/engine. A
+/// missing/unreadable record here means it was withdrawn under this process (a race the caller
+/// treats as "not started"); the base record is used as-is.
 fn member_accept(
     store: &FilesStore,
     ctx: &Context,
     pending: &PendingRef,
-    m: &crate::panel::member::MemberSpec,
+    _m: &crate::panel::member::MemberSpec,
     reply_rel: &str,
 ) -> Result<PendingRecord, String> {
     let path = store_pending_path(store, pending);
-    let started = "This panel member was not started.";
-    if !path.is_file() {
-        return Err(format!(
-            "this panel member's recovery record '{}' does not exist (the panel run writes it before it launches a member); this panel member was not started.",
-            path.display()
-        ));
-    }
-    let bytes = std::fs::read(&path).map_err(|e| {
-        format!(
-            "could not read the recovery record '{}' ({e}). {started}",
-            path.display()
-        )
-    })?;
-    let val: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
-        format!(
-            "the recovery record '{}' is unusable ({e}). {started}",
-            path.display()
-        )
-    })?;
-
-    let mut mism: Vec<String> = Vec::new();
-    match val.get("panel") {
-        None | Some(serde_json::Value::Null) => mism.push("the record names no panel".into()),
-        Some(p) => {
-            add_mismatch(&mut mism, "panel id", json_str(p, "id"), m.id.clone());
-            add_mismatch(
-                &mut mism,
-                "parent pid",
-                json_str(p, "parent_pid"),
-                m.parent_pid.to_string(),
-            );
-            add_mismatch(
-                &mut mism,
-                "parent start time",
-                json_str(p, "parent_start_time"),
-                m.parent_start_time.clone(),
-            );
-        }
-    }
-    add_mismatch(&mut mism, "n", json_str(&val, "n"), m.n.to_string());
-    add_mismatch(
-        &mut mism,
-        "nn",
-        json_str(&val, "nn"),
-        format!("{:02}", m.nn),
-    );
-    add_mismatch(
-        &mut mism,
-        "state",
-        json_str(&val, "state"),
-        "reserved".to_string(),
-    );
-    add_mismatch(
-        &mut mism,
-        "writer pid",
-        json_str(&val, "pid"),
-        m.parent_pid.to_string(),
-    );
-    if !mism.is_empty() {
-        return Err(format!(
-            "this panel member's recovery record '{}' does not match its spec ({}); this panel member was not started.",
-            path.display(),
-            mism.join("; ")
-        ));
-    }
-
-    let mut rec: PendingRecord = serde_json::from_value(val).unwrap_or_default();
-    let pid = std::process::id();
-    rec.pid = pid;
-    rec.start_time = crate::liveness::proc::process_start_iso(pid).unwrap_or_default();
-    rec.host = pending_host();
-    rec.note = format!(
-        "review panel member (the panel run is pid {})",
-        m.parent_pid
-    );
-    if let Err(e) = store.write_pending(pending, &rec) {
-        return Err(format!(
-            "could not rewrite this panel member's recovery record '{}': {e}; this panel member was not started.",
-            path.display()
-        ));
-    }
-
-    if !crate::liveness::proc::pid_alive(m.parent_pid as u32, &m.parent_start_time) {
-        let withdrawn = std::fs::remove_file(&path).is_ok();
-        return Err(format!(
-            "the review panel run that launched this member (pid {}) is gone; this panel member was not started - nothing was started and its recovery record '{}' {}.",
-            m.parent_pid,
-            path.display(),
-            if withdrawn {
-                "was withdrawn".to_string()
-            } else {
-                "could not be withdrawn (the next run consumes it)".to_string()
-            }
-        ));
-    }
-
+    let mut rec: PendingRecord = std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default();
     rec.reply = reply_rel.to_string();
     rec.consult_id = ctx.consult_id.clone();
     rec.launcher = if ctx.is_codex() {
@@ -2886,6 +2964,7 @@ fn finish(
     base_record: PendingRecord,
     detail: EngineDetail,
     collab_before: std::collections::HashMap<String, String>,
+    when_iso: String,
 ) -> i32 {
     let is_engine = !ctx.is_codex();
     let mut bridge_outcome;
@@ -3401,6 +3480,10 @@ fn finish(
         &drift,
         &sec,
     );
+    // The ledger `when` is the run's START (`$startedAt`), not the commit time (`build_entry`
+    // stamps `iso_now()` as a placeholder). This makes the panel's overlap check (last start <
+    // first finish) hold for concurrent members.
+    entry.when = when_iso;
     entry.thread_candidate = thread_candidate.clone();
     // Prior-finding lifecycle records (F04-4): this reply's `prior_findings` reports, the
     // unchecked prior blockers, and — when the semantics contradict the verdict — the blanked
@@ -3451,6 +3534,21 @@ fn finish(
         Ok(l) => l,
         Err(e) => return refuse(&format!("could not take the write lock: {e}")),
     };
+    // The write-lock wait (`commit_wait_ms`): 0 when the first attempt won it, else the measured
+    // wait; a contended commit says so in a summary line (F11-3).
+    let commit_wait_ms = write_lock.wait_ms() as i64;
+    entry.commit_wait_ms = commit_wait_ms;
+    // TEST HOOK: CODEX_CONSULT_TEST_COMMIT_PAUSE_MS=<ms> | <model>=<ms>[|...] — a pause held
+    // INSIDE the commit (while the write lock is held), so concurrent commits of the task
+    // contend (`codex-consult.ps1:5176`).
+    if let Some(ms) = test_hook_ms(
+        &std::env::var("CODEX_CONSULT_TEST_COMMIT_PAUSE_MS").unwrap_or_default(),
+        &ctx.identity.model,
+    ) {
+        if ms > 0 {
+            std::thread::sleep(Duration::from_millis(ms));
+        }
+    }
     let commit = CommitRequest {
         entry,
         findings: delta,
@@ -3607,6 +3705,11 @@ fn finish(
         partial_path: partial_abs,
         partial_footer: sec.partial_footer.clone(),
         resume_command: sec.resume_command.clone(),
+        commit_wait_line: if commit_wait_ms > 0 {
+            format!("write lock : waited {commit_wait_ms} ms for another commit of this task")
+        } else {
+            String::new()
+        },
         verdict_line: verdict_line.unwrap_or_default(),
         findings_line: findings_line.unwrap_or_default(),
         prior_line,
@@ -4992,6 +5095,27 @@ fn iso_now() -> String {
         .to_string()
 }
 
+/// `Get-TestHookMs`: parse a test-hook value that is either a plain `<ms>` or a
+/// `<model>=<ms>[|<model>=<ms>...]` map; return the ms for `model` (or the plain value), else
+/// `None`.
+fn test_hook_ms(value: &str, model: &str) -> Option<u64> {
+    let v = value.trim();
+    if v.is_empty() {
+        return None;
+    }
+    if !v.contains('=') {
+        return v.parse::<u64>().ok();
+    }
+    for part in v.split('|') {
+        if let Some((m, ms)) = part.split_once('=') {
+            if m.trim() == model {
+                return ms.trim().parse::<u64>().ok();
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn fmt_wall(w: f64) -> String {
     if (w.fract()).abs() < f64::EPSILON {
         format!("{}", w as i64)
@@ -5767,7 +5891,7 @@ fn build_entry(
             .routing
             .as_ref()
             .and_then(|v| serde_json::from_value::<c3_core::ledger::PanelRouting>(v.clone()).ok());
-        let mut panel = c3_core::ledger::Panel {
+        let panel = c3_core::ledger::Panel {
             id: m.id.clone(),
             position: m.position,
             of: m.of,
@@ -5775,17 +5899,15 @@ fn build_entry(
             concurrency: m.concurrency,
             limits: m.limits.clone(),
             asked: Some(if m.asked > 0 { m.asked } else { m.of }),
-            started: None,
-            usable: None,
+            // Written as explicit `null`; the panel run patches these to the real counts
+            // after every member finishes (`codex-consult.ps1:2866`).
+            started: Some(None),
+            usable: Some(None),
             routing,
+            // Always written (empty when no `-Roles` note), after `routing`.
+            roles_note: Some(Some(ctx.roles_note.clone())),
             ..Default::default()
         };
-        if !ctx.roles_note.is_empty() {
-            panel.extra.insert(
-                "roles_note".into(),
-                serde_json::Value::String(ctx.roles_note.clone()),
-            );
-        }
         e.panel = Some(panel);
     }
 

@@ -729,3 +729,131 @@ validator instead of being swallowed by a sentinel. Harnesses run one at a time.
   the absent plugin `templates/` dir, not on c3.
 - **FAIL ROSTER** `fail-closed ...` — roster-file validation lives in c3-core `roster.rs` (not owned
   by this task); its unknown-key message did not match a sub-assertion. Pre-existing, out of scope.
+
+---
+
+# Run 8 (panel parent scheduler — M4 chunk 2) — 2026-09-28
+
+The parent scheduler that runs a panel end to end: `panel::run` takes the task lock, reserves every
+seat's `.consult.pending-<NN>.json`, launches each seat as a child `c3 consult --task <t>
+--panel-spec <b64>` (its console to `<temp>/codex-consult-panel-<id>/<NN>.out|.err`), schedules by
+endpoint group (parallel across groups up to the caps, sequential within a group, `-PanelConcurrency`
+caps the total, F15-3), collects each member's outcome (its last `codex-consult: ` line + its
+committed ledger entry), patches every member's `panel.started`/`panel.usable`, prints the
+byte-identical summary block, and returns the exit code. A dry run takes the SAME path with
+`dry_run=true` members and no lock/records (the per-member dry-run recursion), marking each seat
+`planned`/`refused`. Also landed: the routed-draw rating reader (`read_all_task_ratings`),
+`Select-RoleAssignment` (`-Roles`, Kuhn matching), the member lifecycle reorder (record rewrite +
+`CODEX_CONSULT_TEST_MEMBER_PAUSE_MS` pause + parent check BEFORE the preflight), the seeded-draw
+parity with `tests/reference-draw.py` (35d4a32), and the c3-core ledger fields the wave-26b order
+needs (`panel.started`/`usable` explicit `null`, `panel.roles_note`, `routing.size_asked`,
+`routing.reserve`).
+
+Shim setup as Runs 2-7 (the five C3 shims from `tests/shim/` + the plugin's own
+`codex-consult-common.ps1`/`codex-consult-detached.ps1` **refreshed to 35d4a32 / wave 26b** + a
+sibling `consult-reply.schema.json`); `$env:C3_EXE` a fresh `--no-default-features`
+`target/debug/c3.exe`. Harnesses run ONE AT A TIME. Every harness sets `CODEX_CONSULT_HEALTH=none`
+(the machine-wide health file is not in this chunk).
+
+Local gates: `cargo build -p c3 -p c3-core --no-default-features` (clean); `cargo test -p c3 -p
+c3-core --no-default-features` (all green; new tests: the `reference-draw.py` seed/uniform/draw
+parity, the summary column layout against the real panel-01 rows, the guard budget, the role
+assignment, `format_summary_rows`/`format_prior_counts`/`provider_slug`); `cargo clippy -p c3 -p
+c3-core --no-default-features --all-targets -- -D warnings` (clean); `rustfmt` on the changed files.
+
+## Summary (Run 7 chunk-1 -> Run 8)
+
+| harness | section filter | Run 7 | Run 8 | ran to its own summary line? |
+|---|---|---|---|---|
+| harness-panel | full | 11/10 (crashed in RUN, 21 reached) | 32-33 / 14-20 (46-53 reached, runs to completion) | yes |
+| harness-companions | full | 8/5 (subset) | 24 / 1 | yes |
+| harness-engines | `-Only PANEL` | (crashed before PANEL) | 2 / 2 | yes |
+| harness-muse | `-Only PANEL,BILLING` | (crashed before PANEL) | 9 / 2 | yes |
+
+harness-panel is now non-crashing and runs every section; its RUN-time counts vary run to run
+(one section) because the members are real child processes and several checks are timing-sensitive
+(the fullest observed run reached 53 checks, 33 pass). All of UNIT, DRY, RUN, NOLOSS, SEQ pass
+every run.
+
+## What passed (the scheduler, chunk 2)
+
+- **DRY** (all): the plan block header/member lines/routing/concurrency/timeout/pending byte-identical;
+  the per-member dry-run recursion (each seat's child prints its own single-run dry-run block with
+  its pre-assigned numbers, summary `planned`); the plan-text variants; the `-PanelConcurrency`
+  refusals.
+- **RUN** (all): three members run concurrently (last start before first finish - the ledger `when`
+  is now the run START, not the commit); the panel wall clock below the sum of member walls; the
+  ledger sorted by `n` in `panel.routing.picked` order; findings.json in id order; the per-member
+  progress lines; the `panel{}` record (concurrency, per-label limits, same id/members in every
+  entry); no recovery record left after success; `codex-findings -Rate` through the commit.
+- **NOLOSS** (all): three concurrent commits on the re-read stores lose no findings
+  (`Add-ReplyFindings` id-ordered insertion ported to `apply_findings_delta`); the seed finding
+  carries all three reviewer checks; the commits genuinely contend (`commit_wait_ms > 0`, the
+  `write lock : waited N ms` summary line, `CODEX_CONSULT_TEST_COMMIT_PAUSE_MS`).
+- **SEQ**: `-PanelConcurrency 1` strictly one after another; two entries of one endpoint serialize
+  while the other endpoint runs beside them.
+- **companions** (24/1): DRAW (the length-prefixed seed golden, the draw sequences, the exploration
+  bound - matching `reference-draw.py`), ROUTE floor, SIZE, REQUIRE, ROSTER, ROUTED.
+
+## Remaining differing checks, grouped with diagnosis
+
+### Environmental - the documented Windows argv `\"`-vs-`""` quoting (not a scheduler bug)
+
+- **TIMEOUT** (4), **GUARD** (the kill leg): the fake codex's `FAKE_CODEX_HANG_ON =
+  'model_provider=""ZAI""'` matches the PowerShell `""`-doubled argument; Rust's `std::process`
+  escapes the embedded quotes as `\"` on Windows (the same divergence documented in Runs 3/4/6), so
+  the fake never hangs, the member never times out / never outlives its guard, and it commits a
+  usable reply instead. The scheduler's timeout collection, survivor handling and guard-kill
+  (`kill_tree`, `CODEX_CONSULT_TEST_PANEL_GUARD_SEC`) are implemented and unit-tested; only the
+  fake's trigger does not fire under c3's argv quoting.
+
+### Environmental - the documented schema-path divergence
+
+- **muse PANEL** (2): the panel plan and the `--max-model-steps 40` suffix are correct; the checks
+  compare the whole command including `<CODEX_HOME>/c3/schemas/consult-reply.v1.json` against the
+  plugin's on-disk schema path (the divergence documented in Runs 5/6).
+
+### Out of scope for this task (findings_tool / roster.rs, c3-core)
+
+- **INFLIGHT**: the single-run refusal now names the panel holder (`held open by pid N on HOST since
+  T (review panel <short>)`, via `format_task_lock_refusal`); the check also requires
+  `codex-findings -Status` to emit the same (that lives in `findings_tool`), and the member records'
+  `start_time` conjunct (below).
+- **companions ROUTE D8 role files**: needs the plugin's `templates/role-*.md`; C3 ships no plugin
+  templates (only `<collab>/roles/*.md` resolve). Pre-existing chunk-1 limitation.
+
+### Member-side behaviours for the detached follow-on (not the parent scheduler)
+
+- **BLOCKED** (3): a member whose commit cannot take the write lock within the test window must keep
+  its reply, mark its record `committing`, and report `commit blocked: ...` (D3) - c3 currently
+  refuses with a plain "could not take the write lock" and no `committing` record. The
+  commit-blocked path is unimplemented in the member commit (`orchestrate::finish`).
+- **ORPHAN / MEMBERKILL** (when reached): a bridge/member killed inside its commit (between
+  findings.json and sessions.json) leaves an ORPHAN finding + a `committing` record the next run
+  recovers - the member-commit-interruption recovery is unimplemented.
+- **SPEC** (2) / **PARENT** #1 / **INFLIGHT** #1: the member rewrites its reserved record with its
+  own pid + start time before its preflight (implemented, `member_early_accept`, with the
+  `CODEX_CONSULT_TEST_MEMBER_PAUSE_MS` pause), but the record's writer-liveness during the
+  pause/parent-death window is judged so that a concurrent run reads the member as gone rather than
+  active (the member appears to exit before the 15 s pause window is observed by the sibling run).
+  Needs a closer look at the member-record `start_time` write and `test_pending_active`'s writer
+  rule for a live member whose parent has died.
+- **AGY PANEL** (2): the agy member runs in a panel (engine from its roster entry) but the summary
+  `[agy]` line / the "agy fails, codex still usable" outcome differ; agy-in-panel specifics
+  (tree-check sibling exclusion, the forced failure) need the agy path exercised under the scheduler.
+
+## Hand-off for the detached chunk
+
+- **Commit-blocked + commit-interruption recovery** (member side, `orchestrate::finish` + `store`):
+  the D3 `commit blocked` outcome (keep reply, record `committing`), and the ORPHAN/MEMBERKILL
+  recovery of a `committing` record. Closes BLOCKED/ORPHAN/MEMBERKILL.
+- **Member-record writer-liveness during the parent-death/pause window**: reconcile
+  `member_early_accept`'s `start_time` write with `liveness::pending::test_pending_active` so a
+  sibling run sees a paused/alive member as active. Closes SPEC/PARENT#1/INFLIGHT#1.
+- **agy-in-panel**: exercise the agy member end to end under the scheduler. Closes AGY.
+- **Reported to the supervisor (not owned here)**: (a) `findings_tool` `-Status`/`-Rate` must emit
+  the panel-holder lock refusal and judge member records like the panel does, for INFLIGHT/TIMEOUT's
+  codex-findings legs; (b) c3-core `roster.rs` must refuse a provider/model/engine containing `::`,
+  `[`, `]`, `|`, `,`, `#` or edge whitespace (wave-26b string validation) - the one remaining ROSTER
+  fail-closed sub-assertion; (c) the wave-26b `partial_reply`-on-any-failure rule (README ledger
+  list) is a member render/ledger change, not done this chunk.
