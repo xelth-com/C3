@@ -53,9 +53,12 @@ const TOOL: &str = "codex-consult";
 const RANGE_WARN_LINES: i64 = 1500;
 const RANGE_WARN_TIMEOUT: i64 = 2400;
 
-/// Print a refusal (`Stop-WithError`) and return the usage exit code (1).
+/// Print a refusal (`Stop-WithError`) and return the usage exit code (1). A refusal after a
+/// detached background's lock is remembered as that run's final status (D3).
 fn refuse(msg: &str) -> i32 {
-    eprintln!("{TOOL}: {msg}");
+    let line = format!("{TOOL}: {msg}");
+    eprintln!("{line}");
+    super::detach::note_line(&line);
     1
 }
 
@@ -564,19 +567,135 @@ fn run_inner(o: Options) -> i32 {
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty()));
     // A panel member re-exec (`--panel-spec`): reconstruct the run from its spec and honour it.
-    if !o.panel_spec.is_empty() {
+    // `-Detach -PanelSpec` is a misuse the `-Detach` foreground refuses, so it takes precedence.
+    if !o.panel_spec.is_empty() && !o.detach {
         return run_member(o, home.as_deref());
     }
+    // ---- the detached surface (R12): -Status/-Wait (read only), -DetachId (the background), the
+    // -Id/-Prune misuse refusal, and -Detach (the foreground). Ordered as `codex-consult.ps1`.
+    if o.status || o.wait {
+        return super::detach::query(&o);
+    }
+    if o.id_given || o.prune || o.wait_timeout_sec_given {
+        return refuse("-Id and -Prune go with -Status (-Id and -WaitTimeoutSec with -Wait).");
+    }
+    if !o.detach_id.is_empty() {
+        return super::detach::background(o, run_normal);
+    }
+    if o.detach {
+        return detach_foreground(o, home.as_deref());
+    }
+    run_normal(o)
+}
+
+/// The normal run flow (a single run or a panel), reused by the detached background.
+fn run_normal(o: Options) -> i32 {
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty()));
     let r = match args::validate(&o, home.as_deref()) {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
-    // The panel path (`--panel`/`--panel-all`): compute the plan, print the dry-run block, or
-    // refuse a real run (the panel runtime lands in the next chunk).
     if o.panel || o.panel_all {
         return crate::panel::run::run(o, r, home.as_deref());
     }
     dispatch(build_context(o, r, None))
+}
+
+/// The foreground of `-Detach` (D2, D8): make every check a real run makes before its lock, then
+/// spawn the background — or refuse with nothing left behind.
+fn detach_foreground(o: Options, home: Option<&str>) -> i32 {
+    if !o.panel_spec.is_empty() {
+        return refuse("-Detach does not go with -PanelSpec (internal to -Panel).");
+    }
+    if o.dry_run {
+        return refuse(
+            "-Detach does not go with -DryRun: a dry run starts nothing to detach - run -DryRun alone first.",
+        );
+    }
+    let r = match args::validate(&o, home) {
+        Ok(r) => r,
+        Err(msg) => return refuse(&msg),
+    };
+    if o.panel || o.panel_all {
+        return crate::panel::run::detach_foreground(o, r, home);
+    }
+    // A single detached run: build the context (the identity/preflight/launcher/brief refusals a
+    // real run makes), then the pre-lock refusals (launcher missing, preflight, active record).
+    let ctx = match build_context(o.clone(), r, None) {
+        Ok(c) => c,
+        Err((msg, code)) => {
+            return if code == 1 {
+                refuse(&msg)
+            } else {
+                eprintln!("{TOOL}: {msg}");
+                code
+            }
+        }
+    };
+    if ctx.is_codex() && ctx.launcher.is_empty() {
+        return refuse(
+            "codex CLI not found on PATH (set -CodexExe <path> or the CODEX_CONSULT_EXE environment variable).",
+        );
+    }
+    if !ctx.is_codex() && ctx.engine_launcher.is_empty() {
+        let exe_env = c3_core::lineage::engine_spec(&ctx.engine)
+            .map(|s| s.exe_env)
+            .unwrap_or("");
+        return refuse(&format!(
+            "{} CLI not found on PATH (set -EngineExe <path> or the {exe_env} environment variable).",
+            ctx.engine
+        ));
+    }
+    if let Some((msg, code)) = ctx.preflight_refusal.clone() {
+        eprintln!("{TOOL}: {msg}");
+        return code;
+    }
+    // An active recovery record refuses before the lock (nothing consumed/written).
+    let store = FilesStore::new(ctx.collab_root.clone());
+    let assessed = super::recovery::assess(&store, &ctx.task);
+    if let Some(err) = assessed.error {
+        return refuse(&err);
+    }
+    if let Some(msg) = assessed.active_message() {
+        return refuse(&msg);
+    }
+    // The budget (D4), the one planned member, the plan line, then spawn.
+    let denial_on = ctx.engine == "agy" && ctx.o.denial_retry == 1;
+    let budget = super::detach::single_run_budget(
+        ctx.r.timeout_sec,
+        ctx.r.continue_sec,
+        ctx.r.repair_enabled,
+        denial_on,
+    );
+    let lineage = c3_core::lineage::format_reviewer_lineage(
+        &ctx.identity.provider,
+        &ctx.identity.model,
+        &ctx.engine,
+    );
+    let members = vec![super::detach::PlannedMember {
+        position: 1,
+        lineage: lineage.clone(),
+        state: "pending".into(),
+        outcome: String::new(),
+    }];
+    let plan = format!(
+        "a single run of {lineage} (purpose {}, timeout {} s)",
+        ctx.r.purpose_label, ctx.r.timeout_sec
+    );
+    let brief_full = ctx
+        .brief_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let warnings: Vec<String> = if ctx.preflight_warning.is_empty() {
+        Vec::new()
+    } else {
+        vec![ctx.preflight_warning.clone()]
+    };
+    super::detach::start_detached_run(&o, "run", &members, budget, &plan, &brief_full, &warnings)
 }
 
 /// The panel member re-exec (`--panel-spec`): decode the spec, reconstruct the run's options
@@ -846,8 +965,13 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         panel_spec: String::new(),
         detach: false,
         status: false,
+        id: String::new(),
+        id_given: false,
+        detach_id: String::new(),
         list: false,
         wait: false,
+        wait_timeout_sec: 0,
+        wait_timeout_sec_given: false,
         prune: false,
     }
 }
@@ -2252,6 +2376,13 @@ fn resolve_artifacts(
         } else {
             bases.iter().map(|b| b.join(raw)).find(|c| c.is_file())
         };
+        // The ledger records the ABSOLUTE path (`Resolve-ArtifactPaths`), but without the
+        // Windows `\\?\` verbatim prefix that `canonicalize` adds — so use the clean joined
+        // absolute for `path` and the canonicalized form only for reading/hashing.
+        let clean_abs = match &resolved {
+            Some(p) => p.to_string_lossy().to_string(),
+            None => raw.clone(),
+        };
         let full = match resolved {
             Some(p) => p.canonicalize().unwrap_or(p),
             None => {
@@ -2276,7 +2407,7 @@ fn resolve_artifacts(
             .map(|b| c3_core::sha256_hex(&b))
             .unwrap_or_else(|_| "missing".into());
         out.push(ArtifactHash {
-            path: raw.clone(),
+            path: clean_abs,
             full,
             sha256,
         });
@@ -2403,6 +2534,16 @@ fn run_live(mut ctx: Context) -> i32 {
         // start time (the writer-pid liveness rule), the host and this run's numbers/reply.
         let rec = new_pending_record(PendingState::Reserved, &ctx, &reply_rel);
         let _ = store.write_pending(&pending, &rec);
+        // A detached single run: its one member is running now (its numbers are assigned).
+        if super::detach::is_active() {
+            let n = ctx.consult_n;
+            let handoff = format!("{:02}", ctx.nn);
+            super::detach::update_member(1, |m| {
+                m.state = "running".into();
+                m.n = Some(n);
+                m.handoff = handoff;
+            });
+        }
         rec
     };
 
@@ -3733,8 +3874,33 @@ fn finish(
     for w in &ctx.run_warnings {
         println!("WARNING: {w}");
     }
-    for line in summary::render_summary(&s) {
+    let rendered = summary::render_summary(&s);
+    for line in &rendered {
         println!("{line}");
+    }
+    // A detached single run keeps its summary block and its one member's final state in the
+    // status file (a panel member's own run never has the sink active — the panel scheduler
+    // reports its members instead).
+    if super::detach::is_active() && ctx.panel_member.is_none() {
+        super::detach::note_single_run_summary(&rendered);
+        let handoff = format!("{:02}", ctx.nn);
+        let n = ctx.consult_n;
+        let (state, outcome) = if usable {
+            ("usable".to_string(), "usable reply".to_string())
+        } else {
+            // `bridge_outcome` already carries the `failed: ...` phrasing.
+            ("failed".to_string(), bridge_outcome.clone())
+        };
+        let wall = round1(wall_seconds);
+        let reply_rel_final = ctx.hf("md");
+        super::detach::update_member(1, |m| {
+            m.state = state;
+            m.outcome = outcome;
+            m.n = Some(n);
+            m.handoff = handoff;
+            m.wall_seconds = Some(wall);
+            m.reply = reply_rel_final;
+        });
     }
     // temp file cleanup
     let _ = std::fs::remove_file(&ctx.last_msg_path);

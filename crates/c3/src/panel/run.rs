@@ -47,6 +47,102 @@ pub fn run(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
     }
 }
 
+/// The foreground of `-Detach -Panel` (D2, D8): resolve the plan (no lock/records), compute the
+/// budget (D4) and the planned members, then spawn the background — or refuse with nothing written.
+pub fn detach_foreground(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
+    // A missing brief is refused in the foreground (D2), before anything is planned or written.
+    if !o.brief.is_empty() {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let brief_path = if Path::new(&o.brief).is_absolute() {
+            PathBuf::from(&o.brief)
+        } else {
+            cwd.join(&o.brief)
+        };
+        if !brief_path.is_file() {
+            eprintln!(
+                "{TOOL}: brief '{}' not found ({}).",
+                o.brief,
+                brief_path.display()
+            );
+            return 1;
+        }
+    }
+    let b = match build(&o, &r) {
+        Ok(b) => b,
+        Err((msg, code)) => {
+            eprintln!("{TOOL}: {msg}");
+            return code;
+        }
+    };
+    if b.seated_count == 0 {
+        eprintln!(
+            "{TOOL}: -Panel found no available reviewer to seat from the roster '{}'; nothing was started.",
+            b.roster_path
+        );
+        return 1;
+    }
+    // An active recovery record refuses in the foreground, before anything is written (D2).
+    {
+        let store = FilesStore::new(b.collab_root.clone());
+        let assessed = crate::consult::recovery::assess(&store, &b.task);
+        if let Some(err) = assessed.error {
+            eprintln!("{TOOL}: {err}");
+            return 1;
+        }
+        if let Some(msg) = assessed.active_message() {
+            eprintln!("{TOOL}: {msg}");
+            return 1;
+        }
+    }
+    let guard_hook: f64 = std::env::var("CODEX_CONSULT_TEST_PANEL_GUARD_SEC")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(0.0);
+    let guard_of = |pos: i64| -> i64 {
+        let ru = b.runners.iter().find(|ru| ru.position == pos);
+        let g = if guard_hook > 0.0 {
+            guard_hook
+        } else {
+            let denial = ru
+                .map(|ru| {
+                    c3_core::lineage::engine_spec(&ru.engine)
+                        .map(|s| s.denial_retry)
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false)
+                && o.denial_retry == 1;
+            panel_member_guard(r.timeout_sec, r.continue_sec, r.repair_enabled, denial)
+        };
+        g.round() as i64
+    };
+    let groups: Vec<(i64, Vec<i64>)> = b
+        .concurrency
+        .groups
+        .iter()
+        .map(|g| (g.limit, g.positions.clone()))
+        .collect();
+    let budget =
+        crate::consult::detached::detached_budget(&groups, &guard_of, o.panel_concurrency, 120);
+    let mut members: Vec<crate::consult::detach::PlannedMember> = b
+        .runners
+        .iter()
+        .map(|ru| crate::consult::detach::PlannedMember {
+            position: ru.position,
+            lineage: ru.shown.clone(),
+            state: "pending".into(),
+            outcome: String::new(),
+        })
+        .collect();
+    members.sort_by_key(|m| m.position);
+    let plan = format!(
+        "a review panel of {} of {} roster entries, {} (purpose {}, timeout {} s per member)",
+        b.seated_count, b.entry_count, b.concurrency.text, r.purpose_label, r.timeout_sec
+    );
+    let warnings = b.warnings.clone();
+    crate::consult::detach::start_detached_run(&o, "panel", &members, budget, &plan, "", &warnings)
+}
+
 /// A seated runner (seat order), as `build` resolves it (no disk yet).
 struct RunnerInfo {
     position: i64,
@@ -855,6 +951,23 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
             }
             progress = true;
             complete_member(&mut slots[i], &store, &b, dry);
+            // A detached panel: record this member's final state as it finishes (D11).
+            {
+                let pos = b.runners[slots[i].runner].position;
+                let (mstate, moutcome) = detach_member_state(&slots[i], dry);
+                let n = slots[i].n;
+                let nn = format!("{:02}", slots[i].nn);
+                let wall = slots[i].wall;
+                let reply = slots[i].reply_rel.clone();
+                crate::consult::detach::update_member(pos, |m| {
+                    m.state = mstate;
+                    m.outcome = moutcome;
+                    m.n = Some(n);
+                    m.handoff = nn;
+                    m.wall_seconds = Some(wall);
+                    m.reply = reply;
+                });
+            }
             let shown = b.runners[slots[i].runner].shown.clone();
             let mut member_status = member_status(&slots[i], dry);
             let chars: Vec<char> = member_status.chars().collect();
@@ -1237,18 +1350,25 @@ fn render_summary(
             b.concurrency.text
         )
     };
-    println!("Panel {short}: {head}");
-
+    // Collect the block (from the `Panel <id8>:` line down) so a detached panel keeps it verbatim
+    // in its status file (the same slice the harness's `PanelSummary` takes).
+    let mut block: Vec<String> = Vec::new();
+    block.push(format!("Panel {short}: {head}"));
     for line in format_summary_rows(&rows) {
-        println!("{line}");
+        block.push(line);
     }
 
     let not_picked: Vec<&DisplayRow> = b.rows.iter().filter(|r| r.state == "not-picked").collect();
     if !not_picked.is_empty() {
         let names: Vec<String> = not_picked.iter().map(|r| r.shown.clone()).collect();
-        println!("  not picked (panel size {}): {}", b.k, names.join(", "));
+        block.push(format!(
+            "  not picked (panel size {}): {}",
+            b.k,
+            names.join(", ")
+        ));
     }
 
+    let mut exit = if all_usable { 0 } else { 1 };
     if !dry {
         let missing: Vec<String> = slots
             .iter()
@@ -1256,19 +1376,19 @@ fn render_summary(
             .map(|s| b.runners[s.runner].shown.clone())
             .collect();
         if !missing.is_empty() {
-            println!(
+            block.push(format!(
                 "  required member{} without a usable reply: {} - exit 5",
                 if missing.len() != 1 { "s" } else { "" },
                 missing.join(", ")
-            );
-            return 5;
+            ));
+            exit = 5;
         }
     }
-    if all_usable {
-        0
-    } else {
-        1
+    for l in &block {
+        println!("{l}");
     }
+    crate::consult::detach::note_summary(&block);
+    exit
 }
 
 /// PowerShell `PadRight`: pad with spaces to `width` chars (no truncation).
@@ -1334,6 +1454,17 @@ fn member_status(s: &Slot, dry: bool) -> String {
             format!("failed: {}", c3_core::one_line(&s.refusal))
         }
     }
+}
+
+/// The detached-run member state + outcome for a finished slot (D11).
+fn detach_member_state(s: &Slot, dry: bool) -> (String, String) {
+    if s.state == SlotState::Killed {
+        return ("killed".into(), member_status(s, dry));
+    }
+    if slot_usable(s) {
+        return ("usable".into(), member_status(s, dry));
+    }
+    ("failed".into(), member_status(s, dry))
 }
 
 /// `Test-PanelSlotUsable`.
@@ -1454,6 +1585,15 @@ fn start_member(
             slots[i].child = Some(child);
             slots[i].watch = Some(Instant::now());
             slots[i].state = SlotState::Running;
+            // A detached panel keeps each member's state in the status file (D11).
+            let pos = b.runners[slots[i].runner].position;
+            let n = slots[i].n;
+            let nn = format!("{:02}", slots[i].nn);
+            crate::consult::detach::update_member(pos, |m| {
+                m.state = "running".into();
+                m.n = Some(n);
+                m.handoff = nn;
+            });
         }
         Err(e) => {
             slots[i].state = SlotState::FailedStart;

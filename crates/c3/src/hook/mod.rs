@@ -31,6 +31,15 @@ pub fn run(collab_dir: &str) -> i32 {
 
 /// The line, without printing it (so the behaviour is unit-testable).
 pub fn line(collab_dir: &str) -> String {
+    format!(
+        "{}{}",
+        availability_line(collab_dir),
+        detached_phrase(collab_dir)
+    )
+}
+
+/// The availability half of the hook line (the provider check).
+fn availability_line(collab_dir: &str) -> String {
     // `Get-Command codex`: the plugin refuses to run the provider check at all when the
     // launcher is not on PATH. `resolve_codex_launcher("")` returns an empty string in
     // exactly that case (an explicit override would be an error, but the hook passes
@@ -58,6 +67,14 @@ pub fn line(collab_dir: &str) -> String {
         }
         Err(e) => reviewer_check_failed(&e),
     }
+}
+
+/// The SessionStart phrase over every detached run of the collab root (`Get-DetachedPhrase`).
+fn detached_phrase(collab_dir: &str) -> String {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let repo_root = crate::providers::resolve_repo_root(&cwd);
+    let collab_root = crate::providers::resolve_collab_root(&repo_root, collab_dir);
+    crate::consult::detach::detached_phrase(&collab_root, chrono::Utc::now(), 24)
 }
 
 /// The plugin's catch-branch wording: collapse whitespace, truncate to 120 characters

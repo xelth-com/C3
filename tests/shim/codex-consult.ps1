@@ -45,6 +45,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Task,
 
+    # Position 0 so a bare positional (e.g. `-Status abcd1234`) binds here, as the plugin's own
+    # param block does - c3 then refuses it with the -Id hint.
+    [Parameter(Position = 0)]
     [string]$CollabDir = '.collab',
     [string]$Mode = '',
     [string]$Thread = '',
@@ -94,7 +97,7 @@ param(
     [switch]$Detach,
     [string]$DetachId = '',
     [switch]$Status,
-    [string]$StatusId = '',
+    [string]$Id = '',
     [switch]$List,
     [switch]$Wait,
     [int]$WaitTimeoutSec = 0,
@@ -123,6 +126,34 @@ $c3 = Resolve-C3Exe
 if (-not $c3) {
     Write-Error "codex-consult shim: could not locate the c3 binary (checked `$env:C3_EXE, target\debug\c3.exe relative to the repo root, and PATH)."
     exit 127
+}
+
+# A detached QUERY (-Status / -Wait): the plugin forwards only -Task, -CollabDir, -Id, -Prune and
+# -WaitTimeoutSec (plus any bound run option, so c3 can refuse it). Only bound parameters are
+# forwarded so c3's "-Status and -Wait take only ..." check sees exactly what the caller passed.
+if ($Status -or $Wait) {
+    $q = New-Object System.Collections.Generic.List[string]
+    $q.Add('consult'); $q.Add('--task'); $q.Add($Task)
+    if ($PSBoundParameters.ContainsKey('CollabDir')) { $q.Add('--collab-dir'); $q.Add($CollabDir) }
+    if ($Status) { $q.Add('--status') }
+    if ($Wait) { $q.Add('--wait') }
+    if ($PSBoundParameters.ContainsKey('Id')) { $q.Add('--id'); $q.Add($Id) }
+    if ($PSBoundParameters.ContainsKey('WaitTimeoutSec')) { $q.Add('--wait-timeout-sec'); $q.Add([string]$WaitTimeoutSec) }
+    if ($Prune) { $q.Add('--prune') }
+    if ($Detach) { $q.Add('--detach') }
+    # bound run options: forwarded so c3 refuses the query with the "not -X" wording
+    if ($PSBoundParameters.ContainsKey('Mode')) { $q.Add('--mode'); $q.Add($Mode) }
+    if ($PSBoundParameters.ContainsKey('Thread')) { $q.Add('--thread'); $q.Add($Thread) }
+    if ($PSBoundParameters.ContainsKey('Brief')) { $q.Add('--brief'); $q.Add($Brief) }
+    if ($PSBoundParameters.ContainsKey('Prompt')) { $q.Add('--prompt'); $q.Add($Prompt) }
+    if ($PSBoundParameters.ContainsKey('Provider')) { $q.Add('--provider'); $q.Add($Provider) }
+    if ($PSBoundParameters.ContainsKey('Model')) { $q.Add('--model'); $q.Add($Model) }
+    if ($PSBoundParameters.ContainsKey('Purpose')) { $q.Add('--purpose'); $q.Add($Purpose) }
+    if ($PSBoundParameters.ContainsKey('Engine')) { $q.Add('--engine'); $q.Add($Engine) }
+    if ($Panel) { $q.Add('--panel') }
+    if ($PanelAll) { $q.Add('--panel-all') }
+    & $c3 @q
+    exit $LASTEXITCODE
 }
 
 $c3Args = New-Object System.Collections.Generic.List[string]
@@ -194,16 +225,13 @@ if ($MaxModelSteps -ne 0) { $c3Args.Add('--max-model-steps'); $c3Args.Add([strin
 $c3Args.Add('--denial-retry'); $c3Args.Add([string]$DenialRetry)
 if ($DryRun) { $c3Args.Add('--dry-run') }
 
-# RESERVED R12 flags - forwarded only when explicitly passed.
+# R12 flags (a run / the -Detach foreground / the -DetachId background; -Status/-Wait handled
+# above). -Id/-Prune/-WaitTimeoutSec without -Status/-Wait are forwarded so c3 refuses them.
 if ($Detach) { $c3Args.Add('--detach') }
 if ($DetachId) { $c3Args.Add('--detach-id'); $c3Args.Add($DetachId) }
-if ($Status) {
-    $c3Args.Add('--status')
-    if ($StatusId) { $c3Args.Add($StatusId) }
-}
+if ($PSBoundParameters.ContainsKey('Id')) { $c3Args.Add('--id'); $c3Args.Add($Id) }
 if ($List) { $c3Args.Add('--list') }
-if ($Wait) { $c3Args.Add('--wait') }
-if ($WaitTimeoutSec -ne 0) { $c3Args.Add('--wait-timeout-sec'); $c3Args.Add([string]$WaitTimeoutSec) }
+if ($PSBoundParameters.ContainsKey('WaitTimeoutSec')) { $c3Args.Add('--wait-timeout-sec'); $c3Args.Add([string]$WaitTimeoutSec) }
 if ($Prune) { $c3Args.Add('--prune') }
 
 # Forward stdout/stderr unchanged so a harness's captured 2>&1 text is exactly what c3

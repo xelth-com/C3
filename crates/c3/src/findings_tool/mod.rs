@@ -582,6 +582,7 @@ fn mode_list(ctx: &Ctx) -> Result<i32, String> {
             ctx.findings_path.display()
         );
         write_pending_line(&ctx.task_dir);
+        write_detached_lines(&ctx.task_dir, &ctx.args.task);
         return Ok(0);
     }
     let store =
@@ -663,7 +664,16 @@ fn mode_list(ctx: &Ctx) -> Result<i32, String> {
         parts.join(", ")
     );
     write_pending_line(&ctx.task_dir);
+    write_detached_lines(&ctx.task_dir, &ctx.args.task);
     Ok(0)
+}
+
+/// `Format-DetachedListLine` for every not-done detached run of the task (R12): the `-List` line
+/// naming the come-back `-Status -Id <id8>` command.
+fn write_detached_lines(task_dir: &Path, task: &str) {
+    for line in crate::consult::detach::list_lines(task_dir, task, chrono::Utc::now()) {
+        println!("{line}");
+    }
 }
 
 // ----------------------------------------------------------------------------- -Stats

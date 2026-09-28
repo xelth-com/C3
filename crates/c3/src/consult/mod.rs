@@ -15,6 +15,7 @@
 //! adapter for the codex engine.
 
 pub mod args;
+pub mod detach;
 pub mod detached;
 pub mod dryrun;
 pub mod ingest;

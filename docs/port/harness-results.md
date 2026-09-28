@@ -857,3 +857,107 @@ every run.
   `[`, `]`, `|`, `,`, `#` or edge whitespace (wave-26b string validation) - the one remaining ROSTER
   fail-closed sub-assertion; (c) the wave-26b `partial_reply`-on-any-failure rule (README ledger
   list) is a member render/ledger change, not done this chunk.
+
+---
+
+# Run 9 (detached lifecycle — M4 chunk 3) — 2026-09-28
+
+The non-blocking consultation (wave 25, R12): `--detach` (a single run and `--panel`), `--status`,
+`--wait`, `--prune`, `--id`, `--detach-id`, plus the `findings --list` detached line and the
+SessionStart hook phrase. The pure readers/judgement/budget were already in
+`consult::detached`; this pass wired them into `c3 consult`:
+
+- the read-only query surface `consult::detach::query` (`--status`/`--wait`/`--prune`/`--id`/
+  `--wait-timeout-sec`): the refusals and exit codes (0/1/2/3/4), the newest-first report, the
+  worst-state exit, the id-prefix selection/ambiguity, the prune of done/died/never-started/
+  unreadable runs older than 7 days, the `-Status abcd1234` positional binding to `-CollabDir`;
+- the `--detach` foreground (`orchestrate::detach_foreground`, `panel::run::detach_foreground`):
+  the pre-lock refusals a real run makes (missing brief, launcher, preflight, active recovery
+  record, unusable roster), the D4 budget (`member_guard` per endpoint group + slack), the planned
+  members, the plan line, the `starting` record, and the background spawn;
+- the background (`consult::detach::background`, `--detach-id`): the self-report `running`
+  {pid, start_time, host}, the run in-process with a status-file **sink** (the orchestrator's
+  `finish` and the panel scheduler report each member's state and the summary block into the status
+  file as they progress), the `done` {exit, summary} on every exit path, and exit 6 when the
+  terminal write fails (F08-2);
+- the args wire is the **port's JSON** (not base64 CLIXML), an inline `-Prompt` moves to
+  `.consult.detached-<id8>.prompt.txt` (F11-2);
+- `hook`: the `Get-DetachedPhrase` port appended to the SessionStart line; `findings_tool`: the
+  `Format-DetachedListLine` port emitted by `--list`.
+
+Two Windows spawn details were essential: the background is launched with a straight `CreateProcessW`
+(`bInheritHandles = FALSE`) so it holds **none** of the caller's handles — otherwise the harness's
+captured stdout pipe stays open until the background finishes and the foreground appears to block for
+the whole run; and it runs `cmd.exe /d /v:off /s /c "<exe> consult ... <NUL 1>"log" 2>&1"` under
+`CREATE_NO_WINDOW` (a hidden console, so cmd's `>log` redirection captures the background's console
+into the `.log`) — `DETACHED_PROCESS` gives no console and silently drops the redirected output.
+
+Same shim setup as Runs 2-8 (the five C3 shims from `tests/shim/` + the plugin's own
+`codex-consult-common.ps1`/`codex-consult-detached.ps1` at 35d4a32/wave 26b + a sibling schema);
+`$env:C3_EXE` a fresh `--no-default-features` `target/debug/c3.exe`. Every harness sets
+`CODEX_CONSULT_HEALTH=none`. Harnesses run ONE AT A TIME.
+
+The shim (`tests/shim/codex-consult.ps1`) gained a `-Status`/`-Wait` **query branch** (forwards only
+the caller's bound parameters, so c3's "-Status and -Wait take only ..." check refuses a stray run
+option), the `-Id` parameter (`--id`), and `-CollabDir` at position 0 (so a bare positional
+`-Status abcd1234` binds to it). `--wait-timeout-sec` became an `Option<i64>` on the CLI so an
+explicit `--wait-timeout-sec 0` is distinguishable from the default and refused.
+
+Local gates: `cargo build -p c3 -p c3-core --no-default-features` (clean); `cargo test`
+(**352 passed, 0 failed**; new detach unit tests: the JSON args round-trip, the single-run budget,
+guid/id-prefix, the status-file-name parse, `complete_record`'s member folding); `cargo clippy -p c3
+-p c3-core --no-default-features --all-targets -- -D warnings` (clean); `rustfmt` on the changed
+files.
+
+## Summary (Run 8 -> Run 9)
+
+| harness | Run 8 | Run 9 | ran to its own summary line? |
+|---|---|---|---|
+| harness-detach | (not measured / refused) | **48 / 3** | yes |
+| harness-panel | 32-33 / 14-20 | **38 / 15** | yes (no regression; UNIT/DRY/RUN/NOLOSS/SEQ all pass) |
+
+harness-detach reached its own summary line for the first time and passes UNIT, IGNORE, REFUSE,
+SINGLE, PANEL, FABRIC, CARRY (bar F11-2), OUTER, COLLIDE, CWD, ENC, KILL and one WAITTIME leg.
+
+## Remaining differing checks (verbatim) and diagnosis
+
+### harness-detach (3)
+
+1. `FAIL WAITTIME -Wait (no -Id, the budget as the limit): exit 1 - a member failed (mimo: its
+   reviewer refused) ...` — **environmental, the documented Windows argv `\"`-vs-`""` quoting**
+   (Runs 3/4/6/8). The fake's `FAKE_CODEX_FAIL_ON = 'model_provider=""mimo""'` expects PowerShell's
+   quote-doubling; Rust's `std::process` delivers `model_provider=\"mimo\"`, so the fake never fails
+   mimo, both members are usable and the panel exits 0 instead of 1. The detached panel's member
+   states, summary rows and exit are otherwise correct (the sibling `-WaitTimeoutSec 2` timeout-exit-3
+   leg passes). The member outcome the check reads is `usable reply`.
+2. `FAIL AGY D1/F02-7: the codex member finishes first ... the agy member's collab-directory check
+   does not see them ... it stays usable, the panel exits 0` — **agy-in-panel** (the M4 chunk-2
+   hand-off leftover); the agy member end to end under the scheduler is not wired this pass.
+3. `FAIL CARRY F11-2: the `starting` record ... args: PromptFile = ...` — **by design**: c3's `args`
+   field is the port's JSON wire, not the plugin's base64 CLIXML, so the harness's own
+   `ConvertFrom-DetachArgs`/base64 decode of `record.args` fails (its `$spec`/`$xml` legs). The
+   real behaviour is correct: the inline prompt lives only in `.consult.detached-<id8>.prompt.txt`,
+   the status file and the JSON args carry no prompt text, and the background reads the file, runs,
+   and removes it (the sibling F11-2 "background reads its prompt from the file" check passes).
+
+### harness-panel (15) — unchanged from Run 8, all the documented leftovers / environmental
+
+- **BLOCKED (3)**, **SPEC (2)**, **PARENT (1)**, **AGY (2)**, **INFLIGHT (2, findings-tool leg)** —
+  the M4 chunk-2 hand-off leftovers (commit-blocked D3 + commit-interruption recovery; member-record
+  writer-liveness during the pause/parent-death window; agy-in-panel; the `findings_tool`
+  panel-holder lock refusal and member-record judging). Not implemented this pass (see below).
+- **TIMEOUT (4)** — the documented Windows argv `\"`-vs-`""` quoting: the fake's `FAKE_CODEX_HANG_ON`
+  never triggers under c3's argv, so a member never times out. The scheduler's timeout/guard/survivor
+  handling is implemented and unit-tested.
+
+No regression: UNIT (10), DRY (4), RUN (8), NOLOSS (3), SEQ (2) and one each of PARENT/SPEC/INFLIGHT/
+BLOCKED pass, exactly as Run 8's core scheduler did.
+
+## Not implemented this pass (item 2 of the brief — the panel leftovers)
+
+The detached lifecycle (item 1) landed and is verified. The panel leftovers were **not** done:
+member commit-blocked (D3) + commit-interruption recovery (BLOCKED/ORPHAN/MEMBERKILL); the
+member-record writer-liveness during the pause/parent-death window (SPEC/PARENT/INFLIGHT#1);
+agy-in-panel (AGY); the per-member `range` record; `partial_reply` on any failure with content
+(wave 26b); the `findings_tool` panel-holder lock refusal + member-record judging (only the
+`findings --list` detached line landed). These remain the M4 hand-off for a follow-on pass.

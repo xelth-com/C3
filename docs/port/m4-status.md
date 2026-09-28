@@ -58,16 +58,38 @@ full `cargo test` + `--no-default-features` + clippy `-D warnings` green):
 | Member lifecycle: rewrite reserved record + `CODEX_CONSULT_TEST_MEMBER_PAUSE_MS` pause + parent check BEFORE preflight (`member_early_accept`) | done (writer-liveness during the parent-death window still off — SPEC/PARENT#1/INFLIGHT#1) |
 | c3-core ledger: `panel.started`/`usable` explicit `null` + parent patch; `panel.roles_note`; `routing.size_asked`; `routing.reserve`; `apply_findings_delta` id-ordered insertion; ledger `when` = run start; `commit_wait_ms` + `write lock : waited` + `CODEX_CONSULT_TEST_COMMIT_PAUSE_MS`; the task-lock refusal names the panel holder | done |
 
-### Deferred to the detached follow-on (harness-results.md Run 8 hand-off)
+## Chunk 3 — the detached lifecycle (landed; see harness-results.md Run 9)
+
+The non-blocking consultation (wave 25, R12), built on the complete `consult::detached` core:
+`consult::detach` (the query surface, the `--detach` foreground, the `--detach-id` background + the
+status-file sink) wired into `orchestrate::run_inner`, `orchestrate::finish` (single-run member +
+summary), `panel::run` (`detach_foreground` + per-member/summary sink hooks), `hook` (the phrase)
+and `findings_tool` (the `--list` line). harness-detach **48 / 3** (its first full completion); the
+3 remaining are all environmental / by-design / a chunk-2 leftover (below). harness-panel unchanged
+at 38 / 15 (no regression; UNIT/DRY/RUN/NOLOSS/SEQ green). Full `cargo test` 352/0; clippy clean.
+
+| Area | State |
+|---|---|
+| `--status`/`--wait`/`--prune`/`--id`/`--wait-timeout-sec` query surface: refusals + exit codes 0/1/2/3/4, newest-first report, worst-state exit, id-prefix select/ambiguity, prune (done/died/never-started/unreadable > 7 d), `-Status abcd1234` → `-CollabDir` | done |
+| `--detach` foreground (single + panel): pre-lock refusals (brief/launcher/preflight/active record/roster), D4 budget, planned members, plan line, `starting` record, background spawn; three console lines | done |
+| `--detach-id` background: self-report `running`, the run in-process with a status-file sink (members as they progress + the summary block), `done` on every path, exit 6 on a failed terminal write (F08-2) | done |
+| Windows spawn: `CreateProcessW` with `bInheritHandles = FALSE` (the foreground returns at once) + `cmd.exe /c "... <NUL 1>log 2>&1"` under `CREATE_NO_WINDOW` (cmd's redirection captures the console into the `.log`) | done |
+| args = the port's JSON wire (not base64 CLIXML); inline `-Prompt` → `.consult.detached-<id8>.prompt.txt` (F11-2) | done (JSON, not CLIXML — F11-2's `$spec` decode leg differs by design) |
+| `hook` SessionStart phrase (`Get-DetachedPhrase`); `findings --list` detached line (`Format-DetachedListLine`) | done |
+
+### Deferred to a follow-on (still open after chunk 3)
 
 - **Commit-blocked (D3) + commit-interruption recovery** (member side): BLOCKED/ORPHAN/MEMBERKILL.
 - **Member-record writer-liveness during the parent-death/pause window**: SPEC/PARENT#1/INFLIGHT#1.
-- **agy-in-panel** specifics (summary `[agy]`, forced failure, tree-check sibling exclusion): AGY.
+- **agy-in-panel** specifics (summary `[agy]`, forced failure, tree-check sibling exclusion): AGY
+  (fails in both harness-panel AGY and harness-detach AGY).
 - **Range on a panel**: the `Range:` line is computed, but the per-member range record is not passed.
-- **Not owned here**: `findings_tool` panel-holder lock refusal / member-record judging
-  (INFLIGHT/TIMEOUT codex-findings legs); c3-core `roster.rs` wave-26b string validation (`::`,
-  `[`, `]`, `|`, `,`, `#`, edge whitespace — ROSTER fail-closed); the wave-26b
-  `partial_reply`-on-any-failure rule; the machine-wide health file `~/.codex/codex-consult-health.json`.
-- **Environmental (documented, not bugs)**: TIMEOUT/GUARD (the fake's `HANG_ON` needs PowerShell
-  `""` quoting; Rust's Windows argv uses `\"`); muse PANEL command byte-match (the c3 schema path
-  under `<CODEX_HOME>`).
+- **`partial_reply`-on-any-failure** (wave 26b): a member render/ledger change, not done.
+- **`findings_tool` panel-holder lock refusal + member-record judging** (INFLIGHT codex-findings
+  legs): only the `findings --list` detached line landed; the `-Status`/`-Rate` panel-holder refusal
+  and member-record judging are not wired.
+- **Not owned here**: c3-core `roster.rs` wave-26b string validation (`::`, `[`, `]`, `|`, `,`, `#`,
+  edge whitespace — ROSTER fail-closed); the machine-wide health file `~/.codex/codex-consult-health.json`.
+- **Environmental (documented, not bugs)**: TIMEOUT/GUARD/WAITTIME (the fake's `HANG_ON`/`FAIL_ON`
+  need PowerShell `""` quoting; Rust's Windows argv uses `\"`); muse PANEL command byte-match (the
+  c3 schema path under `<CODEX_HOME>`).

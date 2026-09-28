@@ -82,8 +82,15 @@ pub struct Options {
     pub panel_spec: String,
     pub detach: bool,
     pub status: bool,
+    /// `--id <id8>`: the detach id (or its beginning) for `--status`/`--wait`.
+    pub id: String,
+    pub id_given: bool,
+    /// `--detach-id <guid>` (INTERNAL): the background process of `--detach`.
+    pub detach_id: String,
     pub list: bool,
     pub wait: bool,
+    pub wait_timeout_sec: i64,
+    pub wait_timeout_sec_given: bool,
     pub prune: bool,
 }
 
@@ -129,10 +136,6 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
             o.max_model_steps
         ));
     }
-    if o.detach || o.status || o.list || o.wait || o.prune {
-        return Err("--detach/--status/--list/--wait/--prune are reserved (plugin R12) and not implemented in c3 yet.".into());
-    }
-
     // Value sets and bounds (plugin order).
     if !o.effort.is_empty() && !VALID_EFFORTS.contains(&o.effort.as_str()) {
         return Err(format!(

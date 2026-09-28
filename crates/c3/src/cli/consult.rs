@@ -142,19 +142,29 @@ pub struct ConsultArgs {
     /// passed by hand.
     #[arg(long, default_value = "", hide = true)]
     pub panel_spec: String,
-    /// Reserved (R12).
+    /// Run the consultation in a background process and return at once (R12).
     #[arg(long)]
     pub detach: bool,
-    /// Reserved (R12).
+    /// Print the detached runs of the task (R12).
     #[arg(long)]
     pub status: bool,
+    /// The detach id (or its beginning) for --status/--wait (R12).
+    #[arg(long, default_value = "")]
+    pub id: String,
+    /// INTERNAL: the background process of --detach; never pass it yourself (R12).
+    #[arg(long, default_value = "", hide = true)]
+    pub detach_id: String,
     /// Reserved (R12).
     #[arg(long)]
     pub list: bool,
-    /// Reserved (R12).
+    /// Wait until the detached run(s) of the task are done, then print as --status (R12).
     #[arg(long)]
     pub wait: bool,
-    /// Reserved (R12).
+    /// --wait's timeout in seconds (0 = the run's own budget) (R12). `Option` so an explicit
+    /// `--wait-timeout-sec 0` is distinguishable from the default (it is refused).
+    #[arg(long, allow_hyphen_values = true)]
+    pub wait_timeout_sec: Option<i64>,
+    /// With --status: delete the files of old done/died detached runs (R12).
     #[arg(long)]
     pub prune: bool,
 }
@@ -166,6 +176,8 @@ pub fn run(args: ConsultArgs) -> i32 {
     let continue_sec_given = args.continue_sec != -1;
     let panel_concurrency_given = args.panel_concurrency.is_some();
     let panel_size_given = args.panel_size.is_some();
+    let id_given = !args.id.is_empty();
+    let wait_timeout_sec_given = args.wait_timeout_sec.is_some();
     let opts = Options {
         task: args.task,
         collab_dir: args.collab_dir,
@@ -214,8 +226,13 @@ pub fn run(args: ConsultArgs) -> i32 {
         panel_spec: args.panel_spec,
         detach: args.detach,
         status: args.status,
+        id: args.id,
+        id_given,
+        detach_id: args.detach_id,
         list: args.list,
         wait: args.wait,
+        wait_timeout_sec: args.wait_timeout_sec.unwrap_or(0),
+        wait_timeout_sec_given,
         prune: args.prune,
     };
     crate::consult::run(opts)
