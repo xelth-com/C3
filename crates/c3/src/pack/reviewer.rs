@@ -313,6 +313,36 @@ pub fn sidecar_path(out: &Path) -> PathBuf {
     out.with_extension("pack.json")
 }
 
+/// The system prompt the `http` engine sends alongside the pack: the fixed
+/// [`crate::consult::prompt::FINAL_OUTPUT_CONTRACT`] plus the field-meaning block
+/// ([`REPLY_SCHEMA`]). A CLI engine receives this same contract inside its prompt (and, when
+/// its transport supports it, as an `--output-schema`); the `http` engine, which is
+/// prompt-only, carries it as the system message so the reviewer answers with one v1 JSON
+/// object (`evidence.kind: read-code`, a `reference` naming the pack path and hash).
+pub fn system_prompt() -> String {
+    format!(
+        "{}\n\n{}",
+        crate::consult::prompt::FINAL_OUTPUT_CONTRACT,
+        REPLY_SCHEMA
+    )
+}
+
+/// Merge a `request` section into a pack sidecar JSON string (D4): the `http` engine records
+/// what it actually sent (`{url, model, response_format, prompt_sha256}`) next to the content
+/// hashes, path map, coverage and recipe [`build`] already wrote, so a later reader knows both
+/// what the reviewer saw and how it was asked. Returns the re-serialized (pretty) sidecar.
+pub fn sidecar_with_request(sidecar: &str, request: serde_json::Value) -> Result<String, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(sidecar).map_err(|e| format!("parse sidecar: {e}"))?;
+    match value.as_object_mut() {
+        Some(obj) => {
+            obj.insert("request".to_string(), request);
+        }
+        None => return Err("sidecar is not a JSON object".to_string()),
+    }
+    serde_json::to_string_pretty(&value).map_err(|e| format!("sidecar json: {e}"))
+}
+
 /// Write the pack and its sidecar.
 pub fn write(pack: &ReviewerPack, out: &Path) -> Result<PathBuf, String> {
     if let Some(parent) = out.parent() {
@@ -417,5 +447,35 @@ mod tests {
             sidecar_path(Path::new("/tmp/review.md")),
             PathBuf::from("/tmp/review.pack.json")
         );
+    }
+
+    #[test]
+    fn system_prompt_carries_contract_and_schema() {
+        let sp = system_prompt();
+        assert!(sp.starts_with(crate::consult::prompt::FINAL_OUTPUT_CONTRACT));
+        assert!(sp.contains("schema_version"));
+        assert!(sp.contains("read-code"));
+    }
+
+    #[test]
+    fn sidecar_with_request_merges_a_request_section() {
+        let base = r#"{"pack_version":1,"kind":"reviewer","files":[]}"#;
+        let merged = sidecar_with_request(
+            base,
+            serde_json::json!({
+                "url": "https://openrouter.ai/api/v1/chat/completions",
+                "model": "openai/gpt-5",
+                "response_format": "json_object",
+                "prompt_sha256": "abc123",
+            }),
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(v["pack_version"], 1);
+        assert_eq!(v["request"]["model"], "openai/gpt-5");
+        assert_eq!(v["request"]["response_format"], "json_object");
+        assert_eq!(v["request"]["prompt_sha256"], "abc123");
+        // No key-shaped field ever lands in the sidecar.
+        assert!(!merged.contains("Authorization"));
     }
 }

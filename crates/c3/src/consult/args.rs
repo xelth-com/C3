@@ -60,7 +60,26 @@ pub struct Options {
     pub max_model_steps: i64,
     pub panel: bool,
     pub panel_all: bool,
+    /// `-PanelConcurrency` (0 = no cap; 1 = strictly sequential; k = at most k at once).
+    pub panel_concurrency: i64,
     pub panel_concurrency_given: bool,
+    /// `-PanelSize` (0 = the purpose default).
+    pub panel_size: i64,
+    pub panel_size_given: bool,
+    /// `-PanelOrder` (`routed` | `roster`; empty = the default `routed`).
+    pub panel_order: String,
+    /// `-PanelSeed` (the draw nonce; empty = env/date).
+    pub panel_seed: String,
+    /// `-Require` matchers (repeatable; `none` alone drops the roster requirement).
+    pub require: Vec<String>,
+    /// `-Role` (one role for every member).
+    pub role: String,
+    /// `-Roles` (roles assigned by score rank and willingness; repeatable).
+    pub roles: Vec<String>,
+    /// `-Topic` tags (repeatable; used by routing and rating).
+    pub topic: Vec<String>,
+    /// `-PanelSpec` (INTERNAL): the base64 member spec a panel run hands each seat.
+    pub panel_spec: String,
     pub detach: bool,
     pub status: bool,
     pub list: bool,
@@ -100,18 +119,6 @@ fn is_slug(s: &str) -> bool {
 /// Validate the options and compute the self-contained resolutions. `Err` is a refusal
 /// message to print (exit 1); the message text matches the plugin's `Stop-WithError`.
 pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String> {
-    // Refused surface first (milestone / engine scope).
-    if o.panel || o.panel_all {
-        return Err(
-            "-Panel is a milestone 4 feature; c3 consult runs one reviewer (drop -Panel).".into(),
-        );
-    }
-    if o.panel_concurrency_given {
-        return Err(
-            "-PanelConcurrency is a milestone 4 (panel) feature; c3 consult runs one reviewer (drop -PanelConcurrency)."
-                .into(),
-        );
-    }
     // `-Engine`, `-EngineExe`, `-DenialRetry` and `-MaxModelSteps` are engine-aware from M2d on
     // (engine selection, the capability refusals and the `-EngineExe` binding live in
     // `orchestrate::build_context`, after the roster fixes the engine). The only self-contained
@@ -220,6 +227,69 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         );
     }
 
+    // Panel surface (`codex-consult.ps1:1803-1823` and the `-Panel` branch 1971-1974). `-Panel`
+    // seats roster reviewers, so it takes neither a single reviewer (`-Provider`) nor a thread;
+    // its members always fork their own lineage's newest thread. The panel-only options refuse
+    // outside a panel; the sizes and the order/seed are validated here (self-contained).
+    let panel_run = o.panel || o.panel_all;
+    if panel_run {
+        if !o.provider.is_empty() {
+            return Err("-Panel seats reviewers of the roster and does not take -Provider (for one reviewer, drop -Panel; to insist on one in the panel: -Require).".into());
+        }
+        if !o.thread.is_empty() {
+            return Err("-Panel does not take -Thread: each member forks the newest thread of its own lineage (or starts one).".into());
+        }
+        if o.mode == "resume" {
+            return Err("-Panel does not take -Mode resume: each member forks the newest thread of its own lineage (or starts one); -Mode new starts fresh threads for all.".into());
+        }
+    }
+    if o.panel_concurrency_given && !panel_run {
+        return Err("-PanelConcurrency goes with -Panel (or -PanelAll) only.".into());
+    }
+    if o.panel_concurrency < 0 {
+        return Err(format!(
+            "-PanelConcurrency must be 0 (no cap) or a positive number (got {}).",
+            o.panel_concurrency
+        ));
+    }
+    if !panel_run {
+        if o.panel_size_given {
+            return Err("-PanelSize goes with -Panel (or -PanelAll) only.".into());
+        }
+        if !o.panel_order.is_empty() {
+            return Err("-PanelOrder goes with -Panel (or -PanelAll) only.".into());
+        }
+        if !o.panel_seed.is_empty() {
+            return Err("-PanelSeed goes with -Panel (or -PanelAll) only.".into());
+        }
+        if !o.roles.is_empty() {
+            return Err("-Roles goes with -Panel (or -PanelAll) only.".into());
+        }
+    }
+    if o.panel_size_given {
+        if o.panel_all {
+            return Err("-PanelSize does not go with -PanelAll: -PanelAll runs every eligible member (drop one of them).".into());
+        }
+        if o.panel_size < 1 {
+            return Err(format!(
+                "-PanelSize must be 1 or more (got {}); leave it out for the purpose's size.",
+                o.panel_size
+            ));
+        }
+    }
+    let panel_order = o.panel_order.trim().to_lowercase();
+    if !panel_order.is_empty() && !["roster", "routed"].contains(&panel_order.as_str()) {
+        return Err(format!(
+            "-PanelOrder must be roster or routed (got '{panel_order}')."
+        ));
+    }
+    let panel_seed = o.panel_seed.trim();
+    if !panel_seed.is_empty() && !is_panel_seed(panel_seed) {
+        return Err(format!(
+            "-PanelSeed must be a number or a token (letters, digits, dot, dash, underscore, colon; got '{panel_seed}')."
+        ));
+    }
+
     // -CodexConfig expansion + identity/effort-key refusal.
     let (extra_config, cfg_err) =
         c3_core::roster::convert_from_codex_config_items(&o.codex_config, "-CodexConfig", home_dir);
@@ -312,6 +382,20 @@ fn is_range_pair(spec: &str) -> bool {
     let a = parts.next().unwrap_or("").trim();
     let b = parts.next().unwrap_or("").trim();
     !a.is_empty() && !b.is_empty()
+}
+
+/// A `-PanelSeed` token (`^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`).
+fn is_panel_seed(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() || bytes.len() > 64 {
+        return false;
+    }
+    if !bytes[0].is_ascii_alphanumeric() {
+        return false;
+    }
+    bytes[1..]
+        .iter()
+        .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b':' | b'-'))
 }
 
 fn plain_token(s: &str) -> bool {
@@ -415,7 +499,58 @@ mod tests {
         ))
         .contains("part of the reviewer identity"));
         assert!(bad(Box::new(|o| o.max_model_steps = -3)).contains("must be a positive integer"));
-        assert!(bad(Box::new(|o| o.panel = true)).contains("milestone 4"));
+        // Panel combos (self-contained refusals).
+        assert!(bad(Box::new(|o| {
+            o.panel = true;
+            o.provider = "openai".into();
+        }))
+        .contains("does not take -Provider"));
+        assert!(bad(Box::new(|o| {
+            o.panel = true;
+            o.thread = "abc".into();
+        }))
+        .contains("-Panel does not take -Thread"));
+        assert!(bad(Box::new(|o| {
+            o.panel = true;
+            o.mode = "resume".into();
+        }))
+        .contains("does not take -Mode resume"));
+        assert!(bad(Box::new(|o| {
+            o.panel = true;
+            o.panel_all = true;
+            o.panel_size = 3;
+            o.panel_size_given = true;
+        }))
+        .contains("does not go with -PanelAll"));
+        assert!(bad(Box::new(|o| {
+            o.panel = true;
+            o.panel_size = 0;
+            o.panel_size_given = true;
+        }))
+        .contains("-PanelSize must be 1 or more"));
+        assert!(bad(Box::new(|o| {
+            o.panel = true;
+            o.panel_order = "sideways".into();
+        }))
+        .contains("-PanelOrder must be roster or routed"));
+        assert!(bad(Box::new(|o| {
+            o.panel_size = 2;
+            o.panel_size_given = true;
+        }))
+        .contains("-PanelSize goes with -Panel"));
+        assert!(bad(Box::new(|o| {
+            o.panel = true;
+            o.panel_concurrency = -2;
+            o.panel_concurrency_given = true;
+        }))
+        .contains("-PanelConcurrency must be 0"));
+    }
+
+    #[test]
+    fn panel_defaults_pass() {
+        let mut o = ok_opts();
+        o.panel = true;
+        assert!(validate(&o, None).is_ok());
     }
 
     #[test]

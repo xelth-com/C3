@@ -663,3 +663,69 @@ as the documented `\"` vs `""` argv-quoting divergences).
   (`{outcome, files[]}`) at their order positions; once present, this task's `tree_check`-via-`extra`
   write moves to the named field and the RUN/DENIAL field-order rows pass.
 - `RECOVER A18`'s note wording lives partly in `findings_tool` (not owned here).
+
+---
+
+# Run 7 (panel dry-run / CLI) — 2026-09-28
+
+M4 chunk 1: the member-side path of `c3 consult` (`--panel-spec`), the panel CLI surface and its
+refusals, and the panel **plan / dry-run block** (a non-dry `--panel` run refuses — the scheduler
+lands in chunk 2). Same shim setup as the earlier runs (scratch `scripts/` = the five C3 shims +
+the plugin's own `codex-consult-common.ps1`); `$env:C3_EXE` pointed at a freshly built
+`target/debug/c3.exe`. The shim (`tests/shim/codex-consult.ps1`) gained `-PanelSize`,
+`-PanelOrder`, `-PanelSeed`, `-Require`, `-Role`, `-Roles`, `-Topic` forwarding, and
+`-PanelConcurrency`/`-PanelSize` now map to `Option<i64>` so a negative value reaches the
+validator instead of being swallowed by a sentinel. Harnesses run one at a time.
+
+## Summary
+
+| harness | section filter | checks | passed | failed |
+|---|---|---:|---:|---:|
+| harness-panel | `-Only DRY,SPEC` | 9 | 6 | 3 |
+| harness-companions | `-Only SIZE,REQUIRE,ROSTER,ROUTE,ROUTED,ROLE` | 13 | 8 | 5 |
+
+## What passed (c3, chunk 1)
+
+- **DRY** plan text: the header `Panel <id8> (dry run - nothing is executed or written): N of M
+  roster entries would run, <planText> (roster <path>; panel id <guid>)`; the per-entry
+  `  #k <lineage> - member, n=N, handoff NN` lines with the pre-assigned numbers (past an
+  inactive leftover member record); the `Concurrency:` line with endpoint groups and
+  `-PanelConcurrency 0 (no cap)`; the `pending     : ... the real run recovers it` line for the
+  inactive leftover.
+- **DRY** the plan-text variants: `-PanelConcurrency 1` → `one after another`; `-PanelSize 2` of 3
+  → `at most 2 at a time`; two entries of one label → `ZAI x2 one after another`; roster
+  `parallel: {"ZAI": 2}` → `ZAI x2 at once`.
+- **DRY** `-PanelConcurrency` without `-Panel` refused, and a negative value refused
+  (`-PanelConcurrency must be 0 (no cap) or a positive number (got -1).`).
+- **SPEC** a member whose parent is dead at accept refuses after rewriting its record
+  (`... is gone; this panel member was not started - nothing was started and its recovery record
+  '...' was withdrawn.`); a missing record refuses (`does not exist`); a record naming another `n`
+  refuses naming the mismatch (`n 7 in the record, 1 in the spec`).
+- **companions**: 8 checks (`REQUIRE`/`ROUTED`/`SIZE`/`ROSTER` sub-checks that exercise the c3
+  plan and refusals, and the common.ps1 unit checks that happen to be version-aligned).
+
+## Remaining differing checks (verbatim) and diagnosis
+
+- **FAIL DRY** `each member's own dry-run plan shows its assigned numbers ... summary "planned";
+  nothing written` — the panel dry-run in the plugin launches each seated member as a child
+  `-PanelSpec` process **with `dry_run=true`**, captures its single-run dry-run block, prints it,
+  then a `  <lineage>   planned` summary. That launch-and-collect IS the scheduler → **chunk 2**.
+  Chunk 1 emits the plan block only.
+- **FAIL SPEC** `... dies during its preflight -> it stops right before launching: "... this member
+  stopped before starting codex ..."` and **FAIL SPEC** `F07-1/F11-6: the parent killed between the
+  member's rewrite and its parent check ...` — both need (a) the member to rewrite its reserved
+  record **before** its preflight (c3 rewrites it in `run_live`, after `build_context`'s preflight,
+  so the harness's kill-after-rewrite window is inverted) and (b) the `CODEX_CONSULT_TEST_MEMBER_PAUSE_MS`
+  test hook. Both are member-lifecycle-ordering concerns of the runtime → **chunk 2**. The
+  pre-launch parent-alive check itself is implemented and fires; only the ordering/timing differs.
+- **FAIL SIZE** `D6 end to end ... one member plan each` and **FAIL SIZE** `D6 floor end to end ...
+  the member's ledger warnings[]` — the first needs the per-member dry-run recursion (chunk 2); the
+  second needs a real member run's committed ledger (chunk 2). The header, the `not picked: panel
+  size k` lines and the `WARNING: panel floor: ...` / `panel size reduced` console warnings the
+  plan itself emits are correct.
+- **FAIL ROUTE** `D6 floor ...` and **FAIL ROUTE** `D8 role files ...` — these call the plugin's
+  **own** `Select-PanelRouting`, `Resolve-RoleFile` and `Select-RoleAssignment` (dot-sourced from
+  `codex-consult-common.ps1`), not the c3 binary; they fail on the scratch common.ps1 version and
+  the absent plugin `templates/` dir, not on c3.
+- **FAIL ROSTER** `fail-closed ...` — roster-file validation lives in c3-core `roster.rs` (not owned
+  by this task); its unknown-key message did not match a sub-assertion. Pre-existing, out of scope.

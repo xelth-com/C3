@@ -16,6 +16,8 @@ pub mod cli;
 
 pub mod engines;
 
+pub mod http_engine;
+
 pub mod liveness;
 
 pub mod consult;
@@ -26,10 +28,7 @@ pub mod scoreboard;
 
 pub mod hook;
 
-pub mod panel {
-    //! Panel sizing (plugin R14), the endpoint-aware scheduler and detach/status
-    //! (plugin R12). Milestone 4.
-}
+pub mod panel;
 
 pub mod router {
     //! Routing policies (v1: smoothed score over a global prior; later Thompson

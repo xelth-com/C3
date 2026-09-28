@@ -189,17 +189,23 @@ fn label_or(raw: &str, max: usize) -> String {
 }
 
 /// Return the label only if it is a plain, short, secret-free token; otherwise `None`.
-/// Rejects whitespace, control chars, `/`, `\`, `=`, over-length values, secret-name
-/// tokens, and anything outside `[A-Za-z0-9._:-]` starting with an alphanumeric. This
-/// makes paths, prompts, free text and key-shaped strings impossible to echo.
+/// Rejects whitespace, control chars, `\`, `=`, over-length values, secret-name tokens, and
+/// anything outside `[A-Za-z0-9._:/-]` starting with an alphanumeric. A single `/` is allowed
+/// so an OpenRouter model id (`openai/gpt-5`) survives as its own label; two or more `/`, or a
+/// `\`, still reads as a path and is dropped. This keeps paths, prompts, free text and
+/// key-shaped strings impossible to echo.
 pub(crate) fn safe_label(raw: &str, max: usize) -> Option<String> {
     let s = raw.trim();
     if s.is_empty() || s.len() > max {
         return None;
     }
     if s.chars()
-        .any(|c| c.is_whitespace() || c.is_control() || c == '/' || c == '\\' || c == '=')
+        .any(|c| c.is_whitespace() || c.is_control() || c == '\\' || c == '=')
     {
+        return None;
+    }
+    // One `/` is a provider-qualified model id (`openai/gpt-5`); more than one is a path.
+    if s.matches('/').count() > 1 {
         return None;
     }
     let lower = s.to_ascii_lowercase();
@@ -213,7 +219,7 @@ pub(crate) fn safe_label(raw: &str, max: usize) -> Option<String> {
     }
     if !s
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-' | '/'))
     {
         return None;
     }
@@ -239,4 +245,36 @@ fn runtime_label() -> String {
 /// Now as RFC 3339 UTC with seconds precision, matching the T-hub example.
 fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_label_allows_one_slash_model_id() {
+        // OpenRouter model ids carry one `/` and must survive as a label.
+        assert_eq!(
+            safe_label("openai/gpt-5", 64),
+            Some("openai/gpt-5".to_string())
+        );
+        assert_eq!(
+            safe_label("anthropic/claude-opus-4.1", 64),
+            Some("anthropic/claude-opus-4.1".to_string())
+        );
+    }
+
+    #[test]
+    fn safe_label_still_rejects_paths_and_secrets() {
+        // Two or more `/` is a path.
+        assert_eq!(safe_label("crates/c3/src/lib.rs", 64), None);
+        // A leading `/` is not an alphanumeric start.
+        assert_eq!(safe_label("/etc/passwd", 64), None);
+        // A backslash path is still rejected.
+        assert_eq!(safe_label("crates\\c3", 64), None);
+        // Secret-name tokens are still dropped even with a legal `/`.
+        assert_eq!(safe_label("provider/api_key", 64), None);
+        // `=` still rejected.
+        assert_eq!(safe_label("a=b", 64), None);
+    }
 }

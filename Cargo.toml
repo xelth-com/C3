@@ -25,6 +25,9 @@ regex = "1"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
+# base64: the panel member spec travels as base64 of compact UTF-8 JSON on the child's command
+# line (the port's own JSON wire format, m4-spec open question 3), like the plugin's -PanelSpec.
+base64 = "0.22"
 # ureq: a small blocking HTTP client (rustls, bundled roots) for the T-hub telemetry POSTs
 # and DELETE. Blocking on purpose — the send runs in a detached thread with a 3 s timeout,
 # so C3 pulls in no async runtime for one background call per consultation.

@@ -157,6 +157,14 @@ hash.
   Build cost: the `surrealdb` dependency adds about 26 minutes to a cold release build, so `--no-default-features`
   is the documented fast development loop and CI builds both variants.
 - `rebuild` is an acceptance test; the index is never required for a consultation.
+- Measured (2026-09-28, Windows 11, release binary, this repo — 230 files, 2246 entities, 19481 `calls`
+  edges): a cold `index build` 14.0 s, a no-change rebuild (hash skip) 10.0 s, `index rebuild` 16.8 s,
+  `index stats` 2.7 s, embedded store on disk 128.5 MiB, and each of five BM25 queries 3.2–3.6 s with the
+  named symbol first in the top-3. This is down from a debug build that exceeded 15 minutes: the win is
+  batching — entities, relation edges and file hashes go in as chunked bulk `INSERT`/`INSERT RELATION`
+  statements (400 rows each, one `await` per chunk instead of one per row) and, on a from-scratch build, the
+  four BM25 indexes are dropped before the bulk load and rebuilt in one pass afterwards rather than
+  maintained row by row; the incremental (file-hash skip) path keeps the indexes and touches only changed rows.
 - Federation, opt-in: an index may read from or sync with another SurrealDB instance (another project's index, the
   per-user hub, a sibling tool such as xelixir) only when the user has allowed that connection explicitly, per
   connection, in config; never on by default. The xelth.rs `kb_sync` selective-sync pattern is the template; the

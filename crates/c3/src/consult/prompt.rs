@@ -121,6 +121,9 @@ pub struct PromptInputs<'a> {
     /// The engine's `Tools:` line (D11), added after the ask/brief/range for a non-codex
     /// engine; empty for codex.
     pub tools_line: &'a str,
+    /// A panel member's role paragraph (`role_prompt_line`), added after the ask and before the
+    /// brief (`codex-consult.ps1:3555`); empty when the run has no role.
+    pub role_line: &'a str,
 }
 
 const NL: &str = "\r\n";
@@ -133,6 +136,10 @@ pub fn assemble(inp: &PromptInputs) -> String {
     }
     if !inp.prompt.is_empty() {
         parts.push(inp.prompt.trim().to_string());
+    }
+    // A panel member's role goes after the ask, before the brief (never inside the contract).
+    if !inp.role_line.is_empty() {
+        parts.push(inp.role_line.to_string());
     }
     if !inp.brief_ref.is_empty() {
         parts.push(format!(
@@ -237,6 +244,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         max_words: 0,
         consult_id: "",
         tools_line: "",
+        role_line: "",
     };
     schema_block(&inp)
 }
@@ -294,7 +302,19 @@ mod tests {
             max_words: 700,
             consult_id: "abc-123",
             tools_line: "",
+            role_line: "",
         }
+    }
+
+    #[test]
+    fn role_line_after_ask_before_brief() {
+        let mut i = base();
+        i.role_line = "Your role in this review: adversary. Focus on what it asks for; the reply format, the verdict rules and the read-only rule stay as stated.\r\nAttack it.";
+        let p = assemble(&i);
+        let role_at = p.find("Your role in this review").unwrap();
+        let ask_at = p.find("\r\n\r\nx\r\n\r\n").map(|n| n + 4).unwrap_or(0);
+        let brief_at = p.find("Read the brief at").unwrap();
+        assert!(ask_at < role_at && role_at < brief_at);
     }
 
     #[test]

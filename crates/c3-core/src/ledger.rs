@@ -46,6 +46,18 @@ where
     Ok(Some(Option::<String>::deserialize(d)?))
 }
 
+/// Same tri-state as [`deserialize_present_string`] for any object record (the wave-26
+/// `mode_fallback`/`stall`/`tree_check` fields): a *present* value (including `null`) becomes
+/// `Some(..)`, an *absent* key stays `None` (via `#[serde(default)]`), so a pre-wave-26 store
+/// round-trips byte-identical while a fresh entry writes the field in position (null or object).
+fn deserialize_present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Ok(Some(Option::<T>::deserialize(d)?))
+}
+
 /// The whole `sessions.json` document.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionsFile {
@@ -119,6 +131,17 @@ pub struct LedgerEntry {
     pub thread_candidate: String,
     #[serde(default)]
     pub mode: String,
+    /// (wave 26) The mode-fallback record `{from, to, reason}` written when a fork/resume was
+    /// downgraded to `new` (the parent thread's context is too full); `null` otherwise. Sits
+    /// between `mode` and `command` in the wave-26 field order. Tri-state so a pre-wave-26 store
+    /// round-trips byte-identical: **absent** (`None`) is skipped on rewrite; a fresh entry
+    /// writes `null` (`Some(None)`) or the object (`Some(Some(_))`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub mode_fallback: Option<Option<ModeFallback>>,
     #[serde(default)]
     pub command: String,
     #[serde(default)]
@@ -198,6 +221,16 @@ pub struct LedgerEntry {
     /// The timeout-continuation record; `null` when the main turn was not killed.
     #[serde(default)]
     pub timeout_continue: Option<TimeoutContinue>,
+    /// (wave 26) The stall record `{seconds, last_event}` written when the main turn was killed
+    /// for going silent past `-StallSec`; `null` otherwise. Sits between `timeout_continue` and
+    /// `base_commit`. Tri-state so a pre-wave-26 store round-trips byte-identical (see
+    /// [`mode_fallback`](LedgerEntry::mode_fallback)).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub stall: Option<Option<Stall>>,
     #[serde(default)]
     pub base_commit: String,
     #[serde(default)]
@@ -234,6 +267,16 @@ pub struct LedgerEntry {
     pub artifacts: Vec<Value>,
     #[serde(default)]
     pub artifacts_changed_during_review: bool,
+    /// (wave 26b, D9) The engine's read-only tree check `{outcome, files[]}`; `null` for codex
+    /// (no check). Sits between `artifacts_changed_during_review` and `bridge_outcome`.
+    /// Tri-state so a pre-wave-26 store round-trips byte-identical (see
+    /// [`mode_fallback`](LedgerEntry::mode_fallback)).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub tree_check: Option<Option<TreeCheck>>,
     #[serde(default)]
     pub bridge_outcome: String,
     /// The provider's own failure classification; `null` on success.
@@ -299,6 +342,44 @@ pub struct Reviewer {
     pub provider_config: Value,
     #[serde(default)]
     pub identity_note: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `entry.mode_fallback` (wave 26): a downgraded fork/resume, `{from, to, reason}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModeFallback {
+    #[serde(default)]
+    pub from: String,
+    #[serde(default)]
+    pub to: String,
+    #[serde(default)]
+    pub reason: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `entry.stall` (wave 26): the main turn killed for silence, `{seconds, last_event}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Stall {
+    #[serde(default)]
+    pub seconds: i64,
+    /// The ISO time of the last event before the stall kill; `null` when none was seen.
+    #[serde(default)]
+    pub last_event: Option<String>,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `entry.tree_check` (wave 26b, D9): the engine's read-only tree check, `{outcome, files[]}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TreeCheck {
+    /// `clean` | `warned` | `failed`.
+    #[serde(default)]
+    pub outcome: String,
+    /// The changed paths the check saw (working tree, collab directory, brief, artifacts).
+    #[serde(default)]
+    pub files: Vec<Value>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

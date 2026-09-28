@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 use surrealdb::engine::any::{self, Any};
 use surrealdb::engine::local::{Db, SurrealKv};
-use surrealdb::types::SurrealValue;
+use surrealdb::types::{RecordId, SurrealValue};
 use surrealdb::{Connection, Surreal};
 
 use super::extract::{derive_relations, extract_file, file_hash};
@@ -35,6 +35,52 @@ const EXPAND_PER_RELATION: usize = 2;
 const EXPAND_TOTAL_CAP: usize = 24;
 /// BM25 candidates fetched per field before fusion.
 const BM25_LIMIT: usize = 30;
+/// Rows per bulk `INSERT` statement (entities, edges and file hashes). One `await` per chunk
+/// instead of one per row is the difference between a full-repo build in seconds and in
+/// minutes; the value is a compromise between round trips and per-statement value size.
+const CHUNK: usize = 400;
+
+/// The four BM25 full-text indexes, `(name, field)`. Defined once at open (so a query-only
+/// process works) and, on a from-scratch build, dropped before the bulk load and rebuilt in
+/// one pass afterwards — far cheaper than maintaining them incrementally per inserted row.
+const BM25_INDEXES: [(&str, &str); 4] = [
+    ("code_search", "code"),
+    ("name_search", "name"),
+    ("path_search", "path"),
+    ("summary_search", "summary"),
+];
+
+/// An entity row as written to the store (the `id` becomes the record id).
+#[derive(Debug, Clone, SurrealValue)]
+struct EntityIn {
+    id: RecordId,
+    kind: String,
+    path: String,
+    name: String,
+    lang: String,
+    line_start: i64,
+    line_end: i64,
+    summary: String,
+    code: String,
+    content_hash: String,
+    generation: String,
+}
+
+/// A relation edge for a bulk `INSERT RELATION`.
+#[derive(Debug, Clone, SurrealValue)]
+struct EdgeIn {
+    #[surreal(rename = "in")]
+    in_: RecordId,
+    out: RecordId,
+}
+
+/// A `file_hash` row for the incremental-skip table (the `id` is the path).
+#[derive(Debug, Clone, SurrealValue)]
+struct FhIn {
+    id: RecordId,
+    path: String,
+    hash: String,
+}
 
 /// A handle on an open store: the embedded local engine or a remote `any` connection.
 enum Handle {
@@ -261,81 +307,128 @@ async fn do_index<C: Connection>(
     let (dir_entities, relations) = derive_relations(&entities);
     entities.extend(dir_entities);
 
-    // 2. Read stored file hashes to skip unchanged files.
+    // 2. Read stored file hashes to skip unchanged files. An empty table means a from-scratch
+    //    build (a first `index` or the `rebuild` path, which cleared it) — then there is
+    //    nothing to skip and we can drop the BM25 indexes for a one-pass bulk load.
     let stored = stored_file_hashes(db).await?;
+    let from_scratch = stored.is_empty();
 
-    // 3. Orphan cleanup: entities whose path is gone.
-    let mut orphan_paths: Vec<String> = stored
-        .keys()
-        .filter(|p| !current_paths.contains(*p))
-        .cloned()
-        .collect();
-    orphan_paths.sort();
-    for p in &orphan_paths {
-        db.query("DELETE entity WHERE path = $p; DELETE file_hash WHERE path = $p;")
-            .bind(("p", p.clone()))
-            .await
-            .map_err(|e| e.to_string())?
-            .check()
-            .map_err(|e| e.to_string())?;
+    // 3. Orphan cleanup: entities whose path is gone (never any when from scratch).
+    if !from_scratch {
+        let mut orphan_paths: Vec<String> = stored
+            .keys()
+            .filter(|p| !current_paths.contains(*p))
+            .cloned()
+            .collect();
+        orphan_paths.sort();
+        for p in &orphan_paths {
+            db.query("DELETE entity WHERE path = $p; DELETE file_hash WHERE path = $p;")
+                .bind(("p", p.clone()))
+                .await
+                .map_err(|e| e.to_string())?
+                .check()
+                .map_err(|e| e.to_string())?;
+        }
     }
 
-    // 4. Upsert entities of changed/new files (and all synthetic dir entities). A file whose
-    //    content hash is unchanged is skipped — its rows are already present and identical.
-    for e in &entities {
-        let is_dir = e.lang == "dir";
-        if !is_dir {
-            if let Some(h) = stored.get(&e.path) {
-                if hash_by_path.get(&e.path).map(|x| x.as_str()) == Some(h.as_str()) {
-                    continue;
+    // 4. Entities. From scratch: drop the BM25 indexes, bulk-INSERT every entity in chunks,
+    //    then rebuild the four indexes in a single pass. Incremental: keep the indexes and
+    //    UPSERT only the rows of changed/new files (a file whose content hash is unchanged is
+    //    skipped — its rows are already present and identical).
+    if from_scratch {
+        remove_bm25_indexes(db).await?;
+        let rows: Vec<EntityIn> = entities.iter().map(|e| entity_in(e, generation)).collect();
+        for chunk in rows.chunks(CHUNK) {
+            let _: Vec<serde_json::Value> = db
+                .insert("entity")
+                .content(chunk.to_vec())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        define_bm25_indexes(db).await?;
+    } else {
+        for e in &entities {
+            let is_dir = e.lang == "dir";
+            if !is_dir {
+                if let Some(h) = stored.get(&e.path) {
+                    if hash_by_path.get(&e.path).map(|x| x.as_str()) == Some(h.as_str()) {
+                        continue;
+                    }
                 }
             }
+            let _: Option<serde_json::Value> = db
+                .upsert(("entity", e.id.as_str()))
+                .content(serde_json::json!({
+                    "kind": e.kind.as_str(),
+                    "path": e.path,
+                    "name": e.name,
+                    "lang": e.lang,
+                    "line_start": e.line_start as i64,
+                    "line_end": e.line_end as i64,
+                    "summary": e.summary,
+                    "code": e.code,
+                    "content_hash": e.content_hash,
+                    "generation": generation,
+                }))
+                .await
+                .map_err(|e| e.to_string())?;
         }
-        let _: Option<serde_json::Value> = db
-            .upsert(("entity", e.id.as_str()))
-            .content(serde_json::json!({
-                "kind": e.kind.as_str(),
-                "path": e.path,
-                "name": e.name,
-                "lang": e.lang,
-                "line_start": e.line_start as i64,
-                "line_end": e.line_end as i64,
-                "summary": e.summary,
-                "code": e.code,
-                "content_hash": e.content_hash,
-                "generation": generation,
-            }))
-            .await
-            .map_err(|e| e.to_string())?;
     }
 
-    // 5. Rewrite all relation edges (deterministic; cheap for a lexical index).
+    // 5. Rewrite all relation edges (deterministic; cheap for a lexical index). Grouped by
+    //    table and bulk-inserted in chunks, one `await` per chunk.
     db.query("DELETE belongs_to; DELETE calls; DELETE relates_to;")
         .await
         .map_err(|e| e.to_string())?
         .check()
         .map_err(|e| e.to_string())?;
-    for r in &relations {
-        let stmt = format!(
-            "RELATE (type::record('entity', $a)) -> {} -> (type::record('entity', $b))",
-            r.kind.table()
-        );
-        db.query(stmt)
-            .bind(("a", r.from.clone()))
-            .bind(("b", r.to.clone()))
-            .await
-            .map_err(|e| e.to_string())?
-            .check()
-            .map_err(|e| e.to_string())?;
+    for table in ["belongs_to", "calls", "relates_to"] {
+        let edges: Vec<EdgeIn> = relations
+            .iter()
+            .filter(|r| r.kind.table() == table)
+            .map(|r| EdgeIn {
+                in_: RecordId::new("entity", r.from.clone()),
+                out: RecordId::new("entity", r.to.clone()),
+            })
+            .collect();
+        for chunk in edges.chunks(CHUNK) {
+            let _: Vec<serde_json::Value> = db
+                .insert(table)
+                .relation(chunk.to_vec())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
 
-    // 6. Record file hashes and the generation.
-    for (p, h) in &hash_by_path {
-        let _: Option<serde_json::Value> = db
-            .upsert(("file_hash", p.as_str()))
-            .content(serde_json::json!({ "path": p, "hash": h }))
-            .await
-            .map_err(|e| e.to_string())?;
+    // 6. Record file hashes (bulk from scratch; only changed/new paths incrementally) and the
+    //    generation.
+    if from_scratch {
+        let rows: Vec<FhIn> = hash_by_path
+            .iter()
+            .map(|(p, h)| FhIn {
+                id: RecordId::new("file_hash", p.clone()),
+                path: p.clone(),
+                hash: h.clone(),
+            })
+            .collect();
+        for chunk in rows.chunks(CHUNK) {
+            let _: Vec<serde_json::Value> = db
+                .insert("file_hash")
+                .content(chunk.to_vec())
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    } else {
+        for (p, h) in &hash_by_path {
+            if stored.get(p).map(|x| x.as_str()) == Some(h.as_str()) {
+                continue;
+            }
+            let _: Option<serde_json::Value> = db
+                .upsert(("file_hash", p.as_str()))
+                .content(serde_json::json!({ "path": p, "hash": h }))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
     }
     let _: Option<serde_json::Value> = db
         .upsert(("meta", "generation"))
@@ -344,6 +437,23 @@ async fn do_index<C: Connection>(
         .map_err(|e| e.to_string())?;
 
     do_stats(db, backend_name, endpoint).await
+}
+
+/// Build the store row for an entity.
+fn entity_in(e: &super::extract::Entity, generation: &str) -> EntityIn {
+    EntityIn {
+        id: RecordId::new("entity", e.id.clone()),
+        kind: e.kind.as_str().to_string(),
+        path: e.path.clone(),
+        name: e.name.clone(),
+        lang: e.lang.clone(),
+        line_start: e.line_start as i64,
+        line_end: e.line_end as i64,
+        summary: e.summary.clone(),
+        code: e.code.clone(),
+        content_hash: e.content_hash.clone(),
+        generation: generation.to_string(),
+    }
 }
 
 async fn stored_file_hashes<C: Connection>(
@@ -533,15 +643,12 @@ fn row_to_hit(row: Row, score: f64, relations: Vec<String>) -> Hit {
     }
 }
 
-/// Define the lexical schema (four BM25 indexes on one analyser; no HNSW/embeddings).
+/// Define the lexical schema (tables, the analyser and the four BM25 indexes on it; no
+/// HNSW/embeddings). Called once at open so a query-only process finds the indexes present.
 async fn define_schema<C: Connection>(db: &Surreal<C>) -> Result<(), surrealdb::Error> {
     db.query(
         "DEFINE TABLE IF NOT EXISTS entity SCHEMALESS;
          DEFINE ANALYZER IF NOT EXISTS code_analyzer TOKENIZERS blank,class,camel,punct FILTERS lowercase,ascii;
-         DEFINE INDEX IF NOT EXISTS code_search ON entity FIELDS code FULLTEXT ANALYZER code_analyzer BM25;
-         DEFINE INDEX IF NOT EXISTS name_search ON entity FIELDS name FULLTEXT ANALYZER code_analyzer BM25;
-         DEFINE INDEX IF NOT EXISTS path_search ON entity FIELDS path FULLTEXT ANALYZER code_analyzer BM25;
-         DEFINE INDEX IF NOT EXISTS summary_search ON entity FIELDS summary FULLTEXT ANALYZER code_analyzer BM25;
          DEFINE TABLE IF NOT EXISTS belongs_to TYPE RELATION;
          DEFINE TABLE IF NOT EXISTS calls TYPE RELATION;
          DEFINE TABLE IF NOT EXISTS relates_to TYPE RELATION;
@@ -550,6 +657,38 @@ async fn define_schema<C: Connection>(db: &Surreal<C>) -> Result<(), surrealdb::
     )
     .await?
     .check()?;
+    define_bm25_indexes_e(db).await
+}
+
+/// Define the four BM25 full-text indexes (idempotent). On a from-scratch build this runs
+/// once after the bulk load, so each index is built in a single pass instead of being
+/// maintained row by row.
+async fn define_bm25_indexes<C: Connection>(db: &Surreal<C>) -> Result<(), String> {
+    define_bm25_indexes_e(db).await.map_err(|e| e.to_string())
+}
+
+async fn define_bm25_indexes_e<C: Connection>(db: &Surreal<C>) -> Result<(), surrealdb::Error> {
+    let mut sql = String::new();
+    for (name, field) in BM25_INDEXES {
+        sql.push_str(&format!(
+            "DEFINE INDEX IF NOT EXISTS {name} ON entity FIELDS {field} FULLTEXT ANALYZER code_analyzer BM25;"
+        ));
+    }
+    db.query(sql).await?.check()?;
+    Ok(())
+}
+
+/// Drop the four BM25 indexes before a bulk load so inserts do not maintain them.
+async fn remove_bm25_indexes<C: Connection>(db: &Surreal<C>) -> Result<(), String> {
+    let mut sql = String::new();
+    for (name, _) in BM25_INDEXES {
+        sql.push_str(&format!("REMOVE INDEX IF EXISTS {name} ON entity;"));
+    }
+    db.query(sql)
+        .await
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

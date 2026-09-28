@@ -106,15 +106,42 @@ pub struct ConsultArgs {
     /// validator (which refuses it) instead of clap rejecting `-3` as an unknown flag.
     #[arg(long, allow_hyphen_values = true, default_value_t = 0)]
     pub max_model_steps: i64,
-    /// Run every available roster reviewer (M4).
+    /// Run every available roster reviewer as a panel (needs a roster; not with
+    /// --provider/--thread/--mode resume).
     #[arg(long)]
     pub panel: bool,
-    /// Panel including weighty entries (M4).
+    /// Panel including weighty entries (forces size 0; not with --panel-size).
     #[arg(long)]
     pub panel_all: bool,
-    /// Panel concurrency (M4); parsed so clap accepts it, refused like --panel.
-    #[arg(long, default_value_t = -1)]
-    pub panel_concurrency: i64,
+    /// Panel concurrency: 0 = no cap, 1 = strictly sequential, k = at most k at once.
+    #[arg(long, allow_hyphen_values = true)]
+    pub panel_concurrency: Option<i64>,
+    /// The number of panel seats (0 = the purpose default; not with --panel-all).
+    #[arg(long, allow_hyphen_values = true)]
+    pub panel_size: Option<i64>,
+    /// Seat order: routed (default, a seeded weighted draw) or roster.
+    #[arg(long, default_value = "")]
+    pub panel_order: String,
+    /// The panel draw nonce (else CODEX_CONSULT_TEST_PANEL_SEED, else today's UTC date).
+    #[arg(long, default_value = "")]
+    pub panel_seed: String,
+    /// A required reviewer matcher (#n, a label, or `<provider> :: <model> [engine]`);
+    /// repeatable. `--require none` alone drops the roster's requirement.
+    #[arg(long)]
+    pub require: Vec<String>,
+    /// One role assigned to every panel member (in the prompt after the ask).
+    #[arg(long, default_value = "")]
+    pub role: String,
+    /// Roles assigned to panel seats by score rank and willingness (repeatable).
+    #[arg(long)]
+    pub roles: Vec<String>,
+    /// A topic tag for routing/rating (repeatable).
+    #[arg(long)]
+    pub topic: Vec<String>,
+    /// INTERNAL: the base64 member spec a panel run hands each seat's child process. Never
+    /// passed by hand.
+    #[arg(long, default_value = "", hide = true)]
+    pub panel_spec: String,
     /// Reserved (R12).
     #[arg(long)]
     pub detach: bool,
@@ -137,7 +164,8 @@ pub fn run(args: ConsultArgs) -> i32 {
     // Whether the user actually passed --continue-sec (clap can't tell a default -1 from an
     // explicit -1; treat any value != -1 as given, and -1 as the default sentinel).
     let continue_sec_given = args.continue_sec != -1;
-    let panel_concurrency_given = args.panel_concurrency != -1;
+    let panel_concurrency_given = args.panel_concurrency.is_some();
+    let panel_size_given = args.panel_size.is_some();
     let opts = Options {
         task: args.task,
         collab_dir: args.collab_dir,
@@ -173,7 +201,17 @@ pub fn run(args: ConsultArgs) -> i32 {
         max_model_steps: args.max_model_steps,
         panel: args.panel,
         panel_all: args.panel_all,
+        panel_concurrency: args.panel_concurrency.unwrap_or(0),
         panel_concurrency_given,
+        panel_size: args.panel_size.unwrap_or(0),
+        panel_size_given,
+        panel_order: args.panel_order,
+        panel_seed: args.panel_seed,
+        require: args.require,
+        role: args.role,
+        roles: args.roles,
+        topic: args.topic,
+        panel_spec: args.panel_spec,
         detach: args.detach,
         status: args.status,
         list: args.list,

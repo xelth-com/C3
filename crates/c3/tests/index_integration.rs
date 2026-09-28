@@ -112,6 +112,50 @@ fn build_query_lock_and_rebuild() {
 }
 
 #[test]
+fn chunked_bulk_insert_over_one_chunk() {
+    // Enough files that the from-scratch bulk insert spans more than one `INSERT` chunk
+    // (CHUNK is 400 rows): 260 files, each a file entity plus one fn, is > 400 entities.
+    let mut files: Vec<(String, String)> = Vec::new();
+    for i in 0..260 {
+        files.push((
+            format!("src/f{i}.rs"),
+            format!("/// item {i}\npub fn item_{i}() -> i32 {{ {i} }}\n"),
+        ));
+    }
+    let store = scratch_store();
+    let backend = Backend::SurrealKv(store.clone());
+    let generation = "chunkgen-0001";
+    let idx = SurrealIndex::open(backend, "c3", "chunk").expect("open embedded index");
+
+    let s1 = idx.index(&files, generation).expect("index");
+    assert_eq!(s1.files, 260, "one file entity per file");
+    assert!(
+        s1.entities > 400,
+        "expected > 400 entities to span >1 chunk, got {}",
+        s1.entities
+    );
+
+    // A known function is found and ranked first.
+    let hits = idx.retrieve("item_137", 4000).expect("retrieve");
+    assert!(
+        hits.first().map(|h| h.name.as_str()) == Some("item_137"),
+        "'item_137' should rank first, got: {:?}",
+        hits.iter().take(3).map(|h| &h.name).collect::<Vec<_>>()
+    );
+
+    // Deterministic rebuild: identical stats and entity count as the first build.
+    let r1 = idx.rebuild(&files, generation).expect("rebuild");
+    assert_eq!(r1.entities, s1.entities);
+    assert_eq!(r1.files, s1.files);
+    assert_eq!(r1.belongs_to, s1.belongs_to);
+    assert_eq!(r1.calls, s1.calls);
+    assert_eq!(r1.relates_to, s1.relates_to);
+
+    drop(idx);
+    let _ = std::fs::remove_dir_all(store.parent().unwrap_or(&store));
+}
+
+#[test]
 fn none_backend_is_noop() {
     // Parsing and the none backend need no feature-specific store.
     let b = c3::index::parse_conn("none").unwrap();

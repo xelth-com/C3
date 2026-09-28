@@ -494,6 +494,12 @@ pub(crate) struct Context {
     /// The recovered/cleared lines of consumed records (set under the lock in `run_live`),
     /// echoed to the console and carried into the handoff header as `Recovery record: ...`.
     pub(crate) recovery_lines: Vec<String>,
+    /// The panel member spec this run honours (`--panel-spec`); `None` for a single run.
+    pub(crate) panel_member: Option<crate::panel::member::MemberSpec>,
+    /// The member's role name (empty when none), for the ledger `role` field.
+    pub(crate) role: String,
+    /// The panel-wide roles note (ledger `panel.roles_note`), if any.
+    pub(crate) roles_note: String,
     // paths
     pub(crate) handoffs_dir: PathBuf,
     pub(crate) reply_path: PathBuf,
@@ -557,11 +563,53 @@ fn run_inner(o: Options) -> i32 {
         .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty()));
+    // A panel member re-exec (`--panel-spec`): reconstruct the run from its spec and honour it.
+    if !o.panel_spec.is_empty() {
+        return run_member(o, home.as_deref());
+    }
     let r = match args::validate(&o, home.as_deref()) {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
-    match build_context(o, r) {
+    // The panel path (`--panel`/`--panel-all`): compute the plan, print the dry-run block, or
+    // refuse a real run (the panel runtime lands in the next chunk).
+    if o.panel || o.panel_all {
+        return crate::panel::run::run(o, r, home.as_deref());
+    }
+    dispatch(build_context(o, r, None))
+}
+
+/// The panel member re-exec (`--panel-spec`): decode the spec, reconstruct the run's options
+/// from `spec.args`, and run it as the panel run's member (never a single-run reservation).
+fn run_member(o: Options, home: Option<&str>) -> i32 {
+    if o.panel || o.panel_all {
+        return refuse("-PanelSpec is internal to -Panel; never combine them.");
+    }
+    let spec = match crate::panel::member::MemberSpec::from_wire(&o.panel_spec) {
+        Ok(s) => s,
+        Err(e) => {
+            return refuse(&format!(
+                "-PanelSpec is internal to -Panel and could not be read ({}).",
+                c3_core::one_line(&e)
+            ))
+        }
+    };
+    if !spec.names_member() {
+        return refuse(
+            "-PanelSpec is internal to -Panel and does not name this member's numbers and parent (n, nn, parent_pid); this panel member was not started.",
+        );
+    }
+    let mo = member_options(&o.task, &spec);
+    let r = match args::validate(&mo, home) {
+        Ok(r) => r,
+        Err(msg) => return refuse(&msg),
+    };
+    dispatch(build_context(mo, r, Some(&spec)))
+}
+
+/// The shared build-context → run dispatch (single run and panel member).
+fn dispatch(built: Result<Context, (String, i32)>) -> i32 {
+    match built {
         Ok(ctx) => {
             if ctx.o.dry_run {
                 super::dryrun::render(&ctx);
@@ -595,7 +643,90 @@ fn run_inner(o: Options) -> i32 {
     }
 }
 
-fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> {
+/// Reconstruct a run's [`Options`] from a panel member spec's `args` object (`$pa`,
+/// `codex-consult.ps1:1749-1786`) plus the task from the command line. Provider/model/thread are
+/// never in `args` (a member takes its identity from the spec's roster entry); the numbers,
+/// consult id and role come from the spec's top-level fields, handled in `build_context`.
+fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Options {
+    let a = &spec.args;
+    let s = |k: &str| a.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let i = |k: &str, d: i64| a.get(k).and_then(|v| v.as_i64()).unwrap_or(d);
+    let b = |k: &str| a.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+    let list = |k: &str| {
+        a.get(k)
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let collab = s("collab_dir");
+    let continue_sec = i("continue_sec", -1);
+    Options {
+        task: task.to_string(),
+        collab_dir: if collab.is_empty() {
+            ".collab".into()
+        } else {
+            collab
+        },
+        mode: s("mode"),
+        thread: String::new(),
+        brief: s("brief"),
+        prompt: s("prompt"),
+        model: String::new(),
+        purpose: s("purpose"),
+        effort: s("effort"),
+        sandbox: s("sandbox"),
+        max_words: i("max_words", 0),
+        timeout_sec: i("timeout_sec", 0),
+        continue_sec,
+        continue_sec_given: continue_sec != -1,
+        range: s("range"),
+        reply_name: s("reply_name"),
+        artifacts: list("artifact"),
+        raw: b("raw"),
+        codex_exe: s("codex_exe"),
+        provider: String::new(),
+        native_effort: s("native_effort"),
+        off_peak_only: b("off_peak_only"),
+        skip_preflight: b("skip_preflight"),
+        codex_config: list("codex_config"),
+        schema_transport: s("schema_transport"),
+        telemetry: None,
+        format_retry: i("format_retry", 1),
+        dry_run: b("dry_run"),
+        engine: s("engine"),
+        engine_exe: s("engine_exe"),
+        denial_retry: i("denial_retry", 1),
+        max_model_steps: i("max_model_steps", 0),
+        panel: false,
+        panel_all: false,
+        panel_concurrency: 0,
+        panel_concurrency_given: false,
+        panel_size: 0,
+        panel_size_given: false,
+        panel_order: String::new(),
+        panel_seed: String::new(),
+        require: Vec::new(),
+        role: String::new(),
+        roles: Vec::new(),
+        topic: list("topics"),
+        panel_spec: String::new(),
+        detach: false,
+        status: false,
+        list: false,
+        wait: false,
+        prune: false,
+    }
+}
+
+fn build_context(
+    o: Options,
+    mut r: Resolved,
+    member: Option<&crate::panel::member::MemberSpec>,
+) -> Result<Context, (String, i32)> {
     let o_telemetry = o.telemetry; // captured before `o` moves into the Context
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = providers::resolve_repo_root(&cwd);
@@ -672,8 +803,63 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         "-CodexConfig".to_string()
     };
 
+    // A panel member takes its identity from the roster entry its spec names (never a walk).
+    if let Some(m) = member {
+        identity_provider = m.provider.clone();
+        if identity_model.is_empty() {
+            identity_model = m.model.clone();
+        }
+        engine_name = if m.engine.is_empty() {
+            "codex".to_string()
+        } else {
+            m.engine.clone()
+        };
+        engine_from = "roster".into();
+        provider_source_override = "roster".into();
+        roster_skipped = member_skips(&m.skipped);
+    }
+
     if roster.exists {
-        if !o.provider.is_empty() {
+        if let Some(m) = member {
+            // The roster entry the panel run selected for this member (`roster_rule = 'panel'`);
+            // a roster that changed under the panel refuses (`codex-consult.ps1:2940`).
+            roster_rule = "panel".into();
+            let member_engine = engine_name.clone();
+            roster_entry = roster
+                .entries
+                .iter()
+                .find(|e| e.position as i64 == m.roster_position)
+                .cloned();
+            let matches = roster_entry
+                .as_ref()
+                .map(|e| {
+                    e.provider == m.provider
+                        && e.model == m.model
+                        && entry_engine(e) == member_engine
+                })
+                .unwrap_or(false);
+            if !matches {
+                let suffix = if member_engine != "codex" {
+                    format!(" [{member_engine}]")
+                } else {
+                    String::new()
+                };
+                return Err((
+                    format!(
+                        "the reviewer roster '{}' changed while the panel ran (entry {} is no longer {} {}{suffix}); this panel member was not started.",
+                        roster.path, m.roster_position, m.provider, m.model
+                    ),
+                    1,
+                ));
+            }
+            if let Some(e) = &roster_entry {
+                if o.model.is_empty() && !e.model.is_empty() {
+                    identity_model = e.model.clone();
+                    model_source_override = "roster".into();
+                    roster_applied.push("model".into());
+                }
+            }
+        } else if !o.provider.is_empty() {
             roster_rule = "provider".into();
             roster_entry = providers::find_roster_entry(&roster, &o.provider, &o.model).cloned();
             if let Some(e) = &roster_entry {
@@ -1057,7 +1243,13 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
     let parent_note = parent.note.clone();
 
     let nn_n = store.next_numbers(&task).map_err(|e| (e.to_string(), 1))?;
-    let (nn, consult_n) = (nn_n.nn, nn_n.n);
+    let (mut nn, mut consult_n) = (nn_n.nn, nn_n.n);
+    // A panel member takes its numbers from its spec, not the disk (the panel run reserved them
+    // up front); `next_numbers` still ran above to refuse an unusable store.
+    if let Some(m) = member {
+        nn = m.nn as u32;
+        consult_n = m.n;
+    }
 
     let reply_name = if o.reply_name.is_empty() {
         "reply".to_string()
@@ -1136,10 +1328,22 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         String::new()
     };
 
-    // Open findings snapshot.
-    let (open_findings, open_findings_count) = read_open_findings(&store, &task);
+    // Open findings snapshot. A panel member lists only what was open when the panel started —
+    // the same set for every member (`listed_ids`), never a sibling's mid-wave answer.
+    let (mut open_findings, mut open_findings_count) = read_open_findings(&store, &task);
+    if let Some(m) = member {
+        open_findings.retain(|f| m.listed_ids.contains(&f.id));
+        open_findings_count = open_findings.len();
+    }
 
-    let consult_id = uuid::Uuid::new_v4().to_string();
+    let mut consult_id = uuid::Uuid::new_v4().to_string();
+    // A member reuses the consult id its spec reserved (the prompt's last line, so the parent's
+    // rollout scan and the reserved pending record all agree), when it is a well-formed uuid.
+    if let Some(m) = member {
+        if is_uuid36(&m.consult_id) {
+            consult_id = m.consult_id.clone();
+        }
+    }
 
     // Range (`git diff --shortstat <spec> --`, measured once, before the lock). An unknown
     // range refuses here (nothing started). The counts go to the prompt, the ledger `range{}`
@@ -1175,6 +1379,34 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         });
     }
 
+    // A panel member surfaces the panel-level warnings (`codex-consult.ps1:2928`) among its own
+    // run warnings, printed before launch and recorded in the ledger.
+    if let Some(m) = member {
+        for w in &m.panel_warnings {
+            if !w.is_empty() {
+                run_warnings.push(w.clone());
+            }
+        }
+    }
+
+    // A panel member's role paragraph (`Resolve-RoleFile` + `role_prompt_line`), after the ask
+    // and before the brief. A bad/unknown role refuses (naming the member); no role → empty.
+    let mut role_line = String::new();
+    let mut roles_note = String::new();
+    if let Some(m) = member {
+        roles_note = m.roles_note.clone();
+        if !m.role.is_empty() {
+            let ri = crate::panel::roles::resolve_role_file(&m.role, &collab_root, "");
+            if !ri.error.is_empty() {
+                return Err((
+                    format!("-Role: {}; this panel member was not started.", ri.error),
+                    1,
+                ));
+            }
+            role_line = crate::panel::roles::role_prompt_line(&ri);
+        }
+    }
+
     let prompt_text = prompt::assemble(&PromptInputs {
         raw: r.raw,
         purpose: &o.purpose,
@@ -1187,6 +1419,7 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         max_words: r.max_words,
         consult_id: &consult_id,
         tools_line: spec.tools_line,
+        role_line: &role_line,
     });
 
     // The argv (byte-identical to the core plan): build the Request and plan it for the
@@ -1243,6 +1476,9 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
             &engine_name,
         );
         roster_line = match roster_rule.as_str() {
+            // A panel member's roster decision is the panel run's; its own console line is not the
+            // `codex-consult:` line the parent collects, so it is left unprinted here.
+            "panel" => String::new(),
             "walk" => {
                 let mut l = format!(
                     "Roster: {} - position {} of {count}",
@@ -1366,6 +1602,9 @@ fn build_context(o: Options, mut r: Resolved) -> Result<Context, (String, i32)> 
         }),
         recovery_dry_lines,
         recovery_lines: Vec::new(),
+        panel_member: member.cloned(),
+        role: member.map(|m| m.role.clone()).unwrap_or_default(),
+        roles_note,
         handoffs_dir,
         reply_path,
         reply_json_path,
@@ -1964,60 +2203,80 @@ fn run_live(mut ctx: Context) -> i32 {
         println!("WARNING: {}", ctx.preflight_warning);
     }
     let store = FilesStore::new(ctx.collab_root.clone());
-    let pending = PendingRef::single(ctx.task.clone());
+    let reply_rel = ctx.hf("md");
+    let is_member = ctx.panel_member.is_some();
+    let pending = match &ctx.panel_member {
+        Some(m) => PendingRef::member(ctx.task.clone(), m.nn as u32),
+        None => PendingRef::single(ctx.task.clone()),
+    };
 
-    // Task ownership lock (fail-fast).
-    let lock_record = LockRecord::now(&ctx.task, None);
-    let _task_lock = match store.take_task_lock(&ctx.task, &lock_record) {
-        Ok(l) => l,
-        Err(e) => {
-            return refuse(&format!(
-                "the task '{}' is locked by another run ({e}).",
-                ctx.task
-            ))
+    // Task ownership lock: a single run takes it (fail-fast); a panel member runs under the panel
+    // run's lock and never takes one of its own (`codex-consult.ps1:3387`).
+    let _task_lock = if is_member {
+        None
+    } else {
+        let lock_record = LockRecord::now(&ctx.task, None);
+        match store.take_task_lock(&ctx.task, &lock_record) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                return refuse(&format!(
+                    "the task '{}' is locked by another run ({e}).",
+                    ctx.task
+                ))
+            }
         }
     };
 
-    // Recovery records: read and judge every `.consult.pending*.json` of the task under the
-    // lock, BEFORE anything is written (`codex-consult.ps1` ~2766). A corrupt record refuses;
-    // a live process of an interrupted run refuses (its message names the pid); a dead record
-    // is consumed — numbering already skipped past it (`next_numbers`), a recovered/cleared
-    // line is printed and carried into the handoff, and a consumed panel-member record is
-    // removed (the single-run record is overwritten by this run's reservation below).
-    {
-        let assessed = super::recovery::assess(&store, &ctx.task);
-        if let Some(err) = assessed.error {
-            return refuse(&err);
+    let mut rec = if let Some(m) = ctx.panel_member.clone() {
+        // A panel member never consumes the task's other records; it accepts the reserved record
+        // the panel run wrote for it (matching its spec), rewrites it as its own, checks the
+        // parent is alive, then records this run's reply/consult id/launcher/engine.
+        match member_accept(&store, &ctx, &pending, &m, &reply_rel) {
+            Ok(r) => r,
+            Err(msg) => return refuse(&msg),
         }
-        if let Some(msg) = assessed.active_message() {
-            return refuse(&msg);
-        }
-        let own = pending.file_name();
-        for item in &assessed.items {
-            let line = super::recovery::run_line(item);
-            println!("{TOOL}: {line}");
-            ctx.recovery_lines.push(line);
-            let is_own = item
-                .path
-                .file_name()
-                .map(|n| n.to_string_lossy().eq_ignore_ascii_case(&own))
-                .unwrap_or(false);
-            if !is_own {
-                if let Err(e) = std::fs::remove_file(&item.path) {
-                    println!(
-                        "{TOOL}: could not remove the consumed recovery record {} ({e})",
-                        item.path.display()
-                    );
+    } else {
+        // Recovery records: read and judge every `.consult.pending*.json` of the task under the
+        // lock, BEFORE anything is written (`codex-consult.ps1` ~2766). A corrupt record refuses;
+        // a live process of an interrupted run refuses (its message names the pid); a dead record
+        // is consumed — numbering already skipped past it (`next_numbers`), a recovered/cleared
+        // line is printed and carried into the handoff, and a consumed panel-member record is
+        // removed (the single-run record is overwritten by this run's reservation below).
+        {
+            let assessed = super::recovery::assess(&store, &ctx.task);
+            if let Some(err) = assessed.error {
+                return refuse(&err);
+            }
+            if let Some(msg) = assessed.active_message() {
+                return refuse(&msg);
+            }
+            let own = pending.file_name();
+            for item in &assessed.items {
+                let line = super::recovery::run_line(item);
+                println!("{TOOL}: {line}");
+                ctx.recovery_lines.push(line);
+                let is_own = item
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().eq_ignore_ascii_case(&own))
+                    .unwrap_or(false);
+                if !is_own {
+                    if let Err(e) = std::fs::remove_file(&item.path) {
+                        println!(
+                            "{TOOL}: could not remove the consumed recovery record {} ({e})",
+                            item.path.display()
+                        );
+                    }
                 }
             }
         }
-    }
 
-    // Reserve the recovery record (`New-PendingRecord -State reserved`): this bridge's pid and
-    // start time (the writer-pid liveness rule), the host and this run's numbers/reply.
-    let reply_rel = ctx.hf("md");
-    let mut rec = new_pending_record(PendingState::Reserved, &ctx, &reply_rel);
-    let _ = store.write_pending(&pending, &rec);
+        // Reserve the recovery record (`New-PendingRecord -State reserved`): this bridge's pid and
+        // start time (the writer-pid liveness rule), the host and this run's numbers/reply.
+        let rec = new_pending_record(PendingState::Reserved, &ctx, &reply_rel);
+        let _ = store.write_pending(&pending, &rec);
+        rec
+    };
 
     // The plugin fingerprints the tree AFTER the lock and recovery record exist, so the
     // `.consult.*` files under the collab dir are counted among the excluded entries
@@ -2084,6 +2343,27 @@ fn run_live(mut ctx: Context) -> i32 {
             return refuse(&format!(
                 "the {} run is refused before launch: {hazard}; nothing was started.",
                 ctx.engine
+            ));
+        }
+    }
+
+    // A panel member re-checks its parent right before launching its reviewer (D1,
+    // `codex-consult.ps1:3973`): if the panel run died during the member's preflight, the member
+    // stops here, withdraws its record, and starts nothing.
+    if let Some(m) = &ctx.panel_member {
+        if !crate::liveness::proc::pid_alive(m.parent_pid as u32, &m.parent_start_time) {
+            let path = store_pending_path(&store, &pending);
+            let rm = std::fs::remove_file(&path);
+            let suffix = match rm {
+                Ok(_) => String::new(),
+                Err(e) => format!(
+                    " (its recovery record '{}' could not be removed: {e})",
+                    path.display()
+                ),
+            };
+            return refuse(&format!(
+                "the review panel run that launched this member (pid {}) is gone; this member stopped before starting {} - nothing was started{suffix}.",
+                m.parent_pid, ctx.engine
             ));
         }
     }
@@ -2450,6 +2730,150 @@ fn make_live_request(ctx: &Context) -> Request {
 
 fn store_pending_path(store: &FilesStore, pending: &PendingRef) -> PathBuf {
     store.task_dir(&pending.task).join(pending.file_name())
+}
+
+/// Record a member-record/spec mismatch in the plugin's phrasing (`$compare`, line 2083).
+fn add_mismatch(mism: &mut Vec<String>, name: &str, in_record: String, in_spec: String) {
+    if in_record != in_spec {
+        let shown = if in_record.is_empty() {
+            "(none)".to_string()
+        } else {
+            in_record
+        };
+        mism.push(format!(
+            "{name} {shown} in the record, {in_spec} in the spec"
+        ));
+    }
+}
+
+/// A JSON value's field as its string form (a number renders without quotes, matching the
+/// plugin's `[string]$value`).
+fn json_str(v: &serde_json::Value, key: &str) -> String {
+    match v.get(key) {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Null) | None => String::new(),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// The panel-member accept/rewrite guard (`codex-consult.ps1:2074-2113` + `3516-3524`): read the
+/// reserved record the panel run wrote for this member, refuse a missing/corrupt/mismatched one,
+/// rewrite it as this process's own, refuse (and withdraw) when the parent is gone, then record
+/// this run's reply/consult id/launcher/engine. Returns the accepted record.
+fn member_accept(
+    store: &FilesStore,
+    ctx: &Context,
+    pending: &PendingRef,
+    m: &crate::panel::member::MemberSpec,
+    reply_rel: &str,
+) -> Result<PendingRecord, String> {
+    let path = store_pending_path(store, pending);
+    let started = "This panel member was not started.";
+    if !path.is_file() {
+        return Err(format!(
+            "this panel member's recovery record '{}' does not exist (the panel run writes it before it launches a member); this panel member was not started.",
+            path.display()
+        ));
+    }
+    let bytes = std::fs::read(&path).map_err(|e| {
+        format!(
+            "could not read the recovery record '{}' ({e}). {started}",
+            path.display()
+        )
+    })?;
+    let val: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+        format!(
+            "the recovery record '{}' is unusable ({e}). {started}",
+            path.display()
+        )
+    })?;
+
+    let mut mism: Vec<String> = Vec::new();
+    match val.get("panel") {
+        None | Some(serde_json::Value::Null) => mism.push("the record names no panel".into()),
+        Some(p) => {
+            add_mismatch(&mut mism, "panel id", json_str(p, "id"), m.id.clone());
+            add_mismatch(
+                &mut mism,
+                "parent pid",
+                json_str(p, "parent_pid"),
+                m.parent_pid.to_string(),
+            );
+            add_mismatch(
+                &mut mism,
+                "parent start time",
+                json_str(p, "parent_start_time"),
+                m.parent_start_time.clone(),
+            );
+        }
+    }
+    add_mismatch(&mut mism, "n", json_str(&val, "n"), m.n.to_string());
+    add_mismatch(
+        &mut mism,
+        "nn",
+        json_str(&val, "nn"),
+        format!("{:02}", m.nn),
+    );
+    add_mismatch(
+        &mut mism,
+        "state",
+        json_str(&val, "state"),
+        "reserved".to_string(),
+    );
+    add_mismatch(
+        &mut mism,
+        "writer pid",
+        json_str(&val, "pid"),
+        m.parent_pid.to_string(),
+    );
+    if !mism.is_empty() {
+        return Err(format!(
+            "this panel member's recovery record '{}' does not match its spec ({}); this panel member was not started.",
+            path.display(),
+            mism.join("; ")
+        ));
+    }
+
+    let mut rec: PendingRecord = serde_json::from_value(val).unwrap_or_default();
+    let pid = std::process::id();
+    rec.pid = pid;
+    rec.start_time = crate::liveness::proc::process_start_iso(pid).unwrap_or_default();
+    rec.host = pending_host();
+    rec.note = format!(
+        "review panel member (the panel run is pid {})",
+        m.parent_pid
+    );
+    if let Err(e) = store.write_pending(pending, &rec) {
+        return Err(format!(
+            "could not rewrite this panel member's recovery record '{}': {e}; this panel member was not started.",
+            path.display()
+        ));
+    }
+
+    if !crate::liveness::proc::pid_alive(m.parent_pid as u32, &m.parent_start_time) {
+        let withdrawn = std::fs::remove_file(&path).is_ok();
+        return Err(format!(
+            "the review panel run that launched this member (pid {}) is gone; this panel member was not started - nothing was started and its recovery record '{}' {}.",
+            m.parent_pid,
+            path.display(),
+            if withdrawn {
+                "was withdrawn".to_string()
+            } else {
+                "could not be withdrawn (the next run consumes it)".to_string()
+            }
+        ));
+    }
+
+    rec.reply = reply_rel.to_string();
+    rec.consult_id = ctx.consult_id.clone();
+    rec.launcher = if ctx.is_codex() {
+        ctx.launcher.clone()
+    } else {
+        ctx.engine_launcher.clone()
+    };
+    rec.engine = ctx.engine.clone();
+    let _ = store.write_pending(pending, &rec);
+    Ok(rec)
 }
 
 /// Ingest the outcome, render, commit and print the summary.
@@ -4542,6 +4966,26 @@ fn evidence_token(k: c3_core::engine::EvidenceKind) -> &'static str {
     }
 }
 
+/// A well-formed 36-char uuid string (`^[0-9a-fA-F-]{36}$`), the member's `consult_id` gate.
+fn is_uuid36(s: &str) -> bool {
+    s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+/// Parse a panel member spec's `skipped` value into the roster-skip tuples the ledger record
+/// uses: each `{provider, model, engine?, reason}` in order.
+fn member_skips(skipped: &serde_json::Value) -> Vec<(String, String, String, String)> {
+    let arr = match skipped.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter()
+        .map(|v| {
+            let g = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            (g("provider"), g("model"), g("engine"), g("reason"))
+        })
+        .collect()
+}
+
 fn iso_now() -> String {
     chrono::Local::now()
         .format("%Y-%m-%dT%H:%M:%S%:z")
@@ -5164,10 +5608,16 @@ fn build_entry(
         n: ctx.consult_n,
         when: iso_now(),
         purpose: ctx.o.purpose.clone(),
-        // `-Topics`/`-Role` are the roster/M4 surface; a single codex run writes the plugin's
-        // empty defaults (`[]` / `""`) so the entry is byte-identical to the live plugin.
-        topics: Some(Vec::new()),
-        role: Some(String::new()),
+        // `-Topic`/`-Role` (the roster/M4 surface): a panel member (or a `-Topic` run) writes
+        // them; a plain single run writes the plugin's empty defaults (`[]` / `""`).
+        topics: Some(
+            ctx.o
+                .topic
+                .iter()
+                .map(|t| serde_json::Value::String(t.clone()))
+                .collect(),
+        ),
+        role: Some(ctx.role.clone()),
         consult_id: ctx.consult_id.clone(),
         lineage: ctx.identity.lineage.clone(),
         preflight: ctx.preflight.clone(),
@@ -5176,6 +5626,10 @@ fn build_entry(
         thread: thread.to_string(),
         thread_source: thread_source.to_string(),
         mode: ctx.effective_mode.clone(),
+        // (wave 26) `mode_fallback`/`stall` are present-in-order but always `null` here: C3 does
+        // not yet compute the >80%-context fork/resume downgrade nor the stall-kill. `Some(None)`
+        // writes `null` in position (the harness `$order` requires the key present).
+        mode_fallback: Some(None),
         command: if ctx.is_codex() {
             format!("codex {}", ctx.argv_display.trim_start_matches("codex "))
         } else {
@@ -5222,6 +5676,8 @@ fn build_entry(
         format_retry: sec.format_retry.clone(),
         denial_retry: sec.denial_retry.clone(),
         timeout_continue: sec.timeout_continue.clone(),
+        // (wave 26) present-in-order, always `null`: C3 has no stall-kill path yet.
+        stall: Some(None),
         engine_run: if ctx.is_codex() {
             None
         } else {
@@ -5291,19 +5747,64 @@ fn build_entry(
         .to_string();
         e.verdict_reason = s.verdict_reason.clone();
     }
-    // The engine tree-check record (wave 26b, D9): `{outcome, files[]}`, written when a change
-    // was detected (warned/failed). c3-core has no named `tree_check` field yet, so it rides the
-    // flattened `extra` map (serialized at the entry's end rather than after
-    // `artifacts_changed_during_review`); the harness reads `$e.tree_check` regardless of order.
-    if !ctx.is_codex() && !sec.tree_check_outcome.is_empty() && sec.tree_check_outcome != "clean" {
-        e.extra.insert(
-            "tree_check".to_string(),
-            serde_json::json!({
-                "outcome": sec.tree_check_outcome,
-                "files": sec.tree_check_files,
-            }),
-        );
+    // The panel record a member writes into its ledger entry (`codex-consult.ps1:3216`): the
+    // panel id, this seat, the panel-wide member list, the plan and the routing record. `started`
+    // and `usable` are the panel run's to patch after every member finishes (chunk 2). `roles_note`
+    // rides `extra` (after `routing`, matching the plugin's key order).
+    if let Some(m) = &ctx.panel_member {
+        let members = m
+            .members
+            .iter()
+            .map(|b| c3_core::ledger::PanelMember {
+                provider: b.provider.clone(),
+                model: b.model.clone(),
+                state: b.state.clone(),
+                reason: b.reason.clone(),
+                ..Default::default()
+            })
+            .collect();
+        let routing = m
+            .routing
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<c3_core::ledger::PanelRouting>(v.clone()).ok());
+        let mut panel = c3_core::ledger::Panel {
+            id: m.id.clone(),
+            position: m.position,
+            of: m.of,
+            members,
+            concurrency: m.concurrency,
+            limits: m.limits.clone(),
+            asked: Some(if m.asked > 0 { m.asked } else { m.of }),
+            started: None,
+            usable: None,
+            routing,
+            ..Default::default()
+        };
+        if !ctx.roles_note.is_empty() {
+            panel.extra.insert(
+                "roles_note".into(),
+                serde_json::Value::String(ctx.roles_note.clone()),
+            );
+        }
+        e.panel = Some(panel);
     }
+
+    // The engine tree-check record (wave 26b, D9): `{outcome, files[]}` in the named field,
+    // between `artifacts_changed_during_review` and `bridge_outcome`. `null` for codex (no
+    // check); for an engine, the record whenever the check ran (`clean`/`warned`/`failed`).
+    e.tree_check = if ctx.is_codex() || sec.tree_check_outcome.is_empty() {
+        Some(None)
+    } else {
+        Some(Some(c3_core::ledger::TreeCheck {
+            outcome: sec.tree_check_outcome.clone(),
+            files: sec
+                .tree_check_files
+                .iter()
+                .map(|f| serde_json::Value::String(f.clone()))
+                .collect(),
+            ..Default::default()
+        }))
+    };
     e
 }
 
@@ -5347,8 +5848,9 @@ mod telemetry_tests {
     use c3_core::ledger::LedgerEntry;
     use std::sync::Mutex;
 
-    // Serialises the env-mutating part of this file's tests against itself.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // Serialises the env-mutating part of this file's tests against itself and the panel-member
+    // tests below (env is process-global).
+    pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn spool_pending(home: &Path) -> usize {
         let p = home.join("c3").join("telemetry").join("spool.ndjson");
@@ -5399,6 +5901,159 @@ mod telemetry_tests {
 
         std::env::remove_var("CODEX_HOME");
         let _ = std::fs::remove_dir_all(&home);
+    }
+}
+
+#[cfg(test)]
+mod member_tests {
+    use super::*;
+    use crate::panel::member::{MemberBrief, MemberSpec};
+    use serde_json::json;
+
+    fn scratch() -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "c3-member-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(d.join("t")).unwrap();
+        d
+    }
+
+    fn sample_spec(collab: &str, listed: Vec<String>, role: &str) -> MemberSpec {
+        MemberSpec {
+            id: "043d5bfe-1111-2222-3333-444455556666".into(),
+            position: 2,
+            of: 3,
+            members: vec![MemberBrief {
+                provider: "openai".into(),
+                model: "gpt-6-astra".into(),
+                state: "run".into(),
+                reason: String::new(),
+            }],
+            roster_position: 1,
+            provider: "openai".into(),
+            model: "gpt-6-astra".into(),
+            engine: String::new(),
+            skipped: json!([]),
+            listed_ids: listed,
+            n: 12,
+            nn: 7,
+            consult_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+            parent_pid: 4321,
+            parent_start_time: "2026-09-27T10:11:12.3456789Z".into(),
+            sibling_nns: vec![6, 8],
+            concurrency: 3,
+            limits: json!({"openai": 1}),
+            asked: 3,
+            routing: Some(json!({"mode": "roster", "size": 3})),
+            role: role.into(),
+            roles_note: String::new(),
+            panel_warnings: vec!["a framing panel seated below 2".into()],
+            args: json!({
+                "collab_dir": collab,
+                "purpose": "framing",
+                "prompt": "look at this",
+                "reply_name": "reply-openai",
+                "timeout_sec": 0,
+                "continue_sec": -1,
+                "format_retry": 1,
+                "skip_preflight": true,
+                "raw": false,
+                "dry_run": false
+            }),
+        }
+    }
+
+    #[test]
+    fn build_context_honours_the_member_spec() {
+        let _g = super::telemetry_tests::ENV_LOCK.lock().unwrap();
+        let root = scratch();
+        let roster_path = root.join("roster.json");
+        std::fs::write(
+            &roster_path,
+            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-6-astra"}]}"#,
+        )
+        .unwrap();
+        // Two open findings; the spec lists only the first.
+        std::fs::write(
+            root.join("t").join("findings.json"),
+            r#"{"task_id":"t","findings":[{"id":"F01-1","status":"proposed","claim":"a"},{"id":"F02-1","status":"proposed","claim":"b"}]}"#,
+        )
+        .unwrap();
+        // A repository role the member's role paragraph resolves.
+        std::fs::create_dir_all(root.join(".collab").join("roles")).ok();
+        std::fs::create_dir_all(root.join("t").join("roles")).ok();
+        // The collab dir is `<root>` and the task `t`, so the roles dir is `<root>/roles`.
+        std::fs::create_dir_all(root.join("roles")).unwrap();
+        std::fs::write(root.join("roles").join("adversary.md"), "Attack it.").unwrap();
+
+        std::env::set_var("CODEX_CONSULT_ROSTER", &roster_path);
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "off");
+
+        let spec = sample_spec(root.to_str().unwrap(), vec!["F01-1".into()], "adversary");
+        let mo = member_options("t", &spec);
+        let r = args::validate(&mo, None).expect("member options validate");
+        let ctx = build_context(mo, r, Some(&spec)).expect("member build_context");
+
+        // Numbers, consult id and reply file name come from the spec.
+        assert_eq!(ctx.nn, 7);
+        assert_eq!(ctx.consult_n, 12);
+        assert_eq!(ctx.consult_id, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        assert!(
+            ctx.reply_path
+                .to_string_lossy()
+                .ends_with("07-codex-reply-openai.md"),
+            "{}",
+            ctx.reply_path.display()
+        );
+        // The open-findings snapshot is intersected with `listed_ids`.
+        assert_eq!(ctx.open_findings_count, 1);
+        // The role paragraph is in the prompt, after the ask and before nothing else brief-side.
+        assert!(ctx
+            .prompt_text
+            .contains("Your role in this review: adversary."));
+        assert!(ctx.prompt_text.contains("Attack it."));
+        // The panel warning is carried into the run warnings and the ledger.
+        assert!(ctx
+            .run_warnings
+            .iter()
+            .any(|w| w == "a framing panel seated below 2"));
+        // The pending record is the member's, not the single-run file.
+        assert_eq!(ctx.role, "adversary");
+        assert!(ctx.panel_member.is_some());
+
+        std::env::remove_var("CODEX_CONSULT_ROSTER");
+        std::env::remove_var("CODEX_CONSULT_TELEMETRY");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn build_context_refuses_a_roster_that_changed_under_the_panel() {
+        let _g = super::telemetry_tests::ENV_LOCK.lock().unwrap();
+        let root = scratch();
+        let roster_path = root.join("roster.json");
+        // The roster entry at position 1 is a DIFFERENT reviewer than the spec names.
+        std::fs::write(
+            &roster_path,
+            r#"{"roster_version":1,"reviewers":[{"provider":"zai","model":"glm-5.3"}]}"#,
+        )
+        .unwrap();
+        std::env::set_var("CODEX_CONSULT_ROSTER", &roster_path);
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "off");
+
+        let spec = sample_spec(root.to_str().unwrap(), vec![], "");
+        let mo = member_options("t", &spec);
+        let r = args::validate(&mo, None).unwrap();
+        let err = match build_context(mo, r, Some(&spec)) {
+            Ok(_) => panic!("expected a roster-changed refusal"),
+            Err(e) => e,
+        };
+        assert!(err.0.contains("changed while the panel ran"), "{}", err.0);
+
+        std::env::remove_var("CODEX_CONSULT_ROSTER");
+        std::env::remove_var("CODEX_CONSULT_TELEMETRY");
+        let _ = std::fs::remove_dir_all(root);
     }
 }
 

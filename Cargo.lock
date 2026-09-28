@@ -466,6 +466,7 @@ dependencies = [
 name = "c3"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "c3-core",
  "chrono",
  "clap",

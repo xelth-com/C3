@@ -534,6 +534,166 @@ impl Ctx {
     }
 }
 
+/// The purposes on which a weighty roster entry still joins a panel without `-PanelAll`
+/// (`$script:WeightyPurposes`).
+const WEIGHTY_PURPOSES: &[&str] = &[
+    "framing",
+    "decision",
+    "core-contract",
+    "acceptance",
+    "stuck",
+];
+
+/// One row of `Select-PanelMembers`: a roster entry, its resolved identity, and whether it runs.
+pub(crate) struct PanelMemberRow {
+    pub entry: RosterEntry,
+    pub identity: ReviewerIdentity,
+    /// `run` | `skipped`.
+    pub state: String,
+    pub reason: String,
+    /// `""` | `refused` | `unavailable` | `weighty`.
+    pub skip_kind: String,
+}
+
+/// `Select-PanelMembers`' result.
+pub(crate) struct PanelSelection {
+    pub members: Vec<PanelMemberRow>,
+    pub error: String,
+}
+
+impl Ctx {
+    /// `Select-PanelMembers` (common.ps1:5909): every roster entry with its availability state,
+    /// the weighty gate, and the "no eligible member" / "-Model/-Engine no entry" refusals. The
+    /// D16 context skip is not modelled (no token estimate); the caller passes `all`/`skip_preflight`
+    /// for `-PanelAll`/`-SkipPreflight`.
+    pub(crate) fn panel_members(
+        &self,
+        model: &str,
+        engine: &str,
+        purpose: &str,
+        all: bool,
+        skip_preflight: bool,
+    ) -> PanelSelection {
+        let purpose_label = if purpose.is_empty() { "none" } else { purpose };
+        let mut members: Vec<PanelMemberRow> = Vec::new();
+        let mut listing: Vec<String> = Vec::new();
+        for e in &self.roster.entries {
+            let entry_engine = if e.engine.is_empty() {
+                "codex"
+            } else {
+                &e.engine
+            };
+            if !engine.is_empty() && entry_engine != engine {
+                continue;
+            }
+            let entry_launcher = self.engine_launcher(entry_engine);
+            let id = resolve_reviewer_identity(
+                &self.config,
+                &e.provider,
+                &e.model,
+                &self.openai_base_url,
+                entry_engine,
+                &entry_launcher,
+            );
+            if !model.is_empty() && id.model != *model {
+                continue;
+            }
+            let mut state = "run".to_string();
+            let mut reason = String::new();
+            let mut skip_kind = String::new();
+            let health = if id.resolved {
+                Some(endpoint_health(
+                    &self.consults,
+                    &id.fingerprint,
+                    self.utc_now,
+                ))
+            } else {
+                None
+            };
+            let block = self.engine_launch_block(entry_engine);
+            if !block.is_empty() {
+                state = "skipped".into();
+                reason = format!("refused: {block}");
+                skip_kind = "refused".into();
+            } else if !skip_preflight {
+                let verdict = self.preflight(
+                    &id,
+                    health.as_ref(),
+                    &entry_launcher,
+                    e.auth == "none",
+                    true,
+                );
+                if verdict.state != "available" {
+                    state = "skipped".into();
+                    reason = verdict.reason.clone();
+                    skip_kind = "unavailable".into();
+                }
+            }
+            if state == "run"
+                && e.panel == "weighty"
+                && !all
+                && !WEIGHTY_PURPOSES.contains(&purpose)
+            {
+                state = "skipped".into();
+                reason =
+                    format!("weighty reviewer; purpose {purpose_label} is light (use -PanelAll)");
+                skip_kind = "weighty".into();
+            }
+            listing.push(format!(
+                "#{} {} ({})",
+                e.position,
+                format_reviewer_lineage(&id.provider, &id.model, entry_engine),
+                if state == "run" { "runs" } else { &reason }
+            ));
+            members.push(PanelMemberRow {
+                entry: e.clone(),
+                identity: id,
+                state,
+                reason,
+                skip_kind,
+            });
+        }
+        let mut error = String::new();
+        if members.is_empty() {
+            let all_list = self
+                .roster
+                .entries
+                .iter()
+                .map(|e| {
+                    format!(
+                        "#{} {}",
+                        e.position,
+                        if !e.model.is_empty() {
+                            format_reviewer_lineage(&e.provider, &e.model, &e.engine)
+                        } else {
+                            format!("{} (config model)", e.provider)
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !engine.is_empty() && model.is_empty() {
+                error = format!(
+                    "-Engine {engine}: no entry of the reviewer roster '{}' uses that engine ({all_list})",
+                    self.roster.path
+                );
+            } else {
+                error = format!(
+                    "-Model {model}: no entry of the reviewer roster '{}' resolves to that model ({all_list}); pass -Provider <name> -Model {model} to choose a reviewer outside the roster",
+                    self.roster.path
+                );
+            }
+        } else if !members.iter().any(|m| m.state == "run") {
+            error = format!(
+                "no reviewer of the roster '{}' is available; nothing was started: {} (run codex-providers.ps1 for the full picture)",
+                self.roster.path,
+                listing.join("; ")
+            );
+        }
+        PanelSelection { members, error }
+    }
+}
+
 impl Ctx {
     fn engine_launch_block(&self, engine: &str) -> String {
         if engine == "muse" {

@@ -74,6 +74,14 @@ param(
     # INTERNAL: set by -Panel for each member run. Never pass it yourself.
     [string]$PanelSpec = '',
     [int]$PanelConcurrency = 0,
+    # -1 = not given (c3's clap default); >=1 forwarded (0/negatives reach the validator).
+    [int]$PanelSize = -1,
+    [string]$PanelOrder = '',
+    [string]$PanelSeed = '',
+    [string[]]$Require = @(),
+    [string]$Role = '',
+    [string[]]$Roles = @(),
+    [string[]]$Topic = @(),
     [string]$Engine = '',
     [string]$EngineExe = '',
     [int]$MaxModelSteps = 0,
@@ -160,6 +168,25 @@ if ($Panel) { $c3Args.Add('--panel') }
 if ($PanelAll) { $c3Args.Add('--panel-all') }
 if ($PanelSpec) { $c3Args.Add('--panel-spec'); $c3Args.Add($PanelSpec) }
 if ($PanelConcurrency -ne 0) { $c3Args.Add('--panel-concurrency'); $c3Args.Add([string]$PanelConcurrency) }
+if ($PanelSize -ne -1) { $c3Args.Add('--panel-size'); $c3Args.Add([string]$PanelSize) }
+if ($PanelOrder) { $c3Args.Add('--panel-order'); $c3Args.Add($PanelOrder) }
+if ($PanelSeed) { $c3Args.Add('--panel-seed'); $c3Args.Add($PanelSeed) }
+foreach ($rq in $Require) {
+    foreach ($piece in ($rq -split ',')) {
+        if ($piece) { $c3Args.Add('--require'); $c3Args.Add($piece) }
+    }
+}
+if ($Role) { $c3Args.Add('--role'); $c3Args.Add($Role) }
+foreach ($rl in $Roles) {
+    foreach ($piece in ($rl -split ',')) {
+        if ($piece) { $c3Args.Add('--roles'); $c3Args.Add($piece) }
+    }
+}
+foreach ($tp in $Topic) {
+    foreach ($piece in ($tp -split ',')) {
+        if ($piece) { $c3Args.Add('--topic'); $c3Args.Add($piece) }
+    }
+}
 if ($Engine) { $c3Args.Add('--engine'); $c3Args.Add($Engine) }
 if ($EngineExe) { $c3Args.Add('--engine-exe'); $c3Args.Add($EngineExe) }
 if ($MaxModelSteps -ne 0) { $c3Args.Add('--max-model-steps'); $c3Args.Add([string]$MaxModelSteps) }

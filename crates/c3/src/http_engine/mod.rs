@@ -1,0 +1,646 @@
+//! The `http` engine adapter (DESIGN §4 "API path", D4/D8): one OpenAI-compatible request
+//! built from a retained reviewer pack, for OpenRouter or any endpoint that speaks
+//! `chat/completions`.
+//!
+//! Unlike the subprocess engines, this reviewer never receives tools (DESIGN §3 invariant 2):
+//! the whole context is the sanitized [`ReviewerPack`], sent as the user message with the reply
+//! schema as the system message. Before the request is made, the exact pack is written next to
+//! the handoff as `<stem>.pack.md` and `<stem>.pack.json` (the sidecar, extended with a
+//! `request` section) so a later reader knows what the reviewer saw and how it was asked
+//! ([`crate::pack::reviewer::sidecar_with_request`]); the pack path and content hash become the
+//! `reference` a `read-code` finding cites in the v1 reply.
+//!
+//! Identity (DESIGN §4): the lineage is `provider::model::endpoint`; the conversation is a
+//! C3-owned transcript id (never a native thread — [`Capabilities::resume`] is `false`), so a
+//! returned conversation is [`ConversationTrust::Candidate`]. A continuation is *replay*
+//! ([`Continuation::Replay`]): the retained pack, the prior assistant reply and the new prompt,
+//! resent as three messages; a retry reuses the captured inputs without a redraw.
+//!
+//! Key contract (DESIGN §3 invariant 4): the credential is read from the environment only
+//! ([`HttpConfig::key_env`]), never printed, stored, committed or transmitted anywhere but to
+//! the provider. Every error string passes through [`scrub`] (the shared [`redact`] pass plus a
+//! literal-key scrub), and the [`RequestPlan`]'s `Display` shows the `Authorization` header
+//! redacted. A [`precheck`](HttpEngine::precheck) refuses an API key where a subscription engine
+//! would otherwise be billed per token (the muse rule, generalized).
+
+use std::fmt;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use serde_json::{json, Value};
+
+use c3_core::engine::{
+    AttemptOutcome, Capabilities, Continuation, ConversationId, ConversationTrust, Engine,
+    EngineError, EngineKind, LaunchPlan, Reply, Request, SubprocessEngine, TurnRequest,
+};
+use c3_core::health::provider_failure_class;
+use c3_core::ledger::{ProviderFailure, Usage};
+
+use crate::pack::redact;
+use crate::pack::reviewer::{self, ReviewerPack};
+
+/// The default OpenRouter API base (DESIGN §4).
+pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
+/// The default key environment variable (OpenRouter's own).
+pub const DEFAULT_KEY_ENV: &str = "OPENROUTER_API_KEY";
+
+/// Provider labels that name a *subscription* engine: sending an API key to one would bill
+/// per token where a subscription (a signed-in CLI) is the intended, already-paid path. The
+/// `http` engine refuses these in [`HttpEngine::precheck`] — the muse per-token guard,
+/// generalized to the API path (DESIGN §3 invariant 4). Matched case-insensitively as a whole
+/// label; `openrouter`, `openai`, `anthropic`, `google`, … (the API concentrators and labs) are
+/// deliberately absent.
+pub const SUBSCRIPTION_PROVIDERS: [&str; 5] = ["codex", "chatgpt", "muse", "agy", "antigravity"];
+
+/// Configuration for one `http` reviewer. Everything the request needs except the key, which
+/// is read from the environment at run time and never stored here.
+#[derive(Debug, Clone)]
+pub struct HttpConfig {
+    /// The API base (no trailing `/chat/completions`); defaults to [`DEFAULT_BASE_URL`].
+    pub base_url: String,
+    /// The model id sent verbatim (e.g. `openai/gpt-5`).
+    pub model: String,
+    /// The environment variable the key is read from; defaults to [`DEFAULT_KEY_ENV`].
+    pub key_env: String,
+    /// Extra request headers (OpenRouter's `HTTP-Referer` / `X-Title` are optional). The
+    /// `Authorization` and `content-type` headers are set by the engine and never taken here.
+    pub headers: Vec<(String, String)>,
+    /// The request timeout (connect and read).
+    pub timeout: Duration,
+    /// The provider label used for the lineage key and the subscription guard.
+    pub provider_label: String,
+    /// Send `response_format: {"type":"json_object"}` — set when the endpoint supports it.
+    pub json_object: bool,
+    /// The repository root, used to make the pack path in `provider_config` repo-relative
+    /// (DESIGN §3 invariant 9). `None` falls back to the pack file name.
+    pub repo_root: Option<PathBuf>,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        HttpConfig {
+            base_url: DEFAULT_BASE_URL.to_string(),
+            model: String::new(),
+            key_env: DEFAULT_KEY_ENV.to_string(),
+            headers: Vec::new(),
+            timeout: Duration::from_secs(180),
+            provider_label: "openrouter".to_string(),
+            json_object: true,
+            repo_root: None,
+        }
+    }
+}
+
+impl HttpConfig {
+    /// The full `chat/completions` URL for this base.
+    pub fn completions_url(&self) -> String {
+        format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
+    }
+}
+
+/// The runtime `http` engine: the resolved config, the retained pack, and the handoff stem the
+/// pack files are written from (`<stem>.pack.md`, `<stem>.pack.json`).
+#[derive(Debug, Clone)]
+pub struct HttpEngine {
+    pub config: HttpConfig,
+    /// The sanitized reviewer pack this reviewer sees (built by [`crate::pack::reviewer::build`]).
+    pub pack: ReviewerPack,
+    /// The handoff path without extension; `.pack.md` / `.pack.json` are appended.
+    pub handoff_stem: PathBuf,
+}
+
+/// A redactable view of the request headers: `Authorization` is shown as `Bearer [REDACTED]` in
+/// any `Display`, so a plan can be logged without leaking the key (DESIGN §3 invariant 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestPlan {
+    pub url: String,
+    pub model: String,
+    /// Header names in send order (`content-type`, `authorization`, then any config headers).
+    /// The `authorization` value is never stored here — only the header names — so a plan can
+    /// never carry the key.
+    pub headers: Vec<String>,
+    /// A one-line, key-free summary of the request body (`model=…, messages=N, json_object=…`).
+    pub body_summary: String,
+}
+
+impl fmt::Display for RequestPlan {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "POST {}", self.url)?;
+        for h in &self.headers {
+            if h.eq_ignore_ascii_case("authorization") {
+                writeln!(f, "  {h}: Bearer [REDACTED]")?;
+            } else {
+                writeln!(f, "  {h}: <set>")?;
+            }
+        }
+        write!(f, "  body: {}", self.body_summary)
+    }
+}
+
+/// What one `http` attempt produced: the [`AttemptOutcome`], the retained pack file paths, and
+/// the `provider_config` value the orchestrator places on the ledger's `reviewer`.
+#[derive(Debug, Clone)]
+pub struct HttpAttempt {
+    pub outcome: AttemptOutcome,
+    pub pack_md: PathBuf,
+    pub pack_json: PathBuf,
+    /// `{engine, base_url, model, pack, pack_sha256}` — built here, placed by the orchestrator.
+    pub provider_config: Value,
+}
+
+impl HttpEngine {
+    /// The `<stem>.pack.md` path.
+    pub fn pack_md_path(&self) -> PathBuf {
+        append_ext(&self.handoff_stem, "pack.md")
+    }
+
+    /// The `<stem>.pack.json` sidecar path.
+    pub fn pack_json_path(&self) -> PathBuf {
+        append_ext(&self.handoff_stem, "pack.json")
+    }
+
+    /// The lineage key delegated to the core planner so it stays byte-identical.
+    fn inner(&self) -> SubprocessEngine {
+        SubprocessEngine::new(EngineKind::Http)
+    }
+
+    /// `env <X> set` / `env <X> not set` — a key-free diagnostic (never the value).
+    pub fn key_status(&self) -> String {
+        match self.resolve_key() {
+            Some(_) => format!("env {} set", self.config.key_env),
+            None => format!("env {} not set", self.config.key_env),
+        }
+    }
+
+    /// The key from the environment, or `None` when unset/empty. Never logged.
+    fn resolve_key(&self) -> Option<String> {
+        std::env::var(&self.config.key_env)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    }
+
+    /// The richer request plan (url, header names, key-free body summary) used internally and
+    /// available for logging. The core [`Engine::plan`] returns the shared
+    /// [`c3_core::engine::HttpPlan`]; this
+    /// carries the wire shape with the `Authorization` header redacted in any `Display`.
+    pub fn request_plan(&self, turn: &TurnRequest) -> RequestPlan {
+        let messages = self.messages(turn);
+        let mut headers = vec!["content-type".to_string(), "authorization".to_string()];
+        for (k, _) in &self.config.headers {
+            headers.push(k.clone());
+        }
+        RequestPlan {
+            url: self.config.completions_url(),
+            model: self.config.model.clone(),
+            headers,
+            body_summary: format!(
+                "model={}, messages={}, json_object={}",
+                self.config.model,
+                messages.len(),
+                self.config.json_object
+            ),
+        }
+    }
+
+    /// The message array for this turn: a primary turn is `[system, user(pack)]`; a replay
+    /// continuation is the three messages `[user(pack), assistant(prior_reply), user(prompt)]`
+    /// (the pack already ends with the reply schema, so the contract travels with it and the
+    /// replay needs no separate system message — DESIGN §4 "continuation = replay").
+    fn messages(&self, turn: &TurnRequest) -> Vec<Value> {
+        match &turn.continuation {
+            Some(Continuation::Replay { prior_reply, .. }) => vec![
+                json!({ "role": "user", "content": self.pack.content }),
+                json!({ "role": "assistant", "content": prior_reply }),
+                json!({ "role": "user", "content": turn.request.prompt }),
+            ],
+            _ => vec![
+                json!({ "role": "system", "content": reviewer::system_prompt() }),
+                json!({ "role": "user", "content": self.pack.content }),
+            ],
+        }
+    }
+
+    /// The request body for this turn.
+    fn body(&self, turn: &TurnRequest, messages: &[Value]) -> Value {
+        let mut body = json!({
+            "model": self.config.model,
+            "messages": messages,
+        });
+        if self.config.json_object {
+            body["response_format"] = json!({ "type": "json_object" });
+        }
+        if let Some(effort) = turn
+            .request
+            .effort
+            .as_ref()
+            .filter(|e| !e.trim().is_empty())
+        {
+            body["reasoning"] = json!({ "effort": effort });
+        }
+        body
+    }
+
+    /// Redact any string that might carry the key: the shared [`redact`] pass (catches
+    /// `sk-or-…`, bearer headers, JWTs, …) plus a literal replacement of this run's key value.
+    fn scrub(&self, key: Option<&str>, s: &str) -> String {
+        let (mut out, _) = redact::redact(s);
+        if let Some(k) = key {
+            if k.len() > 8 {
+                out = out.replace(k, "[REDACTED:key]");
+            }
+        }
+        out
+    }
+
+    /// Build the `provider_config` value for the ledger (`reviewer.provider_config`).
+    fn provider_config(&self, pack_md: &Path) -> Value {
+        let pack_rel = self
+            .config
+            .repo_root
+            .as_ref()
+            .and_then(|root| c3_core::paths::repo_relative(root, pack_md))
+            .unwrap_or_else(|| {
+                pack_md
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            });
+        json!({
+            "engine": "http",
+            "base_url": self.config.base_url,
+            "model": self.config.model,
+            "pack": pack_rel,
+            "pack_sha256": c3_core::sha256_hex(self.pack.content.as_bytes()),
+        })
+    }
+
+    /// Write the pack and its request-augmented sidecar (BEFORE the request is made).
+    fn retain_pack(&self, request_info: Value) -> Result<(PathBuf, PathBuf), String> {
+        let pack_md = self.pack_md_path();
+        let pack_json = self.pack_json_path();
+        if let Some(parent) = pack_md.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&pack_md, self.pack.content.as_bytes())
+            .map_err(|e| format!("write {}: {e}", pack_md.display()))?;
+        let sidecar = reviewer::sidecar_with_request(&self.pack.sidecar, request_info)?;
+        std::fs::write(&pack_json, sidecar.as_bytes())
+            .map_err(|e| format!("write {}: {e}", pack_json.display()))?;
+        Ok((pack_md, pack_json))
+    }
+
+    /// Run (or replay) one attempt: retain the pack, POST the request, map the result. This is
+    /// the full-fidelity entry point; the [`Engine`] trait methods return only its `outcome`.
+    pub fn attempt(&self, turn: &TurnRequest) -> Result<HttpAttempt, EngineError> {
+        // Guard the lineage/model exactly as the core planner does (also rejects an empty model).
+        self.inner().plan(&turn.request)?;
+
+        let messages = self.messages(turn);
+        let body = self.body(turn, &messages);
+        let body_str = serde_json::to_string(&body).unwrap_or_default();
+        let url = self.config.completions_url();
+        let prompt_sha = c3_core::sha256_hex(
+            serde_json::to_string(&messages)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+        let request_info = json!({
+            "url": url,
+            "model": self.config.model,
+            "response_format": if self.config.json_object { "json_object" } else { "none" },
+            "prompt_sha256": prompt_sha,
+        });
+
+        // Retain the pack BEFORE the request, so a reader knows what was sent even on a failure.
+        let (pack_md, pack_json) = self
+            .retain_pack(request_info)
+            .map_err(EngineError::Precheck)?;
+        let provider_config = self.provider_config(&pack_md);
+
+        // The key: read now, from the environment only, never logged.
+        let Some(key) = self.resolve_key() else {
+            return Ok(HttpAttempt {
+                outcome: AttemptOutcome::LaunchFailed {
+                    child_exists: false,
+                    message: format!("env {} not set", self.config.key_env),
+                },
+                pack_md,
+                pack_json,
+                provider_config,
+            });
+        };
+
+        let outcome = self.post(&key, &url, &body_str);
+        Ok(HttpAttempt {
+            outcome,
+            pack_md,
+            pack_json,
+            provider_config,
+        })
+    }
+
+    /// POST the request and map the response/error to an [`AttemptOutcome`]. Every string that
+    /// could carry the key is scrubbed.
+    fn post(&self, key: &str, url: &str, body: &str) -> AttemptOutcome {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(self.config.timeout)
+            .timeout(self.config.timeout)
+            .build();
+        let mut req = agent
+            .post(url)
+            .set("content-type", "application/json")
+            .set("authorization", &format!("Bearer {key}"));
+        for (k, v) in &self.config.headers {
+            req = req.set(k, v);
+        }
+
+        let started = Instant::now();
+        let res = req.send_string(body);
+        let wall = started.elapsed().as_secs_f64();
+
+        match res {
+            Ok(resp) => {
+                let text = resp.into_string().unwrap_or_default();
+                self.parse_response(Some(key), &text, wall)
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                let retry_after = resp
+                    .header("retry-after")
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                let body_text = resp.into_string().unwrap_or_default();
+                let message = self.scrub(
+                    Some(key),
+                    &c3_core::one_line(&format!("HTTP {code}: {body_text}")),
+                );
+                AttemptOutcome::ProviderFailure {
+                    failure: ProviderFailure {
+                        class: classify_status(code, &message),
+                        code: code.to_string(),
+                        message,
+                        retry_after,
+                        ..Default::default()
+                    },
+                    exit_code: None,
+                }
+            }
+            Err(ureq::Error::Transport(t)) => {
+                let message = self.scrub(Some(key), &c3_core::one_line(&t.to_string()));
+                if is_timeout(&message) {
+                    AttemptOutcome::TimedOut {
+                        partial: None,
+                        survivors: Vec::new(),
+                        conversation: ConversationTrust::Candidate(new_conversation()),
+                        wall_seconds: (wall * 10.0).round() / 10.0,
+                    }
+                } else {
+                    AttemptOutcome::ProviderFailure {
+                        failure: ProviderFailure {
+                            class: "transport".to_string(),
+                            message,
+                            ..Default::default()
+                        },
+                        exit_code: None,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Parse a 200 body: an `{"error":...}` envelope (OpenRouter returns these with 200) is a
+    /// classified [`ProviderFailure`]; otherwise `choices[0].message.content` (falling back to
+    /// `.reasoning`) is the reply text, parsed into a [`StructuredReply`] when it is one v1 JSON
+    /// object (a fenced object is tolerated).
+    fn parse_response(&self, key: Option<&str>, text: &str, wall: f64) -> AttemptOutcome {
+        let json: Value = match serde_json::from_str(text) {
+            Ok(v) => v,
+            Err(_) => {
+                let message = self.scrub(
+                    key,
+                    &c3_core::one_line(&format!("non-JSON response: {text}")),
+                );
+                return AttemptOutcome::ProviderFailure {
+                    failure: ProviderFailure {
+                        class: provider_failure_class(&message),
+                        message,
+                        ..Default::default()
+                    },
+                    exit_code: None,
+                };
+            }
+        };
+
+        if let Some(err) = json.get("error").filter(|e| !e.is_null()) {
+            let code = err
+                .get("code")
+                .map(|c| c.to_string())
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string();
+            let em = err
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("(no message)");
+            let message = self.scrub(key, &c3_core::one_line(&format!("provider error: {em}")));
+            return AttemptOutcome::ProviderFailure {
+                failure: ProviderFailure {
+                    class: provider_failure_class(&message),
+                    code,
+                    message,
+                    ..Default::default()
+                },
+                exit_code: None,
+            };
+        }
+
+        let content = json
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|a| a.first())
+            .and_then(|c| c.get("message"))
+            .map(|m| {
+                m.get("content")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| m.get("reasoning").and_then(Value::as_str))
+                    .unwrap_or("")
+            })
+            .unwrap_or("")
+            .to_string();
+
+        let structured = crate::engines::codex::parse_structured(&content);
+        AttemptOutcome::Completed(Reply {
+            raw_text: content,
+            structured,
+            // The `http` engine has no event stream; its record is the retained pack sidecar.
+            events_path: self.pack_json_path(),
+            usage: parse_usage(&json),
+            wall_seconds: (wall * 10.0).round() / 10.0,
+            conversation: ConversationTrust::Candidate(new_conversation()),
+        })
+    }
+}
+
+impl Engine for HttpEngine {
+    fn capabilities(&self) -> Capabilities {
+        self.inner().capabilities()
+    }
+
+    fn plan(&self, request: &Request) -> Result<LaunchPlan, EngineError> {
+        // Delegate to the core planner so the shared `LaunchPlan::Http(HttpPlan)` stays the
+        // contract; `request_plan()` carries the richer, redactable wire view.
+        self.inner().plan(request)
+    }
+
+    /// The launch guard (DESIGN §3 invariant 4): refuse an API key where a subscription engine
+    /// would be billed per token (the muse rule), and refuse a launch with no key in the
+    /// environment. Reports only whether the env var is set, never its value.
+    fn precheck(&self, _turn: &TurnRequest) -> Result<(), EngineError> {
+        let label = self.config.provider_label.trim().to_ascii_lowercase();
+        if SUBSCRIPTION_PROVIDERS
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case(&label))
+        {
+            return Err(EngineError::Precheck(format!(
+                "refusing the http engine for provider `{}`: it is a subscription engine that would be billed per token on the API path; use its own engine instead",
+                self.config.provider_label
+            )));
+        }
+        if self.resolve_key().is_none() {
+            return Err(EngineError::Precheck(format!(
+                "env {} not set: the http engine reads its key from the environment only",
+                self.config.key_env
+            )));
+        }
+        Ok(())
+    }
+
+    fn run(&self, turn: &TurnRequest) -> Result<AttemptOutcome, EngineError> {
+        Ok(self.attempt(turn)?.outcome)
+    }
+
+    fn continue_turn(&self, turn: &TurnRequest) -> Result<AttemptOutcome, EngineError> {
+        // Continuation is replay (the retained pack + the prior reply + the new prompt); the
+        // message shaping is decided by `turn.continuation` in `messages()`.
+        Ok(self.attempt(turn)?.outcome)
+    }
+}
+
+// --------------------------------------------------------------------------- free helpers
+
+/// Append a compound extension (`pack.md`) to a stem that has none.
+fn append_ext(stem: &Path, ext: &str) -> PathBuf {
+    let mut s = stem.as_os_str().to_os_string();
+    s.push(".");
+    s.push(ext);
+    PathBuf::from(s)
+}
+
+/// A fresh client-owned conversation (transcript) id; `http` has no native thread.
+fn new_conversation() -> ConversationId {
+    ConversationId(uuid::Uuid::new_v4().to_string())
+}
+
+/// Classify an HTTP status into a [`ProviderFailure`] class: 401/403 → auth, 429 → quota,
+/// 5xx → transport (a provider/network failure); anything else falls back to the message-based
+/// classifier.
+fn classify_status(code: u16, message: &str) -> String {
+    match code {
+        401 | 403 => "auth".to_string(),
+        429 => "quota".to_string(),
+        500..=599 => "transport".to_string(),
+        _ => provider_failure_class(message),
+    }
+}
+
+/// Whether a (already scrubbed) transport error message names a timeout. Matches the English
+/// wording and, because the OS text is localized, the locale-independent OS error numbers:
+/// `10060` (WSAETIMEDOUT, Windows), `110` (ETIMEDOUT, Linux), `60` (ETIMEDOUT, macOS).
+fn is_timeout(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("timed out")
+        || m.contains("timeout")
+        || m.contains("os error 10060")
+        || m.contains("os error 110")
+        || m.contains("os error 60")
+}
+
+/// Map an OpenAI-compatible `usage` object to [`Usage`].
+fn parse_usage(json: &Value) -> Option<Usage> {
+    let u = json.get("usage")?;
+    let get = |name: &str| u.get(name).and_then(Value::as_i64).unwrap_or(0);
+    let reasoning = u
+        .get("completion_tokens_details")
+        .and_then(|d| d.get("reasoning_tokens"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    Some(Usage {
+        input_tokens: get("prompt_tokens"),
+        cached_input_tokens: 0,
+        output_tokens: get("completion_tokens"),
+        reasoning_output_tokens: reasoning,
+        total_tokens: u.get("total_tokens").and_then(Value::as_i64),
+        extra: Default::default(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subscription_guard_refuses_muse_label() {
+        assert!(SUBSCRIPTION_PROVIDERS
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case("MUSE")));
+        assert!(!SUBSCRIPTION_PROVIDERS
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case("openrouter")));
+    }
+
+    #[test]
+    fn classify_status_maps_auth_quota_transport() {
+        assert_eq!(classify_status(401, ""), "auth");
+        assert_eq!(classify_status(403, ""), "auth");
+        assert_eq!(classify_status(429, ""), "quota");
+        assert_eq!(classify_status(503, ""), "transport");
+    }
+
+    #[test]
+    fn request_plan_display_redacts_authorization() {
+        let plan = RequestPlan {
+            url: "https://openrouter.ai/api/v1/chat/completions".to_string(),
+            model: "openai/gpt-5".to_string(),
+            headers: vec!["content-type".into(), "authorization".into()],
+            body_summary: "model=openai/gpt-5, messages=2, json_object=true".to_string(),
+        };
+        let shown = plan.to_string();
+        assert!(shown.contains("Bearer [REDACTED]"));
+        assert!(!shown.to_lowercase().contains("sk-or-"));
+    }
+
+    #[test]
+    fn append_ext_builds_compound_extension() {
+        assert_eq!(
+            append_ext(Path::new("/t/01-http-slug"), "pack.md"),
+            PathBuf::from("/t/01-http-slug.pack.md")
+        );
+        assert_eq!(
+            append_ext(Path::new("/t/01-http-slug"), "pack.json"),
+            PathBuf::from("/t/01-http-slug.pack.json")
+        );
+    }
+
+    #[test]
+    fn parse_usage_maps_openai_fields() {
+        let v = json!({"usage":{"prompt_tokens":100,"completion_tokens":40,"total_tokens":140,
+            "completion_tokens_details":{"reasoning_tokens":12}}});
+        let u = parse_usage(&v).unwrap();
+        assert_eq!(u.input_tokens, 100);
+        assert_eq!(u.output_tokens, 40);
+        assert_eq!(u.total_tokens, Some(140));
+        assert_eq!(u.reasoning_output_tokens, 12);
+    }
+}
