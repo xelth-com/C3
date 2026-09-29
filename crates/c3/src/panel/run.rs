@@ -186,6 +186,9 @@ struct Built {
     concurrency: PanelPlan,
     limits_value: Value,
     warnings: Vec<String>,
+    /// (wave 27, R13 D3) the coordinator-is-a-reviewer warnings for seated members, printed in the
+    /// plan but kept OUT of `warnings` (which becomes every member's `panel_warnings`).
+    coordinator_warnings: Vec<String>,
     topics: Vec<String>,
     range_line: String,
     range_warning: String,
@@ -229,7 +232,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     // (wave 27) an unparseable CODEX_CONSULT_COORDINATOR refuses before any member is planned or
     // started (each seated member's build_context records the coordinator; the top-level parse
     // failure must fire once here so nothing is started).
-    crate::consult::orchestrate::resolve_coordinator(Some(&roster.entries[..]))?;
+    let coordinator = crate::consult::orchestrate::resolve_coordinator(Some(&roster.entries[..]))?;
     // (D2) a missing brief is refused before any member is planned or started (no ledger).
     if !o.brief.is_empty() {
         let bp = if Path::new(&o.brief).is_absolute() {
@@ -647,6 +650,10 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     );
 
     let mut runners: Vec<RunnerInfo> = Vec::new();
+    // (wave 27, R13 D3) seated members that ARE the coordinator's own model: warned once in the
+    // plan (dry run and real-run header), NOT in the members' panel_warnings (each such member
+    // warns in its own ledger entry via its build_context). Uses the seat's resolved identity.
+    let mut coordinator_warnings: Vec<String> = Vec::new();
     for p in &route.picked {
         let m = selection
             .members
@@ -661,6 +668,17 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                 }
             })
             .unwrap_or_else(|| "codex".into());
+        if let Some(m) = m {
+            if let Some(w) = c3_core::host::coordinator_reviewer_warning(
+                &coordinator,
+                &m.entry.provider,
+                &m.identity.model,
+                &engine,
+                &p.lineage,
+            ) {
+                coordinator_warnings.push(w);
+            }
+        }
         runners.push(RunnerInfo {
             position: p.position,
             entry: m.map(|m| m.entry.clone()).unwrap_or_default(),
@@ -728,6 +746,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         concurrency,
         limits_value,
         warnings,
+        coordinator_warnings,
         topics,
         range_line,
         range_warning,
@@ -960,6 +979,11 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
         println!("Topics: {}", b.topics.join(", "));
     }
     for w in &b.warnings {
+        println!("WARNING: {w}");
+    }
+    // (wave 27, R13 D3) the coordinator-is-a-reviewer warnings for seated members (the dry run and
+    // the real-run header alike); kept out of the members' panel_warnings.
+    for w in &b.coordinator_warnings {
         println!("WARNING: {w}");
     }
     println!("{}", concurrency_line(&o, &b.concurrency));

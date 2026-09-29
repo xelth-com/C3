@@ -1242,14 +1242,20 @@ resolves (else its setup `Get-ChildItem skills` throws and aborts). Skipped per 
 
 | harness | Run 12 | Run 13 | note |
 |---|---|---|---|
-| harness-0.3 | 227/2 | 227/1 | the `LEDGER entry fields in the documented order` row now PASSES (coordinator after lineage, child_env_scrubbed after command); the 1 remaining fail is the pre-existing CFG comma-split artifact |
-| harness-fixes26b | 39/0 (pre-26c) | 50/0 | all wave-26c behaviours pass; the 51st plugin check is a wave-26b ROLEFILE reparse-point case needing symlink-create privilege (did not emit; environmental, no fail) |
-| harness-lock2 | 10/0 | 10/0 | unchanged |
-| harness-roster | 119/0 | 118/0 | 0 fails; one check fewer than Run 12 (no assertion failed — a Check not reached; not a regression) |
-| harness-engines | 92/5 | 91/5 | the 5 are the documented by-design (`--json-schema` path x3) / shim / fake-CLI artifacts; 0 new fails |
-| harness-host | (new) | 35/14 | NEW harness; behaviour cases (REFUSE, WARN label/claude-code, MATCHER claude-code) pass; the 14 fails are out of scope (below) + 1 panel-plan coordinator-warning gap |
-| harness-panel | 54/0 | 53/0 | 0 fails; one fewer check than Run 12 (a timing/conditional case; no assertion failed) |
-| harness-detach | 50/1 | 49/1 | the 1 fail is the CARRY F11-2 detach `args` JSON-wire case, by design (unchanged from Run 12); one fewer check, 0 new fails |
+| harness-0.3 | 227/2 | 228/1 | the `LEDGER entry fields in the documented order` row now PASSES (coordinator after lineage, child_env_scrubbed after command); the 1 remaining fail is the pre-existing CFG comma-split artifact |
+| harness-fixes26b | 39/0 (pre-26c) | 51/0 | all wave-26c behaviours pass (kick ack incl. the format-repair kick, health-lock retry, size raise, stall wording, legacy rating) |
+| harness-lock2 | 11/0 | 11/0 | unchanged |
+| harness-roster | 119/0 | 119/0 | unchanged |
+| harness-engines | 92/5 | 92/5 | the 5 are the documented by-design (`--json-schema` path x3) / shim / fake-CLI artifacts; 0 new fails |
+| harness-host | (new) | 36/14 | NEW harness; behaviour cases (REFUSE, WARN label/claude-code, MATCHER claude-code) pass; the 14 fails are out of scope (below) + 1 panel-plan coordinator-warning row (addressed in Run 14) |
+| harness-panel | 54/0 | 54/0 | 0 fails |
+| harness-detach | 50/1 | 50/1 | the 1 fail is the CARRY F11-2 detach `args` JSON-wire case, by design (unchanged from Run 12) |
+
+> **Counts corrected after Run 13:** the per-harness counts first recorded for Run 13 were each one
+> low. Cause: the runner writes each log with `Out-File -Encoding utf8`, which prefixes a UTF-8 BOM to
+> line 1, so the first `PASS` line reads `﻿PASS…` and a `^(PASS|FAIL)` grep skips it. The numbers
+> above are the harnesses' OWN printed summary lines (`harness-X (ps51 …): N passed, M failure(s).`);
+> they match Run 12 / the plugin's c6f6966 references exactly. **There are no "missing checks."**
 
 ### harness-host — the 14 fails classed
 
@@ -1289,3 +1295,38 @@ In scope, minor gap (not fixed):
   turn was stopped after no output for N s outside a tool call.`
 - `JOINBLANK` — a legacy rating with an empty/blank field is completed from its consultation
   (`Read-AllTaskRatings`; the plugin helper via the copied common — the wave-26c blank rule).
+
+## Run 14 — panel-plan coordinator warning; the "missing check" question resolved (2026-09-29)
+
+Same single-host scope and setup as Run 13; no build was running.
+
+### 1. The four "missing checks" (roster 118/119, engines 91/92, panel 53/54, detach 49/50)
+
+**There are none.** Every Run-13 per-harness number was recorded one low because the runner writes
+each log with `Out-File -Encoding utf8`, which puts a UTF-8 BOM (`﻿`) on line 1 — so the first
+`PASS` line reads `﻿PASS…` and the `^(PASS|FAIL)` grep used to count skipped it. Read from each
+harness's OWN printed summary line, Run 13 is: `harness-0.3 228/1`, `harness-fixes26b 51/0`,
+`harness-lock2 11/0`, `harness-roster 119/0`, `harness-engines 92/5`, `harness-host 36/14`,
+`harness-panel 54/0`, `harness-detach 50/1` — i.e. roster/engines/panel/detach match Run 12 exactly,
+fixes26b is the full 51, 0.3 gained the field-order pass. No check is skipped by anything c3 does and
+the harness was not changed for these; the Run-13 table above is corrected accordingly.
+
+(Cross-check: `harness-roster` line 1 is `﻿PASS UNIT Get-RetryAfter: 24 samples in zone W. Europe
+Standard Time …` — a plugin-internal `Get-RetryAfter` DST unit test that DID run; it was the BOM line
+my grep dropped, which is exactly why UNIT looked like 7 not 8.)
+
+### 2. Panel-plan coordinator-is-a-reviewer warning (harness-host `ENV` panel row)
+
+Ported `Format-CoordinatorWarning` for a panel (plugin `codex-consult.ps1` `$panelCoordinatorWarnings`,
+lines 2576-2578/2745): a seated member whose resolved identity IS the coordinator's own model is
+warned once in the PLAN (dry run and the real-run header), `WARNING: coordinator: <member lineage> is
+the coordinator's own model (CODEX_CONSULT_COORDINATOR) - a second opinion from the coordinator's own
+model, not an independent one`, kept OUT of the members' `panel_warnings` (that member's own ledger
+`warnings[]` gets it from its build_context; the other members' do not). Files:
+`crates/c3/src/panel/{plan,run}.rs` (compute per seat, print in the plan) — `host.rs` was already
+correct (the warning names the reviewer's lineage).
+
+The harness-host `ENV` panel row also asserts `coordinator.host -eq 'codex'` (from `CODEX_THREAD_ID`);
+c3 does not infer the codex host (single-host decision), so it records `unknown`. That row therefore
+still fails on the host assertion — **out of scope: operator decision 2026-09-29 (single host)** — but
+the coordinator warning it requires is now emitted (verified in the log).
