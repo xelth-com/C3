@@ -1,0 +1,78 @@
+{
+  "schema_version": "1",
+  "reply_markdown": "## 1. Corruption\n\n### Finding: the first brace is not the outermost JSON object\n\nExact input:\n\n```text\nIgnore this sample:\n```json\n{\"schema_version\":\"1\",\"reply_markdown\":\"sample\",\"verdict\":\"ADVISE\",\"verdict_reason\":\"sample object\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}\n```\nActual reply:\n{\"schema_version\":\"1\",\"reply_markdown\":\"real\",\"verdict\":\"REJECT\",\"verdict_reason\":\"real object\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}\n```\n\n`normalise_reply` calls `outermost_object` at `crates/c3/src/consult/ingest.rs:185`. That helper chooses the first `{` anywhere in the response at `crates/c3/src/consult/ingest.rs:219`, stops at its first matching `}` at `crates/c3/src/consult/ingest.rs:235-240`, and discards everything outside that slice at `crates/c3/src/consult/ingest.rs:246-247`. It therefore returns the fenced sample with `verdict:\"ADVISE\"` and silently discards the object explicitly labelled as the actual `REJECT` reply. This changes the reply's meaning rather than merely repairing its shape.\n\nThe complete-reply fence stripping itself is correct: its pattern is anchored to the whole trimmed response at `crates/c3/src/consult/ingest.rs:149-158`, so a code fence inside a larger response is not stripped by that step.\n\n### Additional corruption: duplicate keys lose one interpretation\n\nExact input:\n\n```json\n{\"schema_version\":\"1\",\"verdict\":\"REJECT\",\"verdict\":\"ACCEPT\",\"verdict_reason\":\"r\",\"reply_markdown\":\"m\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}\n```\n\nThe strict struct parse rejects duplicate `verdict` fields under normal `serde` struct semantics, so this is an input for which the normaliser can run. `escape_control_chars_in_strings` leaves it unchanged. However, `serde_json::from_str::<Value>` at `crates/c3/src/consult/ingest.rs:199` represents an object as a map and retains only the last duplicate; the later `serde_json::from_value` at `crates/c3/src/consult/ingest.rs:205` therefore sees only `verdict:\"ACCEPT\"`. The contradictory first value is silently discarded and the malformed reply becomes a valid structured reply. This is separate from object selection and requires duplicate-key rejection before conversion to `Value`.\n\nThe control-character state machine is otherwise correct: it toggles string state on unescaped quotes, consumes the character after a backslash through `esc`, and escapes only raw U+0000..U+001F characters while in a string (`crates/c3/src/consult/ingest.rs:253-285`). This correctly handles odd/even runs of backslashes and escaped quotes. Malformed backslash sequences are left for `serde_json` to reject rather than being silently completed.\n\n## 2. Acceptance of garbage\n\nExact input:\n\n```text\nThis is a fenced example, not the review:\n```json\n{\"schema_version\":\"1\",\"reply_markdown\":\"banana\",\"verdict\":\"ADVISE\",\"verdict_reason\":\"sample\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}\n```\nWhat does it mean?\n```\n\nThe whole-response fence strip does not match because prose precedes the fence (`crates/c3/src/consult/ingest.rs:149-158,178-180`). `outermost_object` then ignores the fence and prose, starts at the example object's opening brace, and extracts it (`crates/c3/src/consult/ingest.rs:219,235-247`). That object has the same complete shape as the known accepted object in the test at `crates/c3/src/consult/ingest.rs:351-353`; after the defaulting and array checks it validates through `StructuredReply::try_from` at `crates/c3/src/consult/ingest.rs:204-207`. Thus an explicitly labelled illustrative example is promoted to the review of record.\n\nThe fix is to make extraction candidate-aware: ignore objects inside nested Markdown fences or code spans, collect all balanced top-level candidates, and unwrap only when exactly one non-code candidate parses successfully. Multiple candidates, a candidate inside an inner code block, or a brace located in a non-whole fence should leave the response invalid rather than choosing one.\n\n## 3. Non-determinism or non-idempotence\n\nNo such defect was found in the deterministic repair steps. The scans are left-to-right over the input, and the object, string, and escape states are updated deterministically at `crates/c3/src/consult/ingest.rs:217-285`. Array wrapping changes an object/string/null once into an already conforming array, and numeric schema version `1` becomes string `\"1\"`; later passes do not repeat either change (`crates/c3/src/consult/ingest.rs:290-343`).\n\nInterpreting `normalise(normalise(x))` as serialising the returned `StructuredReply` and passing that JSON back into `normalise_reply`, the emitted object is semantically idempotent: control characters are already escaped, fields are already arrays, and `schema_version` is already `\"1\"`. The duplicate-key case is idempotent only because its meaning was already destroyed on the first pass. The existing test reruns the same already-valid source rather than the serialised result of a repaired input (`crates/c3/src/consult/ingest.rs:453-465`), so dynamic confirmation for every repaired shape remains unproven, but code inspection shows no non-determinism or second-pass semantic change.\n\n## 4. Cost\n\nNo quadratic-or-worse path was found for `normalise_reply`. `outermost_object` performs one search and one linear scan, with one size-proportional slice allocation (`crates/c3/src/consult/ingest.rs:217-247`). `escape_control_chars_in_strings` makes one character pass and produces at most a constant-factor larger string (`crates/c3/src/consult/ingest.rs:253-285`). JSON parsing/conversion and structural validation are also traversed once, while structural repair does constant work per top-level field or finding (`crates/c3/src/consult/ingest.rs:198-206,307-324`). A multi-megabyte input therefore has linear scan/allocation work, though no wall-clock or peak-memory benchmark was supplied.",
+  "verdict": "REJECT",
+  "verdict_reason": "REJECT because object extraction can silently replace the actual review with an earlier example and duplicate-key parsing can silently change a verdict.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/ingest.rs",
+          "line": 219
+        },
+        {
+          "path": "crates/c3/src/consult/ingest.rs",
+          "line": 235
+        },
+        {
+          "path": "crates/c3/src/consult/ingest.rs",
+          "line": 246
+        }
+      ],
+      "claim": "Outermost-object extraction actually selects the first balanced object at the first brace, so an example or quoted payload can replace the actual reply object.",
+      "trigger": "Exact input: `Ignore this sample:\\n```json\\n{\"schema_version\":\"1\",\"reply_markdown\":\"sample\",\"verdict\":\"ADVISE\",\"verdict_reason\":\"sample object\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}\\n```\\nActual reply:\\n{\"schema_version\":\"1\",\"reply_markdown\":\"real\",\"verdict\":\"REJECT\",\"verdict_reason\":\"real object\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}`",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/ingest.rs:219",
+          "observation": "The candidate start is obtained with `text.find('{')`, which chooses the first opening brace rather than identifying a unique outer object."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/ingest.rs:235-247",
+          "observation": "The scan stops at that candidate's first matching closing brace and returns only its slice, dropping both preceding and following text."
+        }
+      ],
+      "verification": "Add a unit test with the exact trigger and assert that `normalise_reply` currently returns the first ADVISE object; after the fix, assert that it returns `None` because two candidate objects are present.",
+      "remedy": "Collect balanced object candidates while excluding nested Markdown fences and code spans, then unwrap only when exactly one non-code candidate exists and parses successfully. Reject ambiguous or code-only candidates rather than selecting the first.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/ingest.rs",
+          "line": 199
+        },
+        {
+          "path": "crates/c3/src/consult/ingest.rs",
+          "line": 205
+        }
+      ],
+      "claim": "Parsing to `serde_json::Value` before validation silently collapses duplicate object keys, allowing a contradictory verdict to become a valid reply with the last key's meaning.",
+      "trigger": "Exact input: `{\"schema_version\":\"1\",\"verdict\":\"REJECT\",\"verdict\":\"ACCEPT\",\"verdict_reason\":\"r\",\"reply_markdown\":\"m\",\"findings\":[],\"prior_findings\":[],\"unproven\":[],\"first_run_checklist\":[]}`",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/ingest.rs:198-205",
+          "observation": "The code first deserializes into `Value`, performs repairs, and only then deserializes that map into `RawReply`."
+        },
+        {
+          "kind": "inferred",
+          "reference": "crates/c3/src/consult/ingest.rs:199",
+          "observation": "Under normal `serde_json::Map` semantics, the second insertion replaces the first, so the later struct conversion cannot observe that `verdict` occurred twice."
+        }
+      ],
+      "verification": "Add the exact trigger to a unit test, first confirming the strict parser rejects duplicate fields and then observing that `normalise_reply` currently returns a structured reply whose verdict is `ACCEPT`; the fixed implementation should return `None`.",
+      "remedy": "Run a duplicate-aware JSON validation pass over every object before any repair or conversion to `Value`, and reject any repeated key at any nesting depth. Preserve the original syntax information until duplicates have been checked.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [],
+  "unproven": [
+    "The omitted c3_core definitions were not available, so the exact duplicate-field behavior of `RawReply` was inferred from the documented strict `RawReply -> StructuredReply` path and should be confirmed by the proposed unit test.",
+    "No several-megabyte wall-clock or peak-memory benchmark was supplied; the cost conclusion is based on inspection of the linear scans, allocations, and bounded repair work."
+  ],
+  "schema_version": "1"
+}

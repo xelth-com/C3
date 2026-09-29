@@ -1,10 +1,11 @@
 # c3 (Claude Code plugin)
 
-A Claude Code plugin (`c3`, version 0.1.0) — the milestone-6 packaging of the `c3`
-binary as a thin layer for Claude Code: a `SessionStart` hook and two skills, mirroring
-the [`codex-consult`](https://github.com/xelth-com/claude-codex-consult) plugin's own
-layout. This README is written for the AI coding agent that installs, wires and uses the
-plugin; humans can follow the same steps.
+A Claude Code plugin (`c3`, version 0.1.0) — the packaging of the `c3` binary as a thin
+layer for Claude Code: a `SessionStart` hook and three skills (`consult`, `coordinate`,
+`setup-providers`) with brief and role templates, mirroring the
+[`codex-consult`](https://github.com/xelth-com/claude-codex-consult) plugin's own layout.
+This README is written for the AI coding agent that installs, wires and uses the plugin;
+humans can follow the same steps.
 
 The plugin itself carries no reviewer logic: every command it documents shells out to the
 `c3` binary. See the [C3 repository](https://github.com/xelth-com/C3) for what `c3` is,
@@ -14,9 +15,11 @@ from the PowerShell plugin to `c3`'s subcommands.
 ## For the agent installing this
 
 - **What it is:** a dependency-free Rust binary (`c3`) that runs `codex exec` for a
-  review, records the consultation as files (brief, verbatim reply, JSON ledger), and
-  manages reviewer identity, availability and structured findings — plus this thin Claude
-  Code layer (a `SessionStart` hook, a `consult` skill, a `setup-providers` skill).
+  review (or a routed panel, or a Gemini/Muse/OpenRouter reviewer through the `agy`/`muse`/
+  `http` engines), records the consultation as files (brief, verbatim reply, JSON ledger),
+  and manages reviewer identity, availability, structured findings, usefulness ratings,
+  packs, a code index and panel routing — plus this thin Claude Code layer (a `SessionStart`
+  hook and the `consult`, `coordinate` and `setup-providers` skills).
 - **Prerequisites.** Check each with the command; do not assume:
   - [ ] the `c3` binary on PATH, or `C3_EXE` set to its path: `c3 --version`
   - [ ] git: `git --version` → `git version …`
@@ -62,20 +65,38 @@ then a binary bundled at `<plugin root>/bin/`, then PATH), runs `c3 hook`, and p
 one-line output. If `c3` cannot be found, the wrapper prints one line saying so and still
 exits 0 — a missing binary never blocks a Claude Code session from starting.
 
-The `skills/consult/SKILL.md` and `skills/setup-providers/SKILL.md` files are the C3
-versions of the PowerShell plugin's `consult-codex` and `setup-providers` skills: same
-structure and rules, every command rewritten to `c3 <subcommand> --kebab-case-flag`
-form. They call out, explicitly, which parts of the PowerShell plugin's surface (panels,
-the `agy`/`muse` engines, detach/status/wait) `c3` does not implement yet, so an agent
-following them never runs a command that refuses or does nothing.
+The `skills/consult/SKILL.md`, `skills/coordinate/SKILL.md` and
+`skills/setup-providers/SKILL.md` files are the C3 versions of the PowerShell plugin's
+`consult-codex`, `coordinate` and `setup-providers` skills: same rules, every command
+rewritten to `c3 <subcommand> --kebab-case-flag` form. Today's `c3` binary implements the
+full working surface — the routed panel, detach/status/wait/kick, the `agy`/`muse`/`http`
+engines, ratings, the scoreboard, packs, the index and the router — so the skills document
+those directly; `c3 <subcommand> --help` is the authoritative current flag list, and
+`skills/consult/reference.md` holds the detailed flag/engine/panel reference the short
+skill points at. The one part the PowerShell plugin has that C3 deliberately does not port
+is multi-host coordination (Codex CLI, Z Code, Kimi Code, a plain shell): C3's coordinator
+host is Claude Code only.
 
 ## Telemetry
 
 Installing `c3` means accepting its telemetry terms — one anonymous event per
-consultation, off with `CODEX_CONSULT_TELEMETRY=off` or `--telemetry off` per run, never
-blocking a run. See the C3 repository's root [README.md](../README.md), section
-"Telemetry", for exactly what is sent, what never is, and how to inspect, complain about
-or delete your data (`c3 --complain`, `c3 --forget-me`).
+consultation (outcome classes only, never task names, prompts, briefs, paths or keys), off
+with `CODEX_CONSULT_TELEMETRY=off` or `--telemetry off` per run, never blocking a run. See
+the C3 repository's root [README.md](../README.md), section "Telemetry", for exactly what is
+sent, what never is, and how to inspect (`c3 telemetry status`), complain about
+(`c3 complain "<text>"`) or delete (`c3 forget-me`) your data.
+
+## The MCP server (an alternative surface, not shipped enabled)
+
+`c3 mcp` runs a stdio MCP server that exposes C3's read-and-record tools (providers,
+consult, findings, scoreboard, pack, explain, snapshot, index query) to any MCP client — the
+surface for a host that does **not** load skills. This plugin does **not** declare or ship
+that server: a Claude Code user already has the skills above, an always-on `c3 mcp` process
+would give the model a second, unguided way to do what the skills already do (the same
+double-surface problem as running two SessionStart hooks), and enabling the plugin should
+start no background process. To use the MCP server anyway, add it opt-in with a repository-root
+`.mcp.json` (`{"mcpServers":{"c3":{"command":"c3","args":["mcp"]}}}`) — see
+`docs/port/mcp.md` in the C3 repository.
 
 ## License
 

@@ -35,6 +35,22 @@
                         "useful":  "partly",
                         "note":  "Three valid findings of one root cause (raw JSON echoed in refusals); missed the C3_KEY_ hole; 450 s in the free queue, first attempt overloaded",
                         "when":  "2026-09-29T18:06:55+02:00"
+                    },
+                    {
+                        "n":  4,
+                        "consult_id":  "f865b477-5072-4726-89f8-4ebeafee55b5",
+                        "lineage":  "openrouter :: stealth/space-bunny-alpha [http]",
+                        "provider":  "openrouter",
+                        "model":  "stealth/space-bunny-alpha",
+                        "engine":  "http",
+                        "purpose":  "diff-review",
+                        "topics":  [
+                                       "correctness"
+                                   ],
+                        "consult_when":  "2026-09-29T20:05:00+02:00",
+                        "useful":  "yes",
+                        "note":  "Found two real defects of the normaliser: the first balanced object wins over the real reply; duplicate keys collapse silently. Exact triggers given",
+                        "when":  "2026-09-29T20:09:23+02:00"
                     }
                 ]
 }

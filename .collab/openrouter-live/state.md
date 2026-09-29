@@ -59,3 +59,55 @@ look-alikes or a suffix without the dot boundary; CR and LF cannot enter a heade
 Data policy, for the record: a stealth alpha model and a `:free` endpoint may log prompts and use
 them for training. What was sent is the sanitised pack of this repository's own source
 (`handoffs/0N-http-reply.pack.md`); no secret was in it.
+
+## Second run (2026-09-29, the release binary with the fixes, 4e8d1a8)
+
+| n | reviewer | question | result | wall recorded / real | mark |
+|---|---|---|---|---|---|
+| 4 | `openrouter :: stealth/space-bunny-alpha [http]` | the reply normaliser (`brief2.md`) | usable, REJECT, 2 findings | 163.3 s / 167 s | yes |
+
+Confirmed live: D1 (the wall clock covers the body), D3 (the events file: request, response,
+normalised; header names only); the key is in none of the files.
+
+Not yet: the reply was again recorded as `structured: INVALID` - the model wrote the key
+`schema_version` twice, both `"1"` - and the normaliser changed nothing.
+
+| id | from | severity | claim | decision |
+|---|---|---|---|---|
+| L9 | Space Bunny F1 | major | the first balanced `{...}` wins, so a sample object before the real reply replaces it | accepted - D7 |
+| L10 | Space Bunny F2 | major | duplicate keys collapse silently, the last one wins: `REJECT` then `ACCEPT` becomes a valid ACCEPT | accepted - D8 |
+| L11 | coordinator | minor | a duplicate key with identical values (the live case) should be repaired, not refused | D8 |
+
+- D7. Every top-level object outside code fences is a candidate; it counts only with the keys
+  `verdict` and `findings`; exactly one candidate is taken, otherwise the reply stays invalid.
+- D8. A duplicate-aware pass runs before any conversion: identical values are merged with a note,
+  different values keep the reply invalid; the reason names the key, never the values.
+
+## Which model is Space Bunny Alpha: a tokenizer fingerprint
+
+A stealth model hides its name, not its tokenizer: the provider reports `prompt_tokens`, and for
+the real tokenizer `prompt_tokens - T(text)` is the same constant for every text (the chat framing
+plus the provider's own hidden system text). Computed locally from public tokenizer files
+(`fingerprint/`); nothing but the five requests below was sent.
+
+| measurement | text | prompt_tokens | MiniMax M2/M2.5 tokenizer | left over |
+|---|---|---|---|---|
+| run 1 | our system message + pack 1 | 12 564 | 308 + 12 106 | 150 |
+| run 4 | our system message + pack 4 | 13 126 | 308 + 12 668 | 150 |
+| probe A | 2 000 characters of pack 1 | 621 | 465 | 156 |
+| probe B | 4 500 characters of pack 4 | 1 318 | 1 162 | 156 |
+| probe C | `ping` | 165 | 9 | 156 |
+
+The same constant five times out of five (150 with a system message of ours, 156 without). Every
+other tokenizer tried leaves a different remainder in each measurement: OpenAI `o200k` (+176, +155,
++156 on the probes), GLM 4.7-5.3 (+143, +147), DeepSeek V4 and Step 3.x (+145, +99), Cohere
+(+179, +186), Llama 4 (+172, +178), and further off Kimi K2-K3, Qwen 3.8, MiMo / Hunyuan, Mistral /
+Nemotron, Gemma 3-4, ERNIE 4.5, the old Claude and Grok-1 files.
+
+Control: the same arithmetic on Nemotron's run gives +16 with NVIDIA's own Nemotron tokenizer
+(the same file as Mistral's), so the method reads the right thing.
+
+Conclusion: Space Bunny Alpha tokenizes with the MiniMax M2 / M2.5 tokenizer, so it is most likely
+the next MiniMax text model. Tokenizer files are shared between laboratories now and then (Step
+uses DeepSeek's, Phi-4 uses `o200k`, Hunyuan and MiMo share one), so strictly this identifies the
+tokenizer family, not the owner. About 150 hidden tokens are the provider's own system text.

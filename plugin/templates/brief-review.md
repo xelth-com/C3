@@ -1,5 +1,5 @@
-<!-- Serves -Purpose checkpoint | core-contract | acceptance | diff-review. -->
-<!-- The script never writes briefs - you fill this by hand and pass it via -Brief. -->
+<!-- Serves --purpose checkpoint | core-contract | acceptance | diff-review. Write in English. -->
+<!-- c3 never writes briefs - you fill this by hand and pass it via --brief. -->
 
 # Handoff <NN> - Claude: <slug>
 
@@ -36,7 +36,7 @@ Base commit `<sha>`, fingerprint `<tree_sha256 first 12 hex, or "not computed">`
 
 ## Open findings
 
-From `codex-findings.ps1 -Task <task> -List`:
+From `c3 findings --task <task> --list`:
 
 - **<F04-1>** <status> - `<location>` - <claim, first line>
 - <...> / _(none open)_

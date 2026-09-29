@@ -82,6 +82,10 @@ fn mcp_stdio_session() {
     assert!(names.contains(&"c3_telemetry_status".to_string()));
     assert!(names.contains(&"c3_providers".to_string()));
     assert!(names.contains(&"c3_consult".to_string()));
+    assert!(names.contains(&"c3_panel".to_string()));
+    assert!(names.contains(&"c3_status".to_string()));
+    assert!(names.contains(&"c3_router_explain".to_string()));
+    assert!(names.contains(&"c3_router_replay".to_string()));
 
     // tools/call c3_telemetry_status — always works, sends no network.
     send(

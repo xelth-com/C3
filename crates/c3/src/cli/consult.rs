@@ -109,7 +109,7 @@ pub struct ConsultArgs {
     pub telemetry: String,
 
     // --- parsed-but-refused (engine scope M2d / panel M4 / detach R12) ---
-    /// codex | agy | muse (only codex runs in M2c).
+    /// codex | agy | muse | http.
     #[arg(long, default_value = "")]
     pub engine: String,
     /// A non-codex engine launcher path (M2d).

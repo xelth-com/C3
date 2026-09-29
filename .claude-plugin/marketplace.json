@@ -1,0 +1,32 @@
+{
+  "name": "c3",
+  "description": "Marketplace for the c3 plugin: the Rust `c3` binary as a read-only reviewer bridge for Claude Code (Codex, Gemini through agy, Meta Muse through muse, and an OpenAI-compatible API through a native http engine), recording every consultation as files; needs the `c3` binary on PATH.",
+  "owner": {
+    "name": "xelth-com",
+    "url": "https://xelth.com"
+  },
+  "plugins": [
+    {
+      "name": "c3",
+      "source": "./plugin",
+      "displayName": "C3",
+      "description": "Runs the `c3` binary as a read-only reviewer bridge from Claude Code and records each consultation as files (brief, verbatim reply, JSON ledger, findings tracked by id): a reviewer roster, a routed review panel, detached runs, member control, ratings and a scoreboard, sanitised packs, a local code index.",
+      "version": "0.1.0",
+      "author": {
+        "name": "xelth-com",
+        "url": "https://xelth.com"
+      },
+      "homepage": "https://github.com/xelth-com/C3",
+      "repository": "https://github.com/xelth-com/C3",
+      "license": "MIT",
+      "category": "workflow",
+      "keywords": [
+        "codex",
+        "second-opinion",
+        "code-review",
+        "consultation",
+        "rust"
+      ]
+    }
+  ]
+}

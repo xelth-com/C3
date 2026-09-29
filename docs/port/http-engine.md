@@ -96,7 +96,7 @@ file prefix `http`.
 | provider result                    | outcome |
 |------------------------------------|---------|
 | 200, `choices[0].message.content` is one v1 JSON object (fenced tolerated) | `Completed(Reply { structured: Some, .. })` |
-| 200, content is *near*-valid (single-object array field, raw control chars, prose around the object, missing/numeric `schema_version`) | `Completed(Reply { structured: Some, .. })` after the local normaliser; a `reply normalised: <list>` warning |
+| 200, content is *near*-valid (single-object array field, raw control chars, prose around the object, missing/numeric `schema_version`, a key duplicated with identical values) | `Completed(Reply { structured: Some, .. })` after the local normaliser — the repaired JSON becomes the reply-of-record; a `reply normalised: <list>` warning |
 | 200, content is prose              | `Completed(Reply { structured: None, .. })` (orchestrator repairs) |
 | 200 with `{"error":…}` envelope    | `ProviderFailure` (class by the body `code`, else the message) |
 | 401 / 403                          | `ProviderFailure { class: "auth", code }` |
@@ -110,12 +110,31 @@ file prefix `http`.
 
 Class is decided by the numeric code — the body `{"error":{"code":…}}` when present, else the
 HTTP status — then by the scrubbed message (item 4); `unknown` is only the true fallback. The
-local **reply normaliser** (item 2) runs ONLY after the strict parse fails and NEVER invents
-content: it strips a fence, takes the outermost object, escapes raw control characters inside
-strings, wraps a single value into the array the schema requires (`evidence`, `locations`,
-`supersedes`, `findings`, `prior_findings`, `unproven`; `null` → `[]`), and defaults/coerces
-`schema_version` to `"1"`; then it validates strictly again, and on failure the reply stays
-INVALID. Usage maps `prompt_tokens → input_tokens`, `completion_tokens → output_tokens`,
+local **reply normaliser** (item 2, `consult::ingest::normalise_reply`) runs ONLY after the strict
+parse fails and NEVER invents content, in this order:
+1. strip a Markdown fence around the WHOLE reply;
+2. **(N2) select the single reply object** — collect every top-level balanced object (tracking
+   string literals, skipping Markdown code fences and inline spans), keep those that parse as an
+   object with `verdict` and `findings`; exactly one → take it (note `prose around the object
+   removed`), none or several → INVALID with reason `no single reply object found (<n> candidates)`;
+3. escape raw control characters inside string literals;
+4. **(N1) a duplicate-aware parse** over the raw object text before any lossy `Value` conversion
+   (a streaming `serde` visitor that keeps every key/value pair at every depth): a key repeated with
+   IDENTICAL values keeps one (note `duplicate key <name> with identical values removed`); a key
+   repeated with DIFFERENT values → INVALID with reason `duplicate key <name> with different values`
+   (the key is named, never the values);
+5. wrap a single value into the array the schema requires (`evidence`, `locations`, `supersedes`,
+   `findings`, `prior_findings`, `unproven`; `null` → `[]`), and default/coerce `schema_version` to
+   `"1"`.
+
+It then validates strictly again. **(N3)** On success the repaired JSON becomes the reply-of-record
+(so the orchestrator's strict re-parse succeeds and the findings are ingested); the note list is
+never empty when the text was changed and empty when it was not, and the `normalised` event is
+written only when there is at least one note. On failure the reply stays INVALID and the summary
+keeps the ORIGINAL strict error, appending the normaliser's reason after `; normaliser: `
+(`ingest::first_validation_error`, gated to JSON-object-shaped replies so prose replies from the
+other engines are untouched). Idempotent and linear in the reply size. Usage maps
+`prompt_tokens → input_tokens`, `completion_tokens → output_tokens`,
 `total_tokens → total_tokens`, `completion_tokens_details.reasoning_tokens →
 reasoning_output_tokens`. **Wall time** is measured from just before the request to just after the
 response BODY has been read (item 1 — the headers arrive at once while the model streams keep-alive
@@ -127,8 +146,39 @@ tagged `ConversationTrust::Candidate` (`http` has no native thread; `resume_supp
 The engine writes one JSON line per event, so the file the summary/handoff name exists: `request`
 (method, URL without query, model, message count, body size in bytes, pack sha256, header NAMES
 only), `response` (status, the `x-request-id` header or the body `id`, body size, elapsed seconds),
-`normalised` (the normaliser's note list), and `error` (class, code, scrubbed message, elapsed).
-Never the key, never a header value, never the body. `Reply.events_path` points at this file.
+`normalised` (the note list, plus `original` naming the `.original.json` file when the text was
+changed), and `error` (class, code, scrubbed message, elapsed). Never the key, never a header
+value, never the body. `Reply.events_path` points at this file.
+
+## Secondary turns — format repair and timeout retry (STEP 2)
+
+The http seat drives its own secondary turn in-process (`consult::http::drive_seat_turns`); the
+orchestrator's thread-based secondary path stays a no-op for `http`.
+
+- **Format repair** — a substantive prose reply the normaliser could not structure earns ONE
+  `Continuation::Replay` (the pack, the prior reply, and the shared convert-only prompt
+  `orchestrate::format_repair_prompt`). The first prose is kept as `<stem>.original.md`; the
+  normaliser runs on the repaired reply; on success the repaired JSON is the reply-of-record. The
+  ledger records `format_retry` + `engine_turns: 2`, and the events file gets a second
+  `request`/`response` pair tagged `"turn":"format-repair"`. A failed repair keeps the prose.
+- **Timeout retry** — an `unavailable` failure (a request timeout, a 5xx, or an
+  overloaded/unavailable answer) is retried once (the same request resent), after
+  `http_engine::retry_pause` (provider `retry_after`, else 20 s, capped at 120 s); `auth`, `quota`
+  and `burst` are not retried, and `--no-continue` (continue_sec 0) suppresses it. Recorded as
+  `engine_turns: 2` with a `retried once after <class>` warning; the events get a second pair tagged
+  `"turn":"retry"`.
+
+Both go through the same `post`, so the key-host binding, the redirect refusal and the scrubbed
+errors apply to the second request unchanged. The dry-run billing line notes the extra request.
+
+## The reviewer's own text on a repair (`<stem>.original.json`, STEP 1)
+
+Because a repaired reply replaces the reply-of-record, the model's EXACT bytes are written to
+`<stem>.original.json` (next to the reply, like the plugin's `<stem>.original.md`) BEFORE the
+repaired text becomes the record — but only when the normaliser actually changed the text. The
+`normalised` event names it (`original`), and the `reply normalised: <notes>` warning gains
+`; the reviewer's own text: handoffs/<NN>-http-reply.original.json`, so the summary and handoff
+name it. A reply that needed no repair leaves no `.original.json`.
 
 ## Pack / sidecar contract (retained BEFORE the request)
 

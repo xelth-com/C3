@@ -10,25 +10,22 @@ disable-model-invocation: false
 
 This is the C3 port of the `codex-consult` plugin's `setup-providers` skill: the same
 procedure, verified with the `c3` binary instead of `codex-providers.ps1` /
-`codex-consult.ps1`. A reviewer goes through `codex exec` (the only engine `c3` actually
-runs today — see "Not yet implemented" below); the bridge itself never makes an HTTP call.
+`codex-consult.ps1`. `c3` runs four engines — `codex` (`codex exec`, the default), `agy`
+(Gemini through Google's Antigravity CLI), `muse` (Meta's Muse Code CLI) and `http` (an
+OpenAI-compatible API request, section 4b). The subscription engines never make an HTTP call
+themselves; the `http` engine sends one request and reads its key from the environment.
 `<codex home>` is `$CODEX_HOME` when set, else `~/.codex`.
 
-**Not yet implemented in `c3`** — do not wire these expecting them to run a consultation:
+**Notes on specific providers:**
 
-- **Gemini through the `agy` engine** and **Meta Muse through the `muse` engine**
-  (sections 3b/3f of the plugin's own skill). `c3 consult --engine agy` and
-  `--engine muse` parse but do not run a reviewer (milestone 2d/4). `c3 providers` may
-  still show a roster row for such an entry as `not checked` / `unknown`; that is the
-  provider walk, not a working consultation path.
-- **The reviewer roster's panel weighting and `-Panel`.** Write the roster file (section
-  4 below) for `c3 providers`' own bookkeeping if you like, but a `--panel` run on `c3
-  consult` is refused (milestone 4) — every consultation today is a single
-  `--provider`/`--model` run.
-- **BytePlus ModelArk, Kimi Code, Alibaba Cloud Model Studio** as documented providers —
-  these are ordinary `[model_providers.<name>]` tables (same shape as z.ai/MiMo below) and
-  there is no reason `c3`'s provider walk would treat them differently, but they have not
-  been exercised against `c3` specifically; verify with `c3 providers --provider <name>`
+- **`agy` (Gemini) and `muse` (Meta Muse)** are optional CLIs the USER signs into themselves
+  (`agy` via Google's Antigravity, `muse` via `muse login`). You never sign in, never set
+  `META_API_KEY`/`MODEL_API_KEY` (a muse run is refused while either is set), and never read
+  `~/.config/muse/auth.json`. `c3 providers` shows a roster row for each; the reviewer details
+  are in the `consult` skill's `reference.md`.
+- **BytePlus ModelArk, Kimi Code, Alibaba Cloud Model Studio** — ordinary
+  `[model_providers.<name>]` tables (same shape as z.ai/MiMo below); nothing about `c3`'s
+  provider walk treats them differently, but verify with `c3 providers --provider <name>`
   before relying on one.
 
 ## Invariants (never break these)
@@ -154,11 +151,13 @@ the z.ai route works without one).
 
 - Allowed keys only: `roster_version` (must be `1`), `reviewers[]` with `provider`
   (required), `model`, `codex_config` (array of `key=value` strings), `auth`, `panel`,
-  `engine` (`codex` is the only engine `c3` runs today — see "Not yet implemented"), the
-  optional top-level `require` and `ext`. An unknown key, an unknown engine, a duplicate
-  `(provider, model)`, or invalid JSON refuses EVERY run that reads the roster.
-- `"panel": "weighty"` marks the expensive reviewer for a future panel run; it has no
-  effect on a single-reviewer `c3 consult` run today.
+  `engine` (`codex`, `agy` or `muse`; an `http` reviewer goes under `ext.c3.reviewers`,
+  section 4b), the optional top-level `require`, `parallel` and `ext`. An unknown key, an
+  unknown engine, a duplicate `(provider, model)`, or invalid JSON refuses EVERY run that
+  reads the roster.
+- `"panel": "weighty"` marks the expensive reviewer so it only joins the weighty purposes
+  (`framing`, `decision`, `core-contract`, `acceptance`, `stuck`) unless `--panel-all` is
+  passed; it has no effect on a single-reviewer `c3 consult` run.
 - `codex_config` must not set `model`, `model_provider`, `model_reasoning_effort`,
   `profile` or `model_providers.*` (refused).
 - Another file: the user sets `CODEX_CONSULT_ROSTER=<path>` (it must exist).

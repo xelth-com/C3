@@ -3076,6 +3076,9 @@ struct EngineDetail {
     /// pack_sha256}`), built by the adapter and applied to `ctx.identity.provider_config` in
     /// `finish` so it lands on the ledger. `None` for every other engine.
     http_provider_config: Option<serde_json::Value>,
+    /// (STEP 2) The http seat's secondary turn (a format-repair replay or a timeout retry) when one
+    /// ran, so the caller records `engine_turns: 2` and the `format_repair` fields. `None` otherwise.
+    http_secondary: Option<crate::consult::http::HttpSecondary>,
 }
 
 /// Build the request for a live primary/secondary turn of the selected engine.
@@ -3194,6 +3197,7 @@ fn run_primary_turn(
                 reply: seat.reply_text,
                 http_provider_config: Some(seat.provider_config),
                 warnings: seat.warnings,
+                http_secondary: seat.secondary,
                 ..EngineDetail::default()
             };
             Ok((seat.outcome, d))
@@ -3258,6 +3262,7 @@ fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         warnings: t.warnings.clone(),
         msp_schema_version: None,
         http_provider_config: None,
+        http_secondary: None,
     }
 }
 
@@ -3276,6 +3281,7 @@ fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         warnings: t.warnings.clone(),
         msp_schema_version: None,
         http_provider_config: None,
+        http_secondary: None,
     }
 }
 
@@ -3797,6 +3803,18 @@ fn finish(
     // (`Get-EngineTreeProblem`, D12): forced class `permission`, the reply discarded.
     if is_engine {
         sec.engine_turns = 1;
+        // (STEP 2) The http seat runs its own secondary turn (a format-repair replay or a timeout
+        // retry) in-process; copy its result into the secondary record so the ledger and handoff
+        // show `engine_turns: 2` and the `format_repair` fields via the existing recording path.
+        if let Some(hs) = &detail.http_secondary {
+            sec.engine_turns = hs.engine_turns;
+            sec.repaired_ok = hs.repaired_ok;
+            sec.repair_reason = hs.repair_reason.clone();
+            sec.original_rel = hs.original_rel.clone();
+            sec.original_prose = hs.original_prose.clone();
+            sec.drift_notes = hs.drift_notes.clone();
+            sec.format_retry = hs.format_retry.clone();
+        }
         // The engine warnings of a usable primary turn (denial notices, engine stderr warnings).
         if usable {
             sec.engine_warnings.extend(detail.warnings.clone());
@@ -4584,6 +4602,16 @@ fn schema_text_crlf() -> String {
         .replace('\n', "\r\n")
 }
 
+/// The convert-only format-repair prompt (the plugin's repair turn text). Shared by the codex/engine
+/// format repair and the http seat's format-repair replay so both send the exact same instruction.
+pub(crate) fn format_repair_prompt(consult_id: &str) -> String {
+    format!(
+        "Your last message was prose, not the required JSON. Reply with exactly one bare JSON object satisfying the JSON Schema below - no fence, nothing before or after it. Convert, do not re-answer: copy your previous content unchanged (the same Q1..Qn answers verbatim inside reply_markdown, the same findings, the same Requested checks, the same prior-finding statuses and the same verdict); add or omit nothing.\r\n\r\nJSON Schema of the reply:\r\n{}\r\n\r\nConsultation id: {}",
+        schema_text_crlf(),
+        consult_id
+    )
+}
+
 /// Run one secondary turn (`resume <thread>`) through the selected engine and return its outcome
 /// and measured wall. For a muse turn the prompt is written to a fresh temp `--prompt-file`.
 #[allow(clippy::too_many_arguments)]
@@ -5067,11 +5095,7 @@ fn run_format_repair(
         None
     };
 
-    let repair_prompt = format!(
-        "Your last message was prose, not the required JSON. Reply with exactly one bare JSON object satisfying the JSON Schema below - no fence, nothing before or after it. Convert, do not re-answer: copy your previous content unchanged (the same Q1..Qn answers verbatim inside reply_markdown, the same findings, the same Requested checks, the same prior-finding statuses and the same verdict); add or omit nothing.\r\n\r\nJSON Schema of the reply:\r\n{}\r\n\r\nConsultation id: {}",
-        schema_text_crlf(),
-        ctx.consult_id
-    );
+    let repair_prompt = format_repair_prompt(&ctx.consult_id);
 
     let (outcome, wall, engine_outcome) = run_codex_secondary(
         ctx,

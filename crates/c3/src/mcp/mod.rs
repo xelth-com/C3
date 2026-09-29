@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
-use c3_core::task_slug::contained_join;
+use c3_core::task_slug::{contained_join, is_slug};
 
 /// The protocol version echoed when a client's `initialize` omits its own.
 const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -359,6 +359,134 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             }
             Ok((v, CONSULT_TIMEOUT))
         }
+        "c3_panel" => {
+            v.push("consult".into());
+            let task = req_str(args, "task")?;
+            validate_slug(&task, "task")?;
+            let brief = req_str(args, "brief")?;
+            reject_escape(&brief)?;
+            v.push("--task".into());
+            v.push(task);
+            v.push("--brief".into());
+            v.push(brief);
+            v.push("--panel".into());
+            if let Some(p) = opt_str(args, "purpose") {
+                validate_enum(&p, &crate::consult::prompt::presets::VALID, "purpose")?;
+                v.push("--purpose".into());
+                v.push(p);
+            }
+            for a in opt_arr(args, "artifacts") {
+                reject_escape(&a)?;
+                v.push("--artifact".into());
+                v.push(a);
+            }
+            if let Some(n) = opt_i64(args, "size") {
+                validate_range(n, 1, 16, "size")?;
+                v.push("--panel-size".into());
+                v.push(n.to_string());
+            }
+            if let Some(o) = opt_str(args, "order") {
+                validate_enum(&o, &["routed", "roster"], "order")?;
+                v.push("--panel-order".into());
+                v.push(o);
+            }
+            let require = opt_arr(args, "require");
+            validate_require(&require)?;
+            for r in require {
+                v.push("--require".into());
+                v.push(r);
+            }
+            if let Some(r) = opt_str(args, "role") {
+                validate_slug(&r, "role")?;
+                v.push("--role".into());
+                v.push(r);
+            }
+            for r in opt_arr(args, "roles") {
+                validate_slug(&r, "roles")?;
+                v.push("--roles".into());
+                v.push(r);
+            }
+            for t in opt_arr(args, "topics") {
+                validate_slug(&t, "topics")?;
+                v.push("--topic".into());
+                v.push(t);
+            }
+            if let Some(n) = opt_i64(args, "timeout_sec") {
+                v.push("--timeout-sec".into());
+                v.push(n.to_string());
+            }
+            let dry_run = opt_bool(args, "dry_run");
+            // detach defaults to true: a panel takes minutes and an MCP call must
+            // return. --detach and --dry-run are refused together by the CLI, so a
+            // dry run never carries --detach even though the default is on.
+            let detach = args.get("detach").and_then(Value::as_bool).unwrap_or(true);
+            if dry_run {
+                v.push("--dry-run".into());
+            } else if detach {
+                v.push("--detach".into());
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, CONSULT_TIMEOUT))
+        }
+        "c3_status" => {
+            v.push("consult".into());
+            let task = req_str(args, "task")?;
+            validate_slug(&task, "task")?;
+            v.push("--task".into());
+            v.push(task);
+            let wait = opt_bool(args, "wait");
+            if wait {
+                v.push("--wait".into());
+            } else {
+                v.push("--status".into());
+            }
+            if let Some(id) = opt_str(args, "id") {
+                v.push("--id".into());
+                v.push(id);
+            }
+            if wait {
+                let wt = opt_i64(args, "wait_timeout_sec").unwrap_or(300);
+                validate_range(wt, 1, 3600, "wait_timeout_sec")?;
+                v.push("--wait-timeout-sec".into());
+                v.push(wt.to_string());
+            }
+            push_collab(&mut v, args)?;
+            let timeout = if wait {
+                CONSULT_TIMEOUT
+            } else {
+                DEFAULT_TIMEOUT
+            };
+            Ok((v, timeout))
+        }
+        "c3_router_explain" => {
+            v.push("router".into());
+            v.push("explain".into());
+            let purpose = req_str(args, "purpose")?;
+            validate_enum(&purpose, &crate::consult::prompt::presets::VALID, "purpose")?;
+            v.push("--purpose".into());
+            v.push(purpose);
+            for t in opt_arr(args, "topic") {
+                validate_slug(&t, "topic")?;
+                v.push("--topic".into());
+                v.push(t);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_router_replay" => {
+            v.push("router".into());
+            v.push("replay".into());
+            let task = req_str(args, "task")?;
+            validate_slug(&task, "task")?;
+            v.push("--task".into());
+            v.push(task);
+            if let Some(n) = opt_i64(args, "nn") {
+                v.push("--nn".into());
+                v.push(n.to_string());
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
         "c3_findings_list" => {
             v.push("findings".into());
             v.push("--task".into());
@@ -560,6 +688,68 @@ fn validate_conn(conn: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Validate a slug argument (task id, topic, role name) against the plugin's slug rule.
+fn validate_slug(val: &str, field: &str) -> Result<(), String> {
+    if is_slug(val) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{field} argument '{val}' is not a slug (letters, digits, dot, dash, underscore; the first character a letter or digit)"
+        ))
+    }
+}
+
+/// Validate `val` against a fixed enumeration.
+fn validate_enum(val: &str, allowed: &[&str], field: &str) -> Result<(), String> {
+    if allowed.contains(&val) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{field} must be one of {} (got '{val}')",
+            allowed.join(", ")
+        ))
+    }
+}
+
+/// Validate an integer argument is within `lo..=hi`.
+fn validate_range(val: i64, lo: i64, hi: i64, field: &str) -> Result<(), String> {
+    if (lo..=hi).contains(&val) {
+        Ok(())
+    } else {
+        Err(format!("{field} must be between {lo} and {hi} (got {val})"))
+    }
+}
+
+/// Validate `--require` values: at most 8, each at most 128 bytes, no control characters,
+/// and never starting with `-` (they are passed as the VALUE of `--require`, one flag per
+/// value, so an argument can never be read as a flag).
+fn validate_require(items: &[String]) -> Result<(), String> {
+    if items.len() > 8 {
+        return Err(format!(
+            "--require accepts at most 8 values (got {})",
+            items.len()
+        ));
+    }
+    // The refusal names the position, never the value: the answer goes into a model's context,
+    // and a value that is refused for its control characters must not be echoed with them.
+    for (i, r) in items.iter().enumerate() {
+        let n = i + 1;
+        if r.is_empty() {
+            return Err(format!("--require value {n} is empty"));
+        }
+        if r.len() > 128 {
+            return Err(format!("--require value {n} exceeds 128 bytes"));
+        }
+        if r.chars().any(|c| c.is_control()) {
+            return Err(format!("--require value {n} contains a control character"));
+        }
+        if r.starts_with('-') {
+            return Err(format!("--require value {n} must not start with '-'"));
+        }
+    }
+    Ok(())
+}
+
 /// Push a validated `--collab-dir` if the argument is present.
 fn push_collab(v: &mut Vec<String>, args: &Value) -> Result<(), String> {
     if let Some(c) = opt_str(args, "collab_dir") {
@@ -717,6 +907,71 @@ fn tool_defs() -> Value {
                     "telemetry": { "type": "string", "description": "on | off (default on)." }
                 },
                 "required": ["task", "purpose", "brief", "prompt", "reply_name"]
+            }
+        },
+        {
+            "name": "c3_panel",
+            "description": "Start a review panel: several roster reviewers read the same brief and reply independently, recorded next to the code exactly like `c3_consult`. Runs `c3 consult --panel`. A panel takes MINUTES, so `detach` DEFAULTS TO TRUE: the call returns at once with the three lines `c3 consult --status`/`--wait`/`--id` print, which carry the detach id `c3_status` reads later. Pass `dry_run: true` to print the plan and write nothing (dry_run never carries --detach, since the CLI refuses the two together). C3 never commits: this only reads and records.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "Task slug grouping this panel." },
+                    "brief": { "type": "string", "description": "The one-page brief file, relative to the working directory with no '..' component; C3 reads it, never writes." },
+                    "artifacts": { "type": "array", "items": { "type": "string" }, "description": "File(s) bound to the review (repo-relative)." },
+                    "purpose": { "type": "string", "description": "framing | decision | checkpoint | core-contract | acceptance | diff-review | stuck | chore." },
+                    "size": { "type": "integer", "description": "Panel seats, 1..=16 (omit for the purpose default)." },
+                    "order": { "type": "string", "description": "routed (a seeded weighted draw, default) | roster." },
+                    "require": { "type": "array", "items": { "type": "string" }, "description": "Required reviewer matcher(s) (#n, a label, or `<provider> :: <model> [engine]`); at most 8, each at most 128 bytes, no control characters, never starting with '-'." },
+                    "role": { "type": "string", "description": "One role (a slug) assigned to every panel member." },
+                    "roles": { "type": "array", "items": { "type": "string" }, "description": "Roles (slugs) assigned to panel seats by score rank and willingness." },
+                    "topics": { "type": "array", "items": { "type": "string" }, "description": "Topic tag(s) (slugs) for routing/rating." },
+                    "dry_run": { "type": "boolean", "description": "Print the plan and exit; writes nothing (default false)." },
+                    "detach": { "type": "boolean", "description": "Run in the background and return at once. DEFAULT TRUE." },
+                    "timeout_sec": { "type": "integer", "description": "Run timeout in seconds (0 = the purpose default)." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["task", "brief"]
+            }
+        },
+        {
+            "name": "c3_status",
+            "description": "Read the state of a task's detached runs (from `c3_panel` or a detached `c3_consult`): the same output as `c3 consult --status` or, with `wait: true`, `c3 consult --wait`. THE EXIT CODE IS THE ANSWER, returned alongside the text: 0 usable, 1 failed or refused, 2 still running, 3 wait timeout, 4 ambiguous id (name it more precisely with `id`), 5 a required reviewer is missing. Read-only; writes nothing except with `wait: true`, which blocks until the run finishes or `wait_timeout_sec` elapses.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "The task slug." },
+                    "id": { "type": "string", "description": "A detach id, or its beginning, to select one run." },
+                    "wait": { "type": "boolean", "description": "Block until the detached run(s) are done instead of reporting the current state (default false)." },
+                    "wait_timeout_sec": { "type": "integer", "description": "1..=3600; default 300 when wait is true." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["task"]
+            }
+        },
+        {
+            "name": "c3_router_explain",
+            "description": "Print the score table the next routed panel draw would use, one line per roster lineage — the same output as `c3 router explain`. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "purpose": { "type": "string", "description": "framing | decision | checkpoint | core-contract | acceptance | diff-review | stuck | chore." },
+                    "topic": { "type": "array", "items": { "type": "string" }, "description": "Topic tag(s) (slugs) to score against." },
+                    "collab_dir": { "type": "string", "description": "Where consultation ratings are stored; inside the working directory." }
+                },
+                "required": ["purpose"]
+            }
+        },
+        {
+            "name": "c3_router_replay",
+            "description": "Replay a routed panel from the ledger and confirm the seats it drew match — the same output as `c3 router replay`. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": { "type": "string", "description": "The task (its directory under collab_dir)." },
+                    "nn": { "type": "integer", "description": "Replay only this consult number; omit to replay every distinct routed panel." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["task"]
             }
         },
         {
@@ -912,6 +1167,10 @@ mod tests {
         for expected in [
             "c3_providers",
             "c3_consult",
+            "c3_panel",
+            "c3_status",
+            "c3_router_explain",
+            "c3_router_replay",
             "c3_findings_list",
             "c3_findings_stats",
             "c3_findings_status",
@@ -1065,6 +1324,225 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("refused"), "got: {err}");
+    }
+
+    // ------------------------------------------------------------------
+    // c3_panel / c3_status / c3_router_explain / c3_router_replay
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn panel_dry_run_builds_expected_argv() {
+        let (argv, _t) = build_argv(
+            "c3_panel",
+            &json!({
+                "task": "wave27",
+                "brief": "brief.md",
+                "purpose": "diff-review",
+                "size": 4,
+                "order": "roster",
+                "require": ["#1", "openai::gpt-6"],
+                "topics": ["consult-flow"],
+                "dry_run": true,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "consult",
+                "--task",
+                "wave27",
+                "--brief",
+                "brief.md",
+                "--panel",
+                "--purpose",
+                "diff-review",
+                "--panel-size",
+                "4",
+                "--panel-order",
+                "roster",
+                "--require",
+                "#1",
+                "--require",
+                "openai::gpt-6",
+                "--topic",
+                "consult-flow",
+                "--dry-run",
+            ]
+        );
+    }
+
+    #[test]
+    fn panel_detach_defaults_to_true() {
+        let (argv, _t) =
+            build_argv("c3_panel", &json!({ "task": "t", "brief": "brief.md" })).unwrap();
+        assert!(argv.contains(&"--detach".to_string()));
+        assert!(!argv.contains(&"--dry-run".to_string()));
+    }
+
+    #[test]
+    fn panel_detach_false_is_honoured() {
+        let (argv, _t) = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "brief.md", "detach": false }),
+        )
+        .unwrap();
+        assert!(!argv.contains(&"--detach".to_string()));
+    }
+
+    #[test]
+    fn panel_dry_run_never_carries_detach() {
+        let (argv, _t) = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "brief.md", "dry_run": true, "detach": true }),
+        )
+        .unwrap();
+        assert!(argv.contains(&"--dry-run".to_string()));
+        assert!(!argv.contains(&"--detach".to_string()));
+    }
+
+    #[test]
+    fn panel_rejects_brief_path_escape() {
+        let err =
+            build_argv("c3_panel", &json!({ "task": "t", "brief": "../evil.md" })).unwrap_err();
+        assert!(err.contains("refused"), "got: {err}");
+    }
+
+    #[test]
+    fn panel_rejects_artifact_path_escape() {
+        let err = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "brief.md", "artifacts": ["../evil.md"] }),
+        )
+        .unwrap_err();
+        assert!(err.contains("refused"), "got: {err}");
+    }
+
+    #[test]
+    fn panel_rejects_require_starting_with_dash() {
+        let err = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "brief.md", "require": ["-x"] }),
+        )
+        .unwrap_err();
+        assert!(err.contains("start"), "got: {err}");
+    }
+
+    #[test]
+    fn panel_rejects_too_many_require_values() {
+        let items: Vec<String> = (0..9).map(|i| format!("r{i}")).collect();
+        let err = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "brief.md", "require": items }),
+        )
+        .unwrap_err();
+        assert!(err.contains("at most 8"), "got: {err}");
+    }
+
+    #[test]
+    fn panel_rejects_size_out_of_range() {
+        for bad in [0, 17] {
+            let err = build_argv(
+                "c3_panel",
+                &json!({ "task": "t", "brief": "brief.md", "size": bad }),
+            )
+            .unwrap_err();
+            assert!(err.contains("between"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn panel_rejects_non_slug_task() {
+        let err = build_argv(
+            "c3_panel",
+            &json!({ "task": "not a slug", "brief": "brief.md" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("slug"), "got: {err}");
+    }
+
+    #[test]
+    fn panel_rejects_bad_order() {
+        let err = build_argv(
+            "c3_panel",
+            &json!({ "task": "t", "brief": "brief.md", "order": "sideways" }),
+        )
+        .unwrap_err();
+        assert!(err.contains("one of"), "got: {err}");
+    }
+
+    #[test]
+    fn status_builds_expected_argv() {
+        let (argv, _t) = build_argv("c3_status", &json!({ "task": "wave27" })).unwrap();
+        assert_eq!(argv, vec!["consult", "--task", "wave27", "--status"]);
+    }
+
+    #[test]
+    fn status_wait_builds_expected_argv_with_default_timeout() {
+        let (argv, _t) = build_argv(
+            "c3_status",
+            &json!({ "task": "t", "wait": true, "id": "abcd" }),
+        )
+        .unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "consult",
+                "--task",
+                "t",
+                "--wait",
+                "--id",
+                "abcd",
+                "--wait-timeout-sec",
+                "300"
+            ]
+        );
+    }
+
+    #[test]
+    fn status_rejects_wait_timeout_out_of_range() {
+        let err = build_argv(
+            "c3_status",
+            &json!({ "task": "t", "wait": true, "wait_timeout_sec": 3601 }),
+        )
+        .unwrap_err();
+        assert!(err.contains("between"), "got: {err}");
+    }
+
+    #[test]
+    fn router_explain_builds_expected_argv() {
+        let (argv, _t) = build_argv(
+            "c3_router_explain",
+            &json!({ "purpose": "framing", "topic": ["consult-flow"] }),
+        )
+        .unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "router",
+                "explain",
+                "--purpose",
+                "framing",
+                "--topic",
+                "consult-flow"
+            ]
+        );
+    }
+
+    #[test]
+    fn router_explain_rejects_bad_purpose() {
+        let err = build_argv("c3_router_explain", &json!({ "purpose": "nope" })).unwrap_err();
+        assert!(err.contains("one of"), "got: {err}");
+    }
+
+    #[test]
+    fn router_replay_builds_expected_argv() {
+        let (argv, _t) =
+            build_argv("c3_router_replay", &json!({ "task": "wave27", "nn": 3 })).unwrap();
+        assert_eq!(
+            argv,
+            vec!["router", "replay", "--task", "wave27", "--nn", "3"]
+        );
     }
 
     // ------------------------------------------------------------------

@@ -1,0 +1,76 @@
+{
+  "pack_version": 1,
+  "kind": "reviewer",
+  "generated": "2026-09-29T20:05:01.911995900+02:00",
+  "index": {
+    "used": false,
+    "source": "absent",
+    "hits": 0,
+    "files_added": 0
+  },
+  "recipe": {
+    "brief": "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief2.md",
+    "focus": [
+      "crates/c3/src/consult/ingest.rs"
+    ],
+    "budget": 12000,
+    "task": "openrouter-live",
+    "anchor": null
+  },
+  "revision": {
+    "reviewed_revision": "4e8d1a8",
+    "content_sha256": "d94e0a1470f0a415692317284ac968335a04aea2b798443ee5c2170a15205f48"
+  },
+  "redactions": 1,
+  "coverage": {
+    "focus_files": 1,
+    "periphery_shown": 4,
+    "periphery_candidates": 164
+  },
+  "files": [
+    {
+      "path": "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief2.md",
+      "sha256": "20c0324c29f21699bdf0c89f96291a75d3c1e838303fe6485d4fd54c9530f441",
+      "role": "brief"
+    },
+    {
+      "path": "crates/c3/src/consult/ingest.rs",
+      "sha256": "08ade079fcdb8b3cea0f64ca26aec440e8bc80a183cba6ef20818576c56d1436",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/src/pack/reviewer.rs",
+      "sha256": "bc5439c41e3b7b1f6689ae6f7c18922b7701efdbf3a38eb62e37df2fab52ae14",
+      "role": "periphery"
+    },
+    {
+      "path": "crates/c3/src/consult/secondary.rs",
+      "sha256": "44ea6537b0a30bec8dd93ef38b5104e141d9505e1488fe4aaceba021f532373c",
+      "role": "periphery"
+    },
+    {
+      "path": "crates/c3/tests/http_engine.rs",
+      "sha256": "94a09bee8760dad5e8fd5ad5c3a1d2e4da867dfc7196427f43815af89fa7f491",
+      "role": "periphery"
+    },
+    {
+      "path": ".gitattributes",
+      "sha256": "c99c22fa2a42853dd100e8ae310fcb8e0cd896e731b712caaddb0201ea5762d8",
+      "role": "periphery"
+    }
+  ],
+  "path_map": {
+    "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief2.md": "20c0324c29f21699bdf0c89f96291a75d3c1e838303fe6485d4fd54c9530f441",
+    "crates/c3/src/consult/ingest.rs": "08ade079fcdb8b3cea0f64ca26aec440e8bc80a183cba6ef20818576c56d1436",
+    "crates/c3/src/pack/reviewer.rs": "bc5439c41e3b7b1f6689ae6f7c18922b7701efdbf3a38eb62e37df2fab52ae14",
+    "crates/c3/src/consult/secondary.rs": "44ea6537b0a30bec8dd93ef38b5104e141d9505e1488fe4aaceba021f532373c",
+    "crates/c3/tests/http_engine.rs": "94a09bee8760dad5e8fd5ad5c3a1d2e4da867dfc7196427f43815af89fa7f491",
+    ".gitattributes": "c99c22fa2a42853dd100e8ae310fcb8e0cd896e731b712caaddb0201ea5762d8"
+  },
+  "request": {
+    "url": "https://openrouter.ai/api/v1/chat/completions",
+    "model": "stealth/space-bunny-alpha",
+    "response_format": "json_object",
+    "prompt_sha256": "57689e598402bad14abbf67b8c430462ee2d04d1a21f2269c2d582d8e23bf6ca"
+  }
+}

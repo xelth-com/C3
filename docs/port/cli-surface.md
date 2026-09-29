@@ -1,13 +1,20 @@
 # CLI surface mapping — plugin PowerShell scripts to `c3`
 
+> **Status (updated 2026-09-29):** the mapping below was written as a design proposal before
+> the binary existed. Today's `c3` (built from `4e8d1a8`) implements the whole surface —
+> `c3 providers`, `c3 consult`, `c3 findings`, `c3 scoreboard`, `c3 hook`, and beyond the
+> parity port `c3 panel`/`consult --panel`, the detach/status/wait/prune/kick controls, the
+> `agy`/`muse`/`http` engines, `c3 pack`/`explain`/`snapshot`, `c3 index`, `c3 router`, `c3 mcp`,
+> and telemetry (`c3 telemetry`/`complain`/`forget-me`). **`c3 <subcommand> --help` is the
+> authoritative current flag list.** The rows once marked RESERVED are now implemented; the
+> open questions at the foot of this file are resolved inline. The tables below stay as the
+> PowerShell→`c3` naming record.
+
 Source repo read for this: `C:\Users\Dmytro\claude-codex-consult` at HEAD (branch tip after
 the R12 design/decisions handoffs), files `plugins/codex-consult/scripts/codex-consult.ps1`,
 `codex-findings.ps1`, `codex-providers.ps1` (see `docs/port/harness-shim.md`/`m1-acceptance.md`
 for that one — repeated here only for completeness), `codex-scoreboard.ps1`,
-`codex-consult-hook.ps1`, `codex-consult-common.ps1`. Nothing there was modified. `c3 providers`,
-`c3 consult`, `c3 findings`, `c3 scoreboard` do not exist yet (built in parallel by another
-worker); every mapping below is a design proposal, not something exercised against a live
-binary.
+`codex-consult-hook.ps1`, `codex-consult-common.ps1`. Nothing there was modified.
 
 Naming rule applied throughout: a PowerShell `-PascalCase` parameter becomes a `--kebab-case`
 flag; a `[switch]` becomes a boolean flag with no value; a parameter with a default value keeps
@@ -179,32 +186,22 @@ design names for milestones 5 (`telemetry`, an opt-out spool) and the coordinato
 plugin repo implements neither today (R13 has no corresponding decisions handoff at this HEAD,
 unlike R12). Flagged as an open question below.
 
-## Open questions
+## Open questions (resolved)
 
-1. **`c3 findings --json`**: the brief's deliverable list includes `-Json`? for
-   `codex-findings.ps1`, but the reference script's param block has no such switch (confirmed by
-   reading the whole file). Either this is a C3-only addition (recommended — `-Stats`/`-List`
-   output is exactly the kind of thing a machine caller wants structured; `c3 scoreboard` already
-   has `--json`) or the brief expected it to exist upstream and it was removed/never added. Needs
-   a design decision, not a shim decision.
-2. **R12 flags (`--detach`/`--status`/`--wait`/`--prune`, and `--detach-id`)**: these come from a
-   *decisions* handoff (`.collab/nonblocking-2026-09-26/handoffs/05-claude-r12-decisions.md`), not
-   from an implemented, tested `codex-consult.ps1` param block — the plugin script at this HEAD
-   has none of them. They are marked RESERVED above and have no harness coverage to port for M2;
-   `m2-acceptance.md` does not include them. Whoever lands R12 in the plugin (or decides C3 will
-   originate it instead) should re-derive the flag surface from the eventual implementation, not
-   from this design doc alone.
-3. **`--coordinator`**: named in `docs/DESIGN.md` §4 ("plugin R13") but no R13 decisions handoff
-   exists in the reference repo at this HEAD (R12's exists, R13's doesn't) and no
-   `CODEX_CONSULT_COORDINATOR` env var appears anywhere in the scripts. Likely a C3-original
-   flag/env-var pair for a rule the plugin hasn't implemented yet; not included in the mapping
-   table above as a plugin-derived row for that reason, only noted.
-4. **`-FormatRetry`/`-DenialRetry` as `int` (0/1) rather than `[switch]`**: mapped to a boolean
-   flag pair (`--format-retry`/`--no-format-retry`) for `c3` consistency with its other switches;
-   an alternative is `--format-retry <0|1>` kept as an integer to mirror the plugin literally.
-   Flagging the choice for review since it changes the flag's arity.
-5. **`CODEX_CONSULT_ROOT`**: not found anywhere in the plugin scripts under any spelling
-   (`CODEX_CONSULT_ROOT`, `Root`, `-CollabDir` resolution is always relative-to-git-root, never an
-   env var). No plugin-side meaning to port; presumably a C3-only override for the collab-dir
-   resolution base when there is no git repo, but that's a guess, not sourced from the reference
-   repo — needs a design decision.
+1. **`c3 findings --json`**: RESOLVED — not added. `c3 findings` has no `--json` flag today
+   (confirmed against `c3 findings --help`); the machine-readable surface is `c3 scoreboard --json`
+   and `c3 index ... --json`. `--list`/`--stats` print for a human.
+2. **R12 flags (`--detach`/`--status`/`--wait`/`--prune`, `--kick`/`--member`)**: RESOLVED —
+   implemented. All are live on `c3 consult` (see `c3 consult --help`); `--detach-id`/`--panel-spec`
+   are internal re-exec flags. The exit-code shape (0 done/usable, 1 done-with-failure, 2 running,
+   4 ambiguous id) matches the design doc.
+3. **`--coordinator` / `CODEX_CONSULT_COORDINATOR`**: RESOLVED — implemented as the env var
+   `CODEX_CONSULT_COORDINATOR` (`<provider> :: <model> [engine]`, a roster `#<n>`, or a label). The
+   ledger records the coordinator identity and the scrubbed child-env NAMES; see the `coordinate`
+   skill.
+4. **`-FormatRetry`/`-DenialRetry` arity**: RESOLVED — `c3` takes them as `--format-retry <0|1>`
+   (default 1) and `--denial-retry <0|1>` (default 1), an integer mirroring the plugin, not a
+   boolean pair.
+5. **`CODEX_CONSULT_TELEMETRY`**: implemented (milestone 5) — `on|off`, also `--telemetry off` per
+   run. `CODEX_CONSULT_ROOT` is not a `c3` env var; the collab dir is `--collab-dir`, resolved
+   against the git repo root.

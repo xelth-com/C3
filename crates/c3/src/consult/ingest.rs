@@ -9,8 +9,12 @@
 //! * **not attempted** — below the substantiveness floor or refusal-shaped; no repair turn,
 //!   the `validation_error` ends with the reason.
 
+use std::cell::RefCell;
+use std::fmt;
+
 use c3_core::engine::StructuredReply;
 use regex::Regex;
+use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
 
 /// The prose gate's verdict (`Get-ProseGate` fields).
@@ -128,7 +132,7 @@ pub fn first_validation_error(text: &str) -> String {
         return "empty reply".to_string();
     }
     let body = strip_fence(t);
-    match serde_json::from_str::<serde_json::Value>(&body) {
+    let strict = match serde_json::from_str::<serde_json::Value>(&body) {
         Err(e) => {
             let mut m = c3_core::one_line(&e.to_string());
             if m.chars().count() > 120 {
@@ -143,7 +147,20 @@ pub fn first_validation_error(text: &str) -> String {
             },
             Err(e) => format!("not valid JSON: {}", c3_core::one_line(&e.to_string())),
         },
+    };
+    if strict.is_empty() {
+        return String::new();
     }
+    // (N3) For a reply shaped as a JSON object (the http path — the engine sets the repaired text
+    // as the reply-of-record on success, so this fires only when the normaliser ALSO failed), keep
+    // the original strict error and append the normaliser's reason. A prose reply (not starting
+    // with `{`) never triggers the normaliser here, so codex/agy/muse replies are unaffected.
+    if body.trim_start().starts_with('{') {
+        if let Normalisation::Failed { reason } = normalise_reply(text) {
+            return format!("{strict}; normaliser: {reason}");
+        }
+    }
+    strict
 }
 
 /// Strip a single ```lang ... ``` fence, mirroring `ConvertFrom-StructuredReply`'s fence net.
@@ -171,20 +188,33 @@ fn strip_fence(t: &str) -> String {
 /// This is the "no enforced output schema" capability: codex/agy/muse enforce the schema at the
 /// engine and the plugin does no such repair, so their replies never pass through here — only the
 /// http path calls it, and only on a failed strict parse.
-pub fn normalise_reply(raw_text: &str) -> Option<(StructuredReply, Vec<String>)> {
+pub fn normalise_reply(raw_text: &str) -> Normalisation {
     let mut notes: Vec<String> = Vec::new();
 
-    // a. strip a Markdown code fence around the whole reply (reuses the existing fence net).
+    // a. strip a Markdown code fence around the WHOLE reply (reuses the existing fence net).
     let trimmed = raw_text.trim();
     let unfenced = strip_fence(trimmed);
     if unfenced != trimmed {
         notes.push("stripped a code fence".to_string());
     }
 
-    // b. take the outermost JSON object when there is prose before or after it.
-    let (obj_text, dropped_prose) = outermost_object(&unfenced)?;
-    if dropped_prose {
-        notes.push("took the outermost JSON object (dropped surrounding prose)".to_string());
+    // b (N2). Collect every top-level balanced object (ignoring code fences / spans and tracking
+    // strings), and keep only those that parse as an object carrying `verdict` and `findings`.
+    // Exactly one such candidate is the reply; none or several is ambiguous and stays INVALID.
+    let candidates: Vec<String> = top_level_objects(&unfenced)
+        .into_iter()
+        .filter(|o| is_reply_candidate(o))
+        .collect();
+    let obj_text = match candidates.len() {
+        1 => candidates.into_iter().next().unwrap(),
+        n => {
+            return Normalisation::Failed {
+                reason: format!("no single reply object found ({n} candidates)"),
+            }
+        }
+    };
+    if obj_text.trim() != unfenced.trim() {
+        notes.push("prose around the object removed".to_string());
     }
 
     // c. escape raw control characters (U+0000..U+001F) that occur INSIDE string literals.
@@ -195,16 +225,50 @@ pub fn normalise_reply(raw_text: &str) -> Option<(StructuredReply, Vec<String>)>
         ));
     }
 
-    // The text must now be valid JSON; if not, the reply stays INVALID.
-    let mut value: Value = serde_json::from_str(&escaped).ok()?;
+    // d (N1). A duplicate-aware parse over the raw object text, BEFORE any lossy conversion to a
+    // Value (which would silently keep the last of a duplicated key). Identical duplicates are
+    // dropped with a note; different values keep the reply INVALID, naming the key, never the value.
+    let (mut value, dup_keys) = match dedup_parse(&escaped) {
+        Ok(v) => v,
+        Err(reason) => return Normalisation::Failed { reason },
+    };
+    for k in dup_keys {
+        notes.push(format!("duplicate key {k} with identical values removed"));
+    }
 
-    // d/e. structural repairs on the parsed value (array wrapping, schema_version).
+    // e. structural repairs on the parsed value (array wrapping, schema_version).
     structural_repairs(&mut value, &mut notes);
 
     // Validate strictly again — the same RawReply -> StructuredReply path parse_structured uses.
-    let raw: c3_core::engine::RawReply = serde_json::from_value(value).ok()?;
-    let structured = StructuredReply::try_from(raw).ok()?;
-    Some((structured, notes))
+    let json = serde_json::to_string(&value).unwrap_or_default();
+    let raw: c3_core::engine::RawReply = match serde_json::from_value(value) {
+        Ok(r) => r,
+        Err(_) => {
+            return Normalisation::Failed {
+                reason: "the reply is not a v1 object after normalisation".to_string(),
+            }
+        }
+    };
+    match StructuredReply::try_from(raw) {
+        Ok(reply) => Normalisation::Repaired { reply, json, notes },
+        Err(e) => Normalisation::Failed {
+            reason: c3_core::one_line(&e.to_string()),
+        },
+    }
+}
+
+/// The outcome of the local normaliser.
+pub enum Normalisation {
+    /// The reply was repaired into a valid structured object. `json` is the repaired reply text
+    /// (valid v1 JSON, so the reply-of-record's strict parse succeeds downstream), and `notes`
+    /// lists every change — never empty when anything was changed.
+    Repaired {
+        reply: StructuredReply,
+        json: String,
+        notes: Vec<String>,
+    },
+    /// The reply could not be made valid; `reason` is appended to the strict error in the summary.
+    Failed { reason: String },
 }
 
 /// The single-line note recorded and printed when a reply was normalised (`reply normalised: a; b`).
@@ -212,12 +276,71 @@ pub fn normalised_note(notes: &[String]) -> String {
     format!("reply normalised: {}", notes.join("; "))
 }
 
-/// Return the slice from the first `{` to its matching `}` (a string-aware brace scan), and whether
-/// any prose was dropped from before or after it. `None` when there is no balanced object.
-fn outermost_object(text: &str) -> Option<(String, bool)> {
+/// (N2) Collect every top-level balanced `{...}` object in `text`, skipping anything inside a
+/// Markdown code fence (```) or inline code span (`), and tracking JSON string literals so a brace
+/// inside a string is never a boundary. Objects nested inside another object are part of it, not
+/// separate candidates.
+fn top_level_objects(text: &str) -> Vec<String> {
     let bytes = text.as_bytes();
-    let start = text.find('{')?;
-    let (mut depth, mut in_str, mut esc, mut end) = (0i32, false, false, None);
+    let mut objs = Vec::new();
+    let mut i = 0usize;
+    let mut in_fence = false;
+    let mut in_inline = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'`' {
+            let mut n = 0usize;
+            while i + n < bytes.len() && bytes[i + n] == b'`' {
+                n += 1;
+            }
+            if n >= 3 {
+                in_fence = !in_fence;
+            } else if !in_fence && n % 2 == 1 {
+                in_inline = !in_inline;
+            }
+            i += n;
+            continue;
+        }
+        if in_fence || in_inline {
+            i += 1;
+            continue;
+        }
+        if b == b'"' {
+            // A quoted span in the prose: skip to its close so a `{` inside it is not a boundary.
+            i += 1;
+            while i < bytes.len() {
+                match bytes[i] {
+                    b'\\' => i += 2,
+                    b'"' => {
+                        i += 1;
+                        break;
+                    }
+                    _ => i += 1,
+                }
+            }
+            continue;
+        }
+        if b == b'{' {
+            match balanced_object_end(bytes, i) {
+                Some(end) => {
+                    objs.push(text[i..=end].to_string());
+                    i = end + 1;
+                }
+                // An unbalanced `{` has no close to EOF, so no complete top-level object can begin
+                // at or after it either — stop (this also keeps the scan linear).
+                None => break,
+            }
+            continue;
+        }
+        i += 1;
+    }
+    objs
+}
+
+/// The index of the `}` closing the object at `start` (`bytes[start] == b'{'`), tracking JSON
+/// string literals and escapes. `None` when the object is not balanced before EOF.
+fn balanced_object_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let (mut depth, mut in_str, mut esc) = (0i32, false, false);
     for (i, &b) in bytes.iter().enumerate().skip(start) {
         if in_str {
             if esc {
@@ -235,16 +358,146 @@ fn outermost_object(text: &str) -> Option<(String, bool)> {
             b'}' => {
                 depth -= 1;
                 if depth == 0 {
-                    end = Some(i);
-                    break;
+                    return Some(i);
                 }
             }
             _ => {}
         }
     }
-    let end = end?;
-    let dropped = start > 0 || end < bytes.len() - 1;
-    Some((text[start..=end].to_string(), dropped))
+    None
+}
+
+/// Whether an object substring parses as a JSON object carrying `verdict` and `findings` (control
+/// characters escaped first so a near-valid object still parses for this key check).
+fn is_reply_candidate(obj_text: &str) -> bool {
+    let (escaped, _) = escape_control_chars_in_strings(obj_text);
+    match serde_json::from_str::<Value>(&escaped) {
+        Ok(Value::Object(m)) => m.contains_key("verdict") && m.contains_key("findings"),
+        _ => false,
+    }
+}
+
+// --- (N1) duplicate-aware parse: a streaming walk that keeps every key/value pair at every depth.
+
+#[derive(Default)]
+struct DupState {
+    /// Distinct keys that had a duplicate with an IDENTICAL value (dropped, one kept).
+    identical: Vec<String>,
+    /// The first key that had a duplicate with a DIFFERENT value (the reply stays INVALID).
+    different: Option<String>,
+}
+
+thread_local! {
+    static DUP_STATE: RefCell<DupState> = RefCell::new(DupState::default());
+}
+
+/// A JSON value that rejects a key repeated with a different value and records identical-value
+/// duplicates, recursively at every object depth.
+struct Dedup(Value);
+
+impl<'de> Deserialize<'de> for Dedup {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = Value;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a JSON value")
+            }
+            fn visit_unit<E>(self) -> Result<Value, E> {
+                Ok(Value::Null)
+            }
+            fn visit_bool<E>(self, v: bool) -> Result<Value, E> {
+                Ok(Value::Bool(v))
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<Value, E> {
+                Ok(Value::from(v))
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<Value, E> {
+                Ok(Value::from(v))
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<Value, E> {
+                Ok(Value::from(v))
+            }
+            fn visit_str<E>(self, v: &str) -> Result<Value, E> {
+                Ok(Value::String(v.to_string()))
+            }
+            fn visit_string<E>(self, v: String) -> Result<Value, E> {
+                Ok(Value::String(v))
+            }
+            fn visit_none<E>(self) -> Result<Value, E> {
+                Ok(Value::Null)
+            }
+            fn visit_some<D2>(self, d: D2) -> Result<Value, D2::Error>
+            where
+                D2: Deserializer<'de>,
+            {
+                Ok(Dedup::deserialize(d)?.0)
+            }
+            fn visit_seq<A>(self, mut seq: A) -> Result<Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let mut out = Vec::new();
+                while let Some(Dedup(v)) = seq.next_element()? {
+                    out.push(v);
+                }
+                Ok(Value::Array(out))
+            }
+            fn visit_map<A>(self, mut map: A) -> Result<Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut out = Map::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    let Dedup(val) = map.next_value()?;
+                    match out.get(&key) {
+                        Some(existing) if existing == &val => DUP_STATE.with(|s| {
+                            let mut s = s.borrow_mut();
+                            if !s.identical.contains(&key) {
+                                s.identical.push(key.clone());
+                            }
+                        }),
+                        Some(_) => {
+                            DUP_STATE.with(|s| {
+                                let mut s = s.borrow_mut();
+                                if s.different.is_none() {
+                                    s.different = Some(key.clone());
+                                }
+                            });
+                            return Err(de::Error::custom("duplicate key with different values"));
+                        }
+                        None => {
+                            out.insert(key, val);
+                        }
+                    }
+                }
+                Ok(Value::Object(out))
+            }
+        }
+        d.deserialize_any(V).map(Dedup)
+    }
+}
+
+/// Parse `text` with duplicate-key detection. `Ok((value, identical_keys))` keeps one of each
+/// identical-value duplicate; `Err(reason)` names a key repeated with a different value, or reports
+/// unparseable JSON. Never echoes a value.
+fn dedup_parse(text: &str) -> Result<(Value, Vec<String>), String> {
+    DUP_STATE.with(|s| *s.borrow_mut() = DupState::default());
+    let parsed: Result<Dedup, _> = serde_json::from_str(text);
+    let (identical, different) = DUP_STATE.with(|s| {
+        let s = s.borrow();
+        (s.identical.clone(), s.different.clone())
+    });
+    match parsed {
+        Ok(Dedup(v)) => Ok((v, identical)),
+        Err(_) => match different {
+            Some(k) => Err(format!("duplicate key {k} with different values")),
+            None => Err("the reply is not a JSON object c3 could parse".to_string()),
+        },
+    }
 }
 
 /// Escape every raw control character (U+0000..U+001F) that occurs INSIDE a string literal, using
@@ -393,20 +646,35 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------ item 2: normalisation
+    // -------------------------------------------------- item 2 / N1-N3: local reply normalisation
 
     const FIXTURE_01: &str = include_str!("../../tests/fixtures/http/01-http-reply.reply.json");
     const FIXTURE_03: &str = include_str!("../../tests/fixtures/http/03-http-reply.reply.json");
+    const FIXTURE_04: &str = include_str!("../../tests/fixtures/http/04-http-reply.reply.json");
+
+    fn repaired(n: Normalisation) -> (StructuredReply, String, Vec<String>) {
+        match n {
+            Normalisation::Repaired { reply, json, notes } => (reply, json, notes),
+            Normalisation::Failed { reason } => panic!("expected Repaired, got Failed: {reason}"),
+        }
+    }
+    fn failed_reason(n: Normalisation) -> String {
+        match n {
+            Normalisation::Failed { reason } => reason,
+            Normalisation::Repaired { notes, .. } => {
+                panic!("expected Failed, got Repaired: {notes:?}")
+            }
+        }
+    }
+    fn real_object() -> &'static str {
+        r#"{"schema_version":"1","verdict":"REJECT","verdict_reason":"r","reply_markdown":"the real one","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#
+    }
 
     #[test]
     fn normalise_wraps_single_evidence_object_space_bunny() {
-        // Space Bunny: findings[].evidence is ONE object where the schema wants an array; the
-        // strict parse fails, the normaliser wraps it, and the reply becomes structured (2 findings).
-        assert!(
-            crate::engines::codex::parse_structured(FIXTURE_01).is_none(),
-            "the fixture must fail the strict parse first"
-        );
-        let (s, notes) = normalise_reply(FIXTURE_01).expect("fixture 01 normalises");
+        // Space Bunny: findings[].evidence is ONE object where the schema wants an array.
+        assert!(crate::engines::codex::parse_structured(FIXTURE_01).is_none());
+        let (s, _json, notes) = repaired(normalise_reply(FIXTURE_01));
         assert_eq!(s.findings.len(), 2);
         assert!(
             notes
@@ -418,10 +686,9 @@ mod tests {
 
     #[test]
     fn normalise_escapes_raw_control_chars_nemotron() {
-        // Nemotron: raw line breaks inside JSON strings (invalid JSON) plus single-object evidence;
-        // the normaliser escapes the control chars and wraps evidence -> structured (3 findings).
+        // Nemotron: raw line breaks inside JSON strings, plus single-object evidence -> 3 findings.
         assert!(crate::engines::codex::parse_structured(FIXTURE_03).is_none());
-        let (s, notes) = normalise_reply(FIXTURE_03).expect("fixture 03 normalises");
+        let (s, _json, notes) = repaired(normalise_reply(FIXTURE_03));
         assert_eq!(s.findings.len(), 3);
         assert!(
             notes.iter().any(|n| n.contains("control character")),
@@ -429,39 +696,175 @@ mod tests {
         );
     }
 
+    // ---- N1: duplicate keys
+
+    #[test]
+    fn n1_duplicate_schema_version_identical_removed_fixture_04() {
+        // The live review of the normaliser: `schema_version` written twice, both "1". A lossy
+        // Value conversion would keep the last silently; the dedup pass keeps one and notes it.
+        assert!(crate::engines::codex::parse_structured(FIXTURE_04).is_none());
+        let (s, json, notes) = repaired(normalise_reply(FIXTURE_04));
+        assert_eq!(s.findings.len(), 2);
+        assert_eq!(s.verdict, c3_core::engine::Verdict::Reject);
+        assert_eq!(
+            notes,
+            vec!["duplicate key schema_version with identical values removed".to_string()]
+        );
+        // The repaired reply-of-record is now strictly valid.
+        assert!(crate::engines::codex::parse_structured(&json).is_some());
+    }
+
+    #[test]
+    fn n1_duplicate_key_different_values_stays_invalid_and_names_the_key() {
+        // verdict twice with different values must never collapse to a valid ACCEPT.
+        let dup = r#"{"schema_version":"1","verdict":"REJECT","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+        let reason = failed_reason(normalise_reply(dup));
+        assert_eq!(reason, "duplicate key verdict with different values");
+        assert!(
+            !reason.contains("ACCEPT") && !reason.contains("REJECT"),
+            "names the key, never the values: {reason}"
+        );
+    }
+
+    // ---- N2: outermost object
+
+    #[test]
+    fn n2_fenced_sample_then_real_object_takes_the_real_object() {
+        let sample = r#"{"schema_version":"1","verdict":"ADVISE","verdict_reason":"s","reply_markdown":"sample","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+        let text = format!(
+            "Ignore this sample:\n```json\n{sample}\n```\nActual reply:\n{}",
+            real_object()
+        );
+        let (s, _json, notes) = repaired(normalise_reply(&text));
+        assert_eq!(s.reply_markdown, "the real one");
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("prose around the object removed")),
+            "notes: {notes:?}"
+        );
+    }
+
+    #[test]
+    fn n2_two_unfenced_candidates_stay_invalid() {
+        let text = format!("{}\n\n{}", real_object(), real_object());
+        assert_eq!(
+            failed_reason(normalise_reply(&text)),
+            "no single reply object found (2 candidates)"
+        );
+    }
+
+    #[test]
+    fn n2_brace_inside_a_string_does_not_confuse_the_walk() {
+        // A `{` inside a prose string, and `{` inside reply_markdown, must not create a false
+        // candidate nor truncate the real object.
+        let obj = r#"{"schema_version":"1","verdict":"HOLD","verdict_reason":"r","reply_markdown":"use {braces} like {this}","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+        let text = format!("He said \"the cost is {{x}} dollars\" and then:\n{obj}");
+        let (s, _json, _notes) = repaired(normalise_reply(&text));
+        assert_eq!(s.verdict, c3_core::engine::Verdict::Hold);
+        assert_eq!(s.reply_markdown, "use {braces} like {this}");
+    }
+
+    // ---- truncated / control-chars-outside
+
     #[test]
     fn normalise_leaves_truncated_json_invalid() {
-        // A truncated object cannot be balanced -> the reply stays INVALID (None), never invented.
-        let truncated = r#"{"schema_version":"1","verdict":"ACCEPT","verdict_reason":"r","findings":[{"severity":"note""#;
-        assert!(normalise_reply(truncated).is_none());
+        let truncated = r#"prose {"schema_version":"1","verdict":"ACCEPT","verdict_reason":"r","findings":[{"severity":"note""#;
+        assert!(matches!(
+            normalise_reply(truncated),
+            Normalisation::Failed { .. }
+        ));
     }
 
     #[test]
     fn normalise_ignores_control_chars_outside_strings() {
-        // A raw newline OUTSIDE any string is legal JSON whitespace: it is left as is, so the
-        // escape step reports nothing.
+        // A raw newline OUTSIDE any string is legal JSON whitespace; the escape step reports nothing.
         let with_outer_newline = "{\n  \"schema_version\": \"1\",\n  \"verdict\": \"ACCEPT\",\n  \"verdict_reason\": \"r\",\n  \"reply_markdown\": \"m\",\n  \"findings\": [],\n  \"prior_findings\": [],\n  \"unproven\": [],\n  \"first_run_checklist\": []\n}";
-        let (_, notes) =
-            normalise_reply(with_outer_newline).expect("valid-with-whitespace normalises");
+        let (_s, _json, notes) = repaired(normalise_reply(with_outer_newline));
         assert!(
             !notes.iter().any(|n| n.contains("control character")),
-            "no control chars were inside a string: {notes:?}"
+            "notes: {notes:?}"
         );
     }
 
+    // ---- N3: notes discipline + the summary reason
+
     #[test]
-    fn normalise_is_idempotent_on_a_valid_object() {
-        // Running the normaliser on an already-valid v1 object is a no-op: it validates and reports
-        // no change (so normalising twice yields the same result — nothing is invented or altered).
-        let valid = r#"{"schema_version":"1","verdict":"ADVISE","verdict_reason":"r","reply_markdown":"m","findings":[{"severity":"note","locations":[{"path":"a.rs","line":1}],"claim":"c","trigger":"t","evidence":[{"kind":"read-code","reference":"r","observation":"o"}],"verification":"v","remedy":"rm","supersedes":[]}],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
-        let (s1, notes) = normalise_reply(valid).expect("valid object normalises");
+    fn n3_notes_are_empty_only_when_nothing_changed() {
+        let (_s, _j, notes) = repaired(normalise_reply(real_object()));
         assert!(
             notes.is_empty(),
             "a valid object needs no repair: {notes:?}"
         );
-        // A second pass over the same text produces the identical structured reply.
-        let (s2, _) = normalise_reply(valid).unwrap();
-        assert_eq!(s1, s2);
+        let (_s, _j, notes) = repaired(normalise_reply(FIXTURE_04));
+        assert!(!notes.is_empty(), "04 was changed (dedup)");
+    }
+
+    #[test]
+    fn n3_summary_appends_normaliser_reason_for_json_object_replies() {
+        // A JSON-object reply the normaliser also cannot repair: the strict error is KEPT and the
+        // normaliser reason is appended after "; normaliser: ".
+        let dup = r#"{"schema_version":"1","verdict":"REJECT","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+        let ve = first_validation_error(dup);
+        assert!(
+            ve.contains("; normaliser: duplicate key verdict with different values"),
+            "{ve}"
+        );
+        // A prose reply (codex-shaped, not starting with `{`) is unaffected — no normaliser suffix.
+        let ve = first_validation_error("Looks good overall, but the error path is untested.");
+        assert!(!ve.contains("normaliser:"), "{ve}");
+    }
+
+    // ---- the reviewer's two open questions: idempotence and linear cost
+
+    #[test]
+    fn normalise_is_idempotent() {
+        // normalise(normalise(x)) == normalise(x): the repaired reply and json are a fixed point,
+        // for all three fixtures and the N2 trigger.
+        let sample = r#"{"schema_version":"1","verdict":"ADVISE","verdict_reason":"s","reply_markdown":"sample","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+        let trigger = format!(
+            "Ignore:\n```json\n{sample}\n```\nActual:\n{}",
+            real_object()
+        );
+        for input in [FIXTURE_01, FIXTURE_03, FIXTURE_04, trigger.as_str()] {
+            let (r1, j1, _) = repaired(normalise_reply(input));
+            let (r2, j2, notes2) = repaired(normalise_reply(&j1));
+            assert_eq!(r1, r2, "reply is a fixed point");
+            assert_eq!(j1, j2, "json is a fixed point");
+            assert!(
+                notes2.is_empty(),
+                "repaired json needs no further change: {notes2:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalise_is_linear_on_a_large_reply() {
+        // A ~4 MB reply with 100 000 short strings normalises well under a generous bound.
+        let mut unproven = String::from("[");
+        for i in 0..100_000 {
+            if i > 0 {
+                unproven.push(',');
+            }
+            unproven.push_str("\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"");
+        }
+        unproven.push(']');
+        let big = format!(
+            r#"{{"schema_version":"1","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":{unproven},"first_run_checklist":[]}}"#
+        );
+        assert!(
+            big.len() > 3_000_000,
+            "≈4 MB reply, got {} bytes",
+            big.len()
+        );
+        let start = std::time::Instant::now();
+        let out = normalise_reply(&big);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "linear cost: {elapsed:?}"
+        );
+        assert!(matches!(out, Normalisation::Repaired { .. }));
     }
 
     #[test]

@@ -57,7 +57,11 @@ that has one; omitted from the argument column below for brevity.
 | Tool | Input schema (required in **bold**) | Runs |
 |---|---|---|
 | `c3_providers` | `provider?`, `short?`, `no_network?` | `c3 providers [--provider] [--short] [--no-network]` |
-| `c3_consult` | **`task`**, **`purpose`**, **`brief`**, **`prompt`**, **`reply_name`**, `mode?`, `thread?`, `provider?`, `model?`, `effort?`, `max_words?`, `timeout_sec?`, `continue_sec?`, `range?`, `artifact?[]`, `raw?`, `dry_run?`, `skip_preflight?`, `off_peak_only?`, `codex_config?[]`, `schema_transport?`, `format_retry?`, `telemetry?` | `c3 consult …` (may take minutes; a background panel with detach/status is **not** available yet — milestone 4) |
+| `c3_consult` | **`task`**, **`purpose`**, **`brief`**, **`prompt`**, **`reply_name`**, `mode?`, `thread?`, `provider?`, `model?`, `effort?`, `max_words?`, `timeout_sec?`, `continue_sec?`, `range?`, `artifact?[]`, `raw?`, `dry_run?`, `skip_preflight?`, `off_peak_only?`, `codex_config?[]`, `schema_transport?`, `format_retry?`, `telemetry?` | `c3 consult …` (may take minutes) |
+| `c3_panel` | **`task`**, **`brief`**, `artifacts?[]`, `purpose?`, `size?`, `order?`, `require?[]`, `role?`, `roles?[]`, `topics?[]`, `dry_run?`, `detach?`, `timeout_sec?` | `c3 consult --panel …` — a background review panel. `detach` **DEFAULTS TO TRUE** (a panel takes minutes; the call returns at once with the three lines `c3 consult --status`/`--wait`/`--id` print). `dry_run` prints the plan and writes nothing, and never carries `--detach` (the CLI refuses the two together). |
+| `c3_status` | **`task`**, `id?`, `wait?`, `wait_timeout_sec?` | `c3 consult --status` or, with `wait: true`, `c3 consult --wait`. Read-and-record: with `wait: true` it blocks until the run finishes or `wait_timeout_sec` elapses (default 300, 1..=3600). The **exit code is the answer**, returned alongside the text: `0` usable, `1` failed or refused, `2` still running, `3` wait timeout, `4` ambiguous id, `5` a required reviewer missing. |
+| `c3_router_explain` | **`purpose`**, `topic?[]` | `c3 router explain --purpose … [--topic]...` — the score table the next routed draw would use. |
+| `c3_router_replay` | **`task`**, `nn?` | `c3 router replay --task … [--nn]` — replays a routed panel from the ledger and confirms the seats match. |
 | `c3_findings_list` | **`task`**, `all?` | `c3 findings --task … --list [--all]` |
 | `c3_findings_stats` | **`task`** | `c3 findings --task … --stats` |
 | `c3_findings_status` | **`task`**, **`id`**, **`status`**, `note?`, `evidence?` | `c3 findings --task … --id … --status … [--note] [--evidence]` |
@@ -70,9 +74,10 @@ that has one; omitted from the argument column below for brevity.
 | `c3_index_stats` | `collab_dir?`, `conn?` | `c3 index stats --json [--collab-dir] [--conn]` |
 | `c3_index_query` | **`query`**, `budget?`, `json?`, `collab_dir?`, `conn?` | `c3 index query <query> [--budget] [--json] [--collab-dir] [--conn]` |
 
-Not exposed: `complain` and `forget-me` (interactive), `panel` (not built), `index build`
-and `index rebuild` (they take the index lock for minutes and stay CLI-only), and anything
-that commits — there is no such tool.
+Not exposed: `complain` and `forget-me` (interactive), `index build` and `index rebuild`
+(they take the index lock for minutes and stay CLI-only), anything that stops or prunes a
+detached run (`--kick`, `--prune`), anything that fetches priors from the network or edits a
+roster, and anything that commits — there is no such tool.
 
 ## Registering the server in Claude Code
 

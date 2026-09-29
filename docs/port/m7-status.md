@@ -108,6 +108,20 @@ fixed (see `docs/port/http-engine.md` for the mechanics):
    array wrapping, `schema_version` default/coerce; it never invents content. A repaired reply
    records a `reply normalised: <list>` warning in the ledger and the summary. Regression fixtures:
    `crates/c3/tests/fixtures/http/{01,03}-http-reply.reply.json`.
+   - **Second review round (N1-N3), from a live review of the normaliser itself
+     (`04-http-reply.reply.json`, recorded INVALID: duplicate `schema_version`).**
+     - **N1 duplicate keys.** A duplicate-aware `serde` walk runs over the raw object text before any
+       lossy `Value` conversion (which would keep the last silently, e.g. turning
+       `"verdict":"REJECT","verdict":"ACCEPT"` into a valid ACCEPT): identical duplicates keep one
+       with a note, different values stay INVALID naming the key (never the values).
+     - **N2 outermost object.** Instead of the first balanced `{...}`, the normaliser collects every
+       top-level object (tracking strings, skipping code fences/spans) and takes the single one that
+       parses with `verdict` + `findings`; none or several → INVALID with `no single reply object
+       found (<n> candidates)`. Fixes a sample object in the prose masquerading as the reply.
+     - **N3 notes / reply-of-record / reason.** Notes are non-empty iff the text changed; the
+       `normalised` event is written only with ≥1 note; on success the repaired JSON becomes the
+       reply-of-record so the ledger records it structured; on failure the summary keeps the strict
+       error and appends `; normaliser: <reason>`. Idempotence and linear cost are asserted by test.
 3. **Named-but-unwritten events file (item 3).** The summary and handoff named
    `handoffs/<NN>-http-reply.events.jsonl`, never written. The engine now writes it: `request` /
    `response` / `normalised` / `error` JSON lines, header NAMES only, never the key or the body.
@@ -126,11 +140,32 @@ fixed (see `docs/port/http-engine.md` for the mechanics):
    like a key value. Header NAMES that suggest a credential are refused. A canary test asserts no
    marker fed into any field leaks.
 
+## Secondary turns — format repair and timeout retry (STEP 2)
+
+The http seat now runs its own secondary turn in-process (the orchestrator's thread-based
+`run_format_repair` / `run_timeout_continuation` remain no-ops for `http`, which has no thread):
+
+- **Format repair (replay).** When the reply is still not structured after the normaliser and the
+  prose gate (`consult::ingest`) says it is substantive, ONE `Continuation::Replay` request is sent
+  (system/pack + the prior reply + the plugin's convert-only prompt, shared via
+  `orchestrate::format_repair_prompt`). The first reply is kept byte for byte as `<stem>.original.md`;
+  the normaliser runs on the repaired reply too; on success the repaired JSON becomes the
+  reply-of-record. The ledger records it exactly as the codex path does (`format_retry` fields,
+  `engine_turns: 2`), and the events file gains a second `request`/`response` pair tagged
+  `"turn":"format-repair"`. A failed repair keeps the prose, as before.
+- **Timeout retry.** The API returns nothing on a timeout, so a "continuation" is a RETRY of the
+  same request, at most once, only for an `unavailable` failure (a request timeout, a 5xx, or an
+  overloaded/unavailable answer), after a pause of the provider's `retry_after` (else 20 s, never
+  more than 120 s). `auth`, `quota` and `burst` are not retried. `--no-continue` (continue_sec 0)
+  suppresses it. Recorded as `engine_turns: 2` with a `retried once after <class>` warning; the
+  events get a second pair tagged `"turn":"retry"`.
+- **Billing.** Both send the pack a second time; the dry-run billing line says
+  `... ; a format repair or a retry sends them once more`. The key-host binding, redirect refusal
+  and scrubbed errors apply to the second request unchanged (it goes through the same `post`).
+
+The turn-driving is split into `consult::http::drive_seat_turns` so it is unit-tested against the
+in-process fake server without a full orchestrator context.
+
 ## Known limitations / follow-ups
 
-- **Format repair / timeout continuation for `http` is not wired via replay.** The adapter
-  supports replay (`Continuation::Replay`), but the orchestrator's secondary-turn path is
-  thread-based and `http` never verifies a thread, so a prose reply is recorded as prose rather
-  than repaired. With `json_object` (the default) the endpoint returns a JSON object, so the
-  common case is structured. Wiring `run_codex_secondary` to a replay turn for `http` is a
-  follow-up.
+- (none open for the http engine at this milestone)

@@ -1,5 +1,5 @@
-<!-- Serves -Purpose framing | decision | stuck. -->
-<!-- The script never writes briefs - you fill this by hand and pass it via -Brief. -->
+<!-- Serves --purpose framing | decision | stuck. Write in English. -->
+<!-- c3 never writes briefs - you fill this by hand and pass it via --brief. -->
 
 # Handoff <NN> - Claude: <slug>
 

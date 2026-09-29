@@ -16,10 +16,11 @@
 //! entry accepted per-token billing (`api_billing: accepted`).
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use c3_core::engine::{
-    AttemptId, AttemptOutcome, ConsultationId, EngineKind, Mode, Request, TurnKind, TurnRequest,
+    AttemptId, AttemptOutcome, ConsultationId, Continuation, EngineKind, Mode, Request, TurnKind,
+    TurnRequest,
 };
 use serde_json::Value;
 
@@ -68,6 +69,25 @@ pub(crate) struct SeatRun {
     /// (item 2) Engine warnings — the `reply normalised: <list>` line when a near-valid reply was
     /// locally repaired; empty otherwise. Recorded in the ledger `warnings[]` and printed.
     pub warnings: Vec<String>,
+    /// (STEP 2) The result of a secondary turn (a format-repair replay or a timeout retry) when one
+    /// ran; `None` when the primary turn was the only one. The orchestrator copies it into the
+    /// secondary record so the ledger shows `engine_turns: 2` and the `format_repair` fields.
+    pub secondary: Option<HttpSecondary>,
+}
+
+/// (STEP 2) What a secondary http turn produced, for the orchestrator to record via the existing
+/// secondary-turn ledger fields.
+#[derive(Default, Clone)]
+pub(crate) struct HttpSecondary {
+    /// The engine turns run (2 when a secondary turn ran).
+    pub engine_turns: i64,
+    /// A format-repair record when a repair turn ran (`None` for a timeout retry).
+    pub format_retry: Option<c3_core::ledger::FormatRetry>,
+    pub repaired_ok: bool,
+    pub repair_reason: String,
+    pub original_rel: String,
+    pub original_prose: String,
+    pub drift_notes: Vec<String>,
 }
 
 /// Resolve the seat's config: a roster `ext.c3.reviewers` entry matching the resolved identity
@@ -259,21 +279,174 @@ fn engine(ctx: &Context, seat: Seat, pack: ReviewerPack) -> HttpEngine {
     }
 }
 
+/// The plain inputs the two-turn flow needs from the [`Context`], so it is testable with a real
+/// [`HttpEngine`] and no full orchestrator context.
+struct SeatContext {
+    repair_enabled: bool,
+    continue_sec: i64,
+    raw: bool,
+    consult_id: String,
+    /// The absolute `<stem>.original.md` path (the first prose kept before a format repair).
+    original_md: PathBuf,
+    /// `handoffs/<stem>.original.md` (repo-relative), for the ledger record.
+    original_rel: String,
+    /// `handoffs/<stem>.events.jsonl` (repo-relative), for the format-retry record.
+    events_rel: String,
+    transport: String,
+}
+
+/// Run the primary turn and, when warranted, ONE secondary turn — a format-repair replay
+/// (`Continuation::Replay` with the convert-only prompt) or a timeout retry (the same request
+/// resent). Returns the final outcome, the ledger `provider_config`, the merged warnings and the
+/// secondary record. Split from [`run_seat`] so the flow is unit-testable against the fake server.
+fn drive_seat_turns(
+    eng: &HttpEngine,
+    primary: TurnRequest,
+    sc: &SeatContext,
+) -> Result<(AttemptOutcome, Value, Vec<String>, Option<HttpSecondary>), String> {
+    let first = eng
+        .attempt(&primary)
+        .map_err(|e| format!("the http request could not be planned: {e}"))?;
+    let provider_config = first.provider_config.clone();
+    let mut warnings = first.warnings.clone();
+    let mut outcome = first.outcome;
+    let mut secondary: Option<HttpSecondary> = None;
+
+    // --- Format repair (replay): a substantive prose reply the normaliser could not structure.
+    if let AttemptOutcome::Completed(reply) = &outcome {
+        if reply.structured.is_none()
+            && sc.repair_enabled
+            && !sc.raw
+            && crate::consult::ingest::prose_gate(&reply.raw_text).substantive
+        {
+            let prose = reply.raw_text.clone();
+            // Keep the first reply byte for byte as <stem>.original.md (as the codex path does).
+            let _ = c3_core::store::write_text_atomic(&sc.original_md, prose.as_bytes());
+            let mut reason = crate::consult::ingest::first_validation_error(&prose);
+            if reason.chars().count() > 200 {
+                reason = reason.chars().take(200).collect();
+            }
+            let mut repair_turn = primary.clone();
+            repair_turn.request.prompt = super::orchestrate::format_repair_prompt(&sc.consult_id);
+            repair_turn.kind = TurnKind::FormatRepair;
+            repair_turn.continuation = Some(Continuation::Replay {
+                pack_hash: String::new(),
+                prior_reply: prose.clone(),
+            });
+            let started = Instant::now();
+            let repair = eng
+                .attempt(&repair_turn)
+                .map_err(|e| format!("the http repair request could not be planned: {e}"))?;
+            let wall = (started.elapsed().as_secs_f64() * 10.0).round() / 10.0;
+            warnings.extend(repair.warnings.clone());
+            let repaired_ok = matches!(
+                &repair.outcome,
+                AttemptOutcome::Completed(r) if r.structured.is_some()
+            );
+            if repaired_ok {
+                // The repaired object (raw_text = repaired JSON) becomes the reply-of-record.
+                outcome = repair.outcome;
+            }
+            // else: the first prose stays the reply of record, exactly as today.
+            secondary = Some(HttpSecondary {
+                engine_turns: 2,
+                repaired_ok,
+                repair_reason: reason.clone(),
+                original_rel: sc.original_rel.clone(),
+                original_prose: prose,
+                drift_notes: Vec::new(),
+                format_retry: Some(c3_core::ledger::FormatRetry {
+                    attempted: true,
+                    reason,
+                    succeeded: repaired_ok,
+                    thread: String::new(),
+                    wall_seconds: wall,
+                    events: Some(sc.events_rel.clone()),
+                    schema_transport: sc.transport.clone(),
+                    ..Default::default()
+                }),
+            });
+        }
+    }
+
+    // --- Timeout retry: an `unavailable` failure (a request timeout, a 5xx, or an overloaded /
+    // unavailable answer) is retried once, unless `--no-continue` (continue_sec 0). `auth`, `quota`
+    // and `burst` are not retried (the class gate in `retry_pause`).
+    if secondary.is_none() && sc.continue_sec > 0 {
+        let (class, retry_after) = match &outcome {
+            AttemptOutcome::TimedOut { .. } => (Some("unavailable".to_string()), None),
+            AttemptOutcome::ProviderFailure { failure, .. } => {
+                (Some(failure.class.clone()), failure.retry_after.clone())
+            }
+            _ => (None, None),
+        };
+        if let Some(class) = class {
+            if let Some(pause) = crate::http_engine::retry_pause(&class, retry_after.as_deref()) {
+                if !pause.is_zero() {
+                    std::thread::sleep(pause);
+                }
+                let mut retry_turn = primary.clone();
+                retry_turn.kind = TurnKind::TimeoutContinuation;
+                retry_turn.continuation = None; // the same request, resent
+                let retry = eng
+                    .attempt(&retry_turn)
+                    .map_err(|e| format!("the http retry request could not be planned: {e}"))?;
+                warnings.extend(retry.warnings.clone());
+                warnings.push(format!("retried once after {class}"));
+                outcome = retry.outcome;
+                secondary = Some(HttpSecondary {
+                    engine_turns: 2,
+                    ..Default::default()
+                });
+            }
+        }
+    }
+
+    Ok((outcome, provider_config, warnings, secondary))
+}
+
+/// `handoffs/NN-http-<reply>.<ext>` as an absolute path (mirrors `Context::hpath`).
+fn handoff_path(ctx: &Context, ext: &str) -> PathBuf {
+    ctx.handoffs_dir.join(format!(
+        "{:02}-{}-{}.{}",
+        ctx.nn, ctx.file_prefix, ctx.reply_name, ext
+    ))
+}
+
+/// `handoffs/NN-http-<reply>.<ext>` repo-relative (mirrors `Context::hf`).
+fn handoff_rel(ctx: &Context, ext: &str) -> String {
+    format!(
+        "handoffs/{:02}-{}-{}.{}",
+        ctx.nn, ctx.file_prefix, ctx.reply_name, ext
+    )
+}
+
 /// Run one http seat: resolve the config, run the billing/key guard (before the pack is written),
-/// build the pack, and send the request. Returns the outcome and the ledger's provider_config, or
-/// a refusal message (surfaced by `run_primary_turn` as the seat's refusal, before any request).
+/// build the pack, and send the request. On a substantive prose reply the normaliser could not
+/// structure, ONE format-repair replay is sent; on an `unavailable` failure the request is retried
+/// once (STEP 2). Returns the final outcome and the ledger's provider_config, or a refusal message
+/// (surfaced by `run_primary_turn` as the seat's refusal, before any request).
 pub(crate) fn run_seat(ctx: &Context) -> Result<SeatRun, String> {
     let seat = resolve_seat(ctx)?;
     billing_precheck(&seat)?;
     let budget = resolve_pack_budget(ctx, &seat);
     let pack = build_pack(ctx, budget)?;
     let eng = engine(ctx, seat, pack);
-    let turn = primary_turn(ctx);
-    let att = eng
-        .attempt(&turn)
-        .map_err(|e| format!("the http request could not be planned: {e}"))?;
 
-    let (bridge_outcome, reply_text) = match &att.outcome {
+    let sc = SeatContext {
+        repair_enabled: ctx.r.repair_enabled,
+        continue_sec: ctx.r.continue_sec,
+        raw: ctx.r.raw,
+        consult_id: ctx.consult_id.clone(),
+        original_md: handoff_path(ctx, "original.md"),
+        original_rel: handoff_rel(ctx, "original.md"),
+        events_rel: handoff_rel(ctx, "events.jsonl"),
+        transport: ctx.transport.transport.clone(),
+    };
+    let (outcome, provider_config, warnings, secondary) =
+        drive_seat_turns(&eng, primary_turn(ctx), &sc)?;
+
+    let (bridge_outcome, reply_text) = match &outcome {
         AttemptOutcome::Completed(_) => ("usable reply".to_string(), String::new()),
         AttemptOutcome::ProviderFailure { failure, .. } => (
             format!(
@@ -294,11 +467,12 @@ pub(crate) fn run_seat(ctx: &Context) -> Result<SeatRun, String> {
     };
 
     Ok(SeatRun {
-        outcome: att.outcome,
-        provider_config: att.provider_config,
+        outcome,
+        provider_config,
         bridge_outcome,
         reply_text,
-        warnings: att.warnings,
+        warnings,
+        secondary,
     })
 }
 
@@ -367,7 +541,7 @@ pub(crate) fn render_dry_run(ctx: &Context) {
     } else if let Ok(p) = &plan_pack {
         let schema_tokens = reviewer::system_prompt().chars().count() / 4;
         println!(
-            "billing     : per token - this request sends about {} tokens (pack {} + schema {})",
+            "billing     : per token - this request sends about {} tokens (pack {} + schema {}); a format repair or a retry sends them once more",
             p.tokens + schema_tokens,
             p.tokens,
             schema_tokens
@@ -466,5 +640,303 @@ mod tests {
         std::env::set_var("C3_HTTP_BILL_OR", "sk-or-v1-xxxxxxxxxxxxxxxx");
         assert!(billing_precheck(&seat("openrouter", "C3_HTTP_BILL_OR", false)).is_ok());
         std::env::remove_var("C3_HTTP_BILL_OR");
+    }
+
+    // ------------------------------------------------------ STEP 2: format repair + timeout retry
+
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+
+    const FAKE_KEY: &str = "sk-or-v1-0123456789abcdef0123456789abcdef";
+
+    /// A minimal OpenAI-compatible mock: answers each queued response in turn.
+    fn start_mock(responses: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for resp in responses {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(s) => s,
+                    Err(_) => break,
+                };
+                read_request_body(&mut stream);
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn read_request_body(stream: &mut TcpStream) {
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut content_length = 0usize;
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                break;
+            }
+            let l = line.trim_end();
+            if l.is_empty() {
+                break;
+            }
+            if let Some(v) = l.to_ascii_lowercase().strip_prefix("content-length:") {
+                content_length = v.trim().parse().unwrap_or(0);
+            }
+        }
+        if content_length > 0 {
+            let mut body = vec![0u8; content_length];
+            let _ = reader.read_exact(&mut body);
+        }
+    }
+
+    fn http_response(status: &str, headers: &[(&str, &str)], body: &str) -> String {
+        let mut s = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n",
+            body.len()
+        );
+        for (k, v) in headers {
+            s.push_str(&format!("{k}: {v}\r\n"));
+        }
+        s.push_str("\r\n");
+        s.push_str(body);
+        s
+    }
+
+    fn completion(content: &str) -> String {
+        let body = serde_json::json!({
+            "id": "gen-1",
+            "choices": [{ "message": { "role": "assistant", "content": content } }],
+            "usage": { "prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15 }
+        })
+        .to_string();
+        http_response("200 OK", &[("content-type", "application/json")], &body)
+    }
+
+    const PROSE: &str = "Q1. The change looks consistent with the surrounding module and does not obviously regress existing behaviour, but the error path is untested and one edge case around empty input is not covered by the current suite so far as I can tell from reading the diff and the neighbouring tests today.";
+    const VALID: &str = r#"{"schema_version":"1","verdict":"ACCEPT","verdict_reason":"ok","reply_markdown":"body","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+
+    fn sample_pack() -> ReviewerPack {
+        ReviewerPack {
+            content: "# C3 reviewer pack\n\nReply as one JSON object.\n".to_string(),
+            sidecar: r#"{"pack_version":1,"kind":"reviewer","files":[]}"#.to_string(),
+            redactions: 0,
+            tokens: 20,
+            size_bytes: 60,
+            focus_files: vec!["store.rs".to_string()],
+            periphery_shown: 0,
+        }
+    }
+
+    fn mk_engine(base_url: &str, key_env: &str, dir: &std::path::Path) -> HttpEngine {
+        HttpEngine {
+            config: HttpConfig {
+                base_url: base_url.to_string(),
+                model: "openai/gpt-5".to_string(),
+                key_env: key_env.to_string(),
+                headers: Vec::new(),
+                timeout: Duration::from_millis(800),
+                provider_label: "openrouter".to_string(),
+                json_object: true,
+                repo_root: None,
+            },
+            pack: sample_pack(),
+            handoff_stem: dir.join("01-http-slug"),
+        }
+    }
+
+    fn mk_primary() -> TurnRequest {
+        TurnRequest {
+            request: Request {
+                prompt: "review; consultation id: C-1".to_string(),
+                brief_path: None,
+                model: "openai/gpt-5".to_string(),
+                provider: "openrouter".to_string(),
+                engine: EngineKind::Http,
+                effort: None,
+                timeout_sec: 0.8,
+                mode: Mode::New,
+                sandbox: String::new(),
+                schema_path: None,
+                extra_config: Vec::new(),
+                output_last_message: None,
+                prompt_file: None,
+                max_model_steps: None,
+            },
+            consultation: ConsultationId("C-1".to_string()),
+            attempt: AttemptId("C-1".to_string()),
+            kind: TurnKind::Primary,
+            continuation: None,
+        }
+    }
+
+    fn mk_sc(dir: &std::path::Path, repair_enabled: bool, continue_sec: i64) -> SeatContext {
+        SeatContext {
+            repair_enabled,
+            continue_sec,
+            raw: false,
+            consult_id: "C-1".to_string(),
+            original_md: dir.join("01-http-slug.original.md"),
+            original_rel: "handoffs/01-http-slug.original.md".to_string(),
+            events_rel: "handoffs/01-http-slug.events.jsonl".to_string(),
+            transport: "prompt-only".to_string(),
+        }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("c3-seat-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn no_key_leak(dir: &std::path::Path) {
+        for e in std::fs::read_dir(dir).unwrap().flatten() {
+            let body = std::fs::read_to_string(e.path()).unwrap_or_default();
+            assert!(
+                !body.contains(FAKE_KEY),
+                "seeded key leaked into {:?}",
+                e.path()
+            );
+        }
+    }
+
+    #[test]
+    fn format_repair_prose_then_valid_is_structured_with_two_turns() {
+        std::env::set_var("C3_SEAT_REPAIR_OK", FAKE_KEY);
+        let base = start_mock(vec![completion(PROSE), completion(VALID)]);
+        let d = scratch("repair-ok");
+        let eng = mk_engine(&base, "C3_SEAT_REPAIR_OK", &d);
+        let (outcome, _pc, warnings, secondary) =
+            drive_seat_turns(&eng, mk_primary(), &mk_sc(&d, true, 900)).unwrap();
+
+        match &outcome {
+            AttemptOutcome::Completed(reply) => {
+                assert!(
+                    reply.structured.is_some(),
+                    "repair produced a structured reply"
+                )
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+        let hs = secondary.expect("a secondary turn ran");
+        assert_eq!(hs.engine_turns, 2);
+        assert!(hs.repaired_ok);
+        // The first prose is kept byte for byte as .original.md.
+        let kept = std::fs::read_to_string(d.join("01-http-slug.original.md")).unwrap();
+        assert_eq!(kept, PROSE);
+        // The events file has two request/response pairs; the second is marked format-repair.
+        let ev = std::fs::read_to_string(eng.events_path()).unwrap();
+        assert_eq!(ev.matches("\"event\":\"request\"").count(), 2, "{ev}");
+        assert!(ev.contains("\"turn\":\"format-repair\""), "{ev}");
+        assert!(!warnings.iter().any(|w| w.contains("retried")));
+        no_key_leak(&d);
+        std::env::remove_var("C3_SEAT_REPAIR_OK");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn format_repair_second_invalid_keeps_the_prose() {
+        std::env::set_var("C3_SEAT_REPAIR_BAD", FAKE_KEY);
+        let base = start_mock(vec![
+            completion(PROSE),
+            completion("still just prose, no JSON"),
+        ]);
+        let d = scratch("repair-bad");
+        let eng = mk_engine(&base, "C3_SEAT_REPAIR_BAD", &d);
+        let (outcome, _pc, _w, secondary) =
+            drive_seat_turns(&eng, mk_primary(), &mk_sc(&d, true, 900)).unwrap();
+
+        match &outcome {
+            AttemptOutcome::Completed(reply) => {
+                assert!(reply.structured.is_none(), "stays prose");
+                assert_eq!(
+                    reply.raw_text, PROSE,
+                    "the first prose is the reply of record"
+                );
+            }
+            other => panic!("expected Completed prose, got {other:?}"),
+        }
+        let hs = secondary.expect("a repair was attempted");
+        assert_eq!(hs.engine_turns, 2);
+        assert!(!hs.repaired_ok);
+        assert_eq!(
+            std::fs::read_to_string(d.join("01-http-slug.original.md")).unwrap(),
+            PROSE
+        );
+        no_key_leak(&d);
+        std::env::remove_var("C3_SEAT_REPAIR_BAD");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn timeout_retry_503_then_200_is_usable_with_a_note() {
+        std::env::set_var("C3_SEAT_RETRY", FAKE_KEY);
+        // A 503 carrying Retry-After: 0 (so the test does not actually pause), then a 200.
+        let base = start_mock(vec![
+            http_response("503 Service Unavailable", &[("Retry-After", "0")], "down"),
+            completion(VALID),
+        ]);
+        let d = scratch("retry");
+        let eng = mk_engine(&base, "C3_SEAT_RETRY", &d);
+        let (outcome, _pc, warnings, secondary) =
+            drive_seat_turns(&eng, mk_primary(), &mk_sc(&d, true, 900)).unwrap();
+
+        assert!(
+            matches!(outcome, AttemptOutcome::Completed(_)),
+            "usable after retry"
+        );
+        assert_eq!(secondary.unwrap().engine_turns, 2);
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w == "retried once after unavailable"),
+            "warnings: {warnings:?}"
+        );
+        let ev = std::fs::read_to_string(eng.events_path()).unwrap();
+        assert!(ev.contains("\"turn\":\"retry\""), "{ev}");
+        no_key_leak(&d);
+        std::env::remove_var("C3_SEAT_RETRY");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn auth_401_is_not_retried() {
+        std::env::set_var("C3_SEAT_401", FAKE_KEY);
+        let base = start_mock(vec![http_response(
+            "401 Unauthorized",
+            &[("content-type", "application/json")],
+            r#"{"error":{"message":"bad key"}}"#,
+        )]);
+        let d = scratch("noauth");
+        let eng = mk_engine(&base, "C3_SEAT_401", &d);
+        let (outcome, _pc, _w, secondary) =
+            drive_seat_turns(&eng, mk_primary(), &mk_sc(&d, true, 900)).unwrap();
+        match outcome {
+            AttemptOutcome::ProviderFailure { failure, .. } => assert_eq!(failure.class, "auth"),
+            other => panic!("expected auth failure, got {other:?}"),
+        }
+        assert!(secondary.is_none(), "auth is never retried");
+        std::env::remove_var("C3_SEAT_401");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn no_continue_suppresses_the_retry() {
+        std::env::set_var("C3_SEAT_NOCONT", FAKE_KEY);
+        let base = start_mock(vec![http_response(
+            "503 Service Unavailable",
+            &[("Retry-After", "0")],
+            "down",
+        )]);
+        let d = scratch("nocont");
+        let eng = mk_engine(&base, "C3_SEAT_NOCONT", &d);
+        // continue_sec 0 == `--no-continue`.
+        let (outcome, _pc, _w, secondary) =
+            drive_seat_turns(&eng, mk_primary(), &mk_sc(&d, true, 0)).unwrap();
+        assert!(matches!(outcome, AttemptOutcome::ProviderFailure { .. }));
+        assert!(secondary.is_none(), "no retry when --no-continue");
+        std::env::remove_var("C3_SEAT_NOCONT");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -508,6 +508,31 @@ fn seeded_key_never_reaches_any_written_file_or_outcome_string() {
     assert!(!outcome_str.contains(FAKE_KEY) && !outcome_str.contains("sk-or-"));
     assert!(!pc_str.contains(FAKE_KEY) && !pc_str.contains("sk-or-"));
 
+    // (STEP 1) A normalised reply also writes <stem>.original.json; the seeded key must not reach
+    // that file (nor any other file of the run) either.
+    let mock2 = start_mock(vec![Resp::Raw(completion_response(FIXTURE_01))]);
+    let d2 = scratch("seed-norm");
+    let eng2 = engine(&mock2.base_url, "C3_HTTP_KEY_SEED", &d2);
+    let _ = eng2.attempt(&primary_turn()).unwrap();
+    let _ = mock2.last_body();
+    let mut files2 = Vec::new();
+    collect_files(&d2, &mut files2);
+    assert!(
+        files2.iter().any(|p| p.ends_with(".original.json")),
+        "the .original.json was written"
+    );
+    for f in &files2 {
+        let body = std::fs::read_to_string(f).unwrap_or_default();
+        // The seeded key must never appear anywhere.
+        assert!(!body.contains(FAKE_KEY), "seeded key leaked into {f}");
+        // The `sk-or-` shape guard applies to engine-authored files; the .original.json is the
+        // reviewer's OWN verbatim text, which legitimately discusses key prefixes like `sk-or-`.
+        if !f.ends_with(".original.json") {
+            assert!(!body.contains("sk-or-"), "shaped key leaked into {f}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&d2);
+
     std::env::remove_var("C3_HTTP_KEY_SEED");
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -613,6 +638,153 @@ fn near_valid_reply_is_normalised_to_structured() {
     );
     let _ = mock.last_body();
     std::env::remove_var("C3_HTTP_KEY_NORM");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+const FIXTURE_04: &str = include_str!("fixtures/http/04-http-reply.reply.json");
+
+#[test]
+fn duplicate_schema_version_reply_is_normalised_and_becomes_the_reply_of_record() {
+    // (N1) The live review of the normaliser wrote schema_version twice (both "1"); the engine
+    // dedups it, makes the reply structured (2 findings, REJECT), and sets the repaired JSON as the
+    // reply-of-record so the orchestrator's strict re-parse succeeds. The warning names the change.
+    std::env::set_var("C3_HTTP_KEY_DUP", FAKE_KEY);
+    let mock = start_mock(vec![Resp::Raw(completion_response(FIXTURE_04))]);
+    let d = scratch("dup");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_DUP", &d);
+
+    let att = eng.attempt(&primary_turn()).unwrap();
+    match &att.outcome {
+        AttemptOutcome::Completed(reply) => {
+            let s = reply.structured.as_ref().expect("dedup -> structured");
+            assert_eq!(s.findings.len(), 2);
+            // The reply-of-record is now the repaired JSON with the duplicate key removed, so a
+            // strict re-parse by the orchestrator succeeds.
+            assert_eq!(
+                reply.raw_text.matches("\"schema_version\"").count(),
+                1,
+                "the duplicate schema_version is gone from the reply-of-record"
+            );
+            let raw: c3_core::engine::RawReply =
+                serde_json::from_str(&reply.raw_text).expect("raw_text is valid JSON");
+            assert!(
+                c3_core::engine::StructuredReply::try_from(raw).is_ok(),
+                "raw_text validates strictly"
+            );
+        }
+        other => panic!("expected Completed structured, got {other:?}"),
+    }
+    assert!(
+        att.warnings
+            .iter()
+            .any(|w| w.contains("duplicate key schema_version with identical values removed")),
+        "warnings: {:?}",
+        att.warnings
+    );
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_DUP");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+const FIXTURE_03: &str = include_str!("fixtures/http/03-http-reply.reply.json");
+
+#[test]
+fn repair_writes_the_models_exact_bytes_to_original_json() {
+    // (STEP 1) Whenever the normaliser changed the text, the model's reply is kept byte for byte in
+    // <stem>.original.json, the repaired reply-of-record parses strictly, and the events line and a
+    // warning name the original.
+    for (tag, fixture, findings) in [
+        ("o01", FIXTURE_01, 2usize),
+        ("o03", FIXTURE_03, 3),
+        ("o04", FIXTURE_04, 2),
+    ] {
+        let key = format!("C3_HTTP_KEY_{tag}");
+        std::env::set_var(&key, FAKE_KEY);
+        let mock = start_mock(vec![Resp::Raw(completion_response(fixture))]);
+        let d = scratch(tag);
+        let eng = engine(&mock.base_url, &key, &d);
+        let att = eng.attempt(&primary_turn()).unwrap();
+        match &att.outcome {
+            AttemptOutcome::Completed(reply) => {
+                let s = reply.structured.as_ref().expect("normalised -> structured");
+                assert_eq!(s.findings.len(), findings, "{tag}");
+                let raw: c3_core::engine::RawReply =
+                    serde_json::from_str(&reply.raw_text).expect("raw_text valid JSON");
+                assert!(
+                    c3_core::engine::StructuredReply::try_from(raw).is_ok(),
+                    "{tag}: raw_text validates strictly"
+                );
+            }
+            other => panic!("{tag}: expected Completed, got {other:?}"),
+        }
+        // The original bytes are preserved exactly.
+        let bytes = std::fs::read(eng.original_json_path()).expect("original.json written");
+        assert_eq!(
+            bytes,
+            fixture.as_bytes(),
+            "{tag}: .original.json is byte-identical"
+        );
+        // The events `normalised` line and a warning name it.
+        let ev = std::fs::read_to_string(eng.events_path()).unwrap();
+        assert!(
+            ev.contains("\"original\""),
+            "{tag}: events name the original"
+        );
+        assert!(
+            att.warnings
+                .iter()
+                .any(|w| w.contains("the reviewer's own text: handoffs/")),
+            "{tag}: warning names original: {:?}",
+            att.warnings
+        );
+        let _ = mock.last_body();
+        std::env::remove_var(&key);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[test]
+fn a_valid_reply_writes_no_original_json() {
+    // (STEP 1) A reply that needed no repair leaves no .original.json.
+    std::env::set_var("C3_HTTP_KEY_NOORIG", FAKE_KEY);
+    let mock = start_mock(vec![Resp::Raw(completion_response(
+        &structured_reply_json(),
+    ))]);
+    let d = scratch("noorig");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_NOORIG", &d);
+    let _ = eng.attempt(&primary_turn()).unwrap();
+    assert!(
+        !eng.original_json_path().exists(),
+        "an unchanged reply writes no .original.json"
+    );
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_NOORIG");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn unrepairable_reply_keeps_raw_text_and_writes_no_normalised_event() {
+    // (N3) A JSON-object reply with a key repeated at different values stays INVALID: structured is
+    // None, raw_text is the ORIGINAL (unchanged), and no `normalised` event is written.
+    std::env::set_var("C3_HTTP_KEY_BAD", FAKE_KEY);
+    let bad = r#"{"schema_version":"1","verdict":"REJECT","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+    let mock = start_mock(vec![Resp::Raw(completion_response(bad))]);
+    let d = scratch("bad");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_BAD", &d);
+
+    let att = eng.attempt(&primary_turn()).unwrap();
+    match &att.outcome {
+        AttemptOutcome::Completed(reply) => {
+            assert!(reply.structured.is_none(), "stays invalid");
+            assert_eq!(reply.raw_text, bad, "raw_text is the original, unchanged");
+        }
+        other => panic!("expected Completed, got {other:?}"),
+    }
+    assert!(att.warnings.is_empty(), "no normalisation warning");
+    let ev = std::fs::read_to_string(eng.events_path()).unwrap();
+    assert!(!ev.contains("\"normalised\""), "no normalised event: {ev}");
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_BAD");
     let _ = std::fs::remove_dir_all(&d);
 }
 

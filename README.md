@@ -1,12 +1,23 @@
 # C3 — claude-codex-consult in Rust
 
-**Status: early port.** Milestone 1 is done: `c3 providers` reproduces `codex-providers.ps1`
-(table, `--short`, `--json`, exit codes) byte for byte on the same machine; every other
-subcommand is a stub that says which milestone brings it. The working bridge today is the
-PowerShell plugin [`codex-consult`](https://github.com/xelth-com/claude-codex-consult)
-(install in Claude Code: `/plugin marketplace add xelth-com/claude-codex-consult`, then
-`/plugin install codex-consult@claude-codex-consult`). C3 is that bridge rewritten in Rust
-from a finished copy of it; the plugin stays, and its README is the specification this port
+**Status: the full surface runs.** The parity port (milestones 1–6) is in the binary —
+`c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse` and `http` engines),
+`c3 findings` (statuses and ratings), `c3 scoreboard`, `c3 hook`, `c3 telemetry`/`complain`/
+`forget-me`, the reviewer roster and the routed **panel** with detach/status/wait/prune/kick —
+and so are the heavy subsystems after it: **packs and the `http` engine** (milestone 7,
+run live against OpenRouter — see `docs/port/m7-status.md`), the **index** (milestone 8,
+SurrealDB behind a default feature), the **router** (milestone 9) and the **stdio MCP server**
+(milestone 10, `c3 mcp`). What is measured by which harness: milestone-1 parity by
+`docs/port/m1-acceptance.md` (byte-for-byte against `codex-providers.ps1`) and the per-milestone
+`m*-acceptance.md` / `m7-status.md` notes, plus `cargo test` (the c3 lib, `c3-core`, and the
+`http_engine` integration suite incl. a seeded-secret grep of every written file) and
+`cargo clippy -D warnings`. **Deliberately not ported: multi-host coordination.** The PowerShell
+plugin coordinates from Claude Code, Codex CLI, Z Code, Kimi Code or a plain shell; C3's
+coordinator host is **Claude Code only** (host-invariance across shells stays with the plugin).
+The PowerShell plugin [`codex-consult`](https://github.com/xelth-com/claude-codex-consult)
+remains installable (`/plugin marketplace add xelth-com/claude-codex-consult`, then
+`/plugin install codex-consult@claude-codex-consult`) and its `.collab` files are byte-compatible
+with C3's — either bridge reads the same task history. Its README is the specification this port
 follows section by section. Page: <https://xelth.com/C3/>.
 
 ## What it is
@@ -109,15 +120,20 @@ answers to.
 
 ## Install into Claude Code
 
-`plugin/` is a Claude Code plugin directory (milestone 6): a `SessionStart` hook and two
-skills (`consult`, `setup-providers`) that are a thin layer over the `c3` binary built
-above — it carries no reviewer logic of its own. Install the binary first (`cargo install
---path crates/c3-cli`, or a release download, on `PATH` or pointed at with `C3_EXE=<path>`),
-then add the plugin directory in Claude Code (`/plugin marketplace add`, then
-`/plugin install`, against this repository or a local checkout). See
-[plugin/README.md](plugin/README.md) for the exact commands, prerequisites and how it
-relates to the PowerShell [`codex-consult`](https://github.com/xelth-com/claude-codex-consult)
-plugin (both can be installed side by side; their `.collab` files are byte-compatible).
+`plugin/` is a Claude Code plugin directory: a `SessionStart` hook and three skills
+(`consult`, `coordinate`, `setup-providers`) with brief and role templates and an `evals/`
+suite — a thin layer over the `c3` binary built above, carrying no reviewer logic of its own.
+Install the binary first (`cargo install --path crates/c3-cli`, or a release download, on
+`PATH` or pointed at with `C3_EXE=<path>`), then add the plugin directory in Claude Code
+(`/plugin marketplace add`, then `/plugin install`, against this repository or a local
+checkout). The plugin does **not** ship the `c3 mcp` server enabled — a skills-driven Claude
+Code session already has the surface, and an always-on server would be a second, unguided way
+in; add it opt-in with a repo-root `.mcp.json` (see `docs/port/mcp.md`). See
+[plugin/README.md](plugin/README.md) for the exact commands, prerequisites and how it relates
+to the PowerShell [`codex-consult`](https://github.com/xelth-com/claude-codex-consult) plugin
+(both can be installed side by side; their `.collab` files are byte-compatible). The
+switch-over procedure from the PowerShell plugin to C3 is
+[docs/port/phase2-switch.md](docs/port/phase2-switch.md).
 
 ## License
 

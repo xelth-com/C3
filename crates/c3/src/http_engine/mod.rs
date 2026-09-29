@@ -316,25 +316,40 @@ impl HttpEngine {
             "prompt_sha256": prompt_sha,
         });
 
-        // Retain the pack BEFORE the request, so a reader knows what was sent even on a failure.
-        let (pack_md, pack_json) = self
-            .retain_pack(request_info)
-            .map_err(EngineError::Precheck)?;
+        // (STEP 2) A secondary turn (a format-repair replay or a timeout retry) appends to the same
+        // events file and marks its events with the turn label; a primary turn starts it fresh and
+        // is the one that (re)writes the retained pack.
+        let label = turn_label(turn.kind);
+        let fresh = label.is_none();
+
+        // Retain the pack BEFORE the request (primary turn only), so a reader knows what was sent
+        // even on a failure; a secondary turn reuses the pack already on disk.
+        let (pack_md, pack_json) = if fresh {
+            self.retain_pack(request_info)
+                .map_err(EngineError::Precheck)?
+        } else {
+            (self.pack_md_path(), self.pack_json_path())
+        };
         let provider_config = self.provider_config(&pack_md);
 
-        // (item 3) The event stream for this attempt: one JSON line per event, started fresh.
+        // (item 3) The event stream for this attempt.
         let events_path = self.events_path();
-        let _ = std::fs::write(&events_path, b"");
+        if fresh {
+            let _ = std::fs::write(&events_path, b"");
+        }
 
         // The key: read now, from the environment only, never logged.
         let Some(key) = self.resolve_key() else {
             self.append_event(
                 &events_path,
-                &json!({
-                    "event": "error",
-                    "class": "auth",
-                    "message": format!("env {} not set", self.config.key_env),
-                }),
+                &tag(
+                    label,
+                    json!({
+                        "event": "error",
+                        "class": "auth",
+                        "message": format!("env {} not set", self.config.key_env),
+                    }),
+                ),
             );
             return Ok(HttpAttempt {
                 outcome: AttemptOutcome::LaunchFailed {
@@ -356,19 +371,22 @@ impl HttpEngine {
         }
         self.append_event(
             &events_path,
-            &json!({
-                "event": "request",
-                "method": "POST",
-                "url": strip_query(&url),
-                "model": self.config.model,
-                "messages": messages.len(),
-                "body_bytes": body_str.len(),
-                "pack_sha256": c3_core::sha256_hex(self.pack.content.as_bytes()),
-                "headers": header_names,
-            }),
+            &tag(
+                label,
+                json!({
+                    "event": "request",
+                    "method": "POST",
+                    "url": strip_query(&url),
+                    "model": self.config.model,
+                    "messages": messages.len(),
+                    "body_bytes": body_str.len(),
+                    "pack_sha256": c3_core::sha256_hex(self.pack.content.as_bytes()),
+                    "headers": header_names,
+                }),
+            ),
         );
 
-        let (outcome, warnings) = self.post(&key, &url, &body_str, &events_path);
+        let (outcome, warnings) = self.post(&key, &url, &body_str, &events_path, label);
         Ok(HttpAttempt {
             outcome,
             pack_md,
@@ -381,6 +399,13 @@ impl HttpEngine {
     /// The `<stem>.events.jsonl` path (item 3): the request/response/error record for this attempt.
     pub fn events_path(&self) -> PathBuf {
         append_ext(&self.handoff_stem, "events.jsonl")
+    }
+
+    /// The `<stem>.original.json` path (STEP 1): the model's reply byte for byte, written whenever
+    /// the normaliser changed the text so the repaired reply-of-record can still be checked against
+    /// what the reviewer actually wrote (the plugin keeps `<stem>.original.md` for the same reason).
+    pub fn original_json_path(&self) -> PathBuf {
+        append_ext(&self.handoff_stem, "original.json")
     }
 
     /// Append one event as a JSON line (best-effort; a failed write never fails the run).
@@ -407,6 +432,7 @@ impl HttpEngine {
         url: &str,
         body: &str,
         events_path: &Path,
+        label: Option<&str>,
     ) -> (AttemptOutcome, Vec<String>) {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(self.config.timeout)
@@ -443,8 +469,12 @@ impl HttpEngine {
                 };
                 self.append_event(
                     events_path,
-                    &json!({ "event": "error", "class": failure.class, "code": failure.code,
-                        "message": failure.message, "elapsed_seconds": wall }),
+                    &tag(
+                        label,
+                        json!({ "event": "error", "class": failure.class,
+                        "code": failure.code, "message": failure.message,
+                        "elapsed_seconds": wall }),
+                    ),
                 );
                 (
                     AttemptOutcome::ProviderFailure {
@@ -463,7 +493,7 @@ impl HttpEngine {
                 // (item 1) The body is read HERE; the clock stops after it.
                 let text = resp.into_string().unwrap_or_default();
                 let wall = round1(started.elapsed().as_secs_f64());
-                self.parse_response(Some(key), &text, wall, status, req_id, events_path)
+                self.parse_response(Some(key), &text, wall, status, req_id, events_path, label)
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let retry_after = resp
@@ -476,9 +506,12 @@ impl HttpEngine {
                     self.classified_failure(Some(key), Some(code), &body_text, retry_after);
                 self.append_event(
                     events_path,
-                    &json!({ "event": "error", "class": failure.class, "code": failure.code,
-                        "message": failure.message, "elapsed_seconds": wall,
-                        "retry_after": failure.retry_after }),
+                    &tag(
+                        label,
+                        json!({ "event": "error", "class": failure.class,
+                        "code": failure.code, "message": failure.message,
+                        "elapsed_seconds": wall, "retry_after": failure.retry_after }),
+                    ),
                 );
                 (
                     AttemptOutcome::ProviderFailure {
@@ -494,8 +527,11 @@ impl HttpEngine {
                 if is_timeout(&message) {
                     self.append_event(
                         events_path,
-                        &json!({ "event": "error", "class": "unavailable", "message": message,
-                            "elapsed_seconds": wall }),
+                        &tag(
+                            label,
+                            json!({ "event": "error", "class": "unavailable",
+                            "message": message, "elapsed_seconds": wall }),
+                        ),
                     );
                     (
                         AttemptOutcome::TimedOut {
@@ -514,8 +550,11 @@ impl HttpEngine {
                     };
                     self.append_event(
                         events_path,
-                        &json!({ "event": "error", "class": failure.class,
+                        &tag(
+                            label,
+                            json!({ "event": "error", "class": failure.class,
                             "message": failure.message, "elapsed_seconds": wall }),
+                        ),
                     );
                     (
                         AttemptOutcome::ProviderFailure {
@@ -580,6 +619,7 @@ impl HttpEngine {
     /// LOCAL normaliser runs — the http engine has no enforced output schema — and, when it makes
     /// the reply valid, records a `reply normalised: <list>` warning. Writes the response event and,
     /// for an error envelope, the error event.
+    #[allow(clippy::too_many_arguments)]
     fn parse_response(
         &self,
         key: Option<&str>,
@@ -588,6 +628,7 @@ impl HttpEngine {
         status: u16,
         req_id: Option<String>,
         events_path: &Path,
+        label: Option<&str>,
     ) -> (AttemptOutcome, Vec<String>) {
         let json: Value = match serde_json::from_str(text) {
             Ok(v) => v,
@@ -598,8 +639,12 @@ impl HttpEngine {
                 );
                 self.append_event(
                     events_path,
-                    &json!({ "event": "error", "class": provider_failure_class(&message),
+                    &tag(
+                        label,
+                        json!({ "event": "error",
+                        "class": provider_failure_class(&message),
                         "message": message, "elapsed_seconds": wall }),
+                    ),
                 );
                 return (
                     AttemptOutcome::ProviderFailure {
@@ -624,17 +669,23 @@ impl HttpEngine {
         });
         self.append_event(
             events_path,
-            &json!({ "event": "response", "status": status, "id": id,
+            &tag(
+                label,
+                json!({ "event": "response", "status": status, "id": id,
                 "body_bytes": text.len(), "elapsed_seconds": wall }),
+            ),
         );
 
         if json.get("error").filter(|e| !e.is_null()).is_some() {
             let failure = self.classified_failure(key, Some(status), text, None);
             self.append_event(
                 events_path,
-                &json!({ "event": "error", "class": failure.class, "code": failure.code,
-                    "message": failure.message, "elapsed_seconds": wall,
-                    "retry_after": failure.retry_after }),
+                &tag(
+                    label,
+                    json!({ "event": "error", "class": failure.class,
+                    "code": failure.code, "message": failure.message,
+                    "elapsed_seconds": wall, "retry_after": failure.retry_after }),
+                ),
             );
             return (
                 AttemptOutcome::ProviderFailure {
@@ -660,26 +711,51 @@ impl HttpEngine {
             .unwrap_or("")
             .to_string();
 
-        // (item 2) Strict parse first; only on failure does the local normaliser run.
+        // (item 2 / N1-N3) Strict parse first; only on failure does the local normaliser run.
+        // On a successful repair the repaired JSON becomes the reply-of-record (`raw_text`), so the
+        // orchestrator's strict re-parse of the reply succeeds and the finding delta is ingested;
+        // the `normalised` event and the `reply normalised: <list>` warning are emitted only when
+        // the normaliser actually changed the text (a non-empty note list).
         let mut warnings = Vec::new();
+        let mut raw_text = content.clone();
         let structured = match crate::engines::codex::parse_structured(&content) {
             Some(s) => Some(s),
             None => match crate::consult::ingest::normalise_reply(&content) {
-                Some((s, notes)) => {
-                    self.append_event(
-                        events_path,
-                        &json!({ "event": "normalised", "notes": notes }),
-                    );
-                    warnings.push(crate::consult::ingest::normalised_note(&notes));
-                    Some(s)
+                crate::consult::ingest::Normalisation::Repaired { reply, json, notes } => {
+                    if !notes.is_empty() {
+                        // (STEP 1) Preserve the model's EXACT bytes before the repaired text becomes
+                        // the reply-of-record, so the record can show what the reviewer really wrote.
+                        let original = self.original_json_path();
+                        let _ = std::fs::write(&original, content.as_bytes());
+                        let original_name = original
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        self.append_event(
+                            events_path,
+                            &tag(
+                                label,
+                                json!({ "event": "normalised", "notes": notes,
+                                "original": original_name }),
+                            ),
+                        );
+                        warnings.push(format!(
+                            "{}; the reviewer's own text: handoffs/{original_name}",
+                            crate::consult::ingest::normalised_note(&notes)
+                        ));
+                    }
+                    raw_text = json;
+                    Some(reply)
                 }
-                None => None,
+                // The reply stays INVALID; the orchestrator's summary keeps the strict error and
+                // appends the normaliser's reason (via `ingest::first_validation_error`).
+                crate::consult::ingest::Normalisation::Failed { .. } => None,
             },
         };
 
         (
             AttemptOutcome::Completed(Reply {
-                raw_text: content,
+                raw_text,
                 structured,
                 events_path: self.events_path(),
                 usage: parse_usage(&json),
@@ -808,6 +884,41 @@ fn retry_to_string(v: &Value) -> String {
 /// A URL with any query or fragment removed (the events file records the path only).
 fn strip_query(url: &str) -> String {
     url.split(['?', '#']).next().unwrap_or(url).to_string()
+}
+
+/// (STEP 2) The events-file turn label for a turn kind: `None` for the primary turn (which starts
+/// the events file fresh), a marker for a secondary turn (which appends and tags its events).
+fn turn_label(kind: c3_core::engine::TurnKind) -> Option<&'static str> {
+    match kind {
+        c3_core::engine::TurnKind::Primary => None,
+        c3_core::engine::TurnKind::FormatRepair => Some("format-repair"),
+        c3_core::engine::TurnKind::TimeoutContinuation => Some("retry"),
+        c3_core::engine::TurnKind::DenialRetry => Some("denial-retry"),
+    }
+}
+
+/// (STEP 2) The pause before a timeout RETRY, or `None` when the failure is not retryable. Only an
+/// `unavailable` failure (a request timeout, a 5xx, or an overloaded/unavailable answer — item 4)
+/// is retried; `auth`, `quota` and `burst` are not. The pause is the provider's `retry_after` when
+/// given (a burst 429 above 120 s is not retried, but that class is already excluded), else 20 s,
+/// and never more than 120 s.
+pub fn retry_pause(class: &str, retry_after: Option<&str>) -> Option<Duration> {
+    if class != "unavailable" {
+        return None;
+    }
+    let secs = retry_after
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(20)
+        .min(120);
+    Some(Duration::from_secs(secs))
+}
+
+/// Add the `turn` label to an event object when this is a secondary turn (a no-op for the primary).
+fn tag(label: Option<&str>, mut v: Value) -> Value {
+    if let (Some(l), Some(o)) = (label, v.as_object_mut()) {
+        o.insert("turn".to_string(), Value::String(l.to_string()));
+    }
+    v
 }
 
 /// Whether a (already scrubbed) transport error message names a timeout. Matches the English
@@ -941,5 +1052,43 @@ mod tests {
         assert_eq!(u.output_tokens, 40);
         assert_eq!(u.total_tokens, Some(140));
         assert_eq!(u.reasoning_output_tokens, 12);
+    }
+
+    #[test]
+    fn retry_pause_only_for_unavailable_and_capped() {
+        // Only `unavailable` is retried; auth/quota/burst are not.
+        assert!(retry_pause("auth", None).is_none());
+        assert!(retry_pause("quota", Some("30")).is_none());
+        assert!(retry_pause("burst", Some("5")).is_none());
+        // `unavailable` retries: the provider's retry_after when given, else 20 s, capped at 120 s.
+        assert_eq!(
+            retry_pause("unavailable", None),
+            Some(Duration::from_secs(20))
+        );
+        assert_eq!(
+            retry_pause("unavailable", Some("0")),
+            Some(Duration::from_secs(0))
+        );
+        assert_eq!(
+            retry_pause("unavailable", Some("45")),
+            Some(Duration::from_secs(45))
+        );
+        assert_eq!(
+            retry_pause("unavailable", Some("999")),
+            Some(Duration::from_secs(120))
+        );
+    }
+
+    #[test]
+    fn turn_label_marks_only_secondary_turns() {
+        use c3_core::engine::TurnKind;
+        assert_eq!(turn_label(TurnKind::Primary), None);
+        assert_eq!(turn_label(TurnKind::FormatRepair), Some("format-repair"));
+        assert_eq!(turn_label(TurnKind::TimeoutContinuation), Some("retry"));
+        // A secondary event is tagged; a primary event is untouched.
+        let ev = tag(Some("retry"), json!({"event": "response"}));
+        assert_eq!(ev["turn"], "retry");
+        let ev = tag(None, json!({"event": "response"}));
+        assert!(ev.get("turn").is_none());
     }
 }
