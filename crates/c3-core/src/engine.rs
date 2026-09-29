@@ -343,6 +343,18 @@ pub enum AttemptOutcome {
         /// The measured wall time of the killed turn (`[math]::Round(..., 1)`).
         wall_seconds: f64,
     },
+    /// (wave 26b, D10/D12) A subprocess turn the bridge stopped for a reason other than its
+    /// wall-clock timeout: the stall cut (`--stall-sec`: no event for that long while the process
+    /// lived) or the operator's `-Kick`. Carries the same salvage/survivors/conversation the
+    /// [`TimedOut`] path does; [`StopKind`] tells them apart (a stall is stopped like a timeout —
+    /// one continuation turn follows; a kick has no continuation and is class `operator`).
+    Stopped {
+        kind: StopKind,
+        partial: Option<String>,
+        survivors: Vec<u32>,
+        conversation: ConversationTrust,
+        wall_seconds: f64,
+    },
     LaunchFailed {
         /// Whether a child process was left behind by the failed launch.
         child_exists: bool,
@@ -355,6 +367,21 @@ pub enum AttemptOutcome {
         exit_code: Option<i32>,
     },
     Cancelled,
+}
+
+/// Why a subprocess turn was stopped short of a natural exit or a wall-clock timeout
+/// (`AttemptOutcome::Stopped`).
+#[derive(Debug, Clone)]
+pub enum StopKind {
+    /// The stall cut fired: the event stream produced no event for `silent_seconds` while the
+    /// process lived (with the tool-call suspension of wave 26c D3). `last_event` is the ISO time
+    /// of the last event seen before the kill, `None` when none was seen.
+    Stall {
+        silent_seconds: i64,
+        last_event: Option<String>,
+    },
+    /// The operator stopped the run with `-Kick`.
+    Kick,
 }
 
 // --------------------------------------------------------------------------- v1 reply schema

@@ -51,12 +51,18 @@ fn on_running_fires_with_child_pid_and_timeout_kills() {
         events_path: &events,
         stderr_path: &stderr,
         timeout: Duration::from_secs(1),
+        stall_sec: 0,
+        kick_path: None,
+        tool_delta: None,
         on_running: Some(&cb),
     };
     let result = run_turn(&req);
 
     assert!(result.started, "the child started");
-    assert!(result.timed_out, "the 1 s timeout killed the ~29 s hang");
+    assert!(
+        matches!(result.stop, c3::engines::subprocess::TurnStop::Timeout),
+        "the 1 s timeout killed the ~29 s hang"
+    );
     let pid = seen_pid.load(Ordering::SeqCst);
     assert!(pid > 0, "on_running fired with a real child pid ({pid})");
 
@@ -90,6 +96,9 @@ fn survivor_hook_adds_a_live_pid_to_the_kill() {
         events_path: &events,
         stderr_path: &stderr,
         timeout: Duration::from_secs(1),
+        stall_sec: 0,
+        kick_path: None,
+        tool_delta: None,
         on_running: None,
     };
     let result = run_turn(&req);
@@ -98,7 +107,10 @@ fn survivor_hook_adds_a_live_pid_to_the_kill() {
     let _ = helper.kill();
     let _ = helper.wait();
 
-    assert!(result.timed_out);
+    assert!(matches!(
+        result.stop,
+        c3::engines::subprocess::TurnStop::Timeout
+    ));
     assert!(
         result.survivors.contains(&helper_pid),
         "the survivor hook added the live helper pid {helper_pid}; got {:?}",

@@ -537,7 +537,15 @@ pub fn endpoint_health(
         }
         records.push(rec);
     }
-    records.sort_by(|a, b| b.order.cmp(&a.order).then(b.n.cmp(&a.n)));
+    // wave 26c D2: newest `order` wins, ties broken by higher `n`, then by later `until` so
+    // an artificial tie (e.g. two machine-health records minted in the same instant) still
+    // resolves deterministically.
+    records.sort_by(|a, b| {
+        b.order
+            .cmp(&a.order)
+            .then(b.n.cmp(&a.n))
+            .then(b.until.cmp(&a.until))
+    });
 
     let auth = records.iter().find(|r| r.ok || r.class == "auth").cloned();
     if let Some(a) = auth {
@@ -578,4 +586,647 @@ pub fn endpoint_health(
     }
     h.recent_usable = records.iter().find(|r| r.ok && r.age <= 60.0).cloned();
     h
+}
+
+// --------------------------------------------------------------------------- machine health
+//
+// One JSON file per machine (`codex-consult-health.json` under the codex home, or the path
+// named by `CODEX_CONSULT_HEALTH`) that repositories share so they see each other's endpoint
+// failures and running panel members. Ported from the plugin's machine-wide health file
+// (wave 26c). `endpoint_health` above stays ledger-only; `machine_endpoint_consults` folds
+// these records in as synthetic consults for a caller that wants the merge.
+
+use std::fs::OpenOptions;
+use std::path::{Path, PathBuf};
+
+const MACHINE_HEALTH_FILE: &str = "codex-consult-health.json";
+const MACHINE_HEALTH_MAX_ENDPOINTS: usize = 500;
+
+/// One endpoint record in the machine-wide health file.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
+pub struct MachineEndpoint {
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default)]
+    pub class: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub retry_after: Option<String>,
+    #[serde(default)]
+    pub repo: String,
+    #[serde(default)]
+    pub when: String,
+    #[serde(default)]
+    pub message: String,
+}
+
+/// One running-member row in the machine-wide health file.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug, Default)]
+pub struct MachineRunning {
+    #[serde(default)]
+    pub endpoint: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub start_time: String,
+    #[serde(default)]
+    pub repo: String,
+    #[serde(default)]
+    pub task: String,
+    #[serde(default)]
+    pub nn: String,
+    #[serde(default)]
+    pub panel: String,
+    #[serde(default)]
+    pub since: String,
+}
+
+/// The parsed machine health file. Not the wire shape directly — `update_machine_health`
+/// writes the `{health_version, endpoints, running}` object the file actually holds.
+#[derive(Clone, Debug, Default)]
+pub struct MachineHealth {
+    pub endpoints: Vec<MachineEndpoint>,
+    pub running: Vec<MachineRunning>,
+}
+
+/// The fields an `Add-MachineHealthRecord` needs from a provider failure.
+#[derive(Clone, Debug, Default)]
+pub struct MachineFailure {
+    pub class: String,
+    pub kind: String,
+    pub when: String,
+    pub retry_after: Option<String>,
+    pub message: String,
+}
+
+/// `Get-MachineHealthPath`: `CODEX_CONSULT_HEALTH` wins when set and non-blank (the literal
+/// `none`, case-insensitively, disables the file), else `<codex_home>/codex-consult-health.json`,
+/// else `None` when there is no codex home.
+pub fn machine_health_path(codex_home: &str) -> Option<PathBuf> {
+    if let Ok(v) = std::env::var("CODEX_CONSULT_HEALTH") {
+        let v = v.trim();
+        if !v.is_empty() {
+            if v.eq_ignore_ascii_case("none") {
+                return None;
+            }
+            return Some(PathBuf::from(v));
+        }
+    }
+    if codex_home.is_empty() {
+        return None;
+    }
+    Some(Path::new(codex_home).join(MACHINE_HEALTH_FILE))
+}
+
+/// `Read-MachineHealth`: never errors — a missing, unreadable, or unparseable file reads as
+/// empty. Endpoint entries with an empty `endpoint` fingerprint are dropped.
+pub fn read_machine_health(path: &Path) -> MachineHealth {
+    let mut out = MachineHealth::default();
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return out,
+    };
+    let v: Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return out,
+    };
+    if let Some(arr) = v["endpoints"].as_array() {
+        for e in arr {
+            if let Ok(rec) = serde_json::from_value::<MachineEndpoint>(e.clone()) {
+                if !rec.endpoint.is_empty() {
+                    out.endpoints.push(rec);
+                }
+            }
+        }
+    }
+    if let Some(arr) = v["running"].as_array() {
+        for r in arr {
+            if let Ok(rec) = serde_json::from_value::<MachineRunning>(r.clone()) {
+                out.running.push(rec);
+            }
+        }
+    }
+    out
+}
+
+fn now_offset() -> DateTime<FixedOffset> {
+    Utc::now().with_timezone(&FixedOffset::east_opt(0).unwrap())
+}
+
+/// `Add-MachineHealthRecord`: builds a `MachineEndpoint` from an outcome/failure and merges
+/// it into the machine-wide file. Returns `false` without writing when there is nothing to
+/// record: no fingerprint, an operator-class failure, or neither a usable outcome nor a
+/// failure.
+pub fn add_machine_health_record(
+    path: &Path,
+    fingerprint: &str,
+    outcome: &str,
+    failure: Option<&MachineFailure>,
+    repo: &str,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> bool {
+    if fingerprint.is_empty() {
+        return false;
+    }
+    let record = if is_usable_outcome(outcome) {
+        MachineEndpoint {
+            endpoint: fingerprint.to_string(),
+            class: "ok".into(),
+            kind: String::new(),
+            until: None,
+            retry_after: None,
+            repo: repo.to_string(),
+            when: format_offset_iso(now_offset()),
+            message: String::new(),
+        }
+    } else if let Some(f) = failure {
+        let class = f.class.clone();
+        if class.is_empty() || class == "operator" {
+            return false;
+        }
+        let when = DateTime::parse_from_rfc3339(&f.when).unwrap_or_else(|_| now_offset());
+        let kind = f.kind.clone();
+        let (until, retry_after) = if class == "quota" {
+            let ra = f
+                .retry_after
+                .as_deref()
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
+            match ra {
+                Some(r) => (Some(r), Some(r)),
+                None => {
+                    let mins = if kind == "burst" {
+                        BURST_OUT_MINUTES
+                    } else {
+                        QUOTA_OUT_MINUTES
+                    };
+                    (Some(when + Duration::minutes(mins)), None)
+                }
+            }
+        } else if class == "auth" {
+            (Some(when + Duration::hours(24)), None)
+        } else {
+            (None, None)
+        };
+        let mut message = f.message.clone();
+        let chars: Vec<char> = message.chars().collect();
+        if chars.len() > 200 {
+            message = chars[..200].iter().collect();
+        }
+        MachineEndpoint {
+            endpoint: fingerprint.to_string(),
+            class,
+            kind,
+            until: until.map(format_offset_iso),
+            retry_after: retry_after.map(format_offset_iso),
+            repo: repo.to_string(),
+            when: format_offset_iso(when),
+            message,
+        }
+    } else {
+        return false;
+    };
+    update_machine_health(path, Some(record), None, 0, is_alive)
+}
+
+/// `Register-MachineRunning`: removes any existing row for `row.pid`, then adds it.
+pub fn register_machine_running(
+    path: &Path,
+    row: MachineRunning,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> bool {
+    let pid = row.pid;
+    update_machine_health(path, None, Some(row), pid, is_alive)
+}
+
+/// `Unregister-MachineRunning`: drops any running row for `pid`.
+pub fn unregister_machine_running(
+    path: &Path,
+    pid: u32,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> bool {
+    update_machine_health(path, None, None, pid, is_alive)
+}
+
+/// `Get-MachineRunningCount`: the live running rows (per `is_alive`) whose endpoint is one of
+/// `fingerprints`, excluding `exclude_panel`'s own rows when that panel id is non-empty. Reads
+/// the file directly, not under the write lock.
+pub fn machine_running_count(
+    path: &Path,
+    fingerprints: &[String],
+    exclude_panel: &str,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> Vec<MachineRunning> {
+    read_machine_health(path)
+        .running
+        .into_iter()
+        .filter(|r| fingerprints.iter().any(|f| f == &r.endpoint))
+        .filter(|r| !(!exclude_panel.is_empty() && r.panel == exclude_panel))
+        .filter(|r| is_alive(r.pid, &r.start_time))
+        .collect()
+}
+
+/// Acquire the machine-health lock file (`<path>.lock`), retrying with a doubling back-off
+/// (25 ms, capped at 500 ms) for up to 10 seconds. `None` when the lock could never be taken.
+#[cfg(windows)]
+fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let started = std::time::Instant::now();
+    let mut delay = std::time::Duration::from_millis(25);
+    loop {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .share_mode(0)
+            .open(lock_path)
+        {
+            Ok(f) => return Some(f),
+            Err(_) => {
+                if started.elapsed() >= std::time::Duration::from_secs(10) {
+                    return None;
+                }
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(std::time::Duration::from_millis(500));
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
+    let started = std::time::Instant::now();
+    let mut delay = std::time::Duration::from_millis(25);
+    loop {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(lock_path)
+        {
+            Ok(f) => return Some(f),
+            Err(_) => {
+                if started.elapsed() >= std::time::Duration::from_secs(10) {
+                    return None;
+                }
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(std::time::Duration::from_millis(500));
+            }
+        }
+    }
+}
+
+/// Read-modify-write the machine health file under the `<path>.lock` exclusive lock: apply
+/// `add_endpoint`/`add_running`/`remove_pid`, prune stale endpoints and dead running rows, cap
+/// endpoints to the last 500, and write atomically. Never panics; any failure returns `false`.
+fn update_machine_health(
+    path: &Path,
+    add_endpoint: Option<MachineEndpoint>,
+    add_running: Option<MachineRunning>,
+    remove_pid: u32,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> bool {
+    let mut lock_os = path.as_os_str().to_os_string();
+    lock_os.push(".lock");
+    let lock_path = PathBuf::from(lock_os);
+    let _lock = match acquire_machine_lock(&lock_path) {
+        Some(f) => f,
+        None => return false,
+    };
+
+    let result = (|| -> bool {
+        let current = read_machine_health(path);
+        let mut endpoints = current.endpoints;
+        if let Some(e) = add_endpoint {
+            endpoints.push(e);
+        }
+        let mut running = current.running;
+        if remove_pid > 0 {
+            running.retain(|r| r.pid != remove_pid);
+        }
+        if let Some(r) = add_running {
+            running.push(r);
+        }
+
+        let now = Utc::now();
+        endpoints.retain(|e| {
+            let recent = DateTime::parse_from_rfc3339(&e.when)
+                .map(|w| (now - w.with_timezone(&Utc)).num_hours() <= 24)
+                .unwrap_or(false);
+            let still_out = e
+                .until
+                .as_deref()
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                .map(|u| u.with_timezone(&Utc) > now)
+                .unwrap_or(false);
+            recent || still_out
+        });
+        if endpoints.len() > MACHINE_HEALTH_MAX_ENDPOINTS {
+            let drop = endpoints.len() - MACHINE_HEALTH_MAX_ENDPOINTS;
+            endpoints.drain(0..drop);
+        }
+        running.retain(|r| is_alive(r.pid, &r.start_time));
+
+        let out = serde_json::json!({
+            "health_version": 1,
+            "endpoints": endpoints,
+            "running": running,
+        });
+        let mut text = match serde_json::to_string_pretty(&out) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        text.push('\n');
+        crate::store::write_text_atomic(path, text.as_bytes()).is_ok()
+    })();
+
+    #[cfg(not(windows))]
+    {
+        let _ = std::fs::remove_file(&lock_path);
+    }
+
+    result
+}
+
+/// `Get-MachineEndpointConsults`: synthesizes a "consult" `Value` per machine-health record
+/// for `fingerprint`, in the shape `endpoint_health` already reads, so a caller can fold the
+/// machine file's records in alongside the ledger's own consults.
+pub fn machine_endpoint_consults(path: &Path, fingerprint: &str) -> Vec<Value> {
+    machine_consults_filtered(path, Some(fingerprint))
+}
+
+/// Every endpoint record of the machine file as a synthetic consult (all fingerprints), for
+/// folding into an [`endpoint_health`] computation across a repository's own ledgers.
+pub fn machine_endpoint_consults_all(path: &Path) -> Vec<Value> {
+    machine_consults_filtered(path, None)
+}
+
+fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Value> {
+    read_machine_health(path)
+        .endpoints
+        .into_iter()
+        .filter(|e| fingerprint.is_none_or(|fp| e.endpoint == fp))
+        .map(|e| {
+            let mut v = serde_json::json!({
+                "when": e.when,
+                "n": 0,
+                "finished_at": e.when,
+                "reviewer": { "provider_fingerprint": e.endpoint },
+            });
+            if e.class == "ok" {
+                v["bridge_outcome"] = Value::String("usable reply".into());
+            } else {
+                let msg = if !e.message.is_empty() {
+                    e.message.clone()
+                } else {
+                    e.class.clone()
+                };
+                v["bridge_outcome"] = Value::String(format!("failed: {msg}"));
+                v["provider_failure"] = serde_json::json!({
+                    "class": e.class,
+                    "kind": e.kind,
+                    "message": e.message,
+                    "when": e.when,
+                    "retry_after": e.retry_after,
+                });
+            }
+            v
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod machine_health_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_path(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "c3-health-test-{}-{nanos:x}-{n:x}-{name}.json",
+            std::process::id()
+        ))
+    }
+
+    fn alive_true(_pid: u32, _start: &str) -> bool {
+        true
+    }
+    fn alive_false(_pid: u32, _start: &str) -> bool {
+        false
+    }
+
+    #[test]
+    fn machine_health_path_env_none_disables() {
+        std::env::set_var("CODEX_CONSULT_HEALTH", "none");
+        assert_eq!(machine_health_path("C:/codex-home"), None);
+        std::env::set_var("CODEX_CONSULT_HEALTH", "  NoNe  ");
+        assert_eq!(machine_health_path("C:/codex-home"), None);
+        std::env::remove_var("CODEX_CONSULT_HEALTH");
+    }
+
+    #[test]
+    fn machine_health_path_env_overrides() {
+        std::env::set_var("CODEX_CONSULT_HEALTH", "C:/somewhere/health.json");
+        assert_eq!(
+            machine_health_path("C:/codex-home"),
+            Some(PathBuf::from("C:/somewhere/health.json"))
+        );
+        std::env::remove_var("CODEX_CONSULT_HEALTH");
+    }
+
+    #[test]
+    fn machine_health_path_default_from_codex_home() {
+        std::env::remove_var("CODEX_CONSULT_HEALTH");
+        assert_eq!(
+            machine_health_path("C:/codex-home"),
+            Some(PathBuf::from("C:/codex-home").join("codex-consult-health.json"))
+        );
+        assert_eq!(machine_health_path(""), None);
+    }
+
+    #[test]
+    fn add_record_quota_failure_no_retry_after_uses_out_window() {
+        let path = temp_path("quota");
+        let failure = MachineFailure {
+            class: "quota".into(),
+            kind: String::new(),
+            when: format_offset_iso(now_offset()),
+            retry_after: None,
+            message: "usage limit reached".into(),
+        };
+        let ok = add_machine_health_record(
+            &path,
+            "fp1",
+            "failed: usage limit",
+            Some(&failure),
+            "repo-a",
+            &alive_true,
+        );
+        assert!(ok);
+        let health = read_machine_health(&path);
+        assert_eq!(health.endpoints.len(), 1);
+        let rec = &health.endpoints[0];
+        assert_eq!(rec.class, "quota");
+        assert!(rec.retry_after.is_none());
+        assert!(!rec.message.is_empty());
+        let when = DateTime::parse_from_rfc3339(&rec.when).unwrap();
+        let until = DateTime::parse_from_rfc3339(rec.until.as_deref().unwrap()).unwrap();
+        assert_eq!((until - when).num_minutes(), QUOTA_OUT_MINUTES);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn add_record_usable_outcome_is_ok_class() {
+        let path = temp_path("ok");
+        let ok =
+            add_machine_health_record(&path, "fp2", "usable reply", None, "repo-a", &alive_true);
+        assert!(ok);
+        let health = read_machine_health(&path);
+        assert_eq!(health.endpoints.len(), 1);
+        assert_eq!(health.endpoints[0].class, "ok");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn merge_newer_ok_clears_older_quota() {
+        let older = now_offset() - Duration::minutes(30);
+        let newer = now_offset();
+        let ledger_consult = serde_json::json!({
+            "when": format_offset_iso(older),
+            "finished_at": format_offset_iso(older),
+            "n": 1,
+            "reviewer": { "provider_fingerprint": "fp3" },
+            "bridge_outcome": "failed: usage limit",
+            "provider_failure": {
+                "class": "quota",
+                "kind": "",
+                "message": "usage limit reached",
+                "when": format_offset_iso(older),
+                "retry_after": null,
+            },
+        });
+        let path = temp_path("merge-ok");
+        add_machine_health_record(&path, "fp3", "usable reply", None, "repo-a", &alive_true);
+        // stamp the ok record's `when` to be newer than the ledger consult
+        {
+            let mut h = read_machine_health(&path);
+            h.endpoints[0].when = format_offset_iso(newer);
+            let out = serde_json::json!({
+                "health_version": 1,
+                "endpoints": h.endpoints,
+                "running": h.running,
+            });
+            std::fs::write(&path, serde_json::to_string_pretty(&out).unwrap()).unwrap();
+        }
+        let machine_consults = machine_endpoint_consults(&path, "fp3");
+        let mut consults = vec![ledger_consult];
+        consults.extend(machine_consults);
+        let health = endpoint_health(&consults, "fp3", Utc::now());
+        assert!(health.quota.is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn merge_newer_quota_keeps_quota() {
+        let older = now_offset() - Duration::minutes(30);
+        let newer = now_offset();
+        let ledger_consult = serde_json::json!({
+            "when": format_offset_iso(older),
+            "finished_at": format_offset_iso(older),
+            "n": 1,
+            "reviewer": { "provider_fingerprint": "fp4" },
+            "bridge_outcome": "usable reply",
+        });
+        let path = temp_path("merge-quota");
+        let failure = MachineFailure {
+            class: "quota".into(),
+            kind: String::new(),
+            when: format_offset_iso(newer),
+            retry_after: None,
+            message: "usage limit reached".into(),
+        };
+        add_machine_health_record(
+            &path,
+            "fp4",
+            "failed: usage limit",
+            Some(&failure),
+            "repo-a",
+            &alive_true,
+        );
+        let machine_consults = machine_endpoint_consults(&path, "fp4");
+        let mut consults = vec![ledger_consult];
+        consults.extend(machine_consults);
+        let health = endpoint_health(&consults, "fp4", Utc::now());
+        assert!(health.quota.is_some());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn prune_drops_old_expired_keeps_old_still_out_drops_dead_running() {
+        let path = temp_path("prune");
+        let old_when = now_offset() - Duration::hours(48);
+        let past_until = now_offset() - Duration::hours(1);
+        let future_until = now_offset() + Duration::hours(1);
+        let expired = MachineEndpoint {
+            endpoint: "fp-expired".into(),
+            class: "quota".into(),
+            kind: String::new(),
+            until: Some(format_offset_iso(past_until)),
+            retry_after: None,
+            repo: "repo-a".into(),
+            when: format_offset_iso(old_when),
+            message: String::new(),
+        };
+        let still_out = MachineEndpoint {
+            endpoint: "fp-still-out".into(),
+            class: "auth".into(),
+            kind: String::new(),
+            until: Some(format_offset_iso(future_until)),
+            retry_after: None,
+            repo: "repo-a".into(),
+            when: format_offset_iso(old_when),
+            message: String::new(),
+        };
+        let running_row = MachineRunning {
+            endpoint: "fp-run".into(),
+            label: "label".into(),
+            pid: 4242,
+            start_time: format_offset_iso(now_offset()),
+            repo: "repo-a".into(),
+            task: "task".into(),
+            nn: "01".into(),
+            panel: String::new(),
+            since: format_offset_iso(now_offset()),
+        };
+        // seed the file directly, then run one update via unregister with a no-op pid to
+        // trigger the prune pass.
+        let seed = serde_json::json!({
+            "health_version": 1,
+            "endpoints": [expired, still_out],
+            "running": [running_row],
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+        let ok = unregister_machine_running(&path, 0, &alive_false);
+        assert!(ok);
+        let health = read_machine_health(&path);
+        let endpoints: Vec<&str> = health
+            .endpoints
+            .iter()
+            .map(|e| e.endpoint.as_str())
+            .collect();
+        assert!(!endpoints.contains(&"fp-expired"));
+        assert!(endpoints.contains(&"fp-still-out"));
+        assert!(health.running.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
 }

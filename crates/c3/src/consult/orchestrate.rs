@@ -299,7 +299,7 @@ fn resolve_preflight(
     // 24 h), usage limit (with a reset), burst 429 (10 min) or reset-less quota (60 min) blocks
     // a later run before the lock (F09-2/4).
     let health = if id.resolved {
-        let consults = providers::read_all_task_consults(collab_root);
+        let consults = providers::read_all_task_consults_health(collab_root);
         let utc_now = c3_core::peak::consult_clock(0)
             .map(|(u, _, _)| u)
             .unwrap_or_else(|_| chrono::Utc::now());
@@ -503,6 +503,15 @@ pub(crate) struct Context {
     pub(crate) role: String,
     /// The panel-wide roles note (ledger `panel.roles_note`), if any.
     pub(crate) roles_note: String,
+    /// (wave 26b, D16) a fork/resume the reviewer's context window forced down to a new thread
+    /// (`{from, to, reason}`); `None` when the mode was not downgraded.
+    pub(crate) mode_fallback: Option<c3_core::ledger::ModeFallback>,
+    /// (wave 26b, D12) the effective stall cut in seconds for this run (`0` = off), after the
+    /// roster entry's `stall_sec` override.
+    pub(crate) stall_sec: i64,
+    /// (wave 26b, D10) this run's kick file `<task>/.consult.kick-<NN>`; the primary turn watches
+    /// it and, when it appears, stops as `stopped by the operator (-Kick)`.
+    pub(crate) kick_path: PathBuf,
     // paths
     pub(crate) handoffs_dir: PathBuf,
     pub(crate) reply_path: PathBuf,
@@ -565,6 +574,9 @@ fn run_inner(o: Options) -> i32 {
     // and finishes a commit the test means to interrupt. No effect in production (the var is unset);
     // a panel member never has it (the panel run clears it when spawning members).
     crate::liveness::proc::watch_bridge();
+    // Hand the validated bridge pid to c3-core once, so its lock records name it without c3-core
+    // ever reading the environment itself (an invalid or non-ancestor hook resolves to our own pid).
+    c3_core::store::set_bridge_pid(crate::liveness::proc::bridge_identity().0);
     // `-CodexConfig` `~` expansion uses the real user home ($HOME / $USERPROFILE), exactly like
     // the plugin (`codex-consult-common.ps1:2576`), NOT CODEX_HOME.
     let home = std::env::var("HOME")
@@ -575,6 +587,10 @@ fn run_inner(o: Options) -> i32 {
     // `-Detach -PanelSpec` is a misuse the `-Detach` foreground refuses, so it takes precedence.
     if !o.panel_spec.is_empty() && !o.detach {
         return run_member(o, home.as_deref());
+    }
+    // ---- (wave 26b, D10) -Kick / -Member: stop one running member (before the run surface).
+    if o.kick || !o.member.is_empty() {
+        return super::kick::run(&o);
     }
     // ---- the detached surface (R12): -Status/-Wait (read only), -DetachId (the background), the
     // -Id/-Prune misuse refusal, and -Detach (the foreground). Ordered as `codex-consult.ps1`.
@@ -940,6 +956,8 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         timeout_sec: i("timeout_sec", 0),
         continue_sec,
         continue_sec_given: continue_sec != -1,
+        stall_sec: i("stall_sec", -1),
+        stall_sec_given: i("stall_sec", -1) != -1,
         range: s("range"),
         reply_name: s("reply_name"),
         artifacts: list("artifact"),
@@ -981,6 +999,8 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         wait_timeout_sec: 0,
         wait_timeout_sec_given: false,
         prune: false,
+        kick: false,
+        member: String::new(),
     }
 }
 
@@ -994,6 +1014,20 @@ fn build_context(
     let repo_root = providers::resolve_repo_root(&cwd);
     let collab_root = providers::resolve_collab_root(&repo_root, &o.collab_dir);
     let task = TaskSlug::new(o.task.clone()).map_err(|e| (e.to_string(), 1))?;
+
+    // (wave 26b, D16) the new prompt's estimated token size ((ask + brief file) / 4 chars a
+    // token), computed early so the roster walk can skip a reviewer whose context window the brief
+    // alone would overflow. The brief path is resolved fully later; here only its byte length.
+    let prompt_estimate = {
+        let bp = if o.brief.is_empty() {
+            None
+        } else if Path::new(&o.brief).is_absolute() {
+            Some(PathBuf::from(&o.brief))
+        } else {
+            Some(cwd.join(&o.brief))
+        };
+        estimate_prompt_tokens(&o.prompt, bp.as_deref())
+    };
 
     // Launcher + config + identity.
     let launcher = providers::resolve_codex_launcher(&o.codex_exe).map_err(|m| (m, 1))?;
@@ -1058,6 +1092,9 @@ fn build_context(
     let mut roster_entry: Option<c3_core::roster::RosterEntry> = None;
     let mut roster_skipped: Vec<(String, String, String, String)> = Vec::new();
     let mut roster_applied: Vec<String> = Vec::new();
+    // (wave 26b, D12) the effective stall cut: the --stall-sec baseline, overridden by the
+    // matched roster entry's stall_sec below (unless --stall-sec was given).
+    let mut stall_sec = r.stall_sec;
     let mut run_warnings: Vec<String> = Vec::new();
     let mut extra_config_source = if r.extra_config.is_empty() {
         String::new()
@@ -1197,7 +1234,7 @@ fn build_context(
             roster_rule = "walk".into();
             let walk_ctx = providers::Ctx::for_consult(
                 config.clone(),
-                providers::read_all_task_consults(&collab_root),
+                providers::read_all_task_consults_health(&collab_root),
                 roster.clone(),
                 launcher.clone(),
                 openai_base_url.clone(),
@@ -1206,7 +1243,8 @@ fn build_context(
             if !engine_exe_engine.is_empty() {
                 walk_ctx.seed_engine_launcher(&engine_exe_engine, &engine_exe_launcher);
             }
-            let walk = walk_ctx.walk_full(&o.model, &o.engine, o.skip_preflight);
+            let walk =
+                walk_ctx.walk_full_ctx(&o.model, &o.engine, o.skip_preflight, prompt_estimate);
             if !walk.error.is_empty() {
                 return Err((walk.error, 1));
             }
@@ -1234,6 +1272,23 @@ fn build_context(
                 r.extra_config = e.codex_config.clone();
                 extra_config_source = "roster".into();
                 roster_applied.push("codex_config".into());
+            }
+        }
+        // (wave 26b, D11/D12) the matched entry's own timeout_sec / stall_sec. An explicit
+        // --timeout-sec / --stall-sec wins (a panel member inherits the panel run's resolution);
+        // timeout_sec replaces the purpose default and continue_sec follows it.
+        if let Some(e) = &roster_entry {
+            if r.timeout_source == "purpose" && e.timeout_sec >= 60 {
+                r.timeout_sec = e.timeout_sec;
+                r.timeout_source = "roster".into();
+                if !o.continue_sec_given {
+                    r.continue_sec = r.timeout_sec.min(900);
+                }
+                roster_applied.push("timeout_sec".into());
+            }
+            if !r.stall_given && e.stall_sec >= 0 {
+                stall_sec = e.stall_sec;
+                roster_applied.push("stall_sec".into());
             }
         }
     }
@@ -1393,7 +1448,7 @@ fn build_context(
             // The check is skipped, but an active quota record still earns a warning (the plugin's
             // `Format-QuotaWarning`), printed before launch and recorded in the ledger.
             let warning = if identity.resolved {
-                let consults = providers::read_all_task_consults(&collab_root);
+                let consults = providers::read_all_task_consults_health(&collab_root);
                 let health =
                     c3_core::health::endpoint_health(&consults, &identity.fingerprint, utc_now);
                 format_quota_warning(&identity, &health)
@@ -1418,7 +1473,7 @@ fn build_context(
         if let Some((refusal, code)) = preflight_refusal.take() {
             let alt = providers::Ctx::for_consult(
                 config.clone(),
-                providers::read_all_task_consults(&collab_root),
+                providers::read_all_task_consults_health(&collab_root),
                 roster.clone(),
                 launcher.clone(),
                 openai_base_url.clone(),
@@ -1500,9 +1555,11 @@ fn build_context(
         Ok(p) => p,
         Err(refusal) => return Err((refusal, 1)),
     };
-    let effective_mode = parent.mode.clone();
-    let parent_thread = parent.parent_thread.clone();
+    let mut effective_mode = parent.mode.clone();
+    let mut parent_thread = parent.parent_thread.clone();
     let parent_note = parent.note.clone();
+    // (wave 26b, D16) the reviewer's context window (its roster entry's context_tokens; 0 = none).
+    let context_tokens = roster_entry.as_ref().map(|e| e.context_tokens).unwrap_or(0);
 
     let nn_n = store.next_numbers(&task).map_err(|e| (e.to_string(), 1))?;
     let (mut nn, mut consult_n) = (nn_n.nn, nn_n.n);
@@ -1567,6 +1624,75 @@ fn build_context(
         .and_then(|p| std::fs::read(p).ok())
         .map(|b| c3_core::sha256_hex(&b))
         .unwrap_or_default();
+
+    // (wave 26b, D16 b) a single run's explicit reviewer (-Provider / -Thread) whose context
+    // window the new prompt alone would fill beyond 80% is refused before anything starts (a
+    // roster walk skips it instead; a panel member is skipped at selection).
+    if member.is_none() && roster_rule != "walk" && context_tokens > 0 {
+        if let Some(e) = &roster_entry {
+            if (prompt_estimate as f64) > 0.8 * context_tokens as f64 {
+                return Err((
+                    format!(
+                        "brief too large for this reviewer's context (est. {prompt_estimate} of {context_tokens} tokens) - roster entry #{}; nothing was started (a shorter brief, or another reviewer).",
+                        e.position
+                    ),
+                    1,
+                ));
+            }
+        }
+    }
+    // (wave 26b, D16) the fork/resume -> new fallback when the continued thread's last context
+    // plus this prompt would exceed 80% of the reviewer's context window.
+    let mut mode_fallback: Option<c3_core::ledger::ModeFallback> = None;
+    let mut prev_reply_line = String::new();
+    if context_tokens > 0
+        && (effective_mode == "fork" || effective_mode == "resume")
+        && !parent_thread.is_empty()
+    {
+        let parent_entry = ledger_entries.iter().rfind(|e| e.thread == parent_thread);
+        let prior_tokens = parent_entry
+            .and_then(|e| e.usage.as_ref())
+            .map(|u| u.input_tokens)
+            .unwrap_or(0);
+        if (prior_tokens + prompt_estimate) as f64 > 0.8 * context_tokens as f64 {
+            let reason = format!(
+                "the {effective_mode} thread {parent_thread} last carried {prior_tokens} tokens; with this prompt (est. {prompt_estimate}) that exceeds 80% of the reviewer's context window ({context_tokens} tokens)"
+            );
+            println!("codex-consult: mode {effective_mode} -> new: {reason}");
+            let prev_reply = parent_entry
+                .map(|e| e.reply.clone())
+                .filter(|s| !s.is_empty())
+                .map(|reply| {
+                    format!(
+                        "{}/{}/{}",
+                        o.collab_dir.trim_end_matches(['/', '\\']),
+                        task.as_str(),
+                        reply
+                    )
+                    .replace('\\', "/")
+                })
+                .unwrap_or_default();
+            if !prev_reply.is_empty() {
+                prev_reply_line = format!(
+                    "Your previous reply in this task is `{prev_reply}`: this consultation starts a new thread because the previous one is too large for your context window - re-read that reply if you need your earlier review."
+                );
+            }
+            mode_fallback = Some(c3_core::ledger::ModeFallback {
+                from: effective_mode.clone(),
+                to: "new".into(),
+                reason,
+                extra: Default::default(),
+            });
+            effective_mode = "new".into();
+            parent_thread = String::new();
+        }
+    }
+    // (wave 26b, D16) the context-window line the reviewer is told, right after the ask.
+    let context_line = if context_tokens > 0 {
+        format!("Your context window is {context_tokens} tokens: read only what the brief points to; prefer targeted reads.")
+    } else {
+        String::new()
+    };
 
     // -Artifact: resolve each path (absolute, or relative to the cwd / repo root), refuse a
     // missing one (`Resolve-ArtifactPaths`; a review cannot be bound to a file that is not
@@ -1682,6 +1808,8 @@ fn build_context(
         consult_id: &consult_id,
         tools_line: spec.tools_line,
         role_line: &role_line,
+        context_line: &context_line,
+        prev_reply_line: &prev_reply_line,
     });
 
     // The argv (byte-identical to the core plan): build the Request and plan it for the
@@ -1807,6 +1935,9 @@ fn build_context(
         });
     }
 
+    let kick_path = collab_root
+        .join(task.as_str())
+        .join(format!(".consult.kick-{nn:02}"));
     Ok(Context {
         o,
         r,
@@ -1867,6 +1998,9 @@ fn build_context(
         panel_member: member.cloned(),
         role: member.map(|m| m.role.clone()).unwrap_or_default(),
         roles_note,
+        mode_fallback,
+        stall_sec,
+        kick_path,
         handoffs_dir,
         reply_path,
         reply_json_path,
@@ -2672,17 +2806,53 @@ fn run_live(mut ctx: Context) -> i32 {
     // concurrent members share a close `when` while the slower one commits (`finished_at`) later.
     let when_iso = iso_now();
 
+    // (wave 26b, D13) register this run on its endpoint in the machine-wide health file while its
+    // engine turn runs, so panels of other repositories count it against the endpoint's parallel
+    // limit. Removed after the run finishes (below); a failed update only warns.
+    let health_path = if ctx.identity.resolved {
+        c3_core::health::machine_health_path(&providers::get_codex_home())
+    } else {
+        None
+    };
+    let (bridge_pid, _bridge_start) = crate::liveness::proc::bridge_identity();
+    if let Some(hp) = &health_path {
+        let (bpid, bstart) = crate::liveness::proc::bridge_identity();
+        let row = c3_core::health::MachineRunning {
+            endpoint: ctx.identity.fingerprint.clone(),
+            label: ctx.identity.provider.clone(),
+            pid: bpid,
+            start_time: bstart,
+            repo: ctx.repo_root.to_string_lossy().to_string(),
+            task: ctx.o.task.clone(),
+            nn: format!("{:02}", ctx.nn),
+            panel: ctx
+                .panel_member
+                .as_ref()
+                .map(|m| m.id.clone())
+                .unwrap_or_default(),
+            since: iso_now(),
+        };
+        let _ = c3_core::health::register_machine_running(hp, row, &|pid, st| {
+            crate::liveness::proc::pid_alive(pid, st)
+        });
+    }
+
     // Run the primary turn through the selected engine adapter.
     let (outcome, detail) = match run_primary_turn(&ctx, Some(on_running)) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+            if let Some(hp) = &health_path {
+                let _ = c3_core::health::unregister_machine_running(hp, bridge_pid, &|pid, st| {
+                    crate::liveness::proc::pid_alive(pid, st)
+                });
+            }
             return refuse(&e);
         }
     };
 
     let base_record = rec_arc.lock().map(|r| r.clone()).unwrap_or_default();
-    finish(
+    let code = finish(
         ctx,
         store,
         pending,
@@ -2691,7 +2861,13 @@ fn run_live(mut ctx: Context) -> i32 {
         detail,
         collab_before,
         when_iso,
-    )
+    );
+    if let Some(hp) = &health_path {
+        let _ = c3_core::health::unregister_machine_running(hp, bridge_pid, &|pid, st| {
+            crate::liveness::proc::pid_alive(pid, st)
+        });
+    }
+    code
 }
 
 /// Engine-turn detail carried out of the primary turn (empty/false for codex). The agy/muse
@@ -2787,6 +2963,8 @@ fn run_primary_turn(
                 secondary: TurnFiles::default(),
                 no_network: false,
                 models_timeout_sec: 45,
+                stall_sec: ctx.stall_sec,
+                kick_path: Some(ctx.kick_path.clone()),
                 on_running,
             };
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
@@ -2810,6 +2988,8 @@ fn run_primary_turn(
                 cwd: ctx.repo_root.clone(),
                 primary,
                 secondary: TurnFiles::default(),
+                stall_sec: ctx.stall_sec,
+                kick_path: Some(ctx.kick_path.clone()),
                 on_running,
             };
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
@@ -2828,6 +3008,8 @@ fn run_primary_turn(
                 cwd: ctx.repo_root.clone(),
                 primary,
                 secondary: TurnFiles::default(),
+                stall_sec: ctx.stall_sec,
+                kick_path: Some(ctx.kick_path.clone()),
                 on_running,
             };
             let request = make_live_request(ctx);
@@ -3153,6 +3335,10 @@ fn finish(
     let mut provider_failure = None;
     let mut usable = false;
     let mut main_timed_out = false;
+    // (wave 26b, D12) a stall kill's ledger record `{seconds, last_event}`; `None` unless a stall
+    // fired. (wave 26b, D10) whether the operator stopped this run with -Kick.
+    let mut stall_record: Option<c3_core::ledger::Stall> = None;
+    let mut run_kicked = false;
     let mut thread_candidate = String::new();
     // The engine adapter's classified failure (correct class/code/message from the turn's
     // evidence); finalized at commit time with retry_after/kind/when and the forced class.
@@ -3220,6 +3406,57 @@ fn finish(
                         .join(", ")
                 )
             };
+            timeout_survivors = survivors;
+        }
+        AttemptOutcome::Stopped {
+            kind,
+            survivors,
+            wall_seconds: w,
+            conversation,
+            ..
+        } => {
+            wall_seconds = w;
+            // Thread extraction, exactly as the timeout path (a killed turn still emitted the
+            // thread; a killed engine turn leaves only a candidate).
+            match &conversation {
+                c3_core::engine::ConversationTrust::Verified(c) if !c.0.is_empty() => {
+                    thread = c.0.clone();
+                    thread_source = "events".into();
+                }
+                c3_core::engine::ConversationTrust::Candidate(c) if !c.0.is_empty() => {
+                    if is_engine {
+                        thread_candidate = c.0.clone();
+                    } else {
+                        thread = c.0.clone();
+                        thread_source = "events".into();
+                    }
+                }
+                _ => {}
+            }
+            match kind {
+                c3_core::engine::StopKind::Stall { last_event, .. } => {
+                    // (wave 26b, D12) a stall is stopped like a timeout: one continuation turn
+                    // follows (gated by --continue-sec) and the salvage is written.
+                    main_timed_out = true;
+                    stall_record = Some(c3_core::ledger::Stall {
+                        seconds: ctx.stall_sec,
+                        last_event,
+                        extra: Default::default(),
+                    });
+                    bridge_outcome = format!(
+                        "failed: stalled after {} s without an event (process tree killed)",
+                        ctx.stall_sec
+                    );
+                }
+                c3_core::engine::StopKind::Kick => {
+                    // (wave 26b, D10) the operator stopped it: no continuation; the salvage follows
+                    // and the provider failure is class `operator`.
+                    run_kicked = true;
+                    bridge_outcome = "failed: stopped by the operator (-Kick)".to_string();
+                    // Consume this run's kick file (the -Kick command waits for it to disappear).
+                    let _ = std::fs::remove_file(&ctx.kick_path);
+                }
+            }
             timeout_survivors = survivors;
         }
         AttemptOutcome::ProviderFailure {
@@ -3335,6 +3572,15 @@ fn finish(
     // same task lock and recovery record, at most once.
     let mut sec = Secondary::default();
     let main_events_text = std::fs::read_to_string(&ctx.events_path).unwrap_or_default();
+    // (wave 26b, D15) a codex run that failed mid-run still emitted `thread.started`; take that
+    // thread so the salvage footer can name it for a resume.
+    if !is_engine && thread.is_empty() {
+        let t = crate::engines::codex::parse_thread_id(&main_events_text);
+        if !t.is_empty() {
+            thread = t;
+            thread_source = "events".into();
+        }
+    }
     let main_stderr = std::fs::read_to_string(&ctx.stderr_path).unwrap_or_default();
     let main_event_error = crate::engines::codex::parse_error(&main_events_text);
     // The forced provider_failure class for an engine run: the D12 tree check forces `permission`,
@@ -3424,6 +3670,7 @@ fn finish(
             &mut thread_source,
             &mut usable,
             &mut provider_failure,
+            stall_record.as_ref().map(|s| s.seconds),
         );
     }
 
@@ -3469,6 +3716,15 @@ fn finish(
         }
     }
 
+    // (wave 26b, D10) a turn the operator stopped (-Kick): the failure is by the operator's hand,
+    // class `operator` (never an endpoint's fault; it is excluded from the machine health file).
+    if run_kicked && provider_failure.is_none() {
+        provider_failure = Some(c3_core::ledger::ProviderFailure {
+            class: "operator".into(),
+            message: "stopped by the operator (-Kick)".into(),
+            ..Default::default()
+        });
+    }
     // A failed run records a classified provider_failure derived from its evidence
     // (`codex-consult.ps1:4093`), unless a continuation already supplied one. An engine failure
     // keeps the adapter's classified failure (verbatim reason/class from the turn), with the
@@ -3507,6 +3763,11 @@ fn finish(
         &mut sec,
         main_timed_out,
         wall_seconds,
+        stall_record.is_some(),
+        run_kicked,
+        usable,
+        &bridge_outcome,
+        &thread,
     );
 
     // Build the finding delta + ids for a structured reply.
@@ -3654,6 +3915,7 @@ fn finish(
         &events_rel,
         &drift,
         &sec,
+        stall_record.clone(),
     );
     // The ledger `when` is the run's START (`$startedAt`), not the commit time (`build_entry`
     // stamps `iso_now()` as a placeholder). This makes the panel's overlap check (last start <
@@ -3777,6 +4039,32 @@ fn finish(
     };
     drop(write_lock);
     let _ = receipt;
+
+    // (wave 26b, D13) record this run's outcome on its endpoint in the machine-wide health file:
+    // a usable reply clears the endpoint (class ok), a provider failure marks it (class operator
+    // excepted). A failed update only warns (never fails the run); disabled with
+    // CODEX_CONSULT_HEALTH=none.
+    if ctx.identity.resolved {
+        if let Some(hp) = c3_core::health::machine_health_path(&providers::get_codex_home()) {
+            let failure = provider_failure
+                .as_ref()
+                .map(|pf| c3_core::health::MachineFailure {
+                    class: pf.class.clone(),
+                    kind: pf.kind.clone().unwrap_or_default(),
+                    when: pf.when.clone(),
+                    retry_after: pf.retry_after.clone(),
+                    message: pf.message.clone(),
+                });
+            let _ = c3_core::health::add_machine_health_record(
+                &hp,
+                &ctx.identity.fingerprint,
+                &bridge_outcome,
+                failure.as_ref(),
+                &ctx.repo_root.to_string_lossy(),
+                &|pid, st| crate::liveness::proc::pid_alive(pid, st),
+            );
+        }
+    }
 
     // Telemetry: record this consultation to the spool (errors ignored). The env switch is
     // re-checked inside `record_consultation`; a dry run never reaches this point.
@@ -3908,6 +4196,10 @@ fn finish(
         wall_seconds: fmt_wall(wall_seconds),
         lineage_shown,
         mode: ctx.effective_mode.clone(),
+        mode_fallback: ctx
+            .mode_fallback
+            .as_ref()
+            .map(|mf| (mf.from.clone(), mf.reason.clone())),
         thread: thread.clone(),
         thread_source: thread_source.clone(),
         thread_candidate: thread_candidate.clone(),
@@ -4146,6 +4438,8 @@ fn run_codex_secondary(
                 secondary: files,
                 no_network: false,
                 models_timeout_sec: 45,
+                stall_sec: 0,
+                kick_path: None,
                 on_running,
             };
             match eng.run_detailed(&turn) {
@@ -4159,6 +4453,8 @@ fn run_codex_secondary(
                 cwd: ctx.repo_root.clone(),
                 primary: TurnFiles::default(),
                 secondary: files,
+                stall_sec: 0,
+                kick_path: None,
                 on_running,
             };
             match eng.run_detailed(&turn) {
@@ -4173,6 +4469,8 @@ fn run_codex_secondary(
                 cwd: ctx.repo_root.clone(),
                 primary: TurnFiles::default(),
                 secondary: files,
+                stall_sec: 0,
+                kick_path: None,
                 on_running,
             };
             (eng.run(&turn).unwrap_or_else(plan_err), String::new())
@@ -4203,6 +4501,9 @@ fn run_timeout_continuation(
     thread_source: &mut String,
     usable: &mut bool,
     provider_failure: &mut Option<c3_core::ledger::ProviderFailure>,
+    // (wave 26b, D12) `Some(n)` when the main turn was STOPPED by the stall cut (n s without an
+    // event) rather than the wall-clock timeout — the console line says so.
+    stalled_secs: Option<i64>,
 ) {
     let continue_thread = thread.clone();
     sec.continue_thread = continue_thread.clone();
@@ -4288,12 +4589,21 @@ fn run_timeout_continuation(
         None
     };
 
+    let stopped_at = if let Some(n) = stalled_secs {
+        format!(
+            "stopped at {} s ({n} s without an event)",
+            fmt_wall(main_wall)
+        )
+    } else {
+        format!(
+            "killed at {} s of {} s",
+            fmt_wall(main_wall),
+            ctx.r.timeout_sec
+        )
+    };
     println!(
-        "{TOOL}: the main turn was killed at {} s of {} s; one continuation turn on thread {} (up to {} s)",
-        fmt_wall(main_wall),
-        ctx.r.timeout_sec,
-        continue_thread,
-        ctx.r.continue_sec
+        "{TOOL}: the main turn was {stopped_at}; one continuation turn on thread {} (up to {} s)",
+        continue_thread, ctx.r.continue_sec
     );
     sec.continue_ran = true;
     // The continuation event stream is a further turn (added before the run, like the plugin).
@@ -4356,7 +4666,7 @@ fn run_timeout_continuation(
                 *thread_source = "events".to_string();
             }
         }
-        AttemptOutcome::TimedOut { .. } => {
+        AttemptOutcome::TimedOut { .. } | AttemptOutcome::Stopped { .. } => {
             continue_problem = format!(
                 "timeout after {} s (process tree killed)",
                 ctx.r.continue_sec
@@ -4553,7 +4863,7 @@ fn run_format_repair(
                 }
             }
         }
-        AttemptOutcome::TimedOut { .. } => {
+        AttemptOutcome::TimedOut { .. } | AttemptOutcome::Stopped { .. } => {
             repair_problem = format!("timeout after {repair_timeout} s (process tree killed)");
             sec.repair_killed = true;
         }
@@ -4877,6 +5187,8 @@ fn run_engine_secondary(
                 secondary: files,
                 no_network: false,
                 models_timeout_sec: 45,
+                stall_sec: 0,
+                kick_path: None,
                 on_running: None,
             };
             match eng.run_detailed(&turn) {
@@ -4896,6 +5208,8 @@ fn run_engine_secondary(
                 cwd: ctx.repo_root.clone(),
                 primary: TurnFiles::default(),
                 secondary: files,
+                stall_sec: 0,
+                kick_path: None,
                 on_running: None,
             };
             match eng.run_detailed(&turn) {
@@ -5091,37 +5405,135 @@ fn finalize_engine_pf(
 
 /// Build the salvaged `.partial.md` body, footer and resume command when a killed turn had no
 /// usable continuation (`codex-consult.ps1:4108`).
+/// The `entry.panel` object a panel member records (`codex-consult.ps1:3216`): the panel id, this
+/// seat, the panel-wide member list (with each seat's state/reason — the context skip included),
+/// the plan and the routing record. `started`/`usable` are the panel run's to patch after every
+/// member finishes. `None` for a single run. Shared by the ledger entry and the dry-run preview.
+pub(crate) fn build_member_panel(ctx: &Context) -> Option<c3_core::ledger::Panel> {
+    let m = ctx.panel_member.as_ref()?;
+    let members = m
+        .members
+        .iter()
+        .map(|b| c3_core::ledger::PanelMember {
+            provider: b.provider.clone(),
+            model: b.model.clone(),
+            state: b.state.clone(),
+            reason: b.reason.clone(),
+            ..Default::default()
+        })
+        .collect();
+    let routing = m
+        .routing
+        .as_ref()
+        .and_then(|v| serde_json::from_value::<c3_core::ledger::PanelRouting>(v.clone()).ok());
+    Some(c3_core::ledger::Panel {
+        id: m.id.clone(),
+        position: m.position,
+        of: m.of,
+        members,
+        concurrency: m.concurrency,
+        limits: m.limits.clone(),
+        asked: Some(if m.asked > 0 { m.asked } else { m.of }),
+        started: Some(None),
+        usable: Some(None),
+        routing,
+        roles_note: Some(Some(ctx.roles_note.clone())),
+        ..Default::default()
+    })
+}
+
+/// (wave 26b, D16) The new prompt's estimated token size: the ask's character count plus the
+/// brief file's byte length, at 4 characters a token (ceiling), matching the plugin's
+/// `$promptEstimate`.
+fn estimate_prompt_tokens(prompt: &str, brief_path: Option<&Path>) -> i64 {
+    let mut chars = prompt.chars().count() as i64;
+    if let Some(p) = brief_path {
+        if let Ok(m) = std::fs::metadata(p) {
+            chars += m.len() as i64;
+        }
+    }
+    ((chars as f64) / 4.0).ceil() as i64
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_partial_reply(
     ctx: &Context,
     main_events_text: &str,
     sec: &mut Secondary,
     main_timed_out: bool,
     main_wall: f64,
+    // (wave 26b) extra context: a stall kill, an operator kick, whether the run is usable, the
+    // failure outcome text (for D15's "the run ended: <why>") and the run's own thread.
+    stall: bool,
+    run_kicked: bool,
+    usable: bool,
+    bridge_outcome: &str,
+    main_thread: &str,
 ) {
-    let partial_needed =
-        (main_timed_out && !sec.continued) || sec.continue_killed || sec.repair_killed;
-    if !partial_needed {
+    let killed_partial = (main_timed_out && !sec.continued)
+        || sec.continue_killed
+        || sec.repair_killed
+        || run_kicked;
+    // (wave 26b, D15) ANY failed run keeps what its reviewer produced: when the run is not usable
+    // and its main event stream holds at least one agent message, reasoning text or tool call, the
+    // salvage is written even though no turn was killed (codex only; engines keep their own path).
+    let mut partial_on_failure = false;
+    if !killed_partial && !usable && ctx.is_codex() {
+        let s = super::secondary::read_codex_salvage(main_events_text);
+        if !s.items.is_empty() || !s.tools.is_empty() {
+            partial_on_failure = true;
+        }
+    }
+    if !killed_partial && !partial_on_failure {
         return;
     }
     sec.partial_needed = true;
     sec.partial_rel = ctx.hf("partial.md");
+    // The one-lined failure reason for the "it ended at ... / the run ended: ..." wording (D15).
+    let ended_why = {
+        let raw = bridge_outcome
+            .strip_prefix("failed: ")
+            .unwrap_or(bridge_outcome);
+        let one = c3_core::one_line(raw);
+        if one.chars().count() > 200 {
+            let cut: String = one.chars().take(200).collect();
+            format!("{cut}...")
+        } else {
+            one
+        }
+    };
 
     let mut turns: Vec<super::secondary::PartialTurn> = Vec::new();
     let mut killed_at: Vec<String> = Vec::new();
     turns.push(super::secondary::PartialTurn {
         label: "Turn 1 - the main turn".to_string(),
-        note: if main_timed_out {
+        note: if run_kicked {
+            format!(
+                "stopped by the operator (-Kick) at {} s",
+                fmt_wall(main_wall)
+            )
+        } else if stall {
+            format!(
+                "stopped at {} s: {} s without an event",
+                fmt_wall(main_wall),
+                ctx.stall_sec
+            )
+        } else if main_timed_out {
             format!(
                 "killed at {} s of {} s",
                 fmt_wall(main_wall),
                 ctx.r.timeout_sec
             )
+        } else if partial_on_failure {
+            format!("it ended at {} s: {}", fmt_wall(main_wall), ended_why)
         } else {
             "it ended by itself".to_string()
         },
         salvage: super::secondary::read_codex_salvage(main_events_text),
     });
-    if main_timed_out {
+    if run_kicked {
+        killed_at.push(format!("{} s (the main turn)", fmt_wall(main_wall)));
+    } else if main_timed_out && !stall {
         killed_at.push(format!(
             "{} s of {} s (the main turn)",
             fmt_wall(main_wall),
@@ -5179,9 +5591,12 @@ fn build_partial_reply(
     }
     sec.partial_body = body;
 
-    // The resume thread: this run's verified thread, else the killed turn's continuation thread.
+    // The resume thread: the killed turn's continuation thread, else (D15, a mid-run failure that
+    // never ran a continuation) the run's own thread.
     let resume_thread = if !sec.continue_thread.is_empty() {
         sec.continue_thread.clone()
+    } else if partial_on_failure && !main_thread.is_empty() {
+        main_thread.to_string()
     } else {
         String::new()
     };
@@ -5193,6 +5608,13 @@ fn build_partial_reply(
             .unwrap_or_else(|| s.clone())
     } else {
         killed_at.join(", ")
+    };
+    // (wave 26b, D15) a turn was killed -> "killed at ..."; no turn was killed (a mid-run
+    // failure or a stall with no continuation) -> "the run ended: <why>".
+    let ended_text = if killed_at.is_empty() {
+        format!("the run ended: {ended_why}")
+    } else {
+        format!("killed at {killed_text}")
     };
     if !resume_thread.is_empty() {
         let args = summary::build_resume_command(&summary::ResumeInputs {
@@ -5223,11 +5645,16 @@ fn build_partial_reply(
             codex_exe: ctx.o.codex_exe.clone(),
         });
         sec.partial_footer =
-            format!("killed at {killed_text}; thread {resume_thread} - continue with `{args}`");
+            format!("{ended_text}; thread {resume_thread} - continue with `{args}`");
         sec.resume_command = args;
     } else {
+        let which = if killed_at.is_empty() {
+            "failed"
+        } else {
+            "killed"
+        };
         sec.partial_footer = format!(
-            "killed at {killed_text}; the thread of the killed turn is not known - no resume is possible (start again with -Mode new)"
+            "{ended_text}; the thread of the {which} turn is not known - no resume is possible (start again with -Mode new)"
         );
     }
 }
@@ -5975,6 +6402,7 @@ fn build_entry(
     events_rel: &str,
     drift: &Drift,
     sec: &Secondary,
+    stall: Option<c3_core::ledger::Stall>,
 ) -> LedgerEntry {
     let mut e = LedgerEntry {
         n: ctx.consult_n,
@@ -5998,10 +6426,9 @@ fn build_entry(
         thread: thread.to_string(),
         thread_source: thread_source.to_string(),
         mode: ctx.effective_mode.clone(),
-        // (wave 26) `mode_fallback`/`stall` are present-in-order but always `null` here: C3 does
-        // not yet compute the >80%-context fork/resume downgrade nor the stall-kill. `Some(None)`
-        // writes `null` in position (the harness `$order` requires the key present).
-        mode_fallback: Some(None),
+        // (wave 26b, D16) a fork/resume the reviewer's context window forced to a new thread, else
+        // `null` in position (the harness `$order` requires the key present).
+        mode_fallback: Some(ctx.mode_fallback.clone()),
         command: if ctx.is_codex() {
             format!("codex {}", ctx.argv_display.trim_start_matches("codex "))
         } else {
@@ -6048,8 +6475,8 @@ fn build_entry(
         format_retry: sec.format_retry.clone(),
         denial_retry: sec.denial_retry.clone(),
         timeout_continue: sec.timeout_continue.clone(),
-        // (wave 26) present-in-order, always `null`: C3 has no stall-kill path yet.
-        stall: Some(None),
+        // (wave 26b, D12) the stall kill's `{seconds, last_event}`, else `null` in position.
+        stall: Some(stall),
         engine_run: if ctx.is_codex() {
             None
         } else {
@@ -6123,41 +6550,7 @@ fn build_entry(
     // panel id, this seat, the panel-wide member list, the plan and the routing record. `started`
     // and `usable` are the panel run's to patch after every member finishes (chunk 2). `roles_note`
     // rides `extra` (after `routing`, matching the plugin's key order).
-    if let Some(m) = &ctx.panel_member {
-        let members = m
-            .members
-            .iter()
-            .map(|b| c3_core::ledger::PanelMember {
-                provider: b.provider.clone(),
-                model: b.model.clone(),
-                state: b.state.clone(),
-                reason: b.reason.clone(),
-                ..Default::default()
-            })
-            .collect();
-        let routing = m
-            .routing
-            .as_ref()
-            .and_then(|v| serde_json::from_value::<c3_core::ledger::PanelRouting>(v.clone()).ok());
-        let panel = c3_core::ledger::Panel {
-            id: m.id.clone(),
-            position: m.position,
-            of: m.of,
-            members,
-            concurrency: m.concurrency,
-            limits: m.limits.clone(),
-            asked: Some(if m.asked > 0 { m.asked } else { m.of }),
-            // Written as explicit `null`; the panel run patches these to the real counts
-            // after every member finishes (`codex-consult.ps1:2866`).
-            started: Some(None),
-            usable: Some(None),
-            routing,
-            // Always written (empty when no `-Roles` note), after `routing`.
-            roles_note: Some(Some(ctx.roles_note.clone())),
-            ..Default::default()
-        };
-        e.panel = Some(panel);
-    }
+    e.panel = build_member_panel(ctx);
 
     // The engine tree-check record (wave 26b, D9): `{outcome, files[]}` in the named field,
     // between `artifacts_changed_during_review` and `bridge_outcome`. `null` for codex (no
@@ -6495,6 +6888,32 @@ mod engine_tests {
         assert_eq!(engine_kind_of("agy"), EngineKind::Agy);
         assert_eq!(engine_kind_of("muse"), EngineKind::Muse);
         assert_eq!(engine_kind_of("codex"), EngineKind::Codex);
+    }
+}
+
+#[cfg(test)]
+mod context_budget_tests {
+    use super::*;
+
+    // (wave 26b, D16) the 80% rule's estimate: (ask chars + brief bytes) / 4, ceiling. A ~120 KB
+    // brief of `'word ' * 24000` (120000 bytes) plus a one-char ask estimates 30001 tokens, which
+    // is > 80% of a 32000-token window (25600) — the reviewer is skipped / the mode falls back.
+    #[test]
+    fn prompt_token_estimate_and_80pct_threshold() {
+        let dir = std::env::temp_dir().join(format!("c3-est-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let brief = dir.join("big.md");
+        std::fs::write(&brief, "word ".repeat(24000)).unwrap();
+        let est = estimate_prompt_tokens("x", Some(brief.as_path()));
+        assert_eq!(est, 30001);
+        assert!((est as f64) > 0.8 * 32000.0);
+        // The ask alone is tiny; ceiling of 1/4 = 1.
+        assert_eq!(estimate_prompt_tokens("x", None), 1);
+        // A small brief that fits stays under 80%.
+        let small = dir.join("small.md");
+        std::fs::write(&small, "word ".repeat(100)).unwrap();
+        assert!((estimate_prompt_tokens("x", Some(small.as_path())) as f64) <= 0.8 * 32000.0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

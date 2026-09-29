@@ -124,6 +124,12 @@ pub struct PromptInputs<'a> {
     /// A panel member's role paragraph (`role_prompt_line`), added after the ask and before the
     /// brief (`codex-consult.ps1:3555`); empty when the run has no role.
     pub role_line: &'a str,
+    /// (wave 26b, D16) the reviewer's context-window line, added right after the ask when its
+    /// roster entry names a `context_tokens`; empty otherwise.
+    pub context_line: &'a str,
+    /// (wave 26b, D16) the "your previous reply is <path>" line, added when a fork/resume was
+    /// downgraded to a new thread because the previous one is too large; empty otherwise.
+    pub prev_reply_line: &'a str,
 }
 
 const NL: &str = "\r\n";
@@ -136,6 +142,14 @@ pub fn assemble(inp: &PromptInputs) -> String {
     }
     if !inp.prompt.is_empty() {
         parts.push(inp.prompt.trim().to_string());
+    }
+    // (wave 26b, D16) a reviewer with a known context window is told so, right after the ask.
+    if !inp.context_line.is_empty() {
+        parts.push(inp.context_line.to_string());
+    }
+    // (wave 26b, D16) a downgraded fork/resume names the previous reply to re-read.
+    if !inp.prev_reply_line.is_empty() {
+        parts.push(inp.prev_reply_line.to_string());
     }
     // A panel member's role goes after the ask, before the brief (never inside the contract).
     if !inp.role_line.is_empty() {
@@ -245,6 +259,8 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         consult_id: "",
         tools_line: "",
         role_line: "",
+        context_line: "",
+        prev_reply_line: "",
     };
     schema_block(&inp)
 }
@@ -303,6 +319,8 @@ mod tests {
             consult_id: "abc-123",
             tools_line: "",
             role_line: "",
+            context_line: "",
+            prev_reply_line: "",
         }
     }
 

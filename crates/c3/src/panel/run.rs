@@ -152,6 +152,9 @@ struct RunnerInfo {
     role: String,
     required: bool,
     group: usize,
+    /// (wave 26b, D13) the member's resolved endpoint fingerprint, for the machine-wide parallel
+    /// limit (`""` when unresolved).
+    fingerprint: String,
 }
 
 /// A display row (roster order), for the plan block and the summary.
@@ -194,6 +197,9 @@ struct Built {
     roles_note: String,
     parent_start: String,
     verb: &'static str,
+    /// (wave 26b, D11) per-member timeout exceptions for the `Timeout:` header, e.g.
+    /// `#2 ZAI :: glm-5.3 120 s (roster)`; empty when every member takes the shared default.
+    timeout_exceptions: Vec<String>,
 }
 
 /// Resolve the whole plan (`Select-PanelMembers`, required reviewers, `Select-PanelRouting`, the
@@ -225,19 +231,51 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
 
     let ctx = providers::Ctx::for_consult(
         config.clone(),
-        providers::read_all_task_consults(&collab_root),
+        providers::read_all_task_consults_health(&collab_root),
         roster.clone(),
         launcher.clone(),
         openai_base_url.clone(),
         utc_now,
     );
-    let selection = ctx.panel_members(
+    let mut selection = ctx.panel_members(
         &o.model,
         &o.engine,
         &o.purpose,
         o.panel_all,
         o.skip_preflight,
     );
+
+    // (wave 26b, D16 b) the new prompt's estimated token size ((ask + brief) / 4 chars a token);
+    // a member whose context window the brief alone would overflow is skipped before its start.
+    let panel_estimate = {
+        let mut chars = o.prompt.chars().count() as i64;
+        if !o.brief.is_empty() {
+            let bp = if Path::new(&o.brief).is_absolute() {
+                PathBuf::from(&o.brief)
+            } else {
+                cwd.join(&o.brief)
+            };
+            if let Ok(m) = std::fs::metadata(&bp) {
+                chars += m.len() as i64;
+            }
+        }
+        ((chars as f64) / 4.0).ceil() as i64
+    };
+    if panel_estimate > 0 {
+        for m in selection.members.iter_mut() {
+            if m.state != "skipped"
+                && m.entry.context_tokens > 0
+                && (panel_estimate as f64) > 0.8 * m.entry.context_tokens as f64
+            {
+                m.state = "skipped".into();
+                m.reason = format!(
+                    "brief too large for this reviewer's context (est. {panel_estimate} of {} tokens)",
+                    m.entry.context_tokens
+                );
+                m.skip_kind = "context".into();
+            }
+        }
+    }
 
     // Required reviewers (exit 5 on an outage).
     let require_given = !o.require.is_empty();
@@ -331,6 +369,25 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
             skip_kind: m.skip_kind.clone(),
         })
         .collect();
+
+    // (wave 26b, D11) the per-member timeout exceptions for the `Timeout:` header: an eligible
+    // member whose roster entry names a timeout_sec, unless an explicit --timeout-sec applies to all.
+    let timeout_exceptions: Vec<String> = if r.timeout_source == "explicit" {
+        Vec::new()
+    } else {
+        members
+            .iter()
+            .filter(|m| m.state != "skipped" && m.entry.timeout_sec >= 60)
+            .map(|m| {
+                format!(
+                    "#{} {} {} s (roster)",
+                    m.entry.position,
+                    format_reviewer_lineage(&m.provider, &m.model, &m.engine),
+                    m.entry.timeout_sec
+                )
+            })
+            .collect()
+    };
 
     let (size_wanted, size_source) = if o.panel_all {
         (0, "-PanelAll")
@@ -560,6 +617,9 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
             role: role_of.get(&p.position).cloned().unwrap_or_default(),
             required: p.required,
             group: *group_of.get(&p.position).unwrap_or(&0),
+            fingerprint: m
+                .map(|m| m.identity.fingerprint.clone())
+                .unwrap_or_default(),
         });
     }
     let runner_of: HashMap<i64, usize> = runners
@@ -626,6 +686,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         roles_note,
         parent_start,
         verb: if o.dry_run { "would run" } else { "run" },
+        timeout_exceptions,
     })
 }
 
@@ -850,7 +911,7 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
         println!("WARNING: {w}");
     }
     println!("{}", concurrency_line(&o, &b.concurrency));
-    println!("{}", timeout_line(&r));
+    println!("{}", timeout_line(&r, &b.timeout_exceptions));
     if !b.range_line.is_empty() {
         println!("{}", b.range_line);
     }
@@ -918,6 +979,10 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     let _ = std::fs::create_dir_all(&panel_tmp);
     let mut blocked = String::new();
     let mut required_failed = false;
+    // (wave 26b, D13) the machine-wide health file (endpoint parallel limit); which seats have
+    // already printed their "waits: N run(s) elsewhere" line (once each).
+    let machine_health_path = c3_core::health::machine_health_path(&providers::get_codex_home());
+    let mut ext_wait_shown: std::collections::HashSet<usize> = std::collections::HashSet::new();
     loop {
         let mut progress = false;
         // Reap finished/killed members.
@@ -1047,6 +1112,57 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                 >= limit
             {
                 continue;
+            }
+            // (wave 26b, D13) runs on this group's endpoints in OTHER repositories/panels of the
+            // machine count against the limit too (the machine-wide health file's running[]).
+            if !dry {
+                if let Some(hp) = &machine_health_path {
+                    let fps: Vec<String> = {
+                        let mut v: Vec<String> = b
+                            .runners
+                            .iter()
+                            .filter(|ru| ru.group == grp && !ru.fingerprint.is_empty())
+                            .map(|ru| ru.fingerprint.clone())
+                            .collect();
+                        v.sort();
+                        v.dedup();
+                        v
+                    };
+                    if !fps.is_empty() {
+                        let ext = c3_core::health::machine_running_count(
+                            hp,
+                            &fps,
+                            &b.panel_id,
+                            &|pid, st| crate::liveness::proc::pid_alive(pid, st),
+                        );
+                        let local = slots
+                            .iter()
+                            .filter(|s| s.group == grp && s.state == SlotState::Running)
+                            .count() as i64;
+                        if !ext.is_empty() && local + ext.len() as i64 >= limit {
+                            if !ext_wait_shown.contains(&i) {
+                                ext_wait_shown.insert(i);
+                                let who = ext
+                                    .iter()
+                                    .map(|row| {
+                                        format!(
+                                            "{} in {} task {} handoff {} (pid {})",
+                                            row.label, row.repo, row.task, row.nn, row.pid
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                                println!(
+                                    "  panel member {} of {} waits: {} run(s) elsewhere on this machine use its endpoint (parallel limit {limit}): {who}",
+                                    slots[i].k,
+                                    b.runners.len(),
+                                    ext.len()
+                                );
+                            }
+                            continue;
+                        }
+                    }
+                }
             }
             // Roster order within an endpoint group.
             let my_k = slots[i].k;
@@ -1643,8 +1759,12 @@ fn build_spec(
         "effort": o.effort,
         "sandbox": o.sandbox,
         "max_words": o.max_words,
-        "timeout_sec": r.timeout_sec,
-        "continue_sec": r.continue_sec,
+        // (wave 26b, D11/D12) forward timeout/continue/stall to the member ONLY when they were
+        // explicit; otherwise the member re-derives the purpose default and its own roster entry's
+        // timeout_sec/stall_sec (so a per-member roster override records timeout_source "roster").
+        "timeout_sec": if r.timeout_source == "explicit" { r.timeout_sec } else { 0 },
+        "continue_sec": if o.continue_sec_given { r.continue_sec } else { -1 },
+        "stall_sec": if r.stall_given { r.stall_sec } else { -1 },
         "range": o.range,
         "reply_name": s.reply_name,
         "artifact": o.artifacts,
@@ -2064,7 +2184,7 @@ fn concurrency_line(o: &Options, plan: &PanelPlan) -> String {
 }
 
 /// The `Timeout:` line.
-fn timeout_line(r: &Resolved) -> String {
+fn timeout_line(r: &Resolved, exceptions: &[String]) -> String {
     let source = if r.timeout_source == "purpose" {
         let label = if r.purpose_label == "none" {
             "none".to_string()
@@ -2080,8 +2200,14 @@ fn timeout_line(r: &Resolved) -> String {
     } else {
         "off (-ContinueSec 0)".to_string()
     };
+    // (wave 26b, D11) the members whose roster entry overrode the shared default.
+    let exc = if exceptions.is_empty() {
+        String::new()
+    } else {
+        format!("; {}", exceptions.join("; "))
+    };
     format!(
-        "Timeout: {} s per member ({source}); continuation after a timeout kill: {cont}",
+        "Timeout: {} s per member ({source}){exc}; continuation after a timeout kill: {cont}",
         r.timeout_sec
     )
 }

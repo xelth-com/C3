@@ -43,6 +43,10 @@ pub struct AgyEngine {
     pub no_network: bool,
     /// The `agy models` timeout, seconds (`$script:AgyModelsTimeoutSec`, 45).
     pub models_timeout_sec: u64,
+    /// (wave 26b, D12) The stall cut in seconds for the PRIMARY turn (`0` = off).
+    pub stall_sec: i64,
+    /// (wave 26b, D10) The operator's kick file for the PRIMARY turn (`None` = no kick watch).
+    pub kick_path: Option<PathBuf>,
     /// Called once per turn, right after the child spawns and before it is waited on
     /// (recovery record `launching` -> `running`). `None` leaves the record `launching`.
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
@@ -83,6 +87,7 @@ impl AgyEngine {
         let files = self.files_for(turn.kind);
         let timeout = std::time::Duration::from_secs_f64(turn.request.timeout_sec.max(0.0));
         let stdin = convert_to_agy_stdin(&turn.request.prompt);
+        let is_primary = matches!(turn.kind, TurnKind::Primary);
         let spawn = SpawnRequest {
             launcher: &self.launcher,
             argv: &args,
@@ -92,6 +97,15 @@ impl AgyEngine {
             events_path: &files.events,
             stderr_path: &files.stderr,
             timeout,
+            stall_sec: if is_primary { self.stall_sec } else { 0 },
+            kick_path: if is_primary {
+                self.kick_path.as_deref()
+            } else {
+                None
+            },
+            // agy step updates grow the stream on every tool step, so the byte-growth reset covers
+            // its tool calls; no separate suspension classifier is needed.
+            tool_delta: None,
             on_running: self
                 .on_running
                 .as_ref()
@@ -114,23 +128,48 @@ impl AgyEngine {
         let events_text = read_text(&files.events);
         // The last line may be a truncated NDJSON line only when the process was killed or
         // exited non-zero (F10-2); on a clean exit trailing garbage makes the stream malformed.
-        let allow_partial = result.timed_out || result.exit_code != Some(0);
+        use super::subprocess::TurnStop;
+        let killed = !matches!(result.stop, TurnStop::Exited);
+        let allow_partial = killed || result.exit_code != Some(0);
         let events = read_agy_events(&events_text, allow_partial);
 
-        if result.timed_out {
+        if killed {
             let candidate = first_uuid(&[&events.thread, &events.init_thread]);
             let conversation = if candidate.is_empty() {
                 ConversationTrust::None
             } else {
                 ConversationTrust::Candidate(ConversationId(candidate))
             };
-            return Ok(AgyRun {
-                outcome: AttemptOutcome::TimedOut {
-                    partial: agy_salvage(&events_text),
-                    survivors: result.survivors,
+            let partial = agy_salvage(&events_text);
+            let survivors = result.survivors.clone();
+            let wall_seconds = result.wall_seconds;
+            let outcome = match result.stop {
+                TurnStop::Stall => AttemptOutcome::Stopped {
+                    kind: c3_core::engine::StopKind::Stall {
+                        silent_seconds: result.silent_seconds,
+                        last_event: result.last_event.clone(),
+                    },
+                    partial,
+                    survivors,
                     conversation,
-                    wall_seconds: result.wall_seconds,
+                    wall_seconds,
                 },
+                TurnStop::Kick => AttemptOutcome::Stopped {
+                    kind: c3_core::engine::StopKind::Kick,
+                    partial,
+                    survivors,
+                    conversation,
+                    wall_seconds,
+                },
+                _ => AttemptOutcome::TimedOut {
+                    partial,
+                    survivors,
+                    conversation,
+                    wall_seconds,
+                },
+            };
+            return Ok(AgyRun {
+                outcome,
                 turn: AgyTurn::default(),
             });
         }

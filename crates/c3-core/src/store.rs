@@ -141,20 +141,37 @@ pub struct LockRecord {
     pub panel: Option<Value>,
 }
 
+/// The process-wide bridge pid the lock records name. In production c3 IS the bridge, so this
+/// stays c3's own pid. Under the plugin's harnesses c3 runs as a child of a thin shim; the shim
+/// exports `CODEX_CONSULT_TEST_BRIDGE_PID` (its own pid) and the c3 runtime validates it once (a
+/// live ancestor only) and sets it here via [`set_bridge_pid`]. c3-core never reads the
+/// environment itself — it takes the validated pid from the caller. `0` means "unset" (use this
+/// process's own pid).
+static BRIDGE_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Set the validated bridge pid the lock records should name (called once by the c3 runtime at
+/// process start with the value of its own ancestor-validated resolution).
+pub fn set_bridge_pid(pid: u32) {
+    BRIDGE_PID.store(pid, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The bridge pid the lock records name: the value [`set_bridge_pid`] recorded, else this
+/// process's own pid.
+pub fn bridge_pid() -> u32 {
+    let p = BRIDGE_PID.load(std::sync::atomic::Ordering::Relaxed);
+    if p > 0 {
+        p
+    } else {
+        std::process::id()
+    }
+}
+
 impl LockRecord {
     /// A minimal lock record for `task` from the current process context (pid, machine
     /// name, now). The record is informational; the lock is the open handle.
     pub fn now(task: &TaskSlug, panel: Option<Value>) -> LockRecord {
         LockRecord {
-            // In production c3 IS the bridge, so the lock names c3's own pid. Under the plugin's
-            // harnesses c3 runs as a child of a thin PowerShell shim; the shim sets
-            // CODEX_CONSULT_TEST_BRIDGE_PID to its own pid so the record names the launched process
-            // the harness monitors (as the plugin's own bridge would).
-            pid: std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID")
-                .ok()
-                .and_then(|s| s.trim().parse::<u32>().ok())
-                .filter(|p| *p > 0)
-                .unwrap_or_else(std::process::id),
+            pid: bridge_pid(),
             start_time: String::new(),
             host: hostname(),
             task: task.as_str().to_string(),

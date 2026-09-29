@@ -49,6 +49,10 @@ pub struct ConsultArgs {
     /// The timeout-continuation budget (-1 = min(timeout, 900); 0 = no continuation).
     #[arg(long, default_value_t = -1)]
     pub continue_sec: i64,
+    /// The stall cut in seconds without an event (0 = off; -1 = the roster entry's stall_sec,
+    /// else 900). `allow_hyphen_values` so a negative value reaches the validator.
+    #[arg(long, allow_hyphen_values = true, default_value_t = -1)]
+    pub stall_sec: i64,
     /// base..head or base...head (diff-review / acceptance only).
     #[arg(long, default_value = "")]
     pub range: String,
@@ -167,6 +171,12 @@ pub struct ConsultArgs {
     /// With --status: delete the files of old done/died detached runs (R12).
     #[arg(long)]
     pub prune: bool,
+    /// (wave 26b, D10) Stop one running member of the task by its handoff number (needs --member).
+    #[arg(long)]
+    pub kick: bool,
+    /// (wave 26b, D10) The handoff number (NN) --kick acts on.
+    #[arg(long, default_value = "")]
+    pub member: String,
 }
 
 /// Run one consultation and return the process exit code.
@@ -174,6 +184,7 @@ pub fn run(args: ConsultArgs) -> i32 {
     // Whether the user actually passed --continue-sec (clap can't tell a default -1 from an
     // explicit -1; treat any value != -1 as given, and -1 as the default sentinel).
     let continue_sec_given = args.continue_sec != -1;
+    let stall_sec_given = args.stall_sec != -1;
     let panel_concurrency_given = args.panel_concurrency.is_some();
     let panel_size_given = args.panel_size.is_some();
     let id_given = !args.id.is_empty();
@@ -193,6 +204,8 @@ pub fn run(args: ConsultArgs) -> i32 {
         timeout_sec: args.timeout_sec,
         continue_sec: args.continue_sec,
         continue_sec_given,
+        stall_sec: args.stall_sec,
+        stall_sec_given,
         range: args.range,
         reply_name: args.reply_name,
         artifacts: args.artifact,
@@ -234,6 +247,8 @@ pub fn run(args: ConsultArgs) -> i32 {
         wait_timeout_sec: args.wait_timeout_sec.unwrap_or(0),
         wait_timeout_sec_given,
         prune: args.prune,
+        kick: args.kick,
+        member: args.member,
     };
     crate::consult::run(opts)
 }

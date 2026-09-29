@@ -1048,3 +1048,89 @@ remaining failure is the documented by-design row (below).
 ### harness-panel (0)
 
 None.
+
+# Run 11 (wave 26b — member control, stall, context budget, salvage, machine health) — 2026-09-29
+
+Ported the plugin's wave 26b (0.5.0) into c3 and proved it with the plugin's own
+`tests/harness-fixes26b.ps1` through the shim, with the four regression harnesses re-run.
+Host: powershell 5.1. Runners: scratchpad `harness2/run11-*.ps1`.
+
+## Summary table
+
+| harness              | Run 10 | Run 11 | note                                                            |
+|----------------------|--------|--------|-----------------------------------------------------------------|
+| harness-fixes26b     | —      | 34 / 5 | first run; all D10–D16 (my scope) pass; the 5 are D1/D4/D7      |
+| harness-panel        | 54 / 0 | 54 / 0 | no change                                                       |
+| harness-detach       | 50 / 1 | 50 / 1 | the one CARRY F11-2 is by design (JSON args wire), unchanged    |
+| harness-0.3          | 228 / 1| 228 / 1| the one CFG comma-split is the documented artifact, unchanged   |
+| harness-lock2        | 10 / 0 | 10 / 0 | no change                                                       |
+| harness-engines      | —      | 92 / 5 | not in Run 10; the 5 are pre-existing agy/muse argv/effort gaps |
+| harness-roster       | —      | 113 / 6| down from an earlier 10 failures; pre-existing auth/schema/utf8 |
+
+## What this pass landed (wave 26b, D10–D16)
+
+- **D11 `timeout_sec`** — a roster entry's `timeout_sec` (>= 60) replaces the purpose default for
+  that member (an explicit `--timeout-sec` still wins); ledger `timeout_source: roster`,
+  `roster.applied` names `timeout_sec`, `continue_sec` follows it. The single-run summary line and
+  the panel `Timeout:` header (with per-member "#N … s (roster)" exceptions) say it. Applied in
+  `build_context` (roster override) + `args.rs`; the panel forwards timeout only when explicit so a
+  member re-derives its own roster override. Validation (`60..86400`) in `c3-core/roster.rs`.
+- **D12 stall cut** (`--stall-sec` / roster `stall_sec`, default 900, 0 = off) — `run_turn` now
+  polls the event stream: the silent timer resets on any byte growth of the stream and is SUSPENDED
+  while a tool call is in flight (wave 26c D3 detection, per-engine `tool_delta` classifier: codex
+  `command_execution`/`mcp_tool_call`/`web_search` item.started/completed; muse `tool.*`), else the
+  tree is killed like a timeout. Outcome `failed: stalled after N s without an event (process tree
+  killed)`, ledger `stall {seconds, last_event}`, the continuation console line "stopped at … (N s
+  without an event)". Printed/recorded strings are plugin-main's (the 26c wording lands with wave 27).
+- **D16 `context_tokens`** (>= 32000) — a fork/resume falls back to a NEW thread when the parent
+  thread's last `usage.input_tokens` + the prompt estimate ((ask + brief) / 4 chars a token) exceed
+  80 % of the window: ledger `mode_fallback {from, to, reason}`, console "mode fork -> new: …", the
+  prompt names the previous reply. A new-thread prompt over 80 % skips the reviewer ("brief too
+  large for this reviewer's context (est. N of M tokens)") — a panel member at selection, a roster
+  walk (`roster.skipped`), an explicit `-Provider` refused (exit 1). The context-window line rides
+  the prompt. The panel member's dry-run preview now carries the full `panel` object (also fixes the
+  pre-existing SIZE/RESERVE dry-preview rows).
+- **D15 salvage on any failure with content** — a mid-run provider failure (a 429 after content)
+  writes `handoffs/NN-<engine>-<slug>.partial.md` too; the footer says "the run ended: <why>; thread
+  <id> - continue with `…`" (not "killed at"). A stream with no content writes nothing.
+- **D10 `-Kick -Member <NN> [-Id <id8>]`** — the operator stops one running member: writes
+  `<task>/.consult.kick-<NN>`, the primary turn polls it and stops as `failed: stopped by the
+  operator (-Kick)` (class `operator`) with the salvage; the command waits for the acknowledgement.
+  Refusals: exit 4 (`-Kick needs -Member`, `-Member goes with -Kick`), exit 1 (no such running
+  member / a member the detached run does not have). New module `consult/kick.rs`.
+- **D13 machine-wide endpoint health** `~/.codex/codex-consult-health.json`
+  (`CODEX_CONSULT_HEALTH` overrides; `none` disables) — a run records its endpoint outcome (a
+  usable reply clears it, a provider failure marks it, class `operator` excepted); every write is
+  under a `<file>.lock` (Windows exclusive share-mode-0, 10 s wait) and prunes; a run registers a
+  `running[]` row while its engine turn runs so panels of other repositories count it against the
+  endpoint's parallel limit ("panel member K of N waits: … parallel limit L: …"). The reader folds
+  the file's records into every endpoint-health decision (`read_all_task_consults_health`, newest
+  `when` wins, ties by later `until` — wave 26c D2). c3-core `health.rs`.
+
+## Test-hook hardening (supervisor addendum item 4)
+
+`CODEX_CONSULT_TEST_BRIDGE_PID` is now honoured only when it names a LIVE ANCESTOR of the current
+process, validated ONCE at process start (`liveness::proc::validated_bridge`, a parent-chain walk
+via a Toolhelp snapshot on Windows / `/proc/<pid>/stat` elsewhere). c3-core no longer reads the env:
+`c3` resolves the validated pid and hands it to `c3_core::store::set_bridge_pid`; the lock record
+reads that process-global. An invalid or non-ancestor value is ignored silently (own pid used).
+Unit-tested (own parent accepted; pid 4 / self ignored).
+
+## Remaining differing checks (verbatim) and diagnosis — harness-fixes26b (5)
+
+All five are D1–D7 rows ("already in C3, verify — do not redo"), none in the wave-26b scope, and
+none regressed by this pass:
+
+1. `FAIL ROLEFILE D1 (F22-1)` / `FAIL ROLEFILE D1 (junction)` — the `.collab/roles` reparse-point
+   refusal (a symlink/junction role file, and a roles dir that is itself a junction) is not enforced
+   end-to-end by c3 yet (a `-Roles` panel still plans instead of refusing). **Class: pre-existing D1
+   gap (roles-directory reparse detection), outside wave 26b.**
+2. `FAIL ROLEFILE D1 (outside/plugin templates)` — the in-process `Resolve-RoleFile` check resolves
+   the SHIPPED template from `Split-Path -Parent $scripts`, which under the c3-port layout is the
+   scratch `harness2/` dir with no `templates/`. **Class: harness-setup artifact (the plugin-common
+   in-process test needs the plugin's shipped templates dir, absent in the copied-scripts layout).**
+3. `FAIL ROLES D4 end to end` — the `-Roles` panel does not print the "roles: no assignment …"
+   WARNING / carry `panel.roles_note` on every member. **Class: pre-existing D4/D8 roles gap.**
+4. `FAIL UNIQ D7 (F22-7)` — the scoreboard does not normalise location keys (`\` vs `/`, leading
+   `./`, doubled separators, Windows case) before counting unique findings (got ZAI 2/2, want 1/2).
+   **Class: pre-existing D7 gap in `crates/c3/src/scoreboard/**` (do-not-touch).**

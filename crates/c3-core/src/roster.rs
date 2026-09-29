@@ -42,6 +42,15 @@ pub struct RosterEntry {
     pub lab: String,
     /// (wave 26, D8) the role slugs the entry is willing to take under a panel's `-Roles`.
     pub roles: Vec<String>,
+    /// (wave 26b, D11) the member's own turn timeout in seconds (>= 60); `0` when the entry
+    /// names none (the run then takes the purpose default). An explicit `--timeout-sec` still wins.
+    pub timeout_sec: i64,
+    /// (wave 26b, D12) the member's stall cut in seconds without an event (>= 0; `0` = off); `-1`
+    /// when the entry names none (the run then takes `--stall-sec`, else 900).
+    pub stall_sec: i64,
+    /// (wave 26b, D16) the reviewer's context window in tokens (>= 32000); `0` when the entry
+    /// names none (no context budgeting for this reviewer).
+    pub context_tokens: i64,
 }
 
 /// The roster (`Read-ReviewerRoster`'s result).
@@ -538,6 +547,51 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                     break;
                 }
             }
+            // (wave 26b, D11) timeout_sec: an integer from 60 to 86400 (seconds).
+            let mut timeout_sec: i64 = 0;
+            if let Some(tv) = iobj.get("timeout_sec") {
+                if !is_json_integer(tv)
+                    || tv.as_f64().unwrap_or(0.0) < 60.0
+                    || tv.as_f64().unwrap_or(0.0) > 86400.0
+                {
+                    why = format!(
+                        "{at}: timeout_sec must be an integer from 60 to 86400 (seconds; got {})",
+                        compact(tv)
+                    );
+                    break;
+                }
+                timeout_sec = tv.as_i64().unwrap_or(0);
+            }
+            // (wave 26b, D16) context_tokens: an integer from 32000 to 100000000.
+            let mut context_tokens: i64 = 0;
+            if let Some(cv) = iobj.get("context_tokens") {
+                if !is_json_integer(cv)
+                    || cv.as_f64().unwrap_or(0.0) < 32000.0
+                    || cv.as_f64().unwrap_or(0.0) > 100_000_000.0
+                {
+                    why = format!(
+                        "{at}: context_tokens must be an integer from 32000 to 100000000 (the reviewer's context window in tokens, e.g. 256000; got {})",
+                        compact(cv)
+                    );
+                    break;
+                }
+                context_tokens = cv.as_i64().unwrap_or(0);
+            }
+            // (wave 26b, D12) stall_sec: an integer from 0 (off) to 86400 (seconds without an event).
+            let mut stall_sec: i64 = -1;
+            if let Some(sv) = iobj.get("stall_sec") {
+                if !is_json_integer(sv)
+                    || sv.as_f64().unwrap_or(-1.0) < 0.0
+                    || sv.as_f64().unwrap_or(-1.0) > 86400.0
+                {
+                    why = format!(
+                        "{at}: stall_sec must be an integer from 0 (off) to 86400 (seconds without an event; got {})",
+                        compact(sv)
+                    );
+                    break;
+                }
+                stall_sec = sv.as_i64().unwrap_or(-1);
+            }
             if let Some(other) = entries
                 .iter()
                 .find(|e| e.provider == provider && e.engine != engine)
@@ -574,6 +628,9 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 engine_declared,
                 lab,
                 roles,
+                timeout_sec,
+                stall_sec,
+                context_tokens,
             });
         }
     }

@@ -140,13 +140,13 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
     out.push(format!(
         "timeout     : {} s ({}); continuation after a timeout kill: {}",
         ctx.r.timeout_sec,
-        if ctx.r.timeout_source == "purpose" {
-            format!(
+        match ctx.r.timeout_source.as_str() {
+            "purpose" => format!(
                 "the default of purpose {}; -TimeoutSec overrides",
                 ctx.r.purpose_label
-            )
-        } else {
-            "-TimeoutSec".to_string()
+            ),
+            "roster" => "the roster entry's timeout_sec".to_string(),
+            _ => "-TimeoutSec".to_string(),
         },
         if ctx.r.continue_sec > 0 {
             format!(
@@ -379,13 +379,15 @@ fn preview(ctx: &Context) -> Value {
         "preflight": ctx.preflight,
         "preflight_warning": ctx.preflight_warning,
         "roster": ctx.roster_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
-        "panel": Value::Null,
+        "panel": super::orchestrate::build_member_panel(ctx).map(|p| serde_json::to_value(p).unwrap_or(Value::Null)).unwrap_or(Value::Null),
         "extra_config": ctx.r.extra_config.clone(),
         "extra_config_source": ctx.extra_config_source,
         "parent_thread": ctx.parent_thread,
         "thread": "<filled from the event stream>",
         "thread_source": "events|rollout (verified by consultation id)|unknown",
         "mode": ctx.effective_mode,
+        // (wave 26b, D16) the context-window fork/resume -> new downgrade, else null.
+        "mode_fallback": ctx.mode_fallback.as_ref().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).unwrap_or(Value::Null),
         "command": command_str(ctx),
         "reply": preview_rel(ctx, "md"),
         "reply_json": if ctx.r.raw { Value::Null } else { Value::String(preview_rel(ctx, "reply.json")) },

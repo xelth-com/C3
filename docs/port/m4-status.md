@@ -113,3 +113,39 @@ and harness-detach **50 / 1** (the one remaining is by-design).
 - `store::LockRecord::now` reads `CODEX_CONSULT_TEST_BRIDGE_PID` for the record pid (own pid when
   unset — production).
 - `store::write_lock_timeout_secs()` made `pub` (the "commit blocked" message quotes it).
+
+## Wave 26b landed (Run 11, 2026-09-29)
+
+The "still open" list above is now implemented (D10–D16); see
+`docs/port/harness-results.md` Run 11. In brief:
+
+- **D11 timeout_sec / D12 stall_sec / D16 context_tokens** — applied per member in
+  `consult/orchestrate.rs::build_context` (roster override of the resolved timeout/stall, the
+  context-window 80 % fork→new fallback and the context prompt line) and `consult/args.rs`
+  (`--stall-sec`, `Resolved.stall_sec/stall_given`). The panel forwards timeout/continue/stall to a
+  member only when explicit, so a member re-derives its own roster override; the panel `Timeout:`
+  header lists per-member roster exceptions (`panel/run.rs`).
+- **D12 stall detection** lives in `engines/subprocess.rs::run_turn` (byte-growth reset + tool-call
+  suspension via per-engine `tool_delta`), surfaced as `AttemptOutcome::Stopped { StopKind }`
+  (c3-core `engine.rs`, additive — `TimedOut` and `http_engine` untouched).
+- **D15 salvage** — `build_partial_reply` now fires for any non-usable run whose stream holds
+  content, with the "the run ended: <why>" footer.
+- **D10 -Kick** — new `consult/kick.rs`; the primary turn polls `<task>/.consult.kick-<NN>`.
+- **D13 machine health file** — c3-core `health.rs` (read/write/lock/prune/running[]/merge +
+  `machine_endpoint_consults`); `providers::read_all_task_consults_health` folds it into every
+  endpoint-health decision; `orchestrate` registers/unregisters the running row and writes the
+  outcome; `panel/run.rs` enforces the cross-repository parallel limit.
+
+### c3-core contract changes made in this pass
+
+- `engine::AttemptOutcome::Stopped { kind: StopKind, partial, survivors, conversation, wall_seconds }`
+  and `engine::StopKind { Stall { silent_seconds, last_event }, Kick }` — new, additive.
+- `roster::RosterEntry` gained `timeout_sec: i64`, `stall_sec: i64`, `context_tokens: i64` (parsed
+  and validated; `60..86400` / `0..86400` / `32000..100000000`).
+- `health.rs` gained the machine-wide file: `MachineEndpoint`, `MachineRunning`, `MachineHealth`,
+  `MachineFailure`, `machine_health_path`, `read_machine_health`, `add_machine_health_record`,
+  `register_machine_running`, `unregister_machine_running`, `machine_running_count`,
+  `machine_endpoint_consults[_all]`; `endpoint_health`'s sort gained a `until` tiebreak (26c D2).
+- `store`: `LockRecord::now` no longer reads the environment; `set_bridge_pid`/`bridge_pid` take the
+  validated pid from the c3 runtime (test-hook hardening — a live-ancestor-only bridge).
+- `ledger` `Stall`/`ModeFallback` are now populated (were present-in-order `null`).

@@ -322,6 +322,10 @@ impl DetachArgs {
             timeout_sec: self.timeout_sec,
             continue_sec: self.continue_sec,
             continue_sec_given: self.continue_sec != -1,
+            // A detached member re-derives its stall cut from its own roster entry (the panel's
+            // explicit --stall-sec is not preserved across detach); -Kick acts by the kick file.
+            stall_sec: -1,
+            stall_sec_given: false,
             range: self.range,
             reply_name: self.reply_name,
             artifacts: self.artifacts,
@@ -363,6 +367,8 @@ impl DetachArgs {
             wait_timeout_sec: 0,
             wait_timeout_sec_given: false,
             prune: false,
+            kick: false,
+            member: String::new(),
         }
     }
 

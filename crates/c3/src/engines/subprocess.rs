@@ -38,11 +38,37 @@ pub struct SpawnRequest<'a> {
     pub stderr_path: &'a Path,
     /// The wall-clock budget for the turn.
     pub timeout: Duration,
+    /// (wave 26b, D12) The stall cut in seconds (`0` = off): the turn is stopped like a timeout
+    /// when its event stream produces no growth for this long while the process lives. Per wave
+    /// 26c D3 the silent timer resets on any growth of the stream in bytes and is SUSPENDED while
+    /// a tool call is in flight (see `tool_delta`).
+    pub stall_sec: i64,
+    /// (wave 26b, D10) The operator's kick file: when it appears the turn is stopped and recorded
+    /// as `stopped by the operator (-Kick)`. `None` disables the check.
+    pub kick_path: Option<&'a Path>,
+    /// (wave 26c, D3) Classifies one event-stream line for the stall's tool-call suspension:
+    /// `+1` when the line STARTS a tool call, `-1` when it ENDS one, `0` otherwise. While the
+    /// running count is above zero the stall timer is suspended. `None` = no suspension (the
+    /// timer still resets on byte growth).
+    pub tool_delta: Option<&'a dyn Fn(&str) -> i64>,
     /// Called once, right after the child is spawned and before it is waited on, with the
     /// child pid and its start time (.NET `o` string, or empty when unavailable). The
     /// orchestrator uses it to flip the recovery record `launching` -> `running` while the
     /// child is live (`codex-consult.ps1:3330-3339`).
     pub on_running: Option<&'a dyn Fn(u32, String)>,
+}
+
+/// Why [`run_turn`] stopped watching the child.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnStop {
+    /// The child exited on its own.
+    Exited,
+    /// The wall-clock timeout fired and the tree was killed.
+    Timeout,
+    /// The stall cut fired (no event for `stall_sec` while the process lived) and the tree was killed.
+    Stall,
+    /// The operator's kick file appeared and the tree was killed.
+    Kick,
 }
 
 /// The result of one subprocess turn.
@@ -52,8 +78,12 @@ pub struct TurnResult {
     pub started: bool,
     /// The child's exit code, or `None` when it was killed/timed out or never started.
     pub exit_code: Option<i32>,
-    /// The turn was killed on its timeout.
-    pub timed_out: bool,
+    /// Why the watch ended (exited / timeout / stall / kick).
+    pub stop: TurnStop,
+    /// (wave 26b, D12) The ISO time of the last event-stream growth seen, `None` when none.
+    pub last_event: Option<String>,
+    /// (wave 26b, D12) Seconds without an event at the stall kill (`0` unless a stall fired).
+    pub silent_seconds: i64,
     /// Pids that survived the kill (best-effort; empty when the tree died cleanly).
     pub survivors: Vec<u32>,
     /// Wall time, rounded to one decimal.
@@ -69,7 +99,9 @@ impl TurnResult {
         TurnResult {
             started: false,
             exit_code: None,
-            timed_out: false,
+            stop: TurnStop::Exited,
+            last_event: None,
+            silent_seconds: 0,
             survivors: Vec::new(),
             wall_seconds: 0.0,
             stderr: String::new(),
@@ -144,27 +176,70 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     }
 
     let start = Instant::now();
-    let mut timed_out = false;
+    let mut stop = TurnStop::Exited;
     let mut survivors = Vec::new();
+    // Stall tracking (wave 26b D12 + 26c D3): byte offset consumed so far, the last time the
+    // stream grew, the count of tool calls currently in flight, and the last event time seen.
+    let stall_on = req.stall_sec > 0;
+    let mut offset: u64 = 0;
+    let mut line_buf = String::new();
+    let mut last_activity = Instant::now();
+    let mut open_tools: i64 = 0;
+    let mut last_event: Option<String> = None;
+    let mut silent_seconds: i64 = 0;
+    let kill_now = |child: &mut Child| -> Vec<u32> {
+        let mut s = kill_tree(child);
+        // TEST HOOK: CODEX_CONSULT_TEST_SURVIVORS=<pid>[,<pid>] — these pids, when alive, are
+        // reported as survivors of this kill (no test can make a real process outlive a kill).
+        // Only ever adds (a stricter outcome), matching `$env:CODEX_CONSULT_TEST_SURVIVORS`.
+        for hook in test_survivor_pids() {
+            if crate::liveness::proc::pid_alive(hook, "") && !s.contains(&hook) {
+                s.push(hook);
+            }
+        }
+        let _ = child.wait();
+        s
+    };
     let exit_code = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.code(),
             Ok(None) => {
                 if start.elapsed() >= req.timeout {
-                    survivors = kill_tree(&mut child);
-                    // TEST HOOK: CODEX_CONSULT_TEST_SURVIVORS=<pid>[,<pid>] — these pids, when
-                    // alive, are reported as survivors of this kill (no test can make a real
-                    // process outlive a kill). Only ever adds (a stricter outcome), matching
-                    // the plugin's `$env:CODEX_CONSULT_TEST_SURVIVORS` hook.
-                    for hook in test_survivor_pids() {
-                        if crate::liveness::proc::pid_alive(hook, "") && !survivors.contains(&hook)
-                        {
-                            survivors.push(hook);
+                    survivors = kill_now(&mut child);
+                    stop = TurnStop::Timeout;
+                    break None;
+                }
+                // (wave 26b, D10) the operator's kick, checked on every poll.
+                if let Some(kp) = req.kick_path {
+                    if kp.exists() {
+                        survivors = kill_now(&mut child);
+                        stop = TurnStop::Kick;
+                        break None;
+                    }
+                }
+                // (wave 26b, D12 / 26c D3) the stall cut.
+                if stall_on {
+                    let grew = read_stream_growth(
+                        req.events_path,
+                        &mut offset,
+                        &mut line_buf,
+                        req.tool_delta,
+                        &mut open_tools,
+                    );
+                    if grew {
+                        last_activity = Instant::now();
+                        last_event = Some(iso_now());
+                    }
+                    // The timer is suspended while a tool call is in flight.
+                    if open_tools <= 0 {
+                        let silent = last_activity.elapsed();
+                        if silent.as_secs() as i64 >= req.stall_sec {
+                            silent_seconds = silent.as_secs() as i64;
+                            survivors = kill_now(&mut child);
+                            stop = TurnStop::Stall;
+                            break None;
                         }
                     }
-                    timed_out = true;
-                    let _ = child.wait();
-                    break None;
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -172,7 +247,9 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                 return TurnResult {
                     started: true,
                     exit_code: None,
-                    timed_out: false,
+                    stop: TurnStop::Exited,
+                    last_event,
+                    silent_seconds: 0,
                     survivors: Vec::new(),
                     wall_seconds: round1(start.elapsed().as_secs_f64()),
                     stderr: read_text(req.stderr_path),
@@ -186,12 +263,68 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     TurnResult {
         started: true,
         exit_code,
-        timed_out,
+        stop,
+        last_event,
+        silent_seconds,
         survivors,
         wall_seconds,
         stderr: read_text(req.stderr_path),
         error: None,
     }
+}
+
+/// Read any new bytes of the events stream since `offset`, advancing it and the carried
+/// partial-line buffer. Applies `tool_delta` to each COMPLETE new line to keep `open_tools`
+/// (the count of tool calls in flight) current. Returns whether the stream grew at all (any new
+/// bytes) — the caller resets the silent timer on that (wave 26c D3: reset on byte growth).
+fn read_stream_growth(
+    path: &Path,
+    offset: &mut u64,
+    line_buf: &mut String,
+    tool_delta: Option<&dyn Fn(&str) -> i64>,
+    open_tools: &mut i64,
+) -> bool {
+    use std::io::{Seek, SeekFrom};
+    let mut f = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let len = match f.metadata() {
+        Ok(m) => m.len(),
+        Err(_) => return false,
+    };
+    if len <= *offset {
+        return false;
+    }
+    if f.seek(SeekFrom::Start(*offset)).is_err() {
+        return false;
+    }
+    let mut buf = Vec::new();
+    let n = match f.read_to_end(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return false,
+    };
+    if n == 0 {
+        return false;
+    }
+    *offset += n as u64;
+    if let Some(delta) = tool_delta {
+        line_buf.push_str(&String::from_utf8_lossy(&buf));
+        while let Some(nl) = line_buf.find('\n') {
+            let line: String = line_buf.drain(..=nl).collect();
+            let line = line.trim();
+            if !line.is_empty() {
+                *open_tools = (*open_tools + delta(line)).max(0);
+            }
+        }
+    }
+    true
+}
+
+fn iso_now() -> String {
+    chrono::Local::now()
+        .format("%Y-%m-%dT%H:%M:%S%:z")
+        .to_string()
 }
 
 /// Kill the process tree. On Windows `taskkill /F /T /PID <pid>` kills the whole tree
@@ -235,4 +368,92 @@ fn read_text(path: &Path) -> String {
         let _ = f.read_to_end(&mut s);
     }
     String::from_utf8_lossy(&s).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // (wave 26b, D12 / 26c D3) the stall detection's pure helper: any byte growth is seen, and a
+    // tool-call classifier keeps the in-flight count so the timer can suspend while one runs.
+    #[test]
+    fn stream_growth_and_tool_call_suspension() {
+        let dir = std::env::temp_dir().join(format!("c3-sg-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("events.jsonl");
+        let mut f = File::create(&path).unwrap();
+        let delta = |line: &str| crate::engines::codex::codex_tool_delta(line);
+        let td: Option<&dyn Fn(&str) -> i64> = Some(&delta);
+
+        let mut offset = 0u64;
+        let mut line_buf = String::new();
+        let mut open = 0i64;
+
+        // No growth yet.
+        assert!(!read_stream_growth(
+            &path,
+            &mut offset,
+            &mut line_buf,
+            td,
+            &mut open
+        ));
+
+        // A plain agent-message line: growth, no open tool call.
+        writeln!(
+            f,
+            r#"{{"type":"item.completed","item":{{"type":"agent_message","text":"a"}}}}"#
+        )
+        .unwrap();
+        f.flush().unwrap();
+        assert!(read_stream_growth(
+            &path,
+            &mut offset,
+            &mut line_buf,
+            td,
+            &mut open
+        ));
+        assert_eq!(open, 0);
+
+        // A tool call starts: the count rises (the timer would suspend).
+        writeln!(
+            f,
+            r#"{{"type":"item.started","item":{{"type":"command_execution"}}}}"#
+        )
+        .unwrap();
+        f.flush().unwrap();
+        assert!(read_stream_growth(
+            &path,
+            &mut offset,
+            &mut line_buf,
+            td,
+            &mut open
+        ));
+        assert_eq!(open, 1);
+
+        // It completes: back to zero (the timer resumes).
+        writeln!(
+            f,
+            r#"{{"type":"item.completed","item":{{"type":"command_execution"}}}}"#
+        )
+        .unwrap();
+        f.flush().unwrap();
+        assert!(read_stream_growth(
+            &path,
+            &mut offset,
+            &mut line_buf,
+            td,
+            &mut open
+        ));
+        assert_eq!(open, 0);
+
+        // No further growth.
+        assert!(!read_stream_growth(
+            &path,
+            &mut offset,
+            &mut line_buf,
+            td,
+            &mut open
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

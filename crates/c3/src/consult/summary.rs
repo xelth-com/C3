@@ -150,6 +150,9 @@ pub struct SummaryInputs {
     pub wall_seconds: String,
     pub lineage_shown: String,
     pub mode: String,
+    /// (wave 26b, D16) `Some((from, reason))` when the reviewer's context window forced a
+    /// fork/resume down to a new thread; renders the `mode       : <from> -> new (<reason>)` line.
+    pub mode_fallback: Option<(String, String)>,
     pub thread: String,
     pub thread_source: String,
     /// An unverified rollout candidate (`Find-ThreadInRollouts`): the newest rollout uuid that
@@ -244,6 +247,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
         "codex-consult: {} - {}, mode {}, thread {} (source: {}), wall {} s",
         s.bridge_outcome, s.lineage_shown, s.mode, s.thread, s.thread_source, s.wall_seconds
     ));
+    if let Some((from, reason)) = &s.mode_fallback {
+        out.push(format!("mode       : {from} -> new ({reason})"));
+    }
     if !s.continue_line.is_empty() {
         out.push(s.continue_line.clone());
     }
@@ -367,6 +373,7 @@ mod tests {
     #[test]
     fn failed_summary_has_hint_and_partial() {
         let s = SummaryInputs {
+            mode_fallback: None,
             bridge_outcome: "failed: timeout after 900 s".into(),
             usable: false,
             wall_seconds: "901".into(),
@@ -388,6 +395,7 @@ mod tests {
     #[test]
     fn usable_summary_header_and_verdict() {
         let s = SummaryInputs {
+            mode_fallback: None,
             bridge_outcome: "usable reply".into(),
             usable: true,
             wall_seconds: "12".into(),

@@ -146,7 +146,7 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = resolve_repo_root(&cwd);
     let collab_root = resolve_collab_root(&repo_root, &opts.collab_dir);
-    let consults = read_all_task_consults(&collab_root);
+    let consults = read_all_task_consults_health(&collab_root);
     let clock = get_consult_clock_peek()?;
     let utc_now = clock.with_timezone(&Utc);
 
@@ -397,6 +397,18 @@ impl Ctx {
     /// available. `model` (an explicit `-Model` without `-Provider`) restricts the walk to the
     /// entries that resolve to that model; `skip_preflight` takes the first unchecked entry.
     pub(crate) fn walk_full(&self, model: &str, engine: &str, skip_preflight: bool) -> RosterWalk {
+        self.walk_full_ctx(model, engine, skip_preflight, 0)
+    }
+
+    /// [`walk_full`] with a prompt token estimate (`> 0`): an entry whose `context_tokens` the
+    /// brief alone would fill beyond 80% is skipped before its preflight (wave 26b, D16 b).
+    pub(crate) fn walk_full_ctx(
+        &self,
+        model: &str,
+        engine: &str,
+        skip_preflight: bool,
+        context_estimate: i64,
+    ) -> RosterWalk {
         let mut skipped: Vec<(String, String, String, String)> = Vec::new();
         let mut listing: Vec<String> = Vec::new();
         let mut considered = 0usize;
@@ -423,6 +435,28 @@ impl Ctx {
                 continue;
             }
             considered += 1;
+            // (wave 26b, D16 b) skip a reviewer whose context window the brief alone would overflow.
+            if context_estimate > 0
+                && e.context_tokens > 0
+                && (context_estimate as f64) > 0.8 * e.context_tokens as f64
+            {
+                let reason = format!(
+                    "brief too large for this reviewer's context (est. {context_estimate} of {} tokens)",
+                    e.context_tokens
+                );
+                skipped.push((
+                    e.provider.clone(),
+                    id.model.clone(),
+                    entry_engine.to_string(),
+                    reason.clone(),
+                ));
+                listing.push(format!(
+                    "#{} {} ({reason})",
+                    e.position,
+                    format_reviewer_lineage(&id.provider, &id.model, entry_engine)
+                ));
+                continue;
+            }
             let block = self.engine_launch_block(entry_engine);
             if !block.is_empty() {
                 let reason = format!("refused: {block}");
@@ -1928,6 +1962,24 @@ fn count_task_ledgers(collab_root: &Path) -> usize {
                 .count()
         })
         .unwrap_or(0)
+}
+
+/// (wave 26b, D13) The machine-wide health file's endpoint records as synthetic consults, so a
+/// repository's endpoint-health checks fold in what other repositories of the machine recorded.
+/// Empty when `CODEX_CONSULT_HEALTH=none`, no file, or an unreadable one.
+pub(crate) fn machine_health_consults() -> Vec<Value> {
+    match c3_core::health::machine_health_path(&get_codex_home()) {
+        Some(p) => c3_core::health::machine_endpoint_consults_all(&p),
+        None => Vec::new(),
+    }
+}
+
+/// [`read_all_task_consults`] plus the machine-wide health records (wave 26b, D13), for endpoint
+/// -health decisions (a preflight or a roster walk); never for ratings/routing.
+pub(crate) fn read_all_task_consults_health(collab_root: &Path) -> Vec<Value> {
+    let mut all = read_all_task_consults(collab_root);
+    all.extend(machine_health_consults());
+    all
 }
 
 pub(crate) fn read_all_task_consults(collab_root: &Path) -> Vec<Value> {

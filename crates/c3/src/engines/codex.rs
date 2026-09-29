@@ -40,10 +40,41 @@ pub struct CodexEngine {
     pub primary: TurnFiles,
     /// The secondary turn's streams (format repair / timeout continuation), when one runs.
     pub secondary: TurnFiles,
+    /// (wave 26b, D12) The stall cut in seconds for the PRIMARY turn (`0` = off).
+    pub stall_sec: i64,
+    /// (wave 26b, D10) The operator's kick file for the PRIMARY turn (`None` = no kick watch).
+    pub kick_path: Option<PathBuf>,
     /// Called once per turn, right after the child spawns and before it is waited on, with the
     /// child pid and its start time — the orchestrator flips the recovery record `launching`
     /// -> `running` (`codex-consult.ps1:3330`). `None` leaves the record `launching`.
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+}
+
+/// (wave 26c, D3) One codex `--json` line's effect on the tool-call-in-flight count: `+1` when a
+/// `command_execution` / `mcp_tool_call` / `web_search` item STARTS, `-1` when one COMPLETES,
+/// `0` otherwise. Used to suspend the stall timer while a tool call runs.
+pub fn codex_tool_delta(line: &str) -> i64 {
+    let v: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    let item_type = v
+        .get("item")
+        .and_then(|i| i.get("type"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    if !matches!(
+        item_type,
+        "command_execution" | "mcp_tool_call" | "web_search"
+    ) {
+        return 0;
+    }
+    match ty {
+        "item.started" => 1,
+        "item.completed" => -1,
+        _ => 0,
+    }
 }
 
 impl CodexEngine {
@@ -69,6 +100,10 @@ impl CodexEngine {
         let args = self.run_argv(turn)?;
         let files = self.files_for(turn.kind);
         let timeout = std::time::Duration::from_secs_f64(turn.request.timeout_sec.max(0.0));
+        // The stall cut and the operator's kick watch only the primary turn (a continuation /
+        // format-repair turn takes neither).
+        let is_primary = matches!(turn.kind, TurnKind::Primary);
+        let td = |l: &str| codex_tool_delta(l);
         let spawn = SpawnRequest {
             launcher: &self.launcher,
             argv: &args,
@@ -78,6 +113,13 @@ impl CodexEngine {
             events_path: &files.events,
             stderr_path: &files.stderr,
             timeout,
+            stall_sec: if is_primary { self.stall_sec } else { 0 },
+            kick_path: if is_primary {
+                self.kick_path.as_deref()
+            } else {
+                None
+            },
+            tool_delta: Some(&td),
             on_running: self
                 .on_running
                 .as_ref()
@@ -106,13 +148,39 @@ impl CodexEngine {
             }
         };
 
-        if result.timed_out {
-            return Ok(AttemptOutcome::TimedOut {
-                partial: salvage_partial(&events_text),
-                survivors: result.survivors,
-                conversation: conversation(false),
-                wall_seconds: result.wall_seconds,
-            });
+        use super::subprocess::TurnStop;
+        use c3_core::engine::StopKind;
+        match result.stop {
+            TurnStop::Timeout => {
+                return Ok(AttemptOutcome::TimedOut {
+                    partial: salvage_partial(&events_text),
+                    survivors: result.survivors,
+                    conversation: conversation(false),
+                    wall_seconds: result.wall_seconds,
+                });
+            }
+            TurnStop::Stall => {
+                return Ok(AttemptOutcome::Stopped {
+                    kind: StopKind::Stall {
+                        silent_seconds: result.silent_seconds,
+                        last_event: result.last_event.clone(),
+                    },
+                    partial: salvage_partial(&events_text),
+                    survivors: result.survivors,
+                    conversation: conversation(false),
+                    wall_seconds: result.wall_seconds,
+                });
+            }
+            TurnStop::Kick => {
+                return Ok(AttemptOutcome::Stopped {
+                    kind: StopKind::Kick,
+                    partial: salvage_partial(&events_text),
+                    survivors: result.survivors,
+                    conversation: conversation(false),
+                    wall_seconds: result.wall_seconds,
+                });
+            }
+            TurnStop::Exited => {}
         }
 
         let usage = parse_usage(&events_text);
@@ -482,6 +550,25 @@ fn read_text(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_delta_tracks_command_and_search_and_mcp() {
+        // A tool call STARTS (+1) and COMPLETES (-1); other items are neutral.
+        for kind in ["command_execution", "mcp_tool_call", "web_search"] {
+            let start = format!(r#"{{"type":"item.started","item":{{"type":"{kind}"}}}}"#);
+            let done = format!(r#"{{"type":"item.completed","item":{{"type":"{kind}"}}}}"#);
+            assert_eq!(codex_tool_delta(&start), 1, "{kind} start");
+            assert_eq!(codex_tool_delta(&done), -1, "{kind} completed");
+        }
+        // An agent message / reasoning item is not a tool call.
+        assert_eq!(
+            codex_tool_delta(
+                r#"{"type":"item.completed","item":{"type":"agent_message","text":"hi"}}"#
+            ),
+            0
+        );
+        assert_eq!(codex_tool_delta("not json"), 0);
+    }
 
     const STREAM: &str = concat!(
         r#"{"type":"thread.started","thread_id":"11111111-2222-3333-4444-555555555555"}"#,

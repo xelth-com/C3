@@ -60,6 +60,7 @@ param(
     [int]$MaxWords = 0,
     [int]$TimeoutSec = 0,
     [int]$ContinueSec = -1,
+    [int]$StallSec = -1,
     [string]$Range = '',
     [string]$ReplyName = 'reply',
     [string[]]$Artifact = @(),
@@ -101,7 +102,11 @@ param(
     [switch]$List,
     [switch]$Wait,
     [int]$WaitTimeoutSec = 0,
-    [switch]$Prune
+    [switch]$Prune,
+
+    # (wave 26b, D10) -Kick -Member <NN> [-Id <id8>]: stop one running member of -Task.
+    [switch]$Kick,
+    [string]$Member = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -138,6 +143,19 @@ $env:CODEX_CONSULT_TEST_BRIDGE_PID = "$PID"
 # The harnesses run fake consultations: nothing of them may reach the telemetry hub and no
 # priors download may start. A value set by the caller wins.
 if (-not $env:CODEX_CONSULT_TELEMETRY) { $env:CODEX_CONSULT_TELEMETRY = "off" }
+
+# (wave 26b, D10) -Kick / -Member: a control action, not a run. Forward only the flags c3's kick
+# dispatch reads (task, collab-dir, kick, member, id) so the run-path defaults never reach it.
+if ($Kick -or $PSBoundParameters.ContainsKey('Member')) {
+    $k = New-Object System.Collections.Generic.List[string]
+    $k.Add('consult'); $k.Add('--task'); $k.Add($Task)
+    if ($PSBoundParameters.ContainsKey('CollabDir')) { $k.Add('--collab-dir'); $k.Add($CollabDir) }
+    if ($Kick) { $k.Add('--kick') }
+    if ($PSBoundParameters.ContainsKey('Member')) { $k.Add('--member'); $k.Add($Member) }
+    if ($PSBoundParameters.ContainsKey('Id')) { $k.Add('--id'); $k.Add($Id) }
+    & $c3 @k
+    exit $LASTEXITCODE
+}
 
 # A detached QUERY (-Status / -Wait): the plugin forwards only -Task, -CollabDir, -Id, -Prune and
 # -WaitTimeoutSec (plus any bound run option, so c3 can refuse it). Only bound parameters are
@@ -183,6 +201,7 @@ if ($Sandbox) { $c3Args.Add('--sandbox'); $c3Args.Add($Sandbox) }
 if ($MaxWords -ne 0) { $c3Args.Add('--max-words'); $c3Args.Add([string]$MaxWords) }
 if ($TimeoutSec -ne 0) { $c3Args.Add('--timeout-sec'); $c3Args.Add([string]$TimeoutSec) }
 if ($ContinueSec -ne -1) { $c3Args.Add('--continue-sec'); $c3Args.Add([string]$ContinueSec) }
+if ($StallSec -ne -1) { $c3Args.Add('--stall-sec'); $c3Args.Add([string]$StallSec) }
 if ($Range) { $c3Args.Add('--range'); $c3Args.Add($Range) }
 if ($ReplyName) { $c3Args.Add('--reply-name'); $c3Args.Add($ReplyName) }
 foreach ($a in $Artifact) {

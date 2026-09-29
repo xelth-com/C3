@@ -38,9 +38,38 @@ pub struct MuseEngine {
     pub primary: TurnFiles,
     /// The secondary turn's streams (format repair / timeout continuation).
     pub secondary: TurnFiles,
+    /// (wave 26b, D12) The stall cut in seconds for the PRIMARY turn (`0` = off).
+    pub stall_sec: i64,
+    /// (wave 26b, D10) The operator's kick file for the PRIMARY turn (`None` = no kick watch).
+    pub kick_path: Option<PathBuf>,
     /// Called once per turn, right after the child spawns and before it is waited on
     /// (recovery record `launching` -> `running`). `None` leaves the record `launching`.
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+}
+
+/// (wave 26c, D3) One muse MSP line's effect on the tool-call-in-flight count: `+1` when a
+/// `tool.*` task is proposed/started, `-1` when it completes/fails, `0` otherwise. Suspends the
+/// stall timer while a muse tool task runs.
+pub fn muse_tool_delta(line: &str) -> i64 {
+    let v: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return 0,
+    };
+    let p_type = v.get("payload_type").and_then(|t| t.as_str()).unwrap_or("");
+    let kind = v
+        .get("payload")
+        .and_then(|p| p.get("event"))
+        .and_then(|e| e.get("task_kind"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+    if !kind.starts_with("tool.") {
+        return 0;
+    }
+    match p_type {
+        "task.lifecycle.proposed" | "task.lifecycle.started" => 1,
+        "task.lifecycle.completed" | "task.lifecycle.failed" => -1,
+        _ => 0,
+    }
 }
 
 impl MuseEngine {
@@ -75,6 +104,8 @@ impl MuseEngine {
         let args = self.run_argv(turn)?;
         let files = self.files_for(turn.kind);
         let timeout = std::time::Duration::from_secs_f64(turn.request.timeout_sec.max(0.0));
+        let is_primary = matches!(turn.kind, TurnKind::Primary);
+        let td = |l: &str| muse_tool_delta(l);
         let spawn = SpawnRequest {
             launcher: &self.launcher,
             argv: &args,
@@ -84,6 +115,13 @@ impl MuseEngine {
             events_path: &files.events,
             stderr_path: &files.stderr,
             timeout,
+            stall_sec: if is_primary { self.stall_sec } else { 0 },
+            kick_path: if is_primary {
+                self.kick_path.as_deref()
+            } else {
+                None
+            },
+            tool_delta: Some(&td),
             on_running: self
                 .on_running
                 .as_ref()
@@ -104,22 +142,47 @@ impl MuseEngine {
         }
 
         let events_text = read_text(&files.events);
-        let allow_partial = result.timed_out || result.exit_code != Some(0);
+        use super::subprocess::TurnStop;
+        let killed = !matches!(result.stop, TurnStop::Exited);
+        let allow_partial = killed || result.exit_code != Some(0);
         let events = read_muse_events(&events_text, allow_partial);
 
-        if result.timed_out {
+        if killed {
             let conversation = if is_uuid(&events.session) {
                 ConversationTrust::Candidate(ConversationId(events.session.clone()))
             } else {
                 ConversationTrust::None
             };
-            return Ok(MuseRun {
-                outcome: AttemptOutcome::TimedOut {
-                    partial: muse_salvage(&events_text),
-                    survivors: result.survivors,
+            let partial = muse_salvage(&events_text);
+            let survivors = result.survivors.clone();
+            let wall_seconds = result.wall_seconds;
+            let outcome = match result.stop {
+                TurnStop::Stall => AttemptOutcome::Stopped {
+                    kind: c3_core::engine::StopKind::Stall {
+                        silent_seconds: result.silent_seconds,
+                        last_event: result.last_event.clone(),
+                    },
+                    partial,
+                    survivors,
                     conversation,
-                    wall_seconds: result.wall_seconds,
+                    wall_seconds,
                 },
+                TurnStop::Kick => AttemptOutcome::Stopped {
+                    kind: c3_core::engine::StopKind::Kick,
+                    partial,
+                    survivors,
+                    conversation,
+                    wall_seconds,
+                },
+                _ => AttemptOutcome::TimedOut {
+                    partial,
+                    survivors,
+                    conversation,
+                    wall_seconds,
+                },
+            };
+            return Ok(MuseRun {
+                outcome,
                 turn: MuseTurn::default(),
             });
         }
@@ -883,6 +946,22 @@ fn read_text(path: &Path) -> String {
 mod tests {
     use super::*;
     use c3_core::engine::MUSE_API_KEY_VARS;
+
+    #[test]
+    fn tool_delta_tracks_tool_lifecycle() {
+        let proposed = r#"{"payload_type":"task.lifecycle.proposed","payload":{"event":{"task_kind":"tool.shell"}}}"#;
+        let completed = r#"{"payload_type":"task.lifecycle.completed","payload":{"event":{"task_kind":"tool.shell"}}}"#;
+        assert_eq!(muse_tool_delta(proposed), 1);
+        assert_eq!(muse_tool_delta(completed), -1);
+        // A non-tool task and a plain output delta are neutral.
+        let plan = r#"{"payload_type":"task.lifecycle.proposed","payload":{"event":{"task_kind":"plan.step"}}}"#;
+        assert_eq!(muse_tool_delta(plan), 0);
+        assert_eq!(
+            muse_tool_delta(r#"{"payload_type":"run.output.delta","payload":{"text":"x"}}"#),
+            0
+        );
+        assert_eq!(muse_tool_delta("garbage"), 0);
+    }
 
     const OK: &str = include_str!("fixtures/muse_ok.events.jsonl");
     const FAILED: &str = include_str!("fixtures/muse_failed.events.jsonl");

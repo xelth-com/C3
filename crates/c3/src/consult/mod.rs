@@ -19,6 +19,7 @@ pub mod detach;
 pub mod detached;
 pub mod dryrun;
 pub mod ingest;
+pub mod kick;
 pub mod orchestrate;
 pub mod prompt;
 pub mod recovery;

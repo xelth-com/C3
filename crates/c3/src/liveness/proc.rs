@@ -45,18 +45,59 @@ pub fn pid_alive(pid: u32, start_time: &str) -> bool {
 /// own pid, c3 records that pid (matching the plugin, where the launched process IS the bridge),
 /// and [`watch_bridge`] shares the shim's fate. A panel run clears the var when spawning members,
 /// so each member records its own pid.
-pub fn bridge_identity() -> (u32, String) {
-    if let Ok(s) = std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID") {
-        if let Ok(pid) = s.trim().parse::<u32>() {
-            if pid > 0 {
-                if let Some(start) = process_start_iso(pid) {
-                    return (pid, start);
-                }
-            }
+///
+/// SECURITY: the hook is honoured only when it names a LIVE ANCESTOR of this process (the shim is
+/// c3's parent, so it is always an ancestor). An invalid, dead or non-ancestor value is ignored
+/// silently and c3 falls back to its own pid — a stray environment variable can never make c3
+/// record, monitor or share the fate of an unrelated process. The value is validated exactly once
+/// at process start and cached.
+static VALIDATED_BRIDGE: std::sync::OnceLock<Option<(u32, String)>> = std::sync::OnceLock::new();
+
+/// Resolve and validate the bridge hook once: a live ancestor named by
+/// `CODEX_CONSULT_TEST_BRIDGE_PID`, else `None`.
+fn validated_bridge() -> &'static Option<(u32, String)> {
+    VALIDATED_BRIDGE.get_or_init(|| {
+        let pid = std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID")
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .filter(|p| *p > 0 && *p != std::process::id())?;
+        if !pid_alive(pid, "") {
+            return None;
         }
+        if !is_ancestor_of_self(pid) {
+            return None;
+        }
+        Some((pid, process_start_iso(pid).unwrap_or_default()))
+    })
+}
+
+pub fn bridge_identity() -> (u32, String) {
+    if let Some((pid, start)) = validated_bridge() {
+        return (*pid, start.clone());
     }
     let me = std::process::id();
     (me, process_start_iso(me).unwrap_or_default())
+}
+
+/// Walk the parent chain from this process upward: is `target` one of this process's ancestors?
+/// Bounded to 64 hops and stops at the system/idle pids so a reused or stale parent pid never
+/// loops. A non-ancestor (e.g. pid 4, or an unrelated process) returns `false`.
+fn is_ancestor_of_self(target: u32) -> bool {
+    let mut cur = std::process::id();
+    for _ in 0..64 {
+        let parent = match imp::parent_pid(cur) {
+            Some(p) if p > 0 && p != cur => p,
+            _ => return false,
+        };
+        if parent == target {
+            return true;
+        }
+        if parent <= 4 {
+            return false;
+        }
+        cur = parent;
+    }
+    false
 }
 
 /// (Test harness) When `CODEX_CONSULT_TEST_BRIDGE_PID` names a live process other than this one,
@@ -67,15 +108,10 @@ pub fn bridge_identity() -> (u32, String) {
 /// consecutive dead reads (~300 ms) before acting, so a transient `OpenProcess` failure never kills
 /// a live run.
 pub fn watch_bridge() {
-    let pid = match std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID")
-        .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .filter(|p| *p > 0 && *p != std::process::id())
-    {
-        Some(p) => p,
-        None => return,
-    };
-    imp::spawn_bridge_watchdog(pid);
+    // Only a validated live ancestor is watched (see [`bridge_identity`]).
+    if let Some((pid, _)) = validated_bridge() {
+        imp::spawn_bridge_watchdog(*pid);
+    }
 }
 
 /// `Test-SameStartTime`: exact match on Windows; within one second elsewhere (a pid is not
@@ -113,6 +149,22 @@ mod imp {
     const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
     const SYNCHRONIZE: DWORD = 0x0010_0000;
     const INFINITE: DWORD = 0xFFFF_FFFF;
+    const TH32CS_SNAPPROCESS: DWORD = 0x0000_0002;
+    const INVALID_HANDLE_VALUE: HANDLE = -1;
+
+    #[repr(C)]
+    struct PROCESSENTRY32W {
+        dw_size: DWORD,
+        cnt_usage: DWORD,
+        th32_process_id: DWORD,
+        th32_default_heap_id: usize,
+        th32_module_id: DWORD,
+        cnt_threads: DWORD,
+        th32_parent_process_id: DWORD,
+        pc_pri_class_base: i32,
+        dw_flags: DWORD,
+        sz_exe_file: [u16; 260],
+    }
 
     extern "system" {
         fn OpenProcess(access: DWORD, inherit: BOOL, pid: DWORD) -> HANDLE;
@@ -125,6 +177,38 @@ mod imp {
             user: *mut FILETIME,
         ) -> BOOL;
         fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
+        fn CreateToolhelp32Snapshot(flags: DWORD, pid: DWORD) -> HANDLE;
+        fn Process32FirstW(snap: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
+        fn Process32NextW(snap: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
+    }
+
+    /// The parent pid of `pid` from a Toolhelp process snapshot, or `None`.
+    pub fn parent_pid(pid: u32) -> Option<u32> {
+        // SAFETY: CreateToolhelp32Snapshot returns INVALID_HANDLE_VALUE on failure; the handle is
+        // closed before returning. Process32FirstW/NextW write into a PROCESSENTRY32W we own whose
+        // dw_size we set as the API requires.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap == INVALID_HANDLE_VALUE || snap == 0 {
+                return None;
+            }
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dw_size = std::mem::size_of::<PROCESSENTRY32W>() as DWORD;
+            let mut found = None;
+            if Process32FirstW(snap, &mut entry) != 0 {
+                loop {
+                    if entry.th32_process_id == pid {
+                        found = Some(entry.th32_parent_process_id);
+                        break;
+                    }
+                    if Process32NextW(snap, &mut entry) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snap);
+            found
+        }
     }
 
     /// Hold a handle to the bridge process and force-exit this process the moment it terminates.
@@ -215,6 +299,16 @@ mod imp {
         });
     }
 
+    /// The parent pid of `pid` from `/proc/<pid>/stat` (field 4), or `None`.
+    pub fn parent_pid(pid: u32) -> Option<u32> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // `pid (comm) state ppid ...` — comm may contain spaces/parens, so split after the last ')'.
+        let rest = stat.rsplit_once(')').map(|(_, r)| r).unwrap_or(&stat);
+        let mut it = rest.split_whitespace();
+        let _state = it.next()?;
+        it.next()?.parse::<u32>().ok()
+    }
+
     pub fn process_start_iso(pid: u32) -> Option<String> {
         if std::path::Path::new(&format!("/proc/{pid}")).exists() {
             return Some(String::new());
@@ -231,5 +325,26 @@ mod imp {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ancestor_accepts_own_parent_and_rejects_non_ancestors() {
+        // This test process's own parent (the test runner) is an ancestor.
+        let parent = imp::parent_pid(std::process::id())
+            .expect("this process must have a discoverable parent");
+        assert!(parent > 0);
+        assert!(
+            is_ancestor_of_self(parent),
+            "the direct parent pid {parent} must count as an ancestor"
+        );
+        // pid 4 (Windows System) / a low system pid is never this test's ancestor.
+        assert!(!is_ancestor_of_self(4));
+        // This process's own pid is not its own ancestor.
+        assert!(!is_ancestor_of_self(std::process::id()));
     }
 }

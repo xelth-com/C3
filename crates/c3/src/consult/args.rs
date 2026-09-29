@@ -33,6 +33,12 @@ pub struct Options {
     pub continue_sec: i64,
     /// Whether `--continue-sec` was given explicitly (a negative value is then a refusal).
     pub continue_sec_given: bool,
+    /// (wave 26b, D12) `--stall-sec`: the stall cut in seconds (`0` = off). The default sentinel
+    /// is `-1` (= the roster entry's `stall_sec`, else 900).
+    pub stall_sec: i64,
+    /// Whether `--stall-sec` was given explicitly (a negative value other than the sentinel is a
+    /// refusal; an explicit value wins over the roster's `stall_sec`).
+    pub stall_sec_given: bool,
     pub range: String,
     pub reply_name: String,
     pub artifacts: Vec<String>,
@@ -92,6 +98,10 @@ pub struct Options {
     pub wait_timeout_sec: i64,
     pub wait_timeout_sec_given: bool,
     pub prune: bool,
+    /// (wave 26b, D10) `--kick`: stop one running member of the task by its handoff number.
+    pub kick: bool,
+    /// (wave 26b, D10) `--member <NN>`: the handoff number `--kick` acts on.
+    pub member: String,
 }
 
 /// The self-contained resolutions after validation succeeds.
@@ -104,6 +114,12 @@ pub struct Resolved {
     /// `purpose` | `explicit`.
     pub timeout_source: String,
     pub continue_sec: i64,
+    /// (wave 26b, D12) The stall cut in seconds for this run (`0` = off). This is the
+    /// `--stall-sec` value when given, else the default `900`; a roster entry's `stall_sec`
+    /// overrides the default in `orchestrate` (which knows the matched entry).
+    pub stall_sec: i64,
+    /// Whether `--stall-sec` was given explicitly (the roster override only applies when not).
+    pub stall_given: bool,
     /// Whether a format-repair turn is enabled for this run.
     pub repair_enabled: bool,
     /// The `output-schema`|`prompt-only` override (empty = caps-v1 default).
@@ -167,6 +183,13 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         return Err(format!(
             "-ContinueSec must be 0 (no continuation after a timeout kill) or a number of seconds (got {}).",
             o.continue_sec
+        ));
+    }
+    // (wave 26b, D12) -StallSec: 0 = off, else seconds without an event; a negative value refused.
+    if o.stall_sec_given && o.stall_sec < 0 {
+        return Err(format!(
+            "-StallSec must be 0 (no stall cut) or a number of seconds without an event (got {}).",
+            o.stall_sec
         ));
     }
     if !o.range.is_empty() && !RANGE_PURPOSES.contains(&o.purpose.as_str()) {
@@ -346,6 +369,13 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
     } else {
         o.continue_sec
     };
+    // (wave 26b, D12) the stall baseline: an explicit --stall-sec, else 900 (the roster entry's
+    // stall_sec overrides this default in orchestrate).
+    let (stall_sec, stall_given) = if o.stall_sec_given {
+        (o.stall_sec, true)
+    } else {
+        (900, false)
+    };
 
     let max_words = if o.max_words > 0 {
         o.max_words as u32
@@ -359,6 +389,8 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         timeout_sec,
         timeout_source,
         continue_sec,
+        stall_sec,
+        stall_given,
         repair_enabled,
         transport_override,
         extra_config,
