@@ -21,6 +21,89 @@ pub struct RoleInfo {
     pub error: String,
 }
 
+/// Whether a [`resolve_role_file`] error is a SAFETY refusal — a role file outside its roles
+/// directory, a reparse-point role file, or a junctioned roles directory (wave 26b, D1) — as
+/// opposed to a plain "unknown role" / "empty". C3 ships no plugin templates on disk, so a role
+/// that exists only as a plugin template is "unknown" here; the caller tolerates that (no role
+/// paragraph) but always refuses a safety problem.
+pub fn is_role_refusal(error: &str) -> bool {
+    error.starts_with("role file refused:")
+}
+
+/// Whether `path` is a reparse point (a symbolic link or, on Windows, a directory junction),
+/// read WITHOUT following it (`FILE_ATTRIBUTE_REPARSE_POINT` / `symlink_metadata`).
+fn is_reparse_point(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        std::fs::symlink_metadata(path)
+            .map(|m| m.file_attributes() & 0x400 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    }
+}
+
+/// `Get-RoleFileProblem` (`codex-consult-common.ps1`): why the role file at `path` may not be used
+/// — it is outside its `root` roles directory, is not a regular file (a directory, or a symbolic
+/// link / reparse point), or sits under a junctioned directory. `""` when there is no problem (a
+/// non-existent file is not a problem here — it is reported as an unknown role by the caller).
+pub fn role_file_problem(path: &Path, root: &Path) -> String {
+    let root_full = root.to_string_lossy();
+    let root_full = root_full.trim_end_matches(['\\', '/']);
+    let full = path.to_string_lossy().to_string();
+    let sep = std::path::MAIN_SEPARATOR;
+    let prefix = format!("{root_full}{sep}");
+    let inside = if cfg!(windows) {
+        full.to_lowercase().starts_with(&prefix.to_lowercase())
+    } else {
+        full.starts_with(&prefix)
+    };
+    if !inside {
+        return format!("'{}' is outside '{root_full}'", path.display());
+    }
+    let md = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        // Neither a file nor a directory here (nor a dangling link we can read): not a problem;
+        // the caller reports an unknown role.
+        Err(_) => return String::new(),
+    };
+    let reparse = is_reparse_point(path);
+    if md.file_type().is_dir() {
+        let link = if reparse { " link (reparse point)" } else { "" };
+        return format!("'{full}' is a directory{link}, not a regular file");
+    }
+    if reparse {
+        return format!("'{full}' is a symbolic link or another reparse point, not a regular file");
+    }
+    // Walk up from the file's directory to the root: any junctioned directory on the way refuses.
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if is_reparse_point(d) {
+            return format!(
+                "the directory '{}' is a junction or symbolic link (reparse point)",
+                d.display()
+            );
+        }
+        let d_str = d.to_string_lossy();
+        let d_trim = d_str.trim_end_matches(['\\', '/']);
+        let same = if cfg!(windows) {
+            d_trim.eq_ignore_ascii_case(root_full)
+        } else {
+            d_trim == root_full
+        };
+        if same {
+            break;
+        }
+        dir = d.parent();
+    }
+    String::new()
+}
+
 /// A role name is a slug: lowercase letters, digits, dot, dash, underscore.
 fn is_role_slug(name: &str) -> bool {
     !name.is_empty()
@@ -54,7 +137,20 @@ pub fn resolve_role_file(name: &str, collab_root: &Path, plugin_root: &str) -> R
         let tmpl = Path::new(plugin_root).join("templates");
         candidates.push((tmpl.join(format!("role-{name}.md")), "plugin", tmpl));
     }
-    for (path, source, _root) in &candidates {
+    for (path, source, root) in &candidates {
+        // (wave 26b, D1) a roles directory that is itself a junction refuses every role of it.
+        if root.exists() && is_reparse_point(root) {
+            r.error = format!(
+                "role file refused: the {source} roles directory '{}' is a junction or symbolic link (reparse point)",
+                root.display()
+            );
+            return r;
+        }
+        let why = role_file_problem(path, root);
+        if !why.is_empty() {
+            r.error = format!("role file refused: {why}");
+            return r;
+        }
         if path.is_file() {
             let text = std::fs::read_to_string(path).unwrap_or_default();
             let text = text.trim().to_string();

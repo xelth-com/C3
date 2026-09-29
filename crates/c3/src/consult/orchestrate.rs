@@ -288,6 +288,9 @@ fn resolve_preflight(
     launcher: &str,
     config: &c3_core::config::CodexConfig,
     collab_root: &Path,
+    // (wave 26b, D-auth) the selected reviewer's roster entry declares `auth: "none"`: a provider
+    // whose table has no env_key/bearer is then "ok: declared anonymous in the roster".
+    anonymous: bool,
 ) -> (String, Option<(String, i32)>, String) {
     // The plugin refuses a preflight through `Stop-WithError` (exit 1, nothing written,
     // `codex-consult.ps1:304`); c3 matches that, not cli-surface.md's aspirational exit 2/3.
@@ -322,7 +325,7 @@ fn resolve_preflight(
     // A CLI engine checks its own sign-in (`agy models` / muse `auth.json`), with the recorded
     // endpoint-health short-circuit; codex runs `codex login status` / the provider env-key.
     let cred = if id.engine.is_empty() || id.engine == "codex" {
-        providers::identity_credential(config, id, launcher, false, timeout)
+        providers::identity_credential(config, id, launcher, anonymous, timeout)
     } else {
         providers::engine_consult_credential(&id.engine, launcher, health.as_ref())
     };
@@ -379,15 +382,9 @@ fn resolve_transport(id: &ReviewerIdentity, r: &Resolved) -> Transport {
             basis: String::new(),
         };
     }
-    if !r.transport_override.is_empty() {
-        return Transport {
-            transport: r.transport_override.clone(),
-            source: "-SchemaTransport".into(),
-            basis: "-SchemaTransport".into(),
-        };
-    }
+    // The caps-v1 choice for this endpoint (what a run WITHOUT -SchemaTransport would use).
     let host = &id.host;
-    match if host.is_empty() { None } else { caps(host) } {
+    let caps_transport = match if host.is_empty() { None } else { caps(host) } {
         Some(c) => Transport {
             transport: c.schema_transport.to_string(),
             source: c3_core::effort::CAPS_VERSION.to_string(),
@@ -406,7 +403,19 @@ fn resolve_transport(id: &ReviewerIdentity, r: &Resolved) -> Transport {
                 }
             ),
         },
+    };
+    if !r.transport_override.is_empty() {
+        // The basis names the override AND what caps-v1 would have used (`$schemaTransportBasis`).
+        return Transport {
+            transport: r.transport_override.clone(),
+            source: "-SchemaTransport".into(),
+            basis: format!(
+                "-SchemaTransport; {} would use {}",
+                caps_transport.basis, caps_transport.transport
+            ),
+        };
     }
+    caps_transport
 }
 
 /// Resolved run context, shared by the dry-run and live branches.
@@ -1462,8 +1471,12 @@ fn build_context(
                 "skipped (-SkipPreflight)".to_string(),
             )
         } else {
+            let anon = roster_entry
+                .as_ref()
+                .map(|e| e.auth == "none")
+                .unwrap_or(false);
             let (p, refusal, label) =
-                resolve_preflight(&identity, &engine_launcher, &config, &collab_root);
+                resolve_preflight(&identity, &engine_launcher, &config, &collab_root, anon);
             (p, refusal, String::new(), label)
         };
 
@@ -1609,7 +1622,7 @@ fn build_context(
         if !bp.is_file() {
             return Err((
                 format!(
-                    "brief '{}' not found (this tool never writes briefs; write it first).",
+                    "brief '{}' not found (this script never writes briefs; write it first).",
                     o.brief
                 ),
                 1,
@@ -1785,12 +1798,26 @@ fn build_context(
         roles_note = m.roles_note.clone();
         if !m.role.is_empty() {
             let ri = crate::panel::roles::resolve_role_file(&m.role, &collab_root, "");
-            if !ri.error.is_empty() {
+            // A safety problem (reparse/containment) refuses; a role that resolves only as a plugin
+            // template (unknown to c3, which ships none) is tolerated with no role paragraph.
+            if crate::panel::roles::is_role_refusal(&ri.error) {
                 return Err((
                     format!("-Role: {}; this panel member was not started.", ri.error),
                     1,
                 ));
             }
+            if ri.error.is_empty() {
+                role_line = crate::panel::roles::role_prompt_line(&ri);
+            }
+        }
+    } else if !o.role.is_empty() {
+        // (wave 26b, D1) a single run's -Role resolves its role file too: a bad/reparse role file
+        // (or a junctioned roles directory) refuses before anything is written.
+        let ri = crate::panel::roles::resolve_role_file(&o.role, &collab_root, "");
+        if crate::panel::roles::is_role_refusal(&ri.error) {
+            return Err((format!("-Role: {}", ri.error), 1));
+        }
+        if ri.error.is_empty() {
             role_line = crate::panel::roles::role_prompt_line(&ri);
         }
     }
@@ -4324,11 +4351,17 @@ fn codex_failure_pf(
     let (code, message) = c3_core::health::convert_from_provider_error_text(source);
     let class = c3_core::health::provider_failure_class(&format!("{code} {message}"));
     let kind = c3_core::health::failure_kind(&class, &format!("{code} {message}"));
+    // Parse a reset hint out of the failure message (`try again at <date>`, `retry in 32s`), so a
+    // later run on the endpoint honours it — the plugin records `retry_after` on a codex failure too.
+    let reference = chrono::Local::now().fixed_offset();
+    let retry_after = c3_core::health::retry_after_ref(&message, reference)
+        .map(c3_core::health::format_offset_iso);
     finalize_pf(c3_core::ledger::ProviderFailure {
         class,
         kind: Some(kind),
         code,
         message,
+        retry_after,
         ..Default::default()
     })
 }

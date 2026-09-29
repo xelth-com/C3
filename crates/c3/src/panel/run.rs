@@ -60,9 +60,8 @@ pub fn detach_foreground(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
         };
         if !brief_path.is_file() {
             eprintln!(
-                "{TOOL}: brief '{}' not found ({}).",
-                o.brief,
-                brief_path.display()
+                "{TOOL}: brief '{}' not found (this script never writes briefs; write it first).",
+                o.brief
             );
             return 1;
         }
@@ -216,13 +215,33 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
 
     let roster = providers::read_reviewer_roster().map_err(|m| (m, 1))?;
     if !roster.exists {
-        return Err((
+        let msg = if roster.disabled {
+            "-Panel needs a reviewer roster, and CODEX_CONSULT_ROSTER=none switches it off."
+                .to_string()
+        } else {
             format!(
                 "-Panel needs a reviewer roster: '{}' does not exist (CODEX_CONSULT_ROSTER, else <codex home>/codex-consult-roster.json).",
                 roster.path
-            ),
-            1,
-        ));
+            )
+        };
+        return Err((msg, 1));
+    }
+    // (D2) a missing brief is refused before any member is planned or started (no ledger).
+    if !o.brief.is_empty() {
+        let bp = if Path::new(&o.brief).is_absolute() {
+            PathBuf::from(&o.brief)
+        } else {
+            cwd.join(&o.brief)
+        };
+        if !bp.is_file() {
+            return Err((
+                format!(
+                    "brief '{}' not found (this script never writes briefs; write it first).",
+                    o.brief
+                ),
+                1,
+            ));
+        }
     }
 
     let utc_now = c3_core::peak::consult_clock(0)
@@ -471,6 +490,29 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         if !assign.note.is_empty() {
             roles_note = assign.note.clone();
             warnings.push(assign.note);
+        }
+    }
+    // (wave 26b, D1) resolve each assigned role's file up front, so a role file outside its roles
+    // directory, a reparse-point role file, or a junctioned roles directory refuses the whole
+    // panel before any member starts (in the plugin's wording, `-Role`/`-Roles` prefix).
+    if !role_of.is_empty() {
+        let flag = if !o.role.is_empty() {
+            "-Role"
+        } else {
+            "-Roles"
+        };
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for name in role_of.values() {
+            if name.is_empty() || !seen.insert(name.clone()) {
+                continue;
+            }
+            let ri = super::roles::resolve_role_file(name, &collab_root, "");
+            // Only a safety problem (reparse/containment) refuses the panel; a template-only role
+            // (unknown to c3, which ships no templates) is tolerated — the willingness assignment
+            // and its note stand.
+            if super::roles::is_role_refusal(&ri.error) {
+                return Err((format!("{flag}: {}", ri.error), 1));
+            }
         }
     }
 

@@ -1,0 +1,28 @@
+{
+    "health_version":  1,
+    "endpoints":  [
+                      {
+                          "endpoint":  "fp-quota",
+                          "class":  "quota",
+                          "kind":  "",
+                          "until":  "2026-09-29T13:05:00+02:00",
+                          "retry_after":  null,
+                          "repo":  "C:\\Users\\Dmytro\\repoA",
+                          "when":  "2026-09-29T12:05:00+02:00",
+                          "message":  "credits exhausted for this token plan"
+                      },
+                      {
+                          "endpoint":  "fp-ok",
+                          "class":  "ok",
+                          "kind":  "",
+                          "until":  null,
+                          "retry_after":  null,
+                          "repo":  "C:\\Users\\Dmytro\\repoB",
+                          "when":  "2026-09-29T12:30:00+02:00",
+                          "message":  ""
+                      }
+                  ],
+    "running":  [
+
+                ]
+}

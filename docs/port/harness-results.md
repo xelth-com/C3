@@ -1134,3 +1134,89 @@ none regressed by this pass:
 4. `FAIL UNIQ D7 (F22-7)` — the scoreboard does not normalise location keys (`\` vs `/`, leading
    `./`, doubled separators, Windows case) before counting unique findings (got ZAI 2/2, want 1/2).
    **Class: pre-existing D7 gap in `crates/c3/src/scoreboard/**` (do-not-touch).**
+
+# Run 12 (wave 26b follow-up — three harnesses to zero real gaps) — 2026-09-29
+
+Drove harness-fixes26b, harness-roster and harness-engines to zero REAL c3 gaps. HEAD 6d88822
+(wave 26b + M8c index). Host: powershell 5.1. Runners: scratchpad `harness2/run11-*.ps1`. The
+plugin's own harnesses (`C:\Users\Dmytro\claude-codex-consult\tests`) advanced to waves 26c/27/27b
+during this pass (see the harness-0.3 note).
+
+## Summary table
+
+| harness              | Run 11  | Run 12  | note                                                              |
+|----------------------|---------|---------|-------------------------------------------------------------------|
+| harness-fixes26b     | 34 / 5  | 39 / 0  | all fixed (ROLEFILE ×3, ROLES e2e, UNIQ)                           |
+| harness-roster       | 113 / 6 | 119 / 0 | all fixed (auth-none ×2, schema line, utf8 retry_after, panel ×2) |
+| harness-engines      | 92 / 5  | 92 / 5  | 5 remain: all by-design / environment, no real c3 gap (below)     |
+| harness-panel        | 54 / 0  | 54 / 0  | no change                                                         |
+| harness-detach       | 50 / 1  | 50 / 1  | the 1 CARRY F11-2 is by design (JSON args wire), unchanged        |
+| harness-lock2        | 10 / 0  | 10 / 0  | no change                                                         |
+| harness-0.3          | 228 / 1 | 227 / 2 | +1 is the harness UPDATE (waves 26c/27/27b), NOT this pass (below) |
+
+## What this pass landed
+
+1. **Machine-health file bytes** — the machine-wide health file is now written through the Windows
+   PowerShell 5.1 `ConvertTo-Json` formatter (`c3_core::ps_json`), not serde pretty, so both tools
+   rewriting the same file never flip its bytes. The plugin writes it with `Write-TextAtomic` (no
+   CRLF->LF pass), so the on-disk form is CRLF between lines + a trailing LF; `ps_json` gained
+   `to_ps_json_crlf_bytes` for that. A round-trip byte-for-byte test against a plugin-written fixture
+   (`crates/c3-core/tests/fixtures/machine-health.json`) pins it.
+2. **fixes26b D1 (ROLEFILE)** — c3 now enforces the role-file containment and reparse-point refusal
+   end to end for `-Role` (single run) and `-Roles`/`-Role` (panel): a role file outside its roles
+   directory, a symbolic-link / reparse-point role file, or a junctioned roles directory refuses
+   before anything is written, in the plugin's wording (`role file refused: ...`,
+   `panel/roles.rs::role_file_problem` + `is_reparse_point`). A single run's `-Role` is resolved
+   too (it was ignored before). A role that resolves only as a plugin template — unknown to c3,
+   which ships no templates — is tolerated (no role paragraph) rather than refused, since c3 has no
+   templates on disk; only a SAFETY problem refuses. The "plugin templates" in-process check was a
+   **harness-setup artifact**: the harness resolves the shipped templates at `Split-Path -Parent
+   <scripts>`; fixed by copying the plugin's `templates/` to scratchpad `harness2\templates` (no c3
+   change).
+3. **fixes26b D4 (ROLES e2e)** — the `roles: no assignment ...` note now prints as a console
+   WARNING and rides each panel member's `warnings[]` + `panel.roles_note` (already wired; the
+   ROLEFILE tolerance change above unblocked it — the panel no longer refused the template roles).
+4. **fixes26b D7 (UNIQ)** — the scoreboard normalises location keys before the unique count (`\` ->
+   `/`, runs of `/` collapsed, leading `./` dropped, lowercased on Windows;
+   `scoreboard/mod.rs::normalize_location_path`).
+5. **harness-roster** — auth-none: `resolve_preflight` now takes the selected roster entry's `auth:
+   "none"` and reports `ok: declared anonymous in the roster` (a provider whose table has no
+   env_key/bearer). Schema line: the `-SchemaTransport` override basis now names what caps-v1 would
+   have used (`prompt-only (-SchemaTransport; caps-v1: builtin:openai would use output-schema)`).
+   UTF-8: a codex failure's `provider_failure.retry_after` is now parsed from the message
+   (`codex_failure_pf`), so a `try again at <date>` reset is honoured. Panel: a missing brief is
+   refused before any member starts (regular panel, not only `-Detach`), and
+   `CODEX_CONSULT_ROSTER=none` gets its own `-Panel needs a reviewer roster, and
+   CODEX_CONSULT_ROSTER=none switches it off.` refusal; the brief-not-found wording matches the
+   plugin (`this script never writes briefs`).
+
+## harness-engines — the 5 remaining, all by design or environment (no real c3 gap)
+
+1-3. **DRYRUN argv / -NativeEffort / -Mode resume** (exact `-eq` on the command) — c3's agy argv is
+   byte-identical in flags, order, `--effort` placement (end) and `--conversation` placement (after
+   `--disable-slash-commands`); the ONLY difference is the `--json-schema` PATH: the harness
+   hardcodes the plugin's shipped `<plugin>/schemas/consult-reply.schema.json`, while c3 stages its
+   own embedded, byte-identical schema at `<CODEX_HOME>/c3/schemas/consult-reply.v1.json`.
+   **By design** (the c3 schema path under `<CODEX_HOME>/c3/schemas`). The RUN check that uses
+   `--json-schema \S+` (a wildcard path) passes on the schema.
+4. **RUN A8 (the ask arrives byte for byte)** — the prototype shim's `& $c3 @c3Args` drops embedded
+   double-quotes when PowerShell 5.1 forwards `--prompt` to `c3.exe` (a known PS-5.1 native-argument
+   bug). **Environment/shim artifact**: c3's argv and prompt composition are correct; production c3
+   (launched by a non-PS-5.1 caller, or via stdin) gets the prompt intact. A shim rewrite to hand-C-
+   quote the invocation would risk every harness that shares this shim, so it is left as an artifact.
+5. **RUN "the fake saw the argv"** — Rust's std mandatory batch-argument escaping (CVE-2024-24576)
+   quotes `-p=` to `"-p="` when the launcher is `fake-agy.cmd` (a `.cmd`); the fake echoes the raw
+   `%*`, so the harness's `ARGS: -p= ` anchor sees `"-p="`. **Fake artifact** (read-only plugin
+   fake): a real `agy.exe` is not batch-escaped; a real `agy.cmd` would strip the quotes before agy
+   sees them. c3's escaping is correct and required.
+
+## harness-0.3 — the +1 failure is the harness update, not this pass
+
+harness-0.3 went 228/1 -> 227/2. The new failure is `LEDGER entry fields in the documented order`:
+the plugin's `tests/harness-0.3.ps1` was updated during this pass (plugin commit c6f6966, "waves
+26c + 27 + 27b ... the coordinator's manual (R19), the completed scrub list") to expect two NEW
+ledger fields — `coordinator` (after `lineage`) and `child_env_scrubbed` (after `command`) — that
+c3 has not yet ported (wave 27/27b, outside this chunk). This is NOT caused by this pass: c3 never
+emitted those fields (0 occurrences in the wave-26b commit and in HEAD), and no edit here touches
+the ledger field order; every field c3 DOES emit is in the correct documented order. The other
+harness-0.3 failure is the unchanged, documented CFG comma-split artifact.

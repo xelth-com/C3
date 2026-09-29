@@ -46,6 +46,18 @@ pub fn to_ps_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, serde_json::
     Ok(s.into_bytes())
 }
 
+/// Serialize `value` as a store written with `Write-TextAtomic` writes it (the machine-wide
+/// health file, `codex-consult-common.ps1`): `(ConvertTo-Json -Depth 6) + "`n"` with NO CRLF->LF
+/// pass. PowerShell 5.1's `ConvertTo-Json` separates its lines with CRLF, so the on-disk bytes are
+/// CRLF between lines and a single trailing LF (`}` + `\n`). This differs from a `Write-JsonFile`
+/// store ([`to_ps_json_bytes`]), which LF-normalises.
+pub fn to_ps_json_crlf_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    let s = to_ps_json(value)?;
+    let mut out = s.replace('\n', "\r\n");
+    out.push('\n');
+    Ok(out.into_bytes())
+}
+
 /// Format a parsed [`Value`] as the PowerShell-5.1 text (no trailing newline). Used by the
 /// formatter's own tests to prove byte-identity independently of any typed struct.
 pub fn format_value_root(value: &Value) -> String {

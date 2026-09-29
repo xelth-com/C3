@@ -259,6 +259,34 @@ fn row_keys(by_topic: bool, purpose: &str, topics: &[Value]) -> Vec<String> {
 }
 
 /// A finding's location keys (`path:line`; `path:` without a line) for the unique measure.
+/// `ConvertTo-LocationPath` (wave 26b, D7 / F22-7): normalise a location path before it is compared
+/// for the unique-findings measure — `\` -> `/`, runs of `/` collapsed, every leading `./` dropped,
+/// and on Windows (a case-insensitive file system) lowercased. The line stays exact; keys compare
+/// ordinally.
+fn normalize_location_path(path: &str) -> String {
+    let slashed = path.trim().replace('\\', "/");
+    let mut p = String::with_capacity(slashed.len());
+    let mut prev_slash = false;
+    for c in slashed.chars() {
+        if c == '/' {
+            if !prev_slash {
+                p.push('/');
+            }
+            prev_slash = true;
+        } else {
+            p.push(c);
+            prev_slash = false;
+        }
+    }
+    while let Some(rest) = p.strip_prefix("./") {
+        p = rest.to_string();
+    }
+    if cfg!(windows) {
+        p = p.to_lowercase();
+    }
+    p
+}
+
 fn location_keys(finding: &Value) -> Vec<String> {
     let mut keys = Vec::new();
     if let Some(locs) = prop(Some(finding), "locations").and_then(|v| v.as_array()) {
@@ -266,7 +294,7 @@ fn location_keys(finding: &Value) -> Vec<String> {
             if l.is_null() {
                 continue;
             }
-            let path = prop_str(Some(l), "path");
+            let path = normalize_location_path(&prop_str(Some(l), "path"));
             if path.is_empty() {
                 continue;
             }
@@ -275,7 +303,7 @@ fn location_keys(finding: &Value) -> Vec<String> {
                 Some(v) => value_to_string(v),
                 None => String::new(),
             };
-            keys.push(format!("{}:{}", path.replace('\\', "/"), line));
+            keys.push(format!("{path}:{line}"));
         }
     }
     keys

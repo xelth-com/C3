@@ -936,12 +936,15 @@ fn update_machine_health(
             "endpoints": endpoints,
             "running": running,
         });
-        let mut text = match serde_json::to_string_pretty(&out) {
-            Ok(s) => s,
+        // (wave 26b, D13) written through the Windows PowerShell 5.1 `ConvertTo-Json` formatter the
+        // plugin uses (`ps_json`), not serde pretty: both tools rewrite the same file, so its bytes
+        // must not flip with the last writer. The plugin writes it with `Write-TextAtomic` (no
+        // CRLF->LF pass), so the on-disk form is CRLF between lines + a trailing LF.
+        let bytes = match crate::ps_json::to_ps_json_crlf_bytes(&out) {
+            Ok(b) => b,
             Err(_) => return false,
         };
-        text.push('\n');
-        crate::store::write_text_atomic(path, text.as_bytes()).is_ok()
+        crate::store::write_text_atomic(path, &bytes).is_ok()
     })();
 
     #[cfg(not(windows))]
@@ -1005,6 +1008,31 @@ mod machine_health_tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // (wave 26b, D13) a machine-health file the plugin wrote (`(ConvertTo-Json -Depth 6) + "`n"`
+    // via Write-TextAtomic under Windows PowerShell 5.1: CRLF between lines, trailing LF) must
+    // round-trip byte for byte through c3's read + re-serialize, so both tools rewriting the same
+    // file never flip its bytes.
+    #[test]
+    fn plugin_written_file_round_trips_byte_for_byte() {
+        let fixture: &[u8] = include_bytes!("../tests/fixtures/machine-health.json");
+        let path = temp_path("roundtrip");
+        std::fs::write(&path, fixture).unwrap();
+        let mh = read_machine_health(&path);
+        assert_eq!(mh.endpoints.len(), 2);
+        assert!(mh.running.is_empty());
+        let out = serde_json::json!({
+            "health_version": 1,
+            "endpoints": mh.endpoints,
+            "running": mh.running,
+        });
+        let bytes = crate::ps_json::to_ps_json_crlf_bytes(&out).unwrap();
+        assert_eq!(
+            bytes, fixture,
+            "c3's PS-5.1 re-serialize must equal the plugin's bytes"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
 
     fn temp_path(name: &str) -> PathBuf {
         let nanos = std::time::SystemTime::now()

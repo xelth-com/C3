@@ -149,3 +149,33 @@ The "still open" list above is now implemented (D10–D16); see
 - `store`: `LockRecord::now` no longer reads the environment; `set_bridge_pid`/`bridge_pid` take the
   validated pid from the c3 runtime (test-hook hardening — a live-ancestor-only bridge).
 - `ledger` `Stall`/`ModeFallback` are now populated (were present-in-order `null`).
+
+## Wave 26b follow-up landed (Run 12, 2026-09-29)
+
+harness-fixes26b 39/0, harness-roster 119/0 (was 34/5, 113/6). harness-engines' 5 remaining are all
+by-design (the c3 schema path under `<CODEX_HOME>/c3/schemas`) or environment/fake artifacts (a
+PS-5.1 shim quote-drop; Rust's mandatory `.cmd` batch-escaping echoed by the read-only fake) — no
+real c3 gap. See `docs/port/harness-results.md` Run 12.
+
+### c3-core contract changes made in this pass
+
+- `ps_json::to_ps_json_crlf_bytes` — new: the PowerShell-5.1 `ConvertTo-Json` store form written
+  with `Write-TextAtomic` (CRLF between lines, trailing LF); the machine-wide health file uses it so
+  its bytes match the plugin's byte for byte.
+- `health.rs` — the machine-wide health file is now written through `ps_json::to_ps_json_crlf_bytes`
+  (was serde pretty). Round-trip byte-identity test added
+  (`crates/c3-core/tests/fixtures/machine-health.json`).
+
+### c3 (runtime) changes
+
+- `panel/roles.rs` — `role_file_problem` (containment + reparse walk, `Get-RoleFileProblem`),
+  `is_reparse_point`, `is_role_refusal`; `resolve_role_file` now refuses a reparse-point role file
+  or a junctioned roles directory (`role file refused: ...`).
+- `consult/orchestrate.rs` — a single-run `-Role` is now resolved (was ignored); a safety role
+  refusal stops the run, a template-only (unknown) role is tolerated. `resolve_preflight` takes the
+  entry's `auth:"none"` (anonymous). `resolve_transport` names what caps-v1 would use in the
+  `-SchemaTransport` override basis. `codex_failure_pf` parses `retry_after` from the failure text.
+- `panel/run.rs` — up-front role-file resolution (a reparse/containment problem refuses the panel);
+  a missing brief is refused before any member starts; `CODEX_CONSULT_ROSTER=none` gets its own
+  refusal.
+- `scoreboard/mod.rs` — `normalize_location_path` (D7 F22-7 location-key normalisation).
