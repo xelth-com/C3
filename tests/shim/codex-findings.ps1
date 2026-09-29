@@ -66,6 +66,10 @@ if (-not $c3) {
     exit 127
 }
 
+# The harnesses run fake consultations: nothing of them may reach the telemetry hub and no
+# priors download may start. A value set by the caller wins.
+if (-not $env:CODEX_CONSULT_TELEMETRY) { $env:CODEX_CONSULT_TELEMETRY = "off" }
+
 $c3Args = New-Object System.Collections.Generic.List[string]
 $c3Args.Add('findings')
 

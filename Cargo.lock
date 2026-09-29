@@ -470,6 +470,7 @@ dependencies = [
  "c3-core",
  "chrono",
  "clap",
+ "ed25519-dalek",
  "fs4",
  "globset",
  "ignore",

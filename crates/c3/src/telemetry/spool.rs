@@ -67,6 +67,11 @@ impl Spool {
 
     /// Append one event as a single NDJSON line.
     pub fn enqueue(&self, event: &Event) -> Result<()> {
+        self.enqueue_line(event)
+    }
+
+    /// Append any serializable allowlisted event (e.g. a [`crate::telemetry::RatingEvent`]).
+    pub fn enqueue_line<T: serde::Serialize>(&self, event: &T) -> Result<()> {
         fs::create_dir_all(&self.dir)?;
         let line = serde_json::to_string(event)?;
         let mut f = OpenOptions::new()
@@ -181,6 +186,12 @@ pub fn flush_in_background() -> BackgroundFlush {
     thread::spawn(move || {
         if !env_off() {
             let _ = Spool::new(telemetry_dir(), default_hub()).flush();
+            // The priors refresh runs AFTER the events are sent (M9 §3, F8): once a day at most,
+            // injected fetcher in tests. A panic or error inside it must never affect the flush,
+            // so it is isolated in catch_unwind.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::router::maybe_refresh_priors();
+            }));
         }
         let _ = tx.send(());
     });

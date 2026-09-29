@@ -9,6 +9,7 @@ pub mod hook;
 pub mod index;
 pub mod mcp;
 pub mod pack;
+pub mod router;
 pub mod scoreboard;
 pub mod snapshot;
 pub mod telemetry;

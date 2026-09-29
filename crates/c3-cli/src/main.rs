@@ -60,6 +60,8 @@ enum Commands {
     Snapshot(c3::cli::snapshot::SnapshotArgs),
     /// Build or query the code index (milestone 8).
     Index(c3::cli::index::IndexArgs),
+    /// Routing: RC2 simulation, ledger replay, priors and the score table (milestone 9).
+    Router(c3::cli::router::RouterArgs),
     /// Run the stdio MCP server (milestone 10).
     Mcp,
 }
@@ -118,6 +120,7 @@ fn main() {
         Some(Commands::Explain(a)) => c3::cli::explain::run(a),
         Some(Commands::Snapshot(a)) => c3::cli::snapshot::run(a),
         Some(Commands::Index(a)) => c3::cli::index::run(a),
+        Some(Commands::Router(a)) => c3::cli::router::run(a),
         Some(Commands::Mcp) => c3::cli::mcp::run(),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).

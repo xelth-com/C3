@@ -149,6 +149,141 @@ impl Event {
     }
 }
 
+/// The fixed topic vocabulary v1 (M9 §7 D-b, DESIGN §8): a rating (or consultation) carries a
+/// topic tag ONLY when it maps to one of these; anything else is sent as `other`, never the
+/// free text. The router's priors lookup maps the request's topics through the same function,
+/// so a local free slug outside the vocabulary has no topic-level cell and falls to the
+/// purpose cell, while local rating evidence keeps matching the raw slug exactly (as R15 does).
+pub(crate) const TOPIC_VOCAB: [&str; 16] = [
+    "architecture",
+    "api",
+    "protocol",
+    "security",
+    "correctness",
+    "concurrency",
+    "performance",
+    "data",
+    "storage",
+    "testing",
+    "build",
+    "packaging",
+    "docs",
+    "ui",
+    "dependencies",
+    "observability",
+];
+
+/// Map a raw topic to its fixed-vocabulary slug, applying the v1 aliases first, or `None` when
+/// it is not a known class. A secret hidden in a topic never survives (it is not in the
+/// vocabulary), so nothing free-text can be echoed.
+pub(crate) fn topic_slug(raw: &str) -> Option<&'static str> {
+    let s = safe_label(raw, 48)?.to_ascii_lowercase();
+    let mapped = match s.as_str() {
+        "tests" | "test" => "testing",
+        "perf" => "performance",
+        "doc" | "documentation" => "docs",
+        "deps" => "dependencies",
+        "db" | "database" => "storage",
+        "auth" => "security",
+        other => other,
+    };
+    TOPIC_VOCAB.iter().copied().find(|v| *v == mapped)
+}
+
+/// The topic tag for the wire: the vocabulary slug, or `other`.
+pub(crate) fn topic_label(raw: &str) -> String {
+    topic_slug(raw)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "other".to_string())
+}
+
+/// A rating event: the coordinator's later usefulness mark for a consultation (`c3 findings
+/// --rate`), reaching the hub as its own allowlisted event (M9 §7). Carries only classes:
+/// the lineage labels, the purpose label, the topic tags from the fixed vocabulary, the mark
+/// and the consultation's age in days — no ids, no paths, no free text.
+#[derive(Debug, Clone, Serialize)]
+pub struct RatingEvent {
+    pub app_id: &'static str,
+    pub app_version: &'static str,
+    pub instance_id: String,
+    pub event_type: &'static str,
+    pub severity: &'static str,
+    pub title: String,
+    pub details: RatingDetails,
+    pub client_time: String,
+    pub os: String,
+    pub runtime: String,
+    pub tags: Vec<String>,
+}
+
+/// The `details` allowlist of a rating event.
+#[derive(Debug, Clone, Serialize)]
+pub struct RatingDetails {
+    pub engine: String,
+    pub provider: String,
+    pub model: String,
+    pub purpose: String,
+    /// `yes | partly | no`.
+    pub mark: String,
+    /// The consultation's age in days at the time it was rated.
+    pub age_days: i64,
+    pub os: String,
+    pub runtime: String,
+    /// Topic tags from the fixed vocabulary (never free text); empty when none apply.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub topic_tags: Vec<String>,
+}
+
+impl RatingEvent {
+    /// Build a rating event from the rated consultation's ledger entry, the mark and the age
+    /// in days. Every text input passes through [`safe_label`]/[`engine_label`]/[`topic_label`],
+    /// so no path, prompt, id or secret can reach the payload.
+    pub fn from_rating(
+        entry: &LedgerEntry,
+        mark: &str,
+        age_days: i64,
+        raw_topics: &[String],
+        instance_id: &str,
+    ) -> Self {
+        let purpose = label_or(&entry.purpose, 48);
+        let mark = match mark.trim().to_ascii_lowercase().as_str() {
+            m @ ("yes" | "partly" | "no") => m.to_string(),
+            _ => "other".to_string(),
+        };
+        let mut topic_tags: Vec<String> = Vec::new();
+        for t in raw_topics {
+            let tag = topic_label(t);
+            if tag != "other" && !topic_tags.contains(&tag) {
+                topic_tags.push(tag);
+            }
+        }
+        let details = RatingDetails {
+            engine: engine_label(&entry.reviewer.engine),
+            provider: label_or(&entry.reviewer.provider, 64),
+            model: label_or(&entry.reviewer.model, 64),
+            purpose: purpose.clone(),
+            mark,
+            age_days,
+            os: os_label(),
+            runtime: runtime_label(),
+            topic_tags,
+        };
+        RatingEvent {
+            app_id: "c3",
+            app_version: APP_VERSION,
+            instance_id: instance_id.to_string(),
+            event_type: "rating",
+            severity: "info",
+            title: purpose,
+            details,
+            client_time: now_rfc3339(),
+            os: os_label(),
+            runtime: runtime_label(),
+            tags: Vec::new(),
+        }
+    }
+}
+
 /// The outcome class from the ledger: `usable`, or `failed:<class>` where the class is a
 /// safe label taken from the provider failure (preferred) or the bridge outcome.
 fn outcome_class(entry: &LedgerEntry) -> String {

@@ -30,10 +30,7 @@ pub mod hook;
 
 pub mod panel;
 
-pub mod router {
-    //! Routing policies (v1: smoothed score over a global prior; later Thompson
-    //! sampling and brief similarity as new versions). Milestone 9.
-}
+pub mod router;
 
 pub mod index;
 

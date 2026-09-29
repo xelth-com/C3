@@ -28,6 +28,10 @@ uuid = { version = "1", features = ["v4"] }
 # base64: the panel member spec travels as base64 of compact UTF-8 JSON on the child's command
 # line (the port's own JSON wire format, m4-spec open question 3), like the plugin's -PanelSpec.
 base64 = "0.22"
+# ed25519-dalek: verify the detached signature on the maintainer's priors.json (M9 §3).
+# default-features off — the core VerifyingKey/Signature/verify (and from_bytes signing used
+# only by the tests) are always compiled, so no rng/std/zeroize/serde extras are pulled in.
+ed25519-dalek = { version = "2", default-features = false }
 # ureq: a small blocking HTTP client (rustls, bundled roots) for the T-hub telemetry POSTs
 # and DELETE. Blocking on purpose — the send runs in a detached thread with a 3 s timeout,
 # so C3 pulls in no async runtime for one background call per consultation.

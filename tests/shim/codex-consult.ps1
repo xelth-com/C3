@@ -135,6 +135,10 @@ if (-not $c3) {
 # this shim's fate (a test-only hook; unset in production, where c3 is launched directly).
 $env:CODEX_CONSULT_TEST_BRIDGE_PID = "$PID"
 
+# The harnesses run fake consultations: nothing of them may reach the telemetry hub and no
+# priors download may start. A value set by the caller wins.
+if (-not $env:CODEX_CONSULT_TELEMETRY) { $env:CODEX_CONSULT_TELEMETRY = "off" }
+
 # A detached QUERY (-Status / -Wait): the plugin forwards only -Task, -CollabDir, -Id, -Prune and
 # -WaitTimeoutSec (plus any bound run option, so c3 can refuse it). Only bound parameters are
 # forwarded so c3's "-Status and -Wait take only ..." check sees exactly what the caller passed.

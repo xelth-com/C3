@@ -24,7 +24,8 @@ use uuid::Uuid;
 use c3_core::ledger::{LedgerEntry, SessionsFile};
 
 pub use complaint::{complain, complain_to, forget_me, forget_me_at, ForgetOutcome};
-pub use event::{Details, Event};
+pub(crate) use event::topic_slug;
+pub use event::{Details, Event, RatingDetails, RatingEvent};
 pub use spool::{flush_in_background, BackgroundFlush, FlushReport, Spool};
 
 /// The default T-hub base URL.
@@ -158,6 +159,25 @@ pub fn record_consultation(
     let payload = serde_json::to_value(&event)?;
     if !env_off() {
         default_spool().enqueue(&event)?;
+    }
+    Ok(payload)
+}
+
+/// Build a rating event for a later usefulness mark (`c3 findings --rate`), enqueue it to the
+/// spool (unless the environment switch is off), and return the payload for the dry-run line
+/// (M9 §7). The call site in the findings tool is wired by the supervisor; failures are
+/// ignored there. `age_days` is the consultation's age when it was rated; `raw_topics` are
+/// the consultation's topics (mapped to the fixed vocabulary, never echoed as free text).
+pub fn record_rating(
+    entry: &LedgerEntry,
+    mark: &str,
+    age_days: i64,
+    raw_topics: &[String],
+) -> Result<serde_json::Value> {
+    let event = RatingEvent::from_rating(entry, mark, age_days, raw_topics, &instance_id());
+    let payload = serde_json::to_value(&event)?;
+    if !env_off() {
+        default_spool().enqueue_line(&event)?;
     }
     Ok(payload)
 }

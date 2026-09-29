@@ -7,9 +7,11 @@ use c3_core::lineage::format_reviewer_lineage;
 use c3_core::roster::{resolve_reviewer_matcher, Roster, RosterEntry};
 use chrono::{DateTime, Utc};
 
+use crate::router::{self, PriorUse, RouterContext};
+
 use super::routing::{
-    self, invoke_panel_draw, panel_seed, routing_score, Candidate, Rating, RoutingScore,
-    ROUTING_EXPLORE, ROUTING_MIN_RATINGS, ROUTING_NEUTRAL,
+    self, invoke_panel_draw, panel_seed, Candidate, Rating, RoutingScore, ROUTING_EXPLORE,
+    ROUTING_MIN_RATINGS, ROUTING_NEUTRAL,
 };
 
 /// Purposes on which a framing/decision panel warns below two seats.
@@ -387,6 +389,10 @@ pub struct RoutingRecord {
     pub picked: Vec<PickedRow>,
     pub explored: Vec<String>,
     pub required: Vec<String>,
+    /// (C3, M9) the content of the trailing `ext` key: `{ c3: { router: {...} } }` when the
+    /// router used priors or non-default parameters; `None` writes no key, so the record stays
+    /// byte-identical to the plugin's.
+    pub ext: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -428,9 +434,47 @@ fn round(x: f64, d: i32) -> f64 {
     (x * f).round() / f
 }
 
-/// `Select-PanelRouting` (D1, D4-D7).
+/// `Select-PanelRouting` (D1, D4-D7) with the plugin's weights: no priors, default parameters.
 #[allow(clippy::too_many_arguments)]
 pub fn select_panel_routing(
+    members: &[MemberInput],
+    size: i32,
+    size_source: &str,
+    order: &str,
+    ratings: &[Rating],
+    purpose: &str,
+    topics: &[String],
+    utc_now: DateTime<Utc>,
+    task: &str,
+    brief_sha: &str,
+    nonce: &str,
+    nonce_source: &str,
+    required: &[i64],
+) -> PanelRoutingResult {
+    select_panel_routing_with(
+        &RouterContext::default(),
+        members,
+        size,
+        size_source,
+        order,
+        ratings,
+        purpose,
+        topics,
+        utc_now,
+        task,
+        brief_sha,
+        nonce,
+        nonce_source,
+        required,
+    )
+}
+
+/// `Select-PanelRouting` with the weight source of router v1 (M9): the same draw, the score
+/// from [`router::score`]. With no priors in `ctx` and default parameters every number and
+/// every byte of the record equals [`select_panel_routing`]'s.
+#[allow(clippy::too_many_arguments)]
+pub fn select_panel_routing_with(
+    ctx: &RouterContext,
     members: &[MemberInput],
     size: i32,
     size_source: &str,
@@ -449,6 +493,7 @@ pub fn select_panel_routing(
 
     // Enrich each member: a required weighty-skipped member rejoins as `run`.
     let mut seated: Vec<SeatedMember> = Vec::new();
+    let mut prior_uses: Vec<PriorUse> = Vec::new();
     for m in members {
         let mut state = m.state.clone();
         let mut reason = m.reason.clone();
@@ -466,16 +511,23 @@ pub fn select_panel_routing(
         };
         let lineage = format_reviewer_lineage(&m.provider, &m.model, &engine);
         let (lab, lab_source) = entry_lab(&m.entry.lab, &m.model, &lineage);
-        let score = routing_score(
+        let scored = router::score(
             ratings,
-            &m.provider,
-            &m.model,
-            &engine,
+            router::Lineage {
+                provider: &m.provider,
+                model: &m.model,
+                engine: &engine,
+            },
             purpose,
             topics,
             utc_now,
-            false,
+            ctx,
         );
+        if let Some(mut u) = scored.prior {
+            u.position = m.entry.position as i64;
+            prior_uses.push(u);
+        }
+        let score = scored.base;
         seated.push(SeatedMember {
             position: m.entry.position as i64,
             lineage,
@@ -512,9 +564,20 @@ pub fn select_panel_routing(
         k = eligible_count;
     }
 
+    // The record names the priors of the eligible only.
+    prior_uses.retain(|u| {
+        eligible_idx
+            .iter()
+            .any(|&i| seated[i].position == u.position)
+    });
+
     let mut mode = order.to_string();
     let mut fallback = String::new();
+    // (M9) a published prior cell is evidence too: a fresh installation with priors routes
+    // instead of falling back to the roster order. Without priors this is the plugin's rule.
+    let has_prior_cell = prior_uses.iter().any(|u| u.prior_basis != "none");
     if mode == "routed"
+        && !has_prior_cell
         && !eligible_idx
             .iter()
             .any(|&i| seated[i].score.all >= ROUTING_MIN_RATINGS as i64)
@@ -665,6 +728,7 @@ pub fn select_panel_routing(
             .filter(|&&i| seated[i].required)
             .map(|&i| seated[i].lineage.clone())
             .collect(),
+        ext: router::routing_ext(ctx, &prior_uses),
     };
 
     let picked: Vec<SeatedMember> = seats.iter().map(|(mi, _, _)| seated[*mi].clone()).collect();
@@ -904,6 +968,110 @@ mod tests {
         );
         assert_eq!(res.routing.mode, "roster");
         assert_eq!(res.routing.fallback, "no ratings");
+    }
+
+    fn priors_ctx(cells: &str) -> RouterContext {
+        let body = format!(
+            r#"{{"priors_version":1,"generated":"2026-09-29T00:00:00Z","window_days":90,"cells":[{cells}]}}"#
+        );
+        RouterContext {
+            params: Default::default(),
+            priors: Some(crate::router::Priors::validate(body.as_bytes()).unwrap()),
+            source: Default::default(),
+        }
+    }
+
+    fn routed(ctx: &RouterContext, members: &[MemberInput]) -> PanelRoutingResult {
+        select_panel_routing_with(
+            ctx,
+            members,
+            2,
+            "-PanelSize",
+            "routed",
+            &[],
+            "framing",
+            &[],
+            Utc::now(),
+            "task",
+            "sha",
+            "nonce",
+            "date",
+            &[],
+        )
+    }
+
+    #[test]
+    fn priors_route_a_fresh_installation_and_are_recorded() {
+        let members = vec![
+            member(1, "openai", "gpt-6", "run"),
+            member(2, "zai", "glm-5.3", "run"),
+            member(3, "google", "gemini-3", "run"),
+        ];
+        let ctx = priors_ctx(
+            r#"{"provider":"zai","model":"glm-5.3","engine":"codex","purpose":"framing","topic":"","mean":0.9,"n":40}"#,
+        );
+        let res = routed(&ctx, &members);
+        // A published cell is evidence: no roster fallback although nobody has a local mark.
+        assert_eq!(res.routing.mode, "routed");
+        assert_eq!(res.routing.fallback, "");
+        let glm = res
+            .routing
+            .eligible
+            .iter()
+            .find(|e| e.position == 2)
+            .unwrap();
+        assert_eq!(glm.basis, "prior");
+        assert!(glm.score > ROUTING_NEUTRAL);
+        let other = res
+            .routing
+            .eligible
+            .iter()
+            .find(|e| e.position == 1)
+            .unwrap();
+        assert_eq!(other.basis, "neutral");
+        assert_eq!(other.score, ROUTING_NEUTRAL);
+        // The record says which priors shaped the draw, under ONE trailing object.
+        let ext = res
+            .routing
+            .ext
+            .expect("ext is written when priors are loaded");
+        assert_eq!(ext["c3"]["router"]["router"], "v1");
+        let uses = ext["c3"]["router"]["prior_use"].as_array().unwrap();
+        assert_eq!(uses.len(), 3);
+        assert_eq!(uses[1]["position"], 2);
+        assert_eq!(uses[1]["prior_basis"], "lineage+purpose");
+    }
+
+    #[test]
+    fn without_priors_the_record_is_the_plugins() {
+        let members = vec![
+            member(1, "openai", "gpt-6", "run"),
+            member(2, "zai", "glm-5.3", "run"),
+        ];
+        let res = routed(&RouterContext::default(), &members);
+        assert_eq!(res.routing.mode, "roster");
+        assert_eq!(res.routing.fallback, "no ratings");
+        assert!(res.routing.ext.is_none());
+        for e in &res.routing.eligible {
+            assert_eq!(e.score, ROUTING_NEUTRAL);
+            assert_eq!(e.basis, "neutral");
+        }
+    }
+
+    #[test]
+    fn priors_without_a_cell_for_anyone_keep_the_roster_fallback() {
+        let members = vec![
+            member(1, "openai", "gpt-6", "run"),
+            member(2, "zai", "glm-5.3", "run"),
+        ];
+        let ctx = priors_ctx(
+            r#"{"provider":"xiaomi","model":"mimo-v2.6-pro","engine":"codex","purpose":"","topic":"","mean":0.8,"n":12}"#,
+        );
+        let res = routed(&ctx, &members);
+        assert_eq!(res.routing.mode, "roster");
+        assert_eq!(res.routing.fallback, "no ratings");
+        // Priors were loaded, so the record still names them.
+        assert!(res.routing.ext.is_some());
     }
 
     #[test]

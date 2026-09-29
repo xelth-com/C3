@@ -350,7 +350,9 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     // The all-task rating store, read for the routed draw (`Read-AllTaskRatings`).
     let ratings: Vec<Rating> = super::routing::read_all_task_ratings(&collab_root);
 
-    let route: PanelRoutingResult = plan::select_panel_routing(
+    let router_ctx = crate::router::load_context();
+    let route: PanelRoutingResult = plan::select_panel_routing_with(
+        &router_ctx,
         &members,
         size_wanted,
         size_source,
@@ -1815,6 +1817,17 @@ fn pending_dry_tail(item: &crate::consult::recovery::RecoveryItem) -> String {
 /// object: mode, order, fallback, seed, nonce, nonce_source, size, size_asked, size_source,
 /// reserve, eligible[], picked[], explored[], required[]).
 fn routing_value(rt: &RoutingRecord) -> Value {
+    let mut v = routing_value_plugin(rt);
+    // (C3, M9) ONE trailing key, an object, only when the router has something to say; the
+    // plugin's own keys stay untouched and in their order.
+    if let Some(ext) = &rt.ext {
+        v["ext"] = ext.clone();
+    }
+    v
+}
+
+/// The plugin's keys of `panel.routing`, in the plugin's order.
+fn routing_value_plugin(rt: &RoutingRecord) -> Value {
     json!({
         "mode": rt.mode,
         "order": rt.order,

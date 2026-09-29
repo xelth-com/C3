@@ -2,3 +2,4 @@ crates/c3-core/schemas/*.json text eol=lf
 # Byte-for-byte fixtures: the plugin stores are PowerShell 5.1 output with CRLF; never normalise them.
 .collab/** -text
 crates/c3-core/tests/fixtures/** -text
+crates/c3/tests/fixtures/** -text

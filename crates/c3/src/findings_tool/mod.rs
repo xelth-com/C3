@@ -1097,6 +1097,30 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
     .map_err(|e| e.to_string())?;
     drop(write_lock);
 
+    // (M9) the mark reaches the hub as its own allowlisted event - classes only (lineage,
+    // purpose, vocabulary topics, the mark, the age in days), spooled and sent with the next
+    // flush. It never blocks and never fails the rating; the environment switch is honoured
+    // inside.
+    {
+        let age_days = chrono::DateTime::parse_from_rfc3339(&entry.when)
+            .map(|w| {
+                (chrono::Utc::now() - w.with_timezone(&chrono::Utc))
+                    .num_days()
+                    .max(0)
+            })
+            .unwrap_or(0);
+        let raw_topics: Vec<String> = mark
+            .topics
+            .as_ref()
+            .map(|ts| {
+                ts.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let _ = crate::telemetry::record_rating(entry, &ctx.useful, age_days, &raw_topics);
+    }
+
     let purpose_text = if mark.purpose.is_empty() {
         "no purpose".to_string()
     } else {

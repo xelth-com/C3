@@ -115,6 +115,13 @@ hash.
 - Reward, defined once before any learning: per consultation, the coordinator's usefulness mark (yes 1, partly 0.5, no 0)
   combined with the finding outcomes once they settle (verified +, rejected -), decayed by age, with an explicit rule for
   the unrated (they count as missing, not as zero).
+- As built (M9, `docs/port/m9-spec.md`): router v1 keeps the plugin's seeded draw and replaces only the weight source,
+  `w = (yes + 0.5 partly + m*pi) / (n + m)`, of which the plugin's R15 is the case `pi = 0.5, m = 2`; with no priors
+  loaded every score and every byte of the ledger record equal the plugin's. Priors are a signed file (Ed25519, pinned
+  keys, fail closed), fetched at most once a day without any identifier and never followed across a redirect; a
+  published cell counts as evidence, so a fresh installation routes instead of falling back to roster order. What the
+  router used is recorded under one trailing `ext.c3` object of `panel.routing`; `c3 router replay` recomputes any
+  recorded draw, the plugin's included, from the ledger alone.
 - Policy v1: per (reviewer, purpose, topic tag) a smoothed score from the reward with a global prior from `priors.json`
   (hierarchical: the server's aggregate is the prior, local evidence the posterior); exploration as a mixture over feasible
   panels, not a per-member floor. Later policies (Thompson sampling once enough rated consultations exist; similarity over
@@ -206,7 +213,10 @@ milestones, not hidden inside it.
 
 - RC1 two processes on one surrealkv directory - done 2026-09-26: fail-fast exclusive open, no reader mode, crash-safe;
   see section 7. Harness under the session scratchpad (`rc1/`, `skvtest`), not in the repository.
-- RC2 routing simulation under sparse, delayed labels (uniform, regularized Thompson, smoothed softmax).
+- RC2 routing simulation under sparse, delayed labels - done 2026-09-29 (`c3 router simulate`, report in
+  `docs/port/rc2-simulation.md`): cumulative regret at 30/100/300 rounds - uniform 10.7/35.6/107.2, the plugin's R15
+  9.6/21.5/51.8, router v1 with priors 4.2/14.4/41.4, Thompson 6.2/19.0/52.2; with misleading priors v1 still beats R15
+  and locks nobody out (coverage 1.00). Defaults chosen from it: `kappa` 0.1, `m_max` 8, decay and outcome weight off.
 - RC3 retrieval spike: cold and warm BM25 plus graph latency and pack coverage on one representative repository, offline.
 - Outbound redaction test with a seeded secret across packs, requests, events and errors.
 - Ratings count per (reviewer, purpose) across this machine's ledgers - done 2026-09-26: 53 rated of ~90 consultations,

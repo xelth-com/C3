@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use c3_core::ledger::{FindingCounts, FormatRetry, LedgerEntry, Reviewer, Usage};
 
-use c3::telemetry::{self, Config, Event, Spool};
+use c3::telemetry::{self, Config, Event, RatingEvent, Spool};
 
 // --------------------------------------------------------------------------- helpers
 
@@ -156,6 +156,50 @@ fn allowlist_never_leaks_secrets_or_paths() {
     assert_eq!(d["format_retry"], true);
     assert_eq!(d["panel_size"], 3);
     // The title mirrors the safe purpose label, never the raw text.
+    assert_eq!(v["title"], "unknown");
+}
+
+#[test]
+fn rating_event_allowlist_never_leaks_secrets_or_paths() {
+    // The rating event (M9 §7) is the later usefulness mark. Poison every text input,
+    // including the topic tags, and prove none reaches the payload.
+    let entry = poisoned_entry();
+    const POISON: &str = "LEAK /home/u/.ssh/id_rsa secret=sk-live-DEADBEEF password token";
+    let topics = vec![
+        POISON.to_string(),
+        "security".to_string(),
+        "not-a-real-tag".to_string(),
+    ];
+    let event = RatingEvent::from_rating(&entry, "yes", 12, &topics, "testinstance");
+    let serialized = serde_json::to_string(&event).unwrap();
+
+    for needle in [
+        "LEAK",
+        "id_rsa",
+        "sk-live",
+        "DEADBEEF",
+        "/home",
+        "password",
+        ".ssh",
+        "secret=",
+        "not-a-real-tag",
+    ] {
+        assert!(
+            !serialized.contains(needle),
+            "the rating payload leaked `{needle}`: {serialized}"
+        );
+    }
+    let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(v["event_type"], "rating");
+    let d = &v["details"];
+    assert_eq!(d["engine"], "other");
+    assert_eq!(d["provider"], "unknown");
+    assert_eq!(d["model"], "unknown");
+    assert_eq!(d["purpose"], "unknown");
+    assert_eq!(d["mark"], "yes");
+    assert_eq!(d["age_days"], 12);
+    // Only the one vocabulary word survives; the secret and the unknown tag are dropped.
+    assert_eq!(d["topic_tags"], serde_json::json!(["security"]));
     assert_eq!(v["title"], "unknown");
 }
 
