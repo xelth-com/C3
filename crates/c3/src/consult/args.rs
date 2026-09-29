@@ -45,6 +45,17 @@ pub struct Options {
     pub raw: bool,
     pub codex_exe: String,
     pub provider: String,
+    /// (M7b-b) `--key-env <NAME>`: the environment variable the http engine's key is read from
+    /// on a direct `--engine http` run (empty = the OpenRouter default). The key value is never
+    /// a flag or a config value. Ignored by the other engines.
+    pub key_env: String,
+    /// (M7b-b) `--base-url <https url>`: the http engine's API base on a direct `--engine http`
+    /// run (empty = the OpenRouter default). Must be `https://`. Ignored by the other engines.
+    pub base_url: String,
+    /// (M7b-b, S6) `--pack-budget <n>`: the http reviewer pack's periphery budget in tokens
+    /// (`0..=200000`; `0` = no periphery). `-1` = not given (the roster entry's `pack_tokens`,
+    /// else the default 12000). Wins over the roster. Ignored by the other engines.
+    pub pack_budget: i64,
     pub native_effort: String,
     pub off_peak_only: bool,
     pub skip_preflight: bool,

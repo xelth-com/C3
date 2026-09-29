@@ -198,6 +198,12 @@ struct DetachArgs {
     #[serde(default)]
     provider: String,
     #[serde(default)]
+    key_env: String,
+    #[serde(default)]
+    base_url: String,
+    #[serde(default = "minus_one")]
+    pack_budget: i64,
+    #[serde(default)]
     native_effort: String,
     #[serde(default)]
     off_peak_only: bool,
@@ -277,6 +283,9 @@ impl DetachArgs {
             raw: o.raw,
             codex_exe: o.codex_exe.clone(),
             provider: o.provider.clone(),
+            key_env: o.key_env.clone(),
+            base_url: o.base_url.clone(),
+            pack_budget: o.pack_budget,
             native_effort: o.native_effort.clone(),
             off_peak_only: o.off_peak_only,
             skip_preflight: o.skip_preflight,
@@ -332,6 +341,9 @@ impl DetachArgs {
             raw: self.raw,
             codex_exe: self.codex_exe,
             provider: self.provider,
+            key_env: self.key_env,
+            base_url: self.base_url,
+            pack_budget: self.pack_budget,
             native_effort: self.native_effort,
             off_peak_only: self.off_peak_only,
             skip_preflight: self.skip_preflight,

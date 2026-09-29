@@ -347,13 +347,20 @@ impl HttpEngine {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(self.config.timeout)
             .timeout(self.config.timeout)
+            // (S4) Never follow a redirect: a 3xx would re-send the pack (project content) to
+            // another host. A redirect is reported as a failure below, not chased.
+            .redirects(0)
             .build();
         let mut req = agent
             .post(url)
             .set("content-type", "application/json")
             .set("authorization", &format!("Bearer {key}"));
         for (k, v) in &self.config.headers {
-            req = req.set(k, v);
+            // (S5, defence in depth) Never let a reserved or malformed header name through, even
+            // if one somehow reached the config past the roster validator.
+            if c3_core::roster_ext::header_name_problem(k).is_none() {
+                req = req.set(k, v);
+            }
         }
 
         let started = Instant::now();
@@ -361,6 +368,18 @@ impl HttpEngine {
         let wall = started.elapsed().as_secs_f64();
 
         match res {
+            Ok(resp) if (300..=399).contains(&resp.status()) => {
+                // (S4) `redirects(0)` returns a 3xx as `Ok`; treat it as an unavailable endpoint.
+                AttemptOutcome::ProviderFailure {
+                    failure: ProviderFailure {
+                        class: "unavailable".to_string(),
+                        code: resp.status().to_string(),
+                        message: "the endpoint answered with a redirect (not followed)".to_string(),
+                        ..Default::default()
+                    },
+                    exit_code: None,
+                }
+            }
             Ok(resp) => {
                 let text = resp.into_string().unwrap_or_default();
                 self.parse_response(Some(key), &text, wall)
@@ -631,6 +650,32 @@ mod tests {
             append_ext(Path::new("/t/01-http-slug"), "pack.json"),
             PathBuf::from("/t/01-http-slug.pack.json")
         );
+    }
+
+    #[test]
+    fn reserved_or_malformed_headers_are_skipped_by_the_adapter() {
+        // (S5, defence in depth) `post` sets a config header only when
+        // `roster_ext::header_name_problem` clears it — so a reserved or malformed name never
+        // reaches the wire even if it somehow got past the roster validator.
+        for h in [
+            "authorization",
+            "Proxy-Authorization",
+            "Cookie",
+            "Host",
+            "Content-Length",
+            "content-type",
+            "Transfer-Encoding",
+            "Bad Header",
+            "bad:name",
+        ] {
+            assert!(
+                c3_core::roster_ext::header_name_problem(h).is_some(),
+                "{h} must be skipped by the adapter"
+            );
+        }
+        for h in ["X-Title", "HTTP-Referer", "X-Custom"] {
+            assert!(c3_core::roster_ext::header_name_problem(h).is_none());
+        }
     }
 
     #[test]

@@ -113,25 +113,27 @@ for both paths:
 - `cargo test`: 234 lib + 4 index integration + rest, all pass; `cargo test --no-default-features`:
   all pass.
 
-## Measurements (this repo, release without LTO)
+## Measurements (this repo, the installed release binary)
 
-Preliminary, taken under machine load (other workers building/testing); medians of three unless
-noted. Final load-lifted medians to replace these. Baseline "Before" is the DESIGN §7 "Measured"
-paragraph (230 files; the worktree here is 233 files, 2390 entities, 21.7k `calls`).
+Final medians of three, 2026-09-29, the LTO release binary built from 6d88822, measured on the
+clean release worktree into a scratch store (249 files, 2707 entities, 2658 `belongs_to`, 25420
+`calls`, 4 `relates_to`). "Before" is the DESIGN section 7 paragraph of 2026-09-28 (230 files).
 
-| Metric | Before | After (preliminary, under load) |
+| Metric | Before | After |
 |---|---|---|
-| cold build | 14.0 s | 15.5 s (one shot) |
-| no-change build | 10.0 s | 2.66 s (2.58 / 2.66 / 2.79) — under the 3 s target already |
-| rebuild | 16.8 s | 23.8 s (from-scratch; load-inflated) |
-| stats | 2.7 s | 1.76 s |
-| one query (open + retrieve) | 3.2–3.6 s | 1.44–2.36 s (open-bound) |
-| each further query (shared open) | n/a | approx 0.16 s (5 queries in one open approx 1.96 s total) |
-| store on disk | 128.5 MiB | 162.9 MiB (worktree has more files) |
+| cold build | 14.0 s | 19.4 s (one shot; 8 % more files, 20 % more entities) |
+| no-change build | 10.0 s | **2.62 s** (2.40 / 2.62 / 2.63) |
+| rebuild | 16.8 s | 19.6 s (17.8 / 19.6 / 21.3) |
+| stats | 2.7 s | 1.15 s |
+| one query (open + retrieve) | 3.2-3.6 s | **0.95-1.17 s** over five queries |
+| five queries in one open | about 17 s | **1.45 s** (about 0.1 s per further query) |
+| store on disk | 128.5 MiB | 180.7 MiB |
 
-Single-query breakdown (`C3_INDEX_PROFILE=1`, under load): `open_read` 1.77 s, then retrieval
-0.33 s = `bm25_legs` 0.093 + `fetch_primary` 0.061 + `expansion` 0.172. The avoidable work (schema
-`DEFINE` on read, per-row round trips, a second open) is gone; the remaining single-query cost is
-surrealkv's own store open (approx 1.0–1.8 s), the floor the brief anticipated. The shared-open path
-meets "well under 0.5 s per further query" decisively (approx 0.16 s each); the no-change build meets
-"under 3 s" even under load.
+Single-query breakdown (`C3_INDEX_PROFILE=1`): `open_read` 0.89 s, the rest is process start and
+retrieval. The store open is the floor: everything avoidable (schema definition on a read, per-row
+round trips, a second open) is gone. All three targets are met: no-change build under 3 s, one
+query under 1.5 s, a further query well under 0.5 s.
+
+The figures taken under load during development (no-change 2.66 s, one query 1.44-2.36 s with an
+`open_read` of 1.77 s) are kept here only as a warning: on this machine a parallel build doubles
+the store open.

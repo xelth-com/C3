@@ -898,13 +898,45 @@ impl Ctx {
         } else {
             &id.engine
         };
-        let cred = if engine != "codex" {
+        let cred = if engine == "http" {
+            self.http_credential(id, health)
+        } else if engine != "codex" {
             self.engine_credential(engine, launcher, health)
         } else {
             let table = self.provider_table_ref(&id.provider);
             self.provider_credential(&id.provider, table, anonymous)
         };
         verdict_with_credential(id, health, cred, roster_walk)
+    }
+
+    /// The http engine's credential check: it has no CLI to sign into; it reads its key from the
+    /// environment. The verdict is `available` when the reviewer's `key_env` is set (`env <NAME>
+    /// set`), else `missing` (`env <NAME> not set`). Never reads or prints the key value; a
+    /// recorded usable reply on this endpoint short-circuits like the CLI engines.
+    fn http_credential(
+        &self,
+        id: &ReviewerIdentity,
+        health: Option<&EndpointHealth>,
+    ) -> CredentialResult {
+        if let Some(h) = health {
+            if let Some(ru) = &h.recent_usable {
+                return CredentialResult::ok(format!(
+                    "signed in (usable reply {} min ago)",
+                    ru.age_minutes
+                ));
+            }
+        }
+        let key_env = self
+            .roster
+            .http_reviewers
+            .iter()
+            .find(|hr| hr.provider == id.provider && hr.model == id.model)
+            .map(|hr| hr.key_env.clone())
+            .unwrap_or_else(|| c3_core::roster_ext::DEFAULT_KEY_ENV.to_string());
+        match std::env::var(&key_env) {
+            Ok(v) if !v.trim().is_empty() => CredentialResult::ok(format!("env {key_env} set")),
+            _ => CredentialResult::missing(format!("env {key_env} not set")),
+        }
     }
 
     fn select_roster_reviewer(&self) -> Walk {
@@ -1348,14 +1380,27 @@ impl Ctx {
             .map(|e| e.provider == label && e.engine == engine)
             .unwrap_or(false);
 
-        let endpoint = format!(
-            "{engine} ({})",
-            if !engine_launcher.is_empty() {
-                engine_launcher.clone()
-            } else {
-                "launcher not found".into()
-            }
-        );
+        // The http engine has no CLI launcher: its endpoint is the API base of the reviewer's
+        // roster entry (`http (<base_url>)`), not a launcher path.
+        let endpoint = if engine == "http" {
+            let base = self
+                .roster
+                .http_reviewers
+                .iter()
+                .find(|hr| hr.provider == label)
+                .map(|hr| hr.base_url.clone())
+                .unwrap_or_else(|| c3_core::roster_ext::DEFAULT_BASE_URL.to_string());
+            format!("http ({base})")
+        } else {
+            format!(
+                "{engine} ({})",
+                if !engine_launcher.is_empty() {
+                    engine_launcher.clone()
+                } else {
+                    "launcher not found".into()
+                }
+            )
+        };
 
         let row = Row {
             name: label.to_string(),
@@ -2081,9 +2126,25 @@ pub(crate) fn read_reviewer_roster() -> Result<Roster, String> {
         .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| std::env::var("USERPROFILE").ok());
-    let validated = validate_roster(&path, &text, home.as_deref());
+    let mut validated = validate_roster(&path, &text, home.as_deref());
     if !validated.error.is_empty() {
         return Err(validated.error);
+    }
+    // (M7b-b) The C3-only `http` reviewers under the top-level `ext.c3.reviewers` extension: the
+    // plugin validates `ext` as an object and ignores its content, so http reviewers live there
+    // and never among the plugin-visible entries. C3 validates them and appends them AFTER the
+    // plugin's entries (positions continue the numbering), so the panel and `c3 providers` — which
+    // iterate `roster.entries` — see them exactly as they see the plugin's own entries.
+    if let Ok(data) = serde_json::from_str::<serde_json::Value>(&text) {
+        match c3_core::roster_ext::parse_ext_reviewers(&data, validated.entries.len()) {
+            Ok(http_reviewers) => {
+                for hr in &http_reviewers {
+                    validated.entries.push(hr.to_entry());
+                }
+                validated.http_reviewers = http_reviewers;
+            }
+            Err(why) => return Err(roster_refusal(&path, &why)),
+        }
     }
     Ok(validated)
 }

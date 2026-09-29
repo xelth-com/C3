@@ -22,6 +22,14 @@ step** owned by the orchestrator; this document is the contract that step wires 
   key value.
 - **One sanitizer** (invariant 5, D8). The pack body is already redacted by
   `pack::reviewer::build`; error strings go through `scrub()`.
+- **No redirects** (M7b-b S4). The agent is built with `.redirects(0)`; a 3xx is a
+  `ProviderFailure` of class `unavailable` ("the endpoint answered with a redirect (not
+  followed)") — a followed redirect would re-send the pack to another host.
+- **Key-to-host binding** (M7b-b S1, in `c3_core::roster_ext`). A `key_env` may be sent only to
+  the host it belongs to (a known key to its provider, or a `C3_KEY_*` variable to any https
+  host); enforced by the roster parser and the CLI flags, so the config the engine receives is
+  already bound. Reserved/malformed headers (S5) are refused at the source and skipped by the
+  adapter as defence in depth.
 - **Repo-relative POSIX paths** (invariant 9) in the sidecar and `provider_config`.
 
 ## Configuration — `HttpConfig`
@@ -122,7 +130,14 @@ request fails. A `read-code` finding's `reference` names the pack path and hash.
    concentrators/labs (`openrouter`, `openai`, `anthropic`, `google`, …) are deliberately absent.
 2. **No key.** When `key_env` is unset/empty, the launch is refused (env-only rule).
 
-## Wiring the orchestrator must do (later step)
+## Wiring the orchestrator must do (DONE — M7b-b)
+
+This section was the work list for making `http` a first-class reviewer in `c3 consult` and
+the panel; it is now implemented (see `docs/port/m7-status.md`). The seam is `crate::consult::http`
+(the seat's run path and dry-run render) plus `crate::roster_ext` (the `ext.c3.reviewers` parser),
+called from a few lines in `orchestrate.rs`. The list below records the original contract.
+
+
 
 1. **Engine selection:** `--engine http` selects `HttpEngine` for a seat. Build `HttpConfig`
    from the roster entry's `ext.c3` (see below); build the `ReviewerPack` via

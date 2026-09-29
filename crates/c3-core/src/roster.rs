@@ -66,6 +66,13 @@ pub struct Roster {
     /// matchers a `-Panel` of that purpose must include (each already validated to name an
     /// entry). Empty when the roster names no `require`.
     pub require: Vec<(String, Vec<String>)>,
+    /// (M7b-b) The `http` reviewers parsed from the top-level `ext.c3.reviewers` extension
+    /// (invisible to the plugin, which validates `ext` as an object only). They are also
+    /// appended to [`Roster::entries`] as synthesized `http` entries so the panel and
+    /// `c3 providers` see them; this list keeps their full request config, looked up by
+    /// [`RosterEntry::position`]. Populated by the `c3` roster loader, never by
+    /// [`validate_roster`] (which stays byte-parity with the plugin's validator).
+    pub http_reviewers: Vec<crate::roster_ext::HttpReviewer>,
     pub error: String,
 }
 

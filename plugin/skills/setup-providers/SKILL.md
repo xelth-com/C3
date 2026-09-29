@@ -164,6 +164,75 @@ the z.ai route works without one).
 - Another file: the user sets `CODEX_CONSULT_ROSTER=<path>` (it must exist).
   `CODEX_CONSULT_ROSTER=none` disables the roster.
 
+## 4b. Add an OpenRouter reviewer (the `http` engine)
+
+The `http` engine sends one OpenAI-compatible `chat/completions` request built from a
+reviewer pack — no CLI, no subscription, no tools. It is the path for someone who will not
+juggle subscriptions and consults rarely: an API concentrator (OpenRouter by default) or
+any endpoint that speaks the same wire shape.
+
+**The key is never yours to touch.** The user sets the environment variable themselves
+(e.g. `OPENROUTER_API_KEY`); you never ask for it, print it, echo it, log it, read it
+back, or write it to any file. You only ever confirm it is *set* through `c3 providers`.
+
+The plugin's roster validator knows only `codex`/`agy`/`muse` and refuses the whole file
+on any other engine, so an `http` reviewer does **not** go in `reviewers[]`. It goes under
+the top-level `ext.c3.reviewers` array, which the plugin validates as an object and
+ignores — C3 reads and validates it and appends the reviewer after the plugin's entries:
+
+```json
+{
+  "roster_version": 1,
+  "reviewers": [
+    { "provider": "openai", "model": "<the ChatGPT-plan model>", "panel": "weighty" }
+  ],
+  "ext": { "c3": { "reviewers": [
+    {
+      "provider": "openrouter",
+      "model": "openai/gpt-5",
+      "engine": "http",
+      "lab": "openai",
+      "weight": 1,
+      "base_url": "https://openrouter.ai/api/v1",
+      "key_env": "OPENROUTER_API_KEY",
+      "json_object": true,
+      "headers": { "HTTP-Referer": "https://xelth.com", "X-Title": "c3" },
+      "purposes": ["diff-review"],
+      "roles": ["security"]
+    }
+  ] } }
+}
+```
+
+- `base_url` must be `https://` (parsed strictly: a host, no userinfo/query/fragment);
+  `key_env` is the *name* of the variable the key is read from (a valid environment-variable
+  name), never the key. **c3 sends a variable only to the host it belongs to:** a known key
+  (`OPENROUTER_API_KEY`→openrouter.ai, `OPENAI_API_KEY`→api.openai.com, and the Anthropic /
+  Gemini / Google / Mistral / DeepSeek / Groq / Together / xAI keys to their hosts) must go to
+  that host or a subdomain; any other endpoint needs a variable the user created for c3, named
+  `C3_KEY_<NAME>` (then any https host is allowed). Anything else is refused, naming the
+  variable — e.g. `OPENAI_API_KEY` with an openrouter base_url, or `GITHUB_TOKEN` anywhere.
+  Header names/values carry no CR/LF, must be RFC 7230 tokens, and c3 refuses the ones it
+  controls (`Authorization`, `Cookie`, `Host`, `Content-Type`, …). `json_object` (default
+  `true`) sends `response_format: {"type":"json_object"}`. `pack_tokens` (0..=200000, default
+  12000) sizes the pack's periphery for this reviewer; `--pack-budget <n>` overrides per run.
+- **Billing guard.** A subscription-engine label (`codex`, `chatgpt`, `muse`, `agy`,
+  `antigravity`) is refused outright. A lab label (`openai`, `gemini`, `google`, `meta`) is
+  refused unless the entry says `"api_billing": "accepted"` — a user who really wants
+  per-token billing at a lab that also sells them a subscription says so once, here. A
+  concentrator label like `openrouter` is fine.
+
+**Without a roster** (a one-off), run it directly — the defaults are OpenRouter's:
+
+```
+c3 consult --task <t> --brief <brief.md> --artifact <file-to-review> \
+  --engine http --provider openrouter --model openai/gpt-5 --dry-run
+```
+
+`--base-url <https url>` and `--key-env <NAME>` override the defaults; the key itself is
+never a flag. The `http` reviewer receives only the sanitized pack, so the run needs a
+`--brief` and at least one `--artifact` (the files to review, shown in full).
+
 ## 5. Verify
 
 ```

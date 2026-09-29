@@ -71,6 +71,18 @@ pub struct ConsultArgs {
     /// The provider label; needs --model.
     #[arg(long, default_value = "")]
     pub provider: String,
+    /// (--engine http) The environment variable the API key is read from (default:
+    /// OPENROUTER_API_KEY). The key value itself is never a flag.
+    #[arg(long, default_value = "")]
+    pub key_env: String,
+    /// (--engine http) The API base URL (https:// only; default: OpenRouter's).
+    #[arg(long, default_value = "")]
+    pub base_url: String,
+    /// (--engine http) The reviewer pack periphery budget in tokens (0..=200000; 0 = none).
+    /// `allow_hyphen_values` so the -1 "not given" sentinel and a negative refusal reach the
+    /// validator instead of clap rejecting it.
+    #[arg(long, allow_hyphen_values = true, default_value_t = -1)]
+    pub pack_budget: i64,
     /// An effort value sent verbatim (excludes --effort).
     #[arg(long, default_value = "")]
     pub native_effort: String,
@@ -212,6 +224,9 @@ pub fn run(args: ConsultArgs) -> i32 {
         raw: args.raw,
         codex_exe: args.codex_exe,
         provider: args.provider,
+        key_env: args.key_env,
+        base_url: args.base_url,
+        pack_budget: args.pack_budget,
         native_effort: args.native_effort,
         off_peak_only: args.off_peak_only,
         skip_preflight: args.skip_preflight,

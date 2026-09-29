@@ -22,6 +22,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 regex = "1"
+# url: strict parsing of an http reviewer's base URL (M7b-b security S2) — scheme/host/no
+# userinfo/no query/no fragment; already in the lock file via ureq.
+url = "2"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 clap = { version = "4", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }

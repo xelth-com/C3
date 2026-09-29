@@ -148,6 +148,14 @@ pub fn caps(key: &str) -> Option<Caps> {
             models: Models::List(MUSE_MODELS),
             schema_transport: "native",
         },
+        // (M7b-b) The http engine (OpenRouter / OpenAI-compatible): the OpenAI effort vocabulary
+        // (low/medium/high/xhigh), any model, and prompt-only transport (the schema travels in the
+        // pack; JSON mode is requested via `response_format`).
+        "engine:http" => Caps {
+            vocabulary: "openai",
+            models: Models::Any,
+            schema_transport: "prompt-only",
+        },
         _ => return None,
     };
     Some(row)

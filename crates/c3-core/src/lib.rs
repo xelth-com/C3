@@ -33,6 +33,7 @@ pub mod peak;
 pub mod ps_json;
 pub mod purpose;
 pub mod roster;
+pub mod roster_ext;
 pub mod schema;
 pub mod store;
 pub mod task_slug;

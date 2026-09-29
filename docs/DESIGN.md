@@ -164,14 +164,20 @@ hash.
   Build cost: the `surrealdb` dependency adds about 26 minutes to a cold release build, so `--no-default-features`
   is the documented fast development loop and CI builds both variants.
 - `rebuild` is an acceptance test; the index is never required for a consultation.
-- Measured (2026-09-28, Windows 11, release binary, this repo — 230 files, 2246 entities, 19481 `calls`
-  edges): a cold `index build` 14.0 s, a no-change rebuild (hash skip) 10.0 s, `index rebuild` 16.8 s,
-  `index stats` 2.7 s, embedded store on disk 128.5 MiB, and each of five BM25 queries 3.2–3.6 s with the
-  named symbol first in the top-3. This is down from a debug build that exceeded 15 minutes: the win is
-  batching — entities, relation edges and file hashes go in as chunked bulk `INSERT`/`INSERT RELATION`
-  statements (400 rows each, one `await` per chunk instead of one per row) and, on a from-scratch build, the
-  four BM25 indexes are dropped before the bulk load and rebuilt in one pass afterwards rather than
-  maintained row by row; the incremental (file-hash skip) path keeps the indexes and touches only changed rows.
+- Measured (2026-09-29, Windows 11, release binary, this repo - 249 files, 2707 entities, 25420 `calls`
+  edges; medians of three): a cold `index build` 19.4 s, a no-change build 2.6 s (it diffs by file hash and
+  touches no row), `index rebuild` 19.6 s, `index stats` 1.2 s, the embedded store on disk 180.7 MiB, one
+  BM25 query 0.95-1.17 s of which the store open is 0.89 s, five queries in one invocation 1.45 s. The store
+  open is the floor of a single query. History: a debug build exceeded 15 minutes before batching (chunked
+  bulk `INSERT` / `INSERT RELATION`, 400 rows each; on a from-scratch build the four BM25 indexes are dropped
+  before the bulk load and rebuilt in one pass); on 2026-09-28 a no-change build still took 10 s and a query
+  3.2-3.6 s, until reads stopped defining the schema and retrieval went from about 76 round trips to about 6.
+  A query of several words is tokenised and fused per term: the `@@` operator is conjunctive.
+- The reviewer pack takes its periphery from the index when one exists: the brief's identifiers and the focus
+  files are the query, a hit counts only if discovery yields that file in this run, and the tool-state
+  directories (`.collab/`, `.eck/`, `.claude/`) never enter the periphery unless the focus names the path -
+  a reviewer stays independent of the other reviewers' replies. A pack build never creates a store; with no
+  index the pack is byte-identical to the lexical one.
 - Federation, opt-in: an index may read from or sync with another SurrealDB instance (another project's index, the
   per-user hub, a sibling tool such as xelixir) only when the user has allowed that connection explicitly, per
   connection, in config; never on by default. The xelth.rs `kb_sync` selective-sync pattern is the template; the
@@ -217,7 +223,9 @@ milestones, not hidden inside it.
   `docs/port/rc2-simulation.md`): cumulative regret at 30/100/300 rounds - uniform 10.7/35.6/107.2, the plugin's R15
   9.6/21.5/51.8, router v1 with priors 4.2/14.4/41.4, Thompson 6.2/19.0/52.2; with misleading priors v1 still beats R15
   and locks nobody out (coverage 1.00). Defaults chosen from it: `kappa` 0.1, `m_max` 8, decay and outcome weight off.
-- RC3 retrieval spike: cold and warm BM25 plus graph latency and pack coverage on one representative repository, offline.
+- RC3 retrieval spike - done 2026-09-29 on this repository, offline: section 7 "Measured" (one query about 1 s, of
+  which the store open is 0.89 s; a further query in the same open about 0.1 s); the index-fed periphery of a reviewer
+  pack adds 4-8 files inside a 12000-token budget (`docs/port/m8-status.md`).
 - Outbound redaction test with a seeded secret across packs, requests, events and errors.
 - Ratings count per (reviewer, purpose) across this machine's ledgers - done 2026-09-26: 53 rated of ~90 consultations,
   spread over ~19 lineages and 6 purposes (median per cell below 3). Policy v1 therefore starts from priors and shifts

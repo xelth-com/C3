@@ -1053,8 +1053,16 @@ mod machine_health_tests {
         false
     }
 
+    /// The three tests below change one process-wide variable; they take turns.
+    static HEALTH_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn health_env() -> std::sync::MutexGuard<'static, ()> {
+        HEALTH_ENV.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn machine_health_path_env_none_disables() {
+        let _env = health_env();
         std::env::set_var("CODEX_CONSULT_HEALTH", "none");
         assert_eq!(machine_health_path("C:/codex-home"), None);
         std::env::set_var("CODEX_CONSULT_HEALTH", "  NoNe  ");
@@ -1064,6 +1072,7 @@ mod machine_health_tests {
 
     #[test]
     fn machine_health_path_env_overrides() {
+        let _env = health_env();
         std::env::set_var("CODEX_CONSULT_HEALTH", "C:/somewhere/health.json");
         assert_eq!(
             machine_health_path("C:/codex-home"),
@@ -1074,6 +1083,7 @@ mod machine_health_tests {
 
     #[test]
     fn machine_health_path_default_from_codex_home() {
+        let _env = health_env();
         std::env::remove_var("CODEX_CONSULT_HEALTH");
         assert_eq!(
             machine_health_path("C:/codex-home"),

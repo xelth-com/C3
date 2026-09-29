@@ -340,6 +340,34 @@ fn quota_429_maps_with_retry_after() {
 }
 
 #[test]
+fn redirect_is_not_followed_and_maps_to_unavailable() {
+    // (S4) A 3xx would re-send the pack (project content) to another host: the adapter builds the
+    // agent with redirects(0), so a 307 is a failure of class `unavailable`, not a chase.
+    std::env::set_var("C3_HTTP_KEY_REDIR", FAKE_KEY);
+    let mock = start_mock(vec![Resp::Raw(http_response(
+        "307 Temporary Redirect",
+        &[("Location", "https://evil.example/api/v1/chat/completions")],
+        "",
+    ))]);
+    let d = scratch("redir");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_REDIR", &d);
+    match eng.attempt(&primary_turn()).unwrap().outcome {
+        AttemptOutcome::ProviderFailure { failure, .. } => {
+            assert_eq!(failure.class, "unavailable");
+            assert!(
+                failure.message.contains("redirect (not followed)"),
+                "{}",
+                failure.message
+            );
+        }
+        other => panic!("expected ProviderFailure unavailable, got {other:?}"),
+    }
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_REDIR");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn timeout_maps_to_timed_out() {
     std::env::set_var("C3_HTTP_KEY_TO", FAKE_KEY);
     let mock = start_mock(vec![Resp::Hang]);
@@ -427,6 +455,56 @@ fn replay_sends_three_messages() {
 
     std::env::remove_var("C3_HTTP_KEY_REPLAY");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn seeded_key_never_reaches_any_written_file_or_outcome_string() {
+    // The seeded-secret test (DESIGN §3 invariant 4): run a full consultation against the
+    // in-process fake server with a seeded key, then grep EVERY file written under the temp
+    // handoff directory and every captured outcome/reply/provider_config string for the key and
+    // for the `sk-or-` shape. Nothing may carry it.
+    std::env::set_var("C3_HTTP_KEY_SEED", FAKE_KEY);
+    let mock = start_mock(vec![Resp::Raw(completion_response(
+        &structured_reply_json(),
+    ))]);
+    let d = scratch("seed");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_SEED", &d);
+    let att = eng.attempt(&primary_turn()).unwrap();
+    let _ = mock.last_body();
+
+    // Every file written under the temp dir (the pack.md and the pack.json sidecar).
+    let mut files = Vec::new();
+    collect_files(&d, &mut files);
+    assert!(
+        files.iter().any(|p| p.ends_with(".pack.md")),
+        "the pack was written"
+    );
+    for f in &files {
+        let body = std::fs::read_to_string(f).unwrap_or_default();
+        assert!(!body.contains(FAKE_KEY), "key leaked into {f}");
+        assert!(!body.contains("sk-or-"), "shaped key leaked into {f}");
+    }
+    // The outcome and the ledger provider_config strings.
+    let outcome_str = format!("{:?}", att.outcome);
+    let pc_str = att.provider_config.to_string();
+    assert!(!outcome_str.contains(FAKE_KEY) && !outcome_str.contains("sk-or-"));
+    assert!(!pc_str.contains(FAKE_KEY) && !pc_str.contains("sk-or-"));
+
+    std::env::remove_var("C3_HTTP_KEY_SEED");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+fn collect_files(dir: &Path, out: &mut Vec<String>) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                collect_files(&p, out);
+            } else {
+                out.push(p.to_string_lossy().into_owned());
+            }
+        }
+    }
 }
 
 #[test]

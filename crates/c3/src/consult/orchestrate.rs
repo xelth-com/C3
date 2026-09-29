@@ -324,7 +324,14 @@ fn resolve_preflight(
         .unwrap_or(15);
     // A CLI engine checks its own sign-in (`agy models` / muse `auth.json`), with the recorded
     // endpoint-health short-circuit; codex runs `codex login status` / the provider env-key.
-    let cred = if id.engine.is_empty() || id.engine == "codex" {
+    let cred = if id.engine == "http" {
+        // The http engine has no CLI to sign into and no launcher to find; its key/billing guard
+        // runs at launch in `consult::http` (decision 3, "before every turn"), reading the key
+        // from the environment and never probing the network. The preflight is a no-op so the
+        // seat is not refused for a missing launcher; the endpoint-health short-circuit above
+        // still blocks a run after a recorded auth/quota failure on this http endpoint.
+        c3_core::credential::CredentialResult::ok("checked at launch (http engine)")
+    } else if id.engine.is_empty() || id.engine == "codex" {
         providers::identity_credential(config, id, launcher, anonymous, timeout)
     } else {
         providers::engine_consult_credential(&id.engine, launcher, health.as_ref())
@@ -893,6 +900,20 @@ fn member_early_accept(mo: &Options, m: &crate::panel::member::MemberSpec) -> Re
 fn dispatch(built: Result<Context, (String, i32)>) -> i32 {
     match built {
         Ok(ctx) => {
+            // The http engine sends one OpenAI-compatible request built from a reviewer pack; it
+            // has no CLI launcher, so it takes its own dry-run render and live run path and is
+            // exempt from the launcher-not-found refusal below (`consult::http`, M7b-b).
+            if ctx.engine == "http" {
+                return if ctx.o.dry_run {
+                    super::http::render_dry_run(&ctx);
+                    0
+                } else if let Some((msg, code)) = ctx.preflight_refusal.clone() {
+                    eprintln!("{TOOL}: {msg}");
+                    code
+                } else {
+                    run_live(ctx)
+                };
+            }
             if ctx.o.dry_run {
                 super::dryrun::render(&ctx);
                 0
@@ -973,6 +994,11 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         raw: b("raw"),
         codex_exe: s("codex_exe"),
         provider: String::new(),
+        // A panel http seat takes its base_url/key_env/pack_tokens from the roster entry (looked
+        // up by the child from its own roster read), never from the member spec's args.
+        key_env: String::new(),
+        base_url: String::new(),
+        pack_budget: -1,
         native_effort: s("native_effort"),
         off_peak_only: b("off_peak_only"),
         skip_preflight: b("skip_preflight"),
@@ -1431,6 +1457,59 @@ fn build_context(
             "-MaxModelSteps is for the muse engine (--max-model-steps); the {engine_name} engine has no model-step cap.",
         ), 1));
     }
+    // (M7b-b) --key-env / --base-url configure the http engine only; on an http run --base-url
+    // must be https:// and the reviewer needs a provider label (from -Provider or the roster).
+    if (!o.key_env.trim().is_empty() || !o.base_url.trim().is_empty() || o.pack_budget != -1)
+        && engine_name != "http"
+    {
+        return Err((format!(
+            "--key-env / --base-url / --pack-budget configure the http engine only (this run's engine is {engine_name})."
+        ), 1));
+    }
+    if engine_name == "http" {
+        // (S3) `--key-env` / `--base-url` are validated with the same S1/S2 rules the roster
+        // parser uses: the base URL is parsed strictly and the key may go only to the host it
+        // belongs to. A roster-matched seat's config is already validated at load, so these
+        // checks bind the direct-run flags (and their defaults). Refused in the pre-launch style.
+        if !o.key_env.trim().is_empty() && !c3_core::roster_ext::is_env_name(o.key_env.trim()) {
+            return Err((format!(
+                "--key-env must be an environment-variable name (letters, digits and underscore, not starting with a digit; got '{}'). The key value itself is never a flag.",
+                o.key_env
+            ), 1));
+        }
+        let base_url = if o.base_url.trim().is_empty() {
+            c3_core::roster_ext::DEFAULT_BASE_URL.to_string()
+        } else {
+            o.base_url.trim().to_string()
+        };
+        let key_env = if o.key_env.trim().is_empty() {
+            c3_core::roster_ext::DEFAULT_KEY_ENV.to_string()
+        } else {
+            o.key_env.trim().to_string()
+        };
+        let host = c3_core::roster_ext::parse_base_url(&base_url)
+            .map_err(|why| (format!("--base-url: {why}."), 1))?;
+        c3_core::roster_ext::check_key_host(&key_env, &host)
+            .map_err(|why| (format!("{why}."), 1))?;
+        if o.pack_budget != -1
+            && (o.pack_budget < 0 || o.pack_budget > c3_core::roster_ext::MAX_PACK_TOKENS)
+        {
+            return Err((
+                format!(
+                    "--pack-budget must be an integer from 0 to {} (0 = no periphery; got {}).",
+                    c3_core::roster_ext::MAX_PACK_TOKENS,
+                    o.pack_budget
+                ),
+                1,
+            ));
+        }
+        if identity.provider.trim().is_empty() {
+            return Err((
+                "the http engine needs -Provider <label> (e.g. -Provider openrouter -Model openai/gpt-5), or an ext.c3.reviewers roster entry.".to_string(),
+                1,
+            ));
+        }
+    }
     // -EngineExe bound to one engine (D3): a run of another non-codex engine is refused.
     if !engine_exe_engine.is_empty() && !is_codex && engine_exe_engine != engine_name {
         return Err((format!(
@@ -1857,7 +1936,15 @@ fn build_context(
     );
     let argv = match c3_core::engine::SubprocessEngine::new(engine_kind).plan(&request) {
         Ok(c3_core::engine::LaunchPlan::Subprocess(a)) => a,
-        _ => return Err((format!("could not plan the {engine_name} argv"), 1)),
+        // The http engine has no subprocess argv: it sends one OpenAI-compatible request built
+        // from a reviewer pack (M7b). Its command line and dry-run block are rendered by
+        // `consult::http` from the request plan (the `Authorization` header redacted), so the
+        // Context carries an empty argv here.
+        Ok(c3_core::engine::LaunchPlan::Http(_)) => c3_core::engine::Argv {
+            command: String::new(),
+            args: Vec::new(),
+        },
+        Err(_) => return Err((format!("could not plan the {engine_name} argv"), 1)),
     };
     let argv_display = argv.to_command_string();
 
@@ -2922,6 +3009,10 @@ struct EngineDetail {
     warnings: Vec<String>,
     /// The MSP schema version of a muse stream (`None` for agy).
     msp_schema_version: Option<i64>,
+    /// (M7b-b) The http seat's `reviewer.provider_config` (`{engine, base_url, model, pack,
+    /// pack_sha256}`), built by the adapter and applied to `ctx.identity.provider_config` in
+    /// `finish` so it lands on the ledger. `None` for every other engine.
+    http_provider_config: Option<serde_json::Value>,
 }
 
 /// Build the request for a live primary/secondary turn of the selected engine.
@@ -3029,6 +3120,20 @@ fn run_primary_turn(
             d.msp_schema_version = msp;
             Ok((run.outcome, d))
         }
+        "http" => {
+            // The http engine has no subprocess: it builds a reviewer pack, runs the billing/key
+            // guard, retains the pack, and sends one OpenAI-compatible request. The whole run path
+            // lives in `consult::http`; here it just yields the outcome and the ledger's
+            // provider_config (applied to the identity in `finish`).
+            let seat = crate::consult::http::run_seat(ctx)?;
+            let d = EngineDetail {
+                turn_outcome: seat.bridge_outcome,
+                reply: seat.reply_text,
+                http_provider_config: Some(seat.provider_config),
+                ..EngineDetail::default()
+            };
+            Ok((seat.outcome, d))
+        }
         _ => {
             let eng = CodexEngine {
                 launcher: ctx.launcher.clone(),
@@ -3088,6 +3193,7 @@ fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         reply: t.reply.clone(),
         warnings: t.warnings.clone(),
         msp_schema_version: None,
+        http_provider_config: None,
     }
 }
 
@@ -3105,6 +3211,7 @@ fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         reply: t.reply.clone(),
         warnings: t.warnings.clone(),
         msp_schema_version: None,
+        http_provider_config: None,
     }
 }
 
@@ -3351,6 +3458,12 @@ fn finish(
     when_iso: String,
 ) -> i32 {
     let is_engine = !ctx.is_codex();
+    // (M7b-b) The http seat's provider_config (`{engine, base_url, model, pack, pack_sha256}`) is
+    // built by the adapter from the retained pack; apply it to the identity so `build_reviewer`
+    // places it on the ledger's `reviewer.provider_config`.
+    if let Some(pc) = detail.http_provider_config.clone() {
+        ctx.identity.provider_config = pc;
+    }
     let mut bridge_outcome;
     let mut structured: Option<StructuredReply> = None;
     let mut raw_text = String::new();
@@ -5019,6 +5132,7 @@ fn engine_prompt_via(engine: &str) -> &'static str {
     match engine {
         "agy" => "prompt on stdin as one NDJSON line",
         "muse" => "prompt from a file: --prompt-file",
+        "http" => "reviewer pack sent as the request body",
         _ => "prompt on stdin",
     }
 }
@@ -5029,6 +5143,9 @@ fn engine_tree_note(engine: &str) -> String {
         "muse" => {
             "muse ran with --disable-write --disable-shell (the check cannot tell who changed it)"
                 .to_string()
+        }
+        "http" => {
+            "the http reviewer received only a pack and never touched the machine (the change is not the reviewer's)".to_string()
         }
         other => format!("{other}'s sandbox does not block writes"),
     }
@@ -5058,7 +5175,10 @@ fn cut_files(names: &[String]) -> String {
 /// Whether the engine ran write-disabled (muse `--disable-write --disable-shell`): its own tools
 /// cannot have made a change, so the tree check WARNS instead of failing (D9).
 fn engine_write_disabled(engine: &str) -> bool {
-    engine == "muse"
+    // muse runs with --disable-write --disable-shell; the http reviewer receives only a pack and
+    // never touches the machine at all — so any tree change during an http run is not the
+    // reviewer's, and the check WARNS instead of failing (D9).
+    engine == "muse" || engine == "http"
 }
 
 /// The structured read-only tree check (`Get-EngineTreeCheck`, wave 26b D9). Compares the working

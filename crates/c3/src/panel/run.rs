@@ -584,6 +584,12 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                 continue;
             }
             seen.push(eng.clone());
+            // The http engine sends one OpenAI-compatible request built from a reviewer pack; it
+            // has no CLI launcher, so it is exempt from the launcher-not-found refusal (its
+            // billing/key guard runs per seat in `consult::http`).
+            if eng == "http" {
+                continue;
+            }
             if eng == "codex" {
                 if launcher.is_empty() {
                     return Err((
