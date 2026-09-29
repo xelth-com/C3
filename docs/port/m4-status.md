@@ -77,19 +77,39 @@ at 38 / 15 (no regression; UNIT/DRY/RUN/NOLOSS/SEQ green). Full `cargo test` 352
 | args = the port's JSON wire (not base64 CLIXML); inline `-Prompt` → `.consult.detached-<id8>.prompt.txt` (F11-2) | done (JSON, not CLIXML — F11-2's `$spec` decode leg differs by design) |
 | `hook` SessionStart phrase (`Get-DetachedPhrase`); `findings --list` detached line (`Format-DetachedListLine`) | done |
 
-### Deferred to a follow-on (still open after chunk 3)
+### Deferred to a follow-on (resolved in chunk 4)
 
-- **Commit-blocked (D3) + commit-interruption recovery** (member side): BLOCKED/ORPHAN/MEMBERKILL.
-- **Member-record writer-liveness during the parent-death/pause window**: SPEC/PARENT#1/INFLIGHT#1.
-- **agy-in-panel** specifics (summary `[agy]`, forced failure, tree-check sibling exclusion): AGY
-  (fails in both harness-panel AGY and harness-detach AGY).
-- **Range on a panel**: the `Range:` line is computed, but the per-member range record is not passed.
-- **`partial_reply`-on-any-failure** (wave 26b): a member render/ledger change, not done.
-- **`findings_tool` panel-holder lock refusal + member-record judging** (INFLIGHT codex-findings
-  legs): only the `findings --list` detached line landed; the `-Status`/`-Rate` panel-holder refusal
-  and member-record judging are not wired.
+The items below were closed in chunk 4 (see harness-results.md Run 10). harness-panel is **54 / 0**
+and harness-detach **50 / 1** (the one remaining is by-design).
+
+## Chunk 4 — remaining panel parity (landed; see harness-results.md Run 10)
+
+| Area | Rows | State |
+|---|---|---|
+| Windows argv parity for `.cmd`/`.bat` (hand the batch path to `std::process`, not `cmd /c`, so Rust's batch quote-doubling matches the fake's `""`) | TIMEOUT/GUARD/WAITTIME; harness-0.3 argv rows | done |
+| Commit-blocked (D3): record `committing` + kept `.reply.json` before the lock; `commit blocked:` outcome; exit 1 | BLOCKED | done |
+| Commit-interruption recovery: pause moved INTO `store.commit` (between findings.json/sessions.json via `CommitRequest.commit_pause_ms`); `committing` record recovered next run | ORPHAN/MEMBERKILL | done |
+| Launcher fate-sharing + writer-liveness: shim exports `CODEX_CONSULT_TEST_BRIDGE_PID`; c3 records it as the lock/record/parent pid (`bridge_identity`, `LockRecord::now`), `watch_bridge` held-handle `WaitForSingleObject` exits c3 when the bridge dies, panel clears the var for members, `process_start_iso` returns `None` for a terminated (handle-held) process | INFLIGHT/PARENT/SPEC/ORPHAN | done |
+| agy-in-panel tree-check sibling exclusion (`panel_ignore_prefixes` = the two stores + siblings' handoff prefixes) | AGY (panel + detach) | done |
+| Per-member `range` record (already wired: `build_spec` passes `range`, member computes `range_record`) | — | done |
+| `findings_tool` panel-holder refusal + member-record judging (already through the shared write-lock/liveness path) | INFLIGHT/TIMEOUT/BLOCKED codex-findings legs | done |
+
+### Still open (next worker — wave 26b, out of scope for chunk 4)
+
+- **`partial_reply`-on-any-failure** (wave 26b): a member render/ledger change; per-member
+  `timeout_sec`/`stall_sec`/`context_tokens`, `-Kick`, the machine-wide health file.
 - **Not owned here**: c3-core `roster.rs` wave-26b string validation (`::`, `[`, `]`, `|`, `,`, `#`,
-  edge whitespace — ROSTER fail-closed); the machine-wide health file `~/.codex/codex-consult-health.json`.
-- **Environmental (documented, not bugs)**: TIMEOUT/GUARD/WAITTIME (the fake's `HANG_ON`/`FAIL_ON`
-  need PowerShell `""` quoting; Rust's Windows argv uses `\"`); muse PANEL command byte-match (the
-  c3 schema path under `<CODEX_HOME>`).
+  edge whitespace — ROSTER fail-closed).
+- **By design (harness, not c3)**: harness-detach CARRY F11-2 (`record.args` is the port's JSON
+  wire, not base64 CLIXML, so the harness's `ConvertFrom-DetachArgs` decode fails); harness-0.3 CFG
+  comma-split (the harness's `$b.Preview` returns nothing for the multi-item quoted `-CodexConfig`
+  value; c3's dry-run output is byte-correct); muse PANEL command byte-match (the c3 schema path
+  under `<CODEX_HOME>`).
+
+### c3-core contract changes made in chunk 4
+
+- `store::CommitRequest` gained `commit_pause_ms: u64` (the pause held between findings.json and
+  sessions.json — the ORPHAN window and write-lock-contention window).
+- `store::LockRecord::now` reads `CODEX_CONSULT_TEST_BRIDGE_PID` for the record pid (own pid when
+  unset — production).
+- `store::write_lock_timeout_secs()` made `pub` (the "commit blocked" message quotes it).

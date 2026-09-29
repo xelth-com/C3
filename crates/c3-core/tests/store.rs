@@ -119,6 +119,7 @@ fn two_deltas_from_one_snapshot_both_survive() {
                 files: &[],
                 bootstrap_cwd: "/repo".into(),
                 bootstrap_tool: "codex-cli test".into(),
+                commit_pause_ms: 0,
             },
         )
         .unwrap();
@@ -136,6 +137,7 @@ fn two_deltas_from_one_snapshot_both_survive() {
                 files: &[],
                 bootstrap_cwd: "/repo".into(),
                 bootstrap_tool: "codex-cli test".into(),
+                commit_pause_ms: 0,
             },
         )
         .unwrap();
@@ -177,6 +179,7 @@ fn update_findings_applies_a_status_change_only_transaction() {
                 files: &[],
                 bootstrap_cwd: "/repo".into(),
                 bootstrap_tool: "t".into(),
+                commit_pause_ms: 0,
             },
         )
         .unwrap();
@@ -257,6 +260,7 @@ fn committing_one_member_leaves_the_other() {
                 files: &[],
                 bootstrap_cwd: "/repo".into(),
                 bootstrap_tool: "t".into(),
+                commit_pause_ms: 0,
             },
         )
         .unwrap();
@@ -294,6 +298,7 @@ fn a_survivors_record_survives_a_retain_commit() {
                 files: &[],
                 bootstrap_cwd: "/repo".into(),
                 bootstrap_tool: "t".into(),
+                commit_pause_ms: 0,
             },
         )
         .unwrap();

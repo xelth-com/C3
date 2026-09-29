@@ -38,6 +38,46 @@ pub fn pid_alive(pid: u32, start_time: &str) -> bool {
     true
 }
 
+/// (Test harness) The "bridge" process that recovery and lock records name and whose death ends
+/// this run. In production c3 IS the bridge, so this is c3's own pid + start time. Under the
+/// plugin's PowerShell harnesses c3 runs as a child of a thin shim: the harness monitors and kills
+/// the SHIM (the process it launched), so the shim exports `CODEX_CONSULT_TEST_BRIDGE_PID` = its
+/// own pid, c3 records that pid (matching the plugin, where the launched process IS the bridge),
+/// and [`watch_bridge`] shares the shim's fate. A panel run clears the var when spawning members,
+/// so each member records its own pid.
+pub fn bridge_identity() -> (u32, String) {
+    if let Ok(s) = std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID") {
+        if let Ok(pid) = s.trim().parse::<u32>() {
+            if pid > 0 {
+                if let Some(start) = process_start_iso(pid) {
+                    return (pid, start);
+                }
+            }
+        }
+    }
+    let me = std::process::id();
+    (me, process_start_iso(me).unwrap_or_default())
+}
+
+/// (Test harness) When `CODEX_CONSULT_TEST_BRIDGE_PID` names a live process other than this one,
+/// spawn a watchdog thread that force-exits this process shortly after that bridge dies — so a c3
+/// launched under the plugin's shim shares the shim's fate. Without it an orphaned c3 would outlive
+/// the shim the harness killed, keeping the task lock held and finishing a commit the test means to
+/// interrupt (ORPHAN, PARENT). No effect in production (the var is unset). Requires three
+/// consecutive dead reads (~300 ms) before acting, so a transient `OpenProcess` failure never kills
+/// a live run.
+pub fn watch_bridge() {
+    let pid = match std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID")
+        .ok()
+        .and_then(|s| s.trim().parse::<u32>().ok())
+        .filter(|p| *p > 0 && *p != std::process::id())
+    {
+        Some(p) => p,
+        None => return,
+    };
+    imp::spawn_bridge_watchdog(pid);
+}
+
 /// `Test-SameStartTime`: exact match on Windows; within one second elsewhere (a pid is not
 /// reused that fast, and non-Windows clocks derive the value slightly differently).
 pub fn same_start_time(a: &str, b: &str) -> bool {
@@ -71,6 +111,8 @@ mod imp {
     }
 
     const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
+    const SYNCHRONIZE: DWORD = 0x0010_0000;
+    const INFINITE: DWORD = 0xFFFF_FFFF;
 
     extern "system" {
         fn OpenProcess(access: DWORD, inherit: BOOL, pid: DWORD) -> HANDLE;
@@ -82,6 +124,28 @@ mod imp {
             kernel: *mut FILETIME,
             user: *mut FILETIME,
         ) -> BOOL;
+        fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
+    }
+
+    /// Hold a handle to the bridge process and force-exit this process the moment it terminates.
+    /// A held handle stays bound to the ORIGINAL process object, so — unlike `OpenProcess` +
+    /// `GetProcessTimes`, which keeps succeeding for a terminated process whose handle another
+    /// process (the harness) still holds — `WaitForSingleObject` signals exactly at termination and
+    /// is immune to pid reuse. If the bridge cannot be opened (already gone), no watchdog is armed.
+    pub fn spawn_bridge_watchdog(pid: u32) {
+        // SAFETY: OpenProcess returns 0 on failure; the handle is waited on and closed in the
+        // spawned thread. WaitForSingleObject blocks until the process object is signaled.
+        let h = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+        if h == 0 {
+            return;
+        }
+        std::thread::spawn(move || {
+            unsafe {
+                WaitForSingleObject(h, INFINITE);
+                CloseHandle(h);
+            }
+            std::process::exit(1);
+        });
     }
 
     pub fn process_start_iso(pid: u32) -> Option<String> {
@@ -100,6 +164,13 @@ mod imp {
             CloseHandle(h);
             if ok == 0 {
                 return Some(String::new());
+            }
+            // A terminated process whose handle another process still holds (e.g. a harness that
+            // launched it and keeps its Process object) stays openable, but its exit FILETIME is
+            // set. Treat it as gone — matching the plugin's `Get-Process`, which never returns a
+            // dead process — so a recovery record its (now dead) writer left reads inactive.
+            if exit.low != 0 || exit.high != 0 {
+                return None;
             }
             let ft = ((creation.high as u64) << 32) | (creation.low as u64);
             Some(filetime_to_iso(ft))
@@ -129,6 +200,21 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    /// Poll the bridge pid (best effort) and force-exit when it disappears. No held-handle wait on
+    /// Unix; the start-time check guards against pid reuse.
+    pub fn spawn_bridge_watchdog(pid: u32) {
+        let start = super::process_start_iso(pid).unwrap_or_default();
+        if !super::pid_alive(pid, &start) {
+            return;
+        }
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if !super::pid_alive(pid, &start) {
+                std::process::exit(1);
+            }
+        });
+    }
+
     pub fn process_start_iso(pid: u32) -> Option<String> {
         if std::path::Path::new(&format!("/proc/{pid}")).exists() {
             return Some(String::new());

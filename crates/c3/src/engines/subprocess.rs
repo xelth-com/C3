@@ -82,24 +82,21 @@ fn round1(secs: f64) -> f64 {
     (secs * 10.0).round() / 10.0
 }
 
-/// Build `(program, args)` so a `.cmd`/`.bat` launcher runs through `cmd /c` on Windows,
-/// mirroring `providers::run_with_timeout`.
+/// Build `(program, args)` for the launcher spawn.
+///
+/// The launcher path is always the program and the caller's `argv` are always the args —
+/// including for a Windows `.cmd`/`.bat` launcher. We deliberately do **not** wrap a batch
+/// launcher in an explicit `cmd /c`: doing so makes `cmd.exe` the program (an `.exe`), so
+/// Rust escapes the embedded quotes in each arg the MSVC way (`model_provider=\"ZAI\"`),
+/// which is not what a batch file's `%*` expander produces. Handing the `.cmd`/`.bat` path
+/// straight to `Command` lets Rust std's own batch-file handling run it: it invokes the file
+/// through `cmd.exe` with the plugin's quote-doubling (`model_provider=""ZAI""`) and refuses
+/// (a spawn `io::Error`) any argument it cannot escape safely (newlines, `%`, unbalanced
+/// quotes) — matching the plugin's own launch rule and the fake codex's `%*` matching. The
+/// child pid is still `cmd.exe`'s (std spawns it), so `kill_tree`/`on_running` are unchanged.
+/// `.exe` launcher escaping is untouched.
 fn program_and_args(launcher: &str, argv: &[String]) -> (String, Vec<String>) {
-    let is_cmd = cfg!(windows)
-        && Path::new(launcher)
-            .extension()
-            .map(|e| {
-                let e = e.to_string_lossy().to_lowercase();
-                e == "cmd" || e == "bat"
-            })
-            .unwrap_or(false);
-    if is_cmd {
-        let mut v = vec!["/c".to_string(), launcher.to_string()];
-        v.extend(argv.iter().cloned());
-        ("cmd".to_string(), v)
-    } else {
-        (launcher.to_string(), argv.to_vec())
-    }
+    (launcher.to_string(), argv.to_vec())
 }
 
 /// Run one subprocess turn (spawn, feed stdin, capture streams, wait with a timeout kill).

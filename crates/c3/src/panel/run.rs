@@ -590,8 +590,10 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         Value::Object(map)
     };
 
-    let parent_start =
-        crate::liveness::proc::process_start_iso(std::process::id()).unwrap_or_default();
+    // The panel run's bridge identity (the writer of the members' reserved records and the task
+    // lock): c3's own pid in production, the shim's pid under the harnesses (so the members'
+    // `panel.parent_pid` is the launched process the harness monitors and kills).
+    let (_parent_pid_bridge, parent_start) = crate::liveness::proc::bridge_identity();
 
     // The range dry-run line (a diff-review/acceptance panel).
     let (range_line, range_warning) = range_lines(o, r, &repo_root);
@@ -672,7 +674,9 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     let store = FilesStore::new(b.collab_root.clone());
     let task_dir = store.task_dir(&b.task);
     let short = &b.panel_id[..b.panel_id.len().min(8)];
-    let parent_pid = std::process::id();
+    // The bridge pid the members record as their `panel.parent_pid` and re-check before launching:
+    // c3's own pid in production, the shim's pid under the harnesses.
+    let parent_pid = crate::liveness::proc::bridge_identity().0;
     let panel_tmp = std::env::temp_dir().join(format!("codex-consult-panel-{}", b.panel_id));
 
     // A real run creates the handoffs dir and takes the task lock (held to the end).
@@ -1580,6 +1584,10 @@ fn start_member(
         .stdin(Stdio::null())
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err));
+    // The panel run is the member's bridge (its `panel.parent_pid`), launched directly here (no
+    // shim), so the member must NOT inherit the harness shim's bridge pid: clear it so the member
+    // records its OWN pid as the writer and starts no fate-sharing watchdog of its own.
+    cmd.env_remove("CODEX_CONSULT_TEST_BRIDGE_PID");
     match cmd.spawn() {
         Ok(child) => {
             slots[i].child = Some(child);

@@ -961,3 +961,90 @@ member-record writer-liveness during the pause/parent-death window (SPEC/PARENT/
 agy-in-panel (AGY); the per-member `range` record; `partial_reply` on any failure with content
 (wave 26b); the `findings_tool` panel-holder lock refusal + member-record judging (only the
 `findings --list` detached line landed). These remain the M4 hand-off for a follow-on pass.
+
+---
+
+# Run 10 (panel parity — M4 chunk 4) — 2026-09-29
+
+The remaining panel-parity gaps from Run 9's "Deferred to a follow-on": Windows argv parity for
+`.cmd`/`.bat` launchers, member commit-blocked (D3) + commit-interruption recovery, member-record
+writer-liveness during the parent-death/pause window, agy-in-panel (tree-check sibling exclusion),
+and the panel run's fate-sharing with its launcher. Same shim setup as Runs 2-9 (the five C3 shims
+from `tests/shim/` + the plugin's own `codex-consult-common.ps1`/`codex-consult-detached.ps1` at
+wave 26b + a sibling schema); `$env:C3_EXE` a fresh `--no-default-features` `target/debug/c3.exe`.
+Every harness sets `CODEX_CONSULT_HEALTH=none`. Harnesses run ONE AT A TIME.
+
+Local gates: `cargo fmt --all -- --check` clean; `cargo clippy -p c3 -p c3-core
+--no-default-features --all-targets -- -D warnings` clean; `cargo test --no-default-features`
+green (228 lib + integration, 0 failed; new unit tests: `panel_ignore_prefixes`, and the
+`commit_pause_ms` field threaded through the c3-core store tests).
+
+## Summary (Run 9 -> Run 10)
+
+| harness | Run 9 | Run 10 | ran to its own summary line? |
+|---|---|---|---|
+| harness-panel | 38 / 15 | **54 / 0** | yes |
+| harness-detach | 48 / 3 | **50 / 1** | yes |
+| harness-lock2 | 8 / 1 (Run 1) | **10 / 0** | yes (no regression from the shared lock/liveness changes) |
+
+harness-panel is a full clean pass for the first time (UNIT, DRY, RUN, NOLOSS, SEQ, INFLIGHT,
+TIMEOUT, SEQ, AGY, PARENT, SPEC, BLOCKED, ORPHAN, MEMBERKILL, GUARD). harness-detach's one
+remaining failure is the documented by-design row (below).
+
+## What this pass landed
+
+- **Windows argv parity for `.cmd`/`.bat` launchers (item 0)** — `engines::subprocess` no longer
+  wraps a batch launcher in an explicit `cmd /c`: it hands the `.cmd`/`.bat` path straight to
+  `std::process::Command`, so Rust std's own batch-file handling runs it with the plugin's
+  quote-doubling (`model_provider=""ZAI""`) instead of the MSVC `\"` escaping a `cmd.exe`-as-program
+  invocation forces. The fake codex's `FAKE_CODEX_HANG_ON`/`FAKE_CODEX_FAIL_ON` now match, so the
+  TIMEOUT/GUARD/WAITTIME rows exercise their real paths. `.exe` launcher escaping is untouched; the
+  ledger `command` field is unchanged (it is built in c3-core, not from the spawn).
+- **Member commit-blocked (D3) + commit-interruption recovery (item 1)** — `consult::orchestrate::
+  finish` now marks the recovery record `committing` (naming the kept `.reply.json`, collab-relative)
+  BEFORE the write lock; if the lock is not acquired within the wait it keeps the reply, leaves the
+  record `committing`, prints `codex-consult: commit blocked: <Enter-WriteLock message>. ...`, and
+  exits 1 (BLOCKED). The commit pause moved INTO `store.commit` between findings.json and
+  sessions.json (`CommitRequest.commit_pause_ms`), so a kill there leaves an ORPHAN finding + a
+  `committing` record the next run recovers (ORPHAN, MEMBERKILL). The panel summary already consumed
+  the `committing` record state + the member's `commit blocked:` line ("commit blocked" / "stopped
+  inside its commit").
+- **Launcher fate-sharing + writer-liveness (item 2)** — under the harnesses c3 runs as a child of a
+  thin PowerShell shim, but the harness monitors/kills the SHIM and reads its pid from the records.
+  The shim now exports `CODEX_CONSULT_TEST_BRIDGE_PID` (its own pid); c3 records that pid as the
+  lock/recovery-record writer and the members' `panel.parent_pid` (`liveness::proc::bridge_identity`,
+  `LockRecord::now`), and `liveness::proc::watch_bridge` force-exits c3 the moment that bridge
+  terminates (a held-handle `WaitForSingleObject`, immune to the harness's lingering zombie handle
+  and to pid reuse). The panel run clears the var when it spawns members, so each member records its
+  OWN pid. `process_start_iso` now returns `None` for a terminated process whose handle the harness
+  still holds (non-zero exit FILETIME), matching the plugin's `Get-Process` so a dead writer's record
+  reads inactive. Together these fix INFLIGHT (lock/record pids), PARENT (the killed panel run frees
+  the lock; the orphaned members commit and their records stay active), SPEC (the member rewrites,
+  pauses, re-checks its parent), and ORPHAN. Production is unaffected (the var is unset; c3 IS the
+  bridge and records its own pid with no watchdog).
+- **agy-in-panel tree-check sibling exclusion (item 3)** — `engines::tree_check::panel_ignore_prefixes`
+  ports `Get-PanelIgnorePrefixes`; `engine_tree_check` now adds the task's two stores (+ their atomic
+  temps) and the siblings' handoff prefixes to the agy member's collab-directory ignore set, so a
+  committing sibling's writes no longer fail the agy member (AGY, and harness-detach AGY). A write
+  elsewhere in the collab root still fails it.
+- **Per-member `range` record (item 4)** — already wired: `build_spec` passes `range` in the member
+  args and the member computes its `range_record` in `build_context` -> the ledger `range` field.
+- **`findings_tool` panel-holder lock refusal + member-record judging (item 5)** — already working
+  through the shared write-lock/liveness path: `codex-findings -Status`/`-Rate` are refused while a
+  panel holds the task (INFLIGHT), judge the survivor/committing member records (TIMEOUT -Rate,
+  BLOCKED -Status), and take the same write lock.
+
+## Remaining differing checks (verbatim) and diagnosis
+
+### harness-detach (1)
+
+1. `FAIL CARRY F11-2: the `starting` record of a detached run with an inline -Prompt names only its
+   prompt file (args: PromptFile = <task>/.consult.detached-<id8>.prompt.txt ...)` — **by design**
+   (unchanged from Run 9 #3): c3's `args` field is the port's JSON wire, not the plugin's base64
+   CLIXML, so the harness's own `ConvertFrom-DetachArgs` decode of `record.args` fails. The real
+   behaviour is correct — the inline prompt lives only in the prompt file, and the background reads
+   it, runs and removes it (the sibling F11-2 "background reads its prompt from the file" passes).
+
+### harness-panel (0)
+
+None.

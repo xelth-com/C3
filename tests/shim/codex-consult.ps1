@@ -128,6 +128,13 @@ if (-not $c3) {
     exit 127
 }
 
+# The plugin's own codex-consult.ps1 IS the bridge process: the harness monitors and kills THIS
+# process (the one it launched via Start-Process) and reads its pid from the lock and recovery
+# records. c3 runs as a child of this shim, so it would otherwise record its own (different) pid and
+# outlive this shim when killed. Export this shim's pid as the bridge so c3 records it and shares
+# this shim's fate (a test-only hook; unset in production, where c3 is launched directly).
+$env:CODEX_CONSULT_TEST_BRIDGE_PID = "$PID"
+
 # A detached QUERY (-Status / -Wait): the plugin forwards only -Task, -CollabDir, -Id, -Prune and
 # -WaitTimeoutSec (plus any bound run option, so c3 can refuse it). Only bound parameters are
 # forwarded so c3's "-Status and -Wait take only ..." check sees exactly what the caller passed.

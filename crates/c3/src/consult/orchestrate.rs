@@ -560,6 +560,11 @@ pub fn run(o: Options) -> i32 {
 }
 
 fn run_inner(o: Options) -> i32 {
+    // (Test harness) Share the fate of the PowerShell shim that launched this run: if the harness
+    // kills the shim, this process exits too, rather than orphaning a run that keeps the task lock
+    // and finishes a commit the test means to interrupt. No effect in production (the var is unset);
+    // a panel member never has it (the panel run clears it when spawning members).
+    crate::liveness::proc::watch_bridge();
     // `-CodexConfig` `~` expansion uses the real user home ($HOME / $USERPROFILE), exactly like
     // the plugin (`codex-consult-common.ps1:2576`), NOT CODEX_HOME.
     let home = std::env::var("HOME")
@@ -815,9 +820,12 @@ fn member_early_accept(mo: &Options, m: &crate::panel::member::MemberSpec) -> Re
     }
 
     let mut rec: PendingRecord = serde_json::from_value(val).unwrap_or_default();
-    let pid = std::process::id();
+    // The member rewrites the reserved record as its OWN (the writer-pid rule): its own pid when
+    // the panel run launched it (the panel clears the bridge var for members), or the shim's pid
+    // when a harness launched the member directly through the shim (SPEC).
+    let (pid, start_time) = crate::liveness::proc::bridge_identity();
     rec.pid = pid;
-    rec.start_time = crate::liveness::proc::process_start_iso(pid).unwrap_or_default();
+    rec.start_time = start_time;
     rec.host = pending_host();
     rec.note = format!(
         "review panel member (the panel run is pid {})",
@@ -2926,7 +2934,9 @@ pub(crate) fn cmd_argv_hazard(launcher: &str, argv: &[String]) -> String {
 /// A fresh recovery record for this run (`New-PendingRecord`): this bridge's pid/start/host
 /// (the writer-pid liveness rule) plus the run's numbers, reply and launcher.
 fn new_pending_record(state: PendingState, ctx: &Context, reply_rel: &str) -> PendingRecord {
-    let pid = std::process::id();
+    // The bridge that wrote the record (the writer-pid liveness rule): c3's own pid in production,
+    // the shim's pid under the harnesses.
+    let (pid, start_time) = crate::liveness::proc::bridge_identity();
     PendingRecord {
         state,
         n: ctx.consult_n,
@@ -2935,7 +2945,7 @@ fn new_pending_record(state: PendingState, ctx: &Context, reply_rel: &str) -> Pe
         consult_id: ctx.consult_id.clone(),
         started: iso_now(),
         pid,
-        start_time: crate::liveness::proc::process_start_iso(pid).unwrap_or_default(),
+        start_time,
         host: pending_host(),
         launcher: if ctx.is_codex() {
             ctx.launcher.clone()
@@ -2985,6 +2995,30 @@ pub(crate) fn format_task_lock_refusal(lock_path: &Path, task: &str) -> String {
     format!(
         "another consultation or status update for task '{task}' is running: {} is held open by {who}. Wait for it to finish; the lock is released when that process exits.",
         lock_path.display()
+    )
+}
+
+/// The write-lock refusal message (`Enter-WriteLock`, D3): `the write lock '<path>' of task
+/// '<task>' was not acquired within <N> s: it is held open by pid <pid> on <host> since <started>`
+/// (naming the live holder), else `... by a live process`. The timeout is the current
+/// `write_lock_timeout_secs()`.
+pub(crate) fn format_write_lock_refusal(wl_path: &Path, task: &str) -> String {
+    let secs = c3_core::store::write_lock_timeout_secs();
+    let mut who = "a live process".to_string();
+    if let Ok(bytes) = std::fs::read(wl_path) {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+            let pid = v.get("pid").and_then(|x| x.as_i64()).unwrap_or(0);
+            let start = v.get("start_time").and_then(|x| x.as_str()).unwrap_or("");
+            if pid > 0 && crate::liveness::proc::pid_alive(pid as u32, start) {
+                let host = v.get("host").and_then(|x| x.as_str()).unwrap_or("?");
+                let started = v.get("started").and_then(|x| x.as_str()).unwrap_or("?");
+                who = format!("pid {pid} on {host} since {started}");
+            }
+        }
+    }
+    format!(
+        "the write lock '{}' of task '{task}' was not acquired within {secs} s: it is held open by {who}",
+        wl_path.display()
     )
 }
 
@@ -3671,25 +3705,62 @@ fn finish(
         let _ = store.write_pending(&pending, &survivor_rec);
         RecoveryDisposition::Retain
     };
+    // (D2-D4) The run is over and its reply files are on disk. Mark the recovery record
+    // `committing`, naming this run's kept `.reply.json` (collab-relative), BEFORE the write lock:
+    // a commit that never completes — the lock never had (D3), or the bridge stopped inside it
+    // (D4) — leaves a record that says where the reply is and stays `committing` for the next run
+    // to consume. The timeout-survivors path keeps its own `survivors` record instead.
+    let reply_json_record = if reply_json_rel.is_empty() {
+        String::new()
+    } else {
+        c3_core::paths::repo_relative(&ctx.repo_root, &ctx.reply_json_path)
+            .unwrap_or_else(|| ctx.reply_json_path.to_string_lossy().to_string())
+    };
+    let mut committing_record = base_record.clone();
+    if disposition == RecoveryDisposition::Remove {
+        committing_record.state = PendingState::Committing;
+        committing_record.note = "the run is over; committing under the write lock".to_string();
+        if !reply_json_record.is_empty() {
+            committing_record.reply_json = Some(reply_json_record.clone());
+        }
+        let _ = store.write_pending(&pending, &committing_record);
+    }
+    // TEST HOOK: CODEX_CONSULT_TEST_COMMIT_PAUSE_MS=<ms> | <model>=<ms>[|...] — a pause held INSIDE
+    // the commit, between findings.json and sessions.json (the ORPHAN window a kill can hit; the
+    // write-lock contention window), applied by the store (`codex-consult.ps1:5176`).
+    let commit_pause_ms = test_hook_ms(
+        &std::env::var("CODEX_CONSULT_TEST_COMMIT_PAUSE_MS").unwrap_or_default(),
+        &ctx.identity.model,
+    )
+    .unwrap_or(0);
     let write_lock = match store.take_write_lock(&ctx.task) {
         Ok(l) => l,
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+            // D3 commit blocked: the write lock was not acquired within the wait. Keep the reply,
+            // leave the record `committing` naming it, touch no store, exit 1. The next run
+            // consumes the record like any interrupted reservation.
+            let wl_path = store.task_dir(&ctx.task).join(c3_core::store::WRITE_LOCK);
+            let msg = format_write_lock_refusal(&wl_path, ctx.task.as_str());
+            committing_record.note =
+                format!("commit blocked: {msg}; findings.json and sessions.json were not touched");
+            let _ = store.write_pending(&pending, &committing_record);
+            let kept = if reply_json_record.is_empty() {
+                "nothing to keep".to_string()
+            } else {
+                reply_json_record.clone()
+            };
+            let pending_path = store_pending_path(&store, &pending);
+            return refuse(&format!(
+                "commit blocked: {msg}. This run's reply is kept ({kept}); no ledger entry was written and the stores were not touched - {} stays in state committing and the next run consumes it (bridge outcome: {bridge_outcome}).",
+                pending_path.display()
+            ));
+        }
         Err(e) => return refuse(&format!("could not take the write lock: {e}")),
     };
     // The write-lock wait (`commit_wait_ms`): 0 when the first attempt won it, else the measured
     // wait; a contended commit says so in a summary line (F11-3).
     let commit_wait_ms = write_lock.wait_ms() as i64;
     entry.commit_wait_ms = commit_wait_ms;
-    // TEST HOOK: CODEX_CONSULT_TEST_COMMIT_PAUSE_MS=<ms> | <model>=<ms>[|...] — a pause held
-    // INSIDE the commit (while the write lock is held), so concurrent commits of the task
-    // contend (`codex-consult.ps1:5176`).
-    if let Some(ms) = test_hook_ms(
-        &std::env::var("CODEX_CONSULT_TEST_COMMIT_PAUSE_MS").unwrap_or_default(),
-        &ctx.identity.model,
-    ) {
-        if ms > 0 {
-            std::thread::sleep(Duration::from_millis(ms));
-        }
-    }
     let commit = CommitRequest {
         entry,
         findings: delta,
@@ -3698,6 +3769,7 @@ fn finish(
         files: &files,
         bootstrap_cwd: ctx.repo_root.to_string_lossy().to_string(),
         bootstrap_tool: ctx.codex_version.clone(),
+        commit_pause_ms,
     };
     let receipt = match store.commit(&write_lock, commit) {
         Ok(r) => r,
@@ -4685,8 +4757,18 @@ fn engine_tree_check(
         "{}/handoffs/{:02}-{}-{}.",
         ctx.task, ctx.nn, ctx.file_prefix, ctx.reply_name
     );
+    // A member of a panel whose members run at the same time (D7): the task's two stores and the
+    // siblings' handoffs are theirs to write meanwhile (each with its atomic-write temp); every
+    // other collab path stays monitored.
+    let mut own_prefixes = vec![own];
+    if let Some(m) = &ctx.panel_member {
+        own_prefixes.extend(crate::engines::tree_check::panel_ignore_prefixes(
+            ctx.task.as_str(),
+            &m.sibling_nns,
+        ));
+    }
     let collab_changed =
-        crate::engines::tree_check::compare_collab(collab_before, collab_after, &[own]);
+        crate::engines::tree_check::compare_collab(collab_before, collab_after, &own_prefixes);
     if !collab_changed.is_empty() {
         let shown = collab_shown(ctx);
         let names: Vec<String> = collab_changed

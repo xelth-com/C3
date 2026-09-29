@@ -146,7 +146,15 @@ impl LockRecord {
     /// name, now). The record is informational; the lock is the open handle.
     pub fn now(task: &TaskSlug, panel: Option<Value>) -> LockRecord {
         LockRecord {
-            pid: std::process::id(),
+            // In production c3 IS the bridge, so the lock names c3's own pid. Under the plugin's
+            // harnesses c3 runs as a child of a thin PowerShell shim; the shim sets
+            // CODEX_CONSULT_TEST_BRIDGE_PID to its own pid so the record names the launched process
+            // the harness monitors (as the plugin's own bridge would).
+            pid: std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID")
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .filter(|p| *p > 0)
+                .unwrap_or_else(std::process::id),
             start_time: String::new(),
             host: hostname(),
             task: task.as_str().to_string(),
@@ -349,6 +357,10 @@ pub struct CommitRequest<'a> {
     /// When `sessions.json` does not yet exist, the `codex.tool` string (the harness/CLI
     /// version) - not the engine harness copied off the reviewer.
     pub bootstrap_tool: String,
+    /// A pause (ms) held INSIDE the commit, between `findings.json` and `sessions.json` -
+    /// the ORPHAN window a kill can hit and the write-lock contention window
+    /// (`CODEX_CONSULT_TEST_COMMIT_PAUSE_MS`). 0 = no pause.
+    pub commit_pause_ms: u64,
 }
 
 /// The outcome of a commit (G, F03-4/F04-3/F08-8).
@@ -656,13 +668,17 @@ fn write_lock_record(file: &mut File, record: &LockRecord) -> io::Result<()> {
     Ok(())
 }
 
-fn write_lock_timeout() -> Duration {
-    // The plugin allows CODEX_CONSULT_TEST_WRITE_LOCK_SEC to shorten the ceiling for tests.
-    let secs = std::env::var("CODEX_CONSULT_TEST_WRITE_LOCK_SEC")
+/// The write-lock wait ceiling in seconds (`Get-WriteLockTimeout`): the default, or the
+/// `CODEX_CONSULT_TEST_WRITE_LOCK_SEC` test override. The "commit blocked" message quotes it.
+pub fn write_lock_timeout_secs() -> u64 {
+    std::env::var("CODEX_CONSULT_TEST_WRITE_LOCK_SEC")
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or(WRITE_LOCK_TIMEOUT_SEC);
-    Duration::from_secs(secs)
+        .unwrap_or(WRITE_LOCK_TIMEOUT_SEC)
+}
+
+fn write_lock_timeout() -> Duration {
+    Duration::from_secs(write_lock_timeout_secs())
 }
 
 impl EvidenceStore for FilesStore {
@@ -968,6 +984,12 @@ impl EvidenceStore for FilesStore {
         // Findings, then Sessions (the commit point).
         if let Some(f) = &findings {
             write_text_atomic(&dir.join("findings.json"), &f.to_bytes().map_err(map_err)?)?;
+        }
+        // A pause between findings.json and sessions.json: the ORPHAN window (a kill here leaves
+        // the finding written with no ledger entry and the record in `committing`) and the
+        // write-lock contention window (this run holds the lock while others wait).
+        if req.commit_pause_ms > 0 {
+            std::thread::sleep(Duration::from_millis(req.commit_pause_ms));
         }
         write_text_atomic(
             &dir.join("sessions.json"),

@@ -118,9 +118,49 @@ pub fn compare_collab(
     changed
 }
 
+/// `Get-PanelIgnorePrefixes` (D7, F04-1): the collab paths a panel member's siblings write while
+/// it runs — the task's two stores (each with its `Write-TextAtomic` temp) and every sibling's
+/// handoff files (with their temps). Empty when the member has no active siblings. The nns are
+/// zero-padded to two digits to match the handoff filenames (`NN-<prefix>-<slug>.*`).
+pub fn panel_ignore_prefixes(task: &str, sibling_nns: &[i64]) -> Vec<String> {
+    let nns: Vec<i64> = sibling_nns.iter().copied().filter(|n| *n != 0).collect();
+    let mut p: Vec<String> = Vec::new();
+    if nns.is_empty() {
+        return p;
+    }
+    for store in ["sessions.json", "findings.json"] {
+        p.push(format!("{task}/{store}"));
+        p.push(format!("{task}/.{store}."));
+    }
+    for s in &nns {
+        p.push(format!("{task}/handoffs/{s:02}-"));
+        p.push(format!("{task}/handoffs/.{s:02}-"));
+    }
+    p
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panel_ignore_prefixes_covers_stores_and_sibling_handoffs() {
+        assert!(panel_ignore_prefixes("t", &[]).is_empty());
+        let p = panel_ignore_prefixes("t", &[2, 3]);
+        assert_eq!(
+            p,
+            vec![
+                "t/sessions.json".to_string(),
+                "t/.sessions.json.".to_string(),
+                "t/findings.json".to_string(),
+                "t/.findings.json.".to_string(),
+                "t/handoffs/02-".to_string(),
+                "t/handoffs/.02-".to_string(),
+                "t/handoffs/03-".to_string(),
+                "t/handoffs/.03-".to_string(),
+            ]
+        );
+    }
 
     #[test]
     fn identical_content_is_not_a_change_but_a_moved_head_is_noted() {
