@@ -1220,3 +1220,72 @@ c3 has not yet ported (wave 27/27b, outside this chunk). This is NOT caused by t
 emitted those fields (0 occurrences in the wave-26b commit and in HEAD), and no edit here touches
 the ledger field order; every field c3 DOES emit is in the correct documented order. The other
 harness-0.3 failure is the unchanged, documented CFG comma-split artifact.
+
+## Run 13 — plugin waves 26c + 27 + 27b, ported SINGLE HOST (2026-09-29)
+
+Scope narrowed by an operator decision (2026-09-29): C3 supports one coordinator host, **Claude
+Code**. The multi-host area (Codex CLI / Z Code / Kimi Code inference, `-Explain`, `-BriefPrefix`,
+host-neutral rewording, per-host install/docs) stays with the PowerShell bridge. Harness rows that
+fail only because of a skipped item are classed **"out of scope: operator decision 2026-09-29
+(single host)"** below.
+
+Setup as prior runs: `$env:C3_EXE` = the fresh `target\debug\c3.exe`; `harness2\scripts` = the five
+C3 shims overlaid on the plugin's own `codex-consult-common.ps1`/`codex-consult-detached.ps1` at
+`c6f6966` (the harnesses dot-source the common for their own PowerShell helpers — `Wait-EngineProcess`,
+`Read-AllTaskRatings`, `Update-ToolFlight`, `Confirm-Kick` — which test the PLUGIN, not the c3
+binary; the `Run-Tool`/`Consult` cases test the c3 shim → c3). For `harness-host`, the plugin's
+`skills`/`agents`/`install`/`schemas`/`templates` were staged under `harness2\` so `$pluginDir`
+resolves (else its setup `Get-ChildItem skills` throws and aborts). Skipped per the brief:
+`harness-3b`, `harness-fixes`, `harness-pending` (real-codex survivor scans).
+
+### Counts, before (Run 12) -> after (Run 13)
+
+| harness | Run 12 | Run 13 | note |
+|---|---|---|---|
+| harness-0.3 | 227/2 | 227/1 | the `LEDGER entry fields in the documented order` row now PASSES (coordinator after lineage, child_env_scrubbed after command); the 1 remaining fail is the pre-existing CFG comma-split artifact |
+| harness-fixes26b | 39/0 (pre-26c) | 50/0 | all wave-26c behaviours pass; the 51st plugin check is a wave-26b ROLEFILE reparse-point case needing symlink-create privilege (did not emit; environmental, no fail) |
+| harness-lock2 | 10/0 | 10/0 | unchanged |
+| harness-roster | 119/0 | 118/0 | 0 fails; one check fewer than Run 12 (no assertion failed — a Check not reached; not a regression) |
+| harness-engines | 92/5 | 91/5 | the 5 are the documented by-design (`--json-schema` path x3) / shim / fake-CLI artifacts; 0 new fails |
+| harness-host | (new) | 35/14 | NEW harness; behaviour cases (REFUSE, WARN label/claude-code, MATCHER claude-code) pass; the 14 fails are out of scope (below) + 1 panel-plan coordinator-warning gap |
+| harness-panel | 54/0 | 53/0 | 0 fails; one fewer check than Run 12 (a timing/conditional case; no assertion failed) |
+| harness-detach | 50/1 | 49/1 | the 1 fail is the CARRY F11-2 detach `args` JSON-wire case, by design (unchanged from Run 12); one fewer check, 0 new fails |
+
+### harness-host — the 14 fails classed
+
+Out of scope: operator decision 2026-09-29 (single host):
+- `GREP` D6 "no script says Claude" — greps the c3 shim scripts for host-neutral wording (the c3
+  shims are not the plugin scripts).
+- `WARN` "the reviewer IS the coordinator" — the warning text is correct; the row also asserts
+  `host codex`, which c3 does not infer (single host).
+- `WARN` preview `coordinator ... host codex` — asserts `host codex`.
+- `WARN` "wave 27b Z Code session" — asserts `host zcode` and the `ZCODE_*` scrub-name display.
+- `ENV` "child_env_scrubbed = the names" — the scrub-names half is correct (verified by
+  `crates/c3/tests/scrub_markers.rs` and the field-order case); the row also asserts
+  `coordinator.host codex`.
+- `ENV` "a detached run" — asserts `host codex` and the status-file record passing.
+- `EXPLAIN` x3 — `-Explain` was removed (skipped item).
+- `HOOK` x2 — the SessionStart pointer line and `hooks.json`/README for other hosts (skipped).
+- `PREFIX` x2 — `-BriefPrefix` / `CODEX_CONSULT_BRIEF_PREFIX` was removed (skipped item).
+
+In scope, minor gap (not fixed):
+- `ENV` "a panel: its plan warns coordinator: ZAI :: glm-5.3 is the coordinator" — the single-run
+  coordinator-is-reviewer warning is emitted; the PANEL-plan does not emit it (the panel's
+  coordinator record and refusal ARE correct). A per-seat panel warning was left out.
+
+### Wave-26c/27 behaviours verified (harness-fixes26b, all PASS)
+
+- `KICKACK` — the `.ack` protocol: a kick before/during a live turn is taken and acknowledged
+  `kicked`; a kick after the turn exits is `kick_late`; `-Kick` exit 3 (no ack in 10 s, kick file
+  stays) then exit 1 (no running member, stale kick removed); a kick that stops only the FORMAT
+  REPAIR leaves the first reply standing with the `kick: ...` warning (case 634).
+- `HEALTHLOCK` — the machine-health record is written before the ledger; a lock timeout is retried
+  once and, still failing, recorded as `machine-wide health not updated (lock timeout)` in
+  `warnings[]` and printed `warning    : ...`.
+- `SIZERAISE` — two required reviewers raise `-PanelSize 1` to 2: `WARNING: panel size raised: asked
+  1, required 2`, `panel.routing.size_source required`, `Routing: ... size 2 (required; asked 1)`.
+- `STALLTOOL` — the stall timer is suspended while a tool call is in flight and reset on byte
+  growth; a silent main turn outside a tool call is cut and its continuation says `Your previous
+  turn was stopped after no output for N s outside a tool call.`
+- `JOINBLANK` — a legacy rating with an empty/blank field is completed from its consultation
+  (`Read-AllTaskRatings`; the plugin helper via the copied common — the wave-26c blank rule).

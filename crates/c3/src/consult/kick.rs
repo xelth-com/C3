@@ -4,8 +4,11 @@
 //! The command writes `<task>/.consult.kick-<NN>`; the run's primary turn polls that file (see
 //! [`crate::engines::subprocess::run_turn`]), stops its engine's process tree, salvages the
 //! partial output and records `failed: stopped by the operator (-Kick)` (class `operator`); the
-//! kicked run removes the file as its acknowledgement, which this command waits for. Exit `0`
-//! done, `1` no such member / not running, `4` the command is misused.
+//! kicked run writes `<kick file>.ack` (`kicked` | `late`) and removes the kick file, which this
+//! command waits up to 10 s for (wave 26c, D1). Exit `0` acknowledged (the message says whether it
+//! was taken live or LATE), `1` no such member / not running (a stale kick file of that number is
+//! removed), `3` no acknowledgement in time (the kick file stays for the member's next poll), `4`
+//! the command is misused.
 
 use std::path::Path;
 
@@ -15,14 +18,14 @@ use crate::liveness::pending;
 use crate::providers;
 
 const TOOL: &str = "codex-consult";
-/// How long the command waits for the run to take the kick (`codex-consult.ps1`: 60 s). A test may
-/// shorten it with `CODEX_CONSULT_TEST_KICK_WAIT_MS`.
+/// How long the command waits for the run to acknowledge the kick (`codex-consult.ps1`, wave 26c:
+/// 10 s). A test may shorten it with `CODEX_CONSULT_TEST_KICK_WAIT_MS`.
 fn kick_wait_ms() -> u64 {
     std::env::var("CODEX_CONSULT_TEST_KICK_WAIT_MS")
         .ok()
         .and_then(|s| s.trim().parse::<u64>().ok())
         .filter(|v| *v > 0)
-        .unwrap_or(60_000)
+        .unwrap_or(10_000)
 }
 
 fn misuse(msg: &str) -> i32 {
@@ -122,17 +125,22 @@ pub fn run(o: &Options) -> i32 {
         .get("child_start_time")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    let kick_path = task_dir.join(format!(".consult.kick-{nn}"));
+    let ack_path = crate::engines::subprocess::kick_ack_path(&kick_path);
     if state != "running"
         || child_pid == 0
         || !crate::liveness::proc::pid_alive(child_pid, child_start)
     {
+        // (wave 26c, D1) no engine turn runs: remove any stale kick file of this number.
+        let _ = std::fs::remove_file(&kick_path);
         return fail(&format!(
             "the run with handoff {nn} has no engine turn running (state {state})."
         ));
     }
 
-    // Write the kick file and wait for the run to remove it (its acknowledgement).
-    let kick_path = task_dir.join(format!(".consult.kick-{nn}"));
+    // (wave 26c, D1) remove a stale acknowledgement, write the kick file, then wait up to 10 s for
+    // the run to write `<kick>.ack` (its acknowledgement) polling every 200 ms.
+    let _ = std::fs::remove_file(&ack_path);
     let stamp = c3_core::health::format_offset_iso(chrono::Local::now().into());
     if std::fs::write(
         &kick_path,
@@ -146,18 +154,29 @@ pub fn run(o: &Options) -> i32 {
         ));
     }
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(kick_wait_ms());
-    while kick_path.exists() && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(100));
+    while !ack_path.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    if kick_path.exists() {
-        let _ = std::fs::remove_file(&kick_path);
-        return fail(&format!(
-            "the run with handoff {nn} did not take the kick within 60 s (its engine turn may have ended meanwhile); the kick file was removed."
-        ));
+    if !ack_path.exists() {
+        // Exit 3: no acknowledgement in time. The kick file STAYS for the member's next poll (a run
+        // that has ended leaves it to the next run of that number, which removes it).
+        eprintln!(
+            "{TOOL}: -Kick: the run with handoff {nn} did not acknowledge the kick within 10 s - the kick file stays ({}): the member takes it at its next poll; a run that has ended leaves it to the next run of that number, which removes it.",
+            kick_path.display()
+        );
+        return 3;
     }
-    println!(
-        "{TOOL}: -Kick: member {nn} of task {} stopped - its engine's process tree is stopped, its partial output salvaged; it records \"failed: stopped by the operator (-Kick)\" (the panel goes on with the others).",
-        o.task
-    );
+    let ack = std::fs::read_to_string(&ack_path).unwrap_or_default();
+    if ack.trim_start().starts_with("late") {
+        println!(
+            "{TOOL}: -Kick: member {nn} of task {} had already finished - the kick is recorded as kick_late in its warnings, its outcome unchanged.",
+            o.task
+        );
+    } else {
+        println!(
+            "{TOOL}: -Kick: member {nn} of task {} stopped - it took the kick; its engine's process tree is being stopped and its partial output salvaged; it records \"failed: stopped by the operator (-Kick)\" (a format repair only: its first reply stands) - the panel goes on with the others.",
+            o.task
+        );
+    }
     0
 }

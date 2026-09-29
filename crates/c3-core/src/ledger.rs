@@ -109,6 +109,12 @@ pub struct LedgerEntry {
     pub reviewer: Reviewer,
     #[serde(default)]
     pub lineage: String,
+    /// (wave 27) The coordinator that started this run: `{provider, model, engine, host, source}`,
+    /// sits between `lineage` and `preflight`. `source` is `explicit | inferred | none`; `host` is
+    /// `codex | zcode | claude-code | unknown`. Tri-state so byte-identity survives a pre-wave-27
+    /// store: **absent** (`None`) is skipped on rewrite; a fresh entry always writes the object.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinator: Option<Coordinator>,
     #[serde(default)]
     pub preflight: String,
     #[serde(default)]
@@ -144,6 +150,12 @@ pub struct LedgerEntry {
     pub mode_fallback: Option<Option<ModeFallback>>,
     #[serde(default)]
     pub command: String,
+    /// (wave 27) The host-marker variable NAMES removed from the reviewer child's environment
+    /// (`Get-HostMarkerNames`: those present in the parent env, sorted ordinal; NEVER a value).
+    /// Sits between `command` and `brief`. Tri-state for byte-identity like [`topics`]: **absent**
+    /// (`None`) skipped on rewrite; a fresh entry writes `Some(vec![])` → `[]` (or the names).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_env_scrubbed: Option<Vec<Value>>,
     #[serde(default)]
     pub brief: String,
     /// The `-Range` record (wave 24); `null` when the whole brief was reviewed.
@@ -342,6 +354,26 @@ pub struct Reviewer {
     pub provider_config: Value,
     #[serde(default)]
     pub identity_note: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// `entry.coordinator` (wave 27): who ran the bridge. Field order is the plugin literal
+/// `{provider, model, engine, host, source}` and MUST NOT change. `provider`/`model`/`engine`
+/// are `null` when the host was only inferred (no `CODEX_CONSULT_COORDINATOR` value); `host` is
+/// `codex | zcode | claude-code | unknown`; `source` is `explicit | inferred | none`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Coordinator {
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub engine: Option<String>,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default)]
+    pub source: String,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

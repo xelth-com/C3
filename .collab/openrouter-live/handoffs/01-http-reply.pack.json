@@ -1,0 +1,58 @@
+{
+  "pack_version": 1,
+  "kind": "reviewer",
+  "generated": "2026-09-29T17:47:01.737353900+02:00",
+  "index": {
+    "used": false,
+    "source": "feature-off",
+    "hits": 0,
+    "files_added": 0
+  },
+  "recipe": {
+    "brief": "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief.md",
+    "focus": [
+      "crates/c3-core/src/roster_ext.rs"
+    ],
+    "budget": 12000,
+    "task": "openrouter-live",
+    "anchor": null
+  },
+  "revision": {
+    "reviewed_revision": "174bf48",
+    "content_sha256": "edf0d8612fb6b6a216ceea5741c0d0a254cfd9b0bddc386b96de4f3f246af701"
+  },
+  "redactions": 1,
+  "coverage": {
+    "focus_files": 1,
+    "periphery_shown": 1,
+    "periphery_candidates": 160
+  },
+  "files": [
+    {
+      "path": "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief.md",
+      "sha256": "ae0ee10a0b7762c3dab21aec660439438edb22d2ae6eb586f2252c19ec77f0c7",
+      "role": "brief"
+    },
+    {
+      "path": "crates/c3-core/src/roster_ext.rs",
+      "sha256": "1c6653443dad166afcdd69e107bb14451dad26dcf696494cd5ccd6946a7515f5",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/tests/http_engine.rs",
+      "sha256": "2610f68ecea500b130982f3a63d4bd30c552ff11965ef4359976d41c8d1f9e63",
+      "role": "periphery"
+    }
+  ],
+  "path_map": {
+    "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief.md": "ae0ee10a0b7762c3dab21aec660439438edb22d2ae6eb586f2252c19ec77f0c7",
+    "crates/c3-core/src/roster_ext.rs": "1c6653443dad166afcdd69e107bb14451dad26dcf696494cd5ccd6946a7515f5",
+    "crates/c3/tests/http_engine.rs": "2610f68ecea500b130982f3a63d4bd30c552ff11965ef4359976d41c8d1f9e63"
+  },
+  "request": {
+    "url": "https://openrouter.ai/api/v1/chat/completions",
+    "model": "stealth/space-bunny-alpha",
+    "response_format": "json_object",
+    "prompt_sha256": "abee6297fdb8eb95fafa2e15671f6df6d6e96ba73d41e22d2f88b6dc087e823c"
+  }
+}

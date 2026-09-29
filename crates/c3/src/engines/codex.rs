@@ -114,11 +114,10 @@ impl CodexEngine {
             stderr_path: &files.stderr,
             timeout,
             stall_sec: if is_primary { self.stall_sec } else { 0 },
-            kick_path: if is_primary {
-                self.kick_path.as_deref()
-            } else {
-                None
-            },
+            // (wave 26c, D1) the caller sets `kick_path` only where it should be watched: the
+            // primary turn always, and the FORMAT REPAIR turn (a kicked repair leaves the first
+            // reply standing). A continuation/denial retry passes `None`.
+            kick_path: self.kick_path.as_deref(),
             tool_delta: Some(&td),
             on_running: self
                 .on_running

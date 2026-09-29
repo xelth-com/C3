@@ -179,3 +179,64 @@ real c3 gap. See `docs/port/harness-results.md` Run 12.
   a missing brief is refused before any member starts; `CODEX_CONSULT_ROSTER=none` gets its own
   refusal.
 - `scoreboard/mod.rs` — `normalize_location_path` (D7 F22-7 location-key normalisation).
+
+## Wave 26c + 27 landed, SINGLE HOST (Run 13, 2026-09-29)
+
+**Scope** (operator decision 2026-09-29): C3 supports one coordinator host, **Claude Code**. The
+multi-host area (Codex CLI / Z Code / Kimi Code inference, `-Explain`, `-BriefPrefix`, host-neutral
+rewording, per-host docs) stays with the PowerShell bridge.
+
+Ported: the child-environment **scrub** with `child_env_scrubbed` (full name list as data); the
+ledger **`coordinator {provider, model, engine, host, source}`** after `lineage` (host is
+`claude-code` when the Claude Code markers are present, else `unknown`; `CODEX_CONSULT_COORDINATOR`
+is parsed and an unparseable value refused before anything starts); **wave 26c** — the kick
+acknowledgement (`.ack`, exit 0/1/3, `kick_late`), the health-lock retry + warning, `size_source:
+required` + warning, the stall continuation wording, the legacy rating completion rule (this last
+lives in the plugin's `Read-AllTaskRatings`, exercised via the copied common).
+
+### c3-core contract changes
+
+- `ledger.rs` — `LedgerEntry` gains `coordinator: Option<Coordinator>` (after `lineage`) and
+  `child_env_scrubbed: Option<Vec<Value>>` (after `command`), both tri-state for byte-identity
+  (absent → skipped on rewrite; a fresh entry always writes them). New `Coordinator` struct
+  `{provider, model, engine, host, source}` (field order fixed).
+- **`host.rs` (new module)** — `HOST_MARKER_NAMES`/`HOST_MARKER_PREFIXES`, `is_host_marker`,
+  `host_marker_names[_in]`, `coordinator_host[_from]` (claude-code/unknown, single host),
+  `parse_coordinator_matcher` + `coordinator_refusal` + `build_coordinator`,
+  `format_coordinator_text`, `coordinator_reviewer_warning`.
+- `health.rs` — `update_machine_health` / `add_machine_health_record` now return `HealthUpdate`
+  (`Written`/`Skipped`/`LockTimeout`); the machine-health lock is 3 attempts of 5 s
+  (`CODEX_CONSULT_TEST_HEALTH_LOCK_SEC`), and the lock file is removed on release.
+
+### c3 (runtime) changes
+
+- `engines/mod.rs` — `scrub_host_markers(cmd)` removes every host-marker variable from a launched
+  child; applied at the reviewer CLI (`engines/subprocess.rs`) and the launcher probes
+  (`providers::capture_launcher`, the `codex --version` probe). **Deviation:** c3's own child
+  processes (the detached background run, panel members) are not scrubbed — they inherit the
+  coordinator's env unchanged and recompute the identical `coordinator`/`child_env_scrubbed`, while
+  every third-party reviewer CLI and probe they spawn is scrubbed at launch; observably identical to
+  the plugin (which scrubs its own background and passes the record via the status/spec).
+- `consult/orchestrate.rs` — `resolve_coordinator` (explicit parse + refusal); the `coordinator`
+  record and `child_env_scrubbed` on the `Context`, in `build_entry`, and the dry-run preview + the
+  `coordinator :` and `child env   :` dry-run lines; the coordinator-is-reviewer warning (names the
+  reviewer's lineage); the machine-health record written **before** the ledger with a lock-timeout
+  retry + `machine-wide health not updated (lock timeout)` warning; the stall continuation wording
+  (`stopped after no output for N s outside a tool call`); the format-repair kick (first reply
+  stands + warning); stale kick/ack removal at run start.
+- `consult/kick.rs` — the wave-26c kick command: write the kick, wait 10 s for `<kick>.ack`, exit 0
+  (kicked | late), 1 (no running member; stale kick removed), 3 (no ack in time; kick file stays).
+- `engines/{subprocess,codex,agy,muse}.rs` — `confirm_kick`/`kick_ack_path` and `kick_late`; a kick
+  found before/during a live turn is acknowledged `kicked`, one found after exit is `late`; the
+  format-repair turn now watches the kick (all engines).
+- `panel/plan.rs` + `panel/run.rs` — `size_source: required` + `panel size raised: asked k, required
+  r`; the coordinator refusal at the panel entry; the `Routing: ... size N (required; asked M)` line.
+- `consult/dryrun.rs` — the preview field order aligned to the plugin (brief after
+  `child_env_scrubbed`); the two new dry-run lines.
+- Security test `crates/c3/tests/scrub_markers.rs` — seeds every marker, launches an env-dump helper
+  through the scrub, asserts no seed value reaches the child and the operator's kept variables
+  survive.
+
+Removed after the single-host decision: `consult/explain.rs` and `--explain`, the `--brief-prefix`
+surface, the SessionStart hook's second (pointer) line, and the multi-host host inference. The
+`plugin/skills/coordinate/` skill is kept, trimmed to Claude Code.

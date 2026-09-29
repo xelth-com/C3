@@ -26,6 +26,7 @@ pub mod engine;
 pub mod findings;
 pub mod handoff;
 pub mod health;
+pub mod host;
 pub mod ledger;
 pub mod lineage;
 pub mod paths;

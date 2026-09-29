@@ -729,9 +729,9 @@ pub fn add_machine_health_record(
     failure: Option<&MachineFailure>,
     repo: &str,
     is_alive: &dyn Fn(u32, &str) -> bool,
-) -> bool {
+) -> HealthUpdate {
     if fingerprint.is_empty() {
-        return false;
+        return HealthUpdate::Skipped;
     }
     let record = if is_usable_outcome(outcome) {
         MachineEndpoint {
@@ -747,7 +747,7 @@ pub fn add_machine_health_record(
     } else if let Some(f) = failure {
         let class = f.class.clone();
         if class.is_empty() || class == "operator" {
-            return false;
+            return HealthUpdate::Skipped;
         }
         let when = DateTime::parse_from_rfc3339(&f.when).unwrap_or_else(|_| now_offset());
         let kind = f.kind.clone();
@@ -788,7 +788,7 @@ pub fn add_machine_health_record(
             message,
         }
     } else {
-        return false;
+        return HealthUpdate::Skipped;
     };
     update_machine_health(path, Some(record), None, 0, is_alive)
 }
@@ -800,7 +800,7 @@ pub fn register_machine_running(
     is_alive: &dyn Fn(u32, &str) -> bool,
 ) -> bool {
     let pid = row.pid;
-    update_machine_health(path, None, Some(row), pid, is_alive)
+    update_machine_health(path, None, Some(row), pid, is_alive) == HealthUpdate::Written
 }
 
 /// `Unregister-MachineRunning`: drops any running row for `pid`.
@@ -809,7 +809,7 @@ pub fn unregister_machine_running(
     pid: u32,
     is_alive: &dyn Fn(u32, &str) -> bool,
 ) -> bool {
-    update_machine_health(path, None, None, pid, is_alive)
+    update_machine_health(path, None, None, pid, is_alive) == HealthUpdate::Written
 }
 
 /// `Get-MachineRunningCount`: the live running rows (per `is_alive`) whose endpoint is one of
@@ -830,54 +830,91 @@ pub fn machine_running_count(
         .collect()
 }
 
-/// Acquire the machine-health lock file (`<path>.lock`), retrying with a doubling back-off
-/// (25 ms, capped at 500 ms) for up to 10 seconds. `None` when the lock could never be taken.
+/// The outcome of a machine-health update: written, skipped (nothing to record), or blocked by a
+/// lock timeout — the caller retries the latter once and warns (wave 26c, D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthUpdate {
+    /// The file was updated.
+    Written,
+    /// Nothing to record (no fingerprint, an operator-class failure, or no usable outcome/failure).
+    Skipped,
+    /// `<file>.lock` could not be acquired within the retry budget (`MachineHealthLastError`).
+    LockTimeout,
+}
+
+/// Seconds per lock attempt (`CODEX_CONSULT_TEST_HEALTH_LOCK_SEC`, else 5); three attempts are
+/// made (wave 26c, D2).
+fn machine_lock_attempt_secs() -> f64 {
+    std::env::var("CODEX_CONSULT_TEST_HEALTH_LOCK_SEC")
+        .ok()
+        .and_then(|s| s.trim().parse::<f64>().ok())
+        .filter(|v| *v > 0.0)
+        .unwrap_or(5.0)
+}
+
+const MACHINE_LOCK_ATTEMPTS: u32 = 3;
+
+/// Acquire the machine-health lock file (`<path>.lock`, wave 26c D2): three attempts of five
+/// seconds each (`CODEX_CONSULT_TEST_HEALTH_LOCK_SEC` shortens an attempt), each attempt polling
+/// with a doubling back-off (25 ms, capped at 500 ms). `None` when the lock could never be taken.
 #[cfg(windows)]
 fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
-    let started = std::time::Instant::now();
-    let mut delay = std::time::Duration::from_millis(25);
-    loop {
-        match OpenOptions::new()
+    let open = || {
+        OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .share_mode(0)
             .open(lock_path)
-        {
-            Ok(f) => return Some(f),
-            Err(_) => {
-                if started.elapsed() >= std::time::Duration::from_secs(10) {
-                    return None;
+    };
+    let attempt = std::time::Duration::from_secs_f64(machine_lock_attempt_secs());
+    for _ in 0..MACHINE_LOCK_ATTEMPTS {
+        let started = std::time::Instant::now();
+        let mut delay = std::time::Duration::from_millis(25);
+        loop {
+            match open() {
+                Ok(f) => return Some(f),
+                Err(_) => {
+                    if started.elapsed() >= attempt {
+                        break;
+                    }
+                    std::thread::sleep(delay);
+                    delay = (delay * 2).min(std::time::Duration::from_millis(500));
                 }
-                std::thread::sleep(delay);
-                delay = (delay * 2).min(std::time::Duration::from_millis(500));
             }
         }
     }
+    None
 }
 
 #[cfg(not(windows))]
 fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
-    let started = std::time::Instant::now();
-    let mut delay = std::time::Duration::from_millis(25);
-    loop {
-        match OpenOptions::new()
+    let open = || {
+        OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(lock_path)
-        {
-            Ok(f) => return Some(f),
-            Err(_) => {
-                if started.elapsed() >= std::time::Duration::from_secs(10) {
-                    return None;
+    };
+    let attempt = std::time::Duration::from_secs_f64(machine_lock_attempt_secs());
+    for _ in 0..MACHINE_LOCK_ATTEMPTS {
+        let started = std::time::Instant::now();
+        let mut delay = std::time::Duration::from_millis(25);
+        loop {
+            match open() {
+                Ok(f) => return Some(f),
+                Err(_) => {
+                    if started.elapsed() >= attempt {
+                        break;
+                    }
+                    std::thread::sleep(delay);
+                    delay = (delay * 2).min(std::time::Duration::from_millis(500));
                 }
-                std::thread::sleep(delay);
-                delay = (delay * 2).min(std::time::Duration::from_millis(500));
             }
         }
     }
+    None
 }
 
 /// Read-modify-write the machine health file under the `<path>.lock` exclusive lock: apply
@@ -889,13 +926,15 @@ fn update_machine_health(
     add_running: Option<MachineRunning>,
     remove_pid: u32,
     is_alive: &dyn Fn(u32, &str) -> bool,
-) -> bool {
+) -> HealthUpdate {
     let mut lock_os = path.as_os_str().to_os_string();
     lock_os.push(".lock");
     let lock_path = PathBuf::from(lock_os);
-    let _lock = match acquire_machine_lock(&lock_path) {
+    // (wave 26c, D2) a lock timeout is a distinct outcome: the caller retries it once at the ledger
+    // commit and warns `machine-wide health not updated (lock timeout)`.
+    let lock = match acquire_machine_lock(&lock_path) {
         Some(f) => f,
-        None => return false,
+        None => return HealthUpdate::LockTimeout,
     };
 
     let result = (|| -> bool {
@@ -947,12 +986,16 @@ fn update_machine_health(
         crate::store::write_text_atomic(path, &bytes).is_ok()
     })();
 
-    #[cfg(not(windows))]
-    {
-        let _ = std::fs::remove_file(&lock_path);
-    }
+    // Release and remove the lock file we acquired (both platforms), so a waiter never inherits a
+    // held name and the machine-wide `.lock` never lingers.
+    drop(lock);
+    let _ = std::fs::remove_file(&lock_path);
 
-    result
+    if result {
+        HealthUpdate::Written
+    } else {
+        HealthUpdate::Skipped
+    }
 }
 
 /// `Get-MachineEndpointConsults`: synthesizes a "consult" `Value` per machine-health record
@@ -1110,7 +1153,7 @@ mod machine_health_tests {
             "repo-a",
             &alive_true,
         );
-        assert!(ok);
+        assert_eq!(ok, HealthUpdate::Written);
         let health = read_machine_health(&path);
         assert_eq!(health.endpoints.len(), 1);
         let rec = &health.endpoints[0];
@@ -1128,7 +1171,7 @@ mod machine_health_tests {
         let path = temp_path("ok");
         let ok =
             add_machine_health_record(&path, "fp2", "usable reply", None, "repo-a", &alive_true);
-        assert!(ok);
+        assert_eq!(ok, HealthUpdate::Written);
         let health = read_machine_health(&path);
         assert_eq!(health.endpoints.len(), 1);
         assert_eq!(health.endpoints[0].class, "ok");

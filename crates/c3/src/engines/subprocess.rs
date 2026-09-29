@@ -80,6 +80,9 @@ pub struct TurnResult {
     pub exit_code: Option<i32>,
     /// Why the watch ended (exited / timeout / stall / kick).
     pub stop: TurnStop,
+    /// (wave 26c, D1) The process had already finished when a kick was found (checked once more
+    /// after it exited): the kick is taken LATE (`kick_late`), the outcome unchanged.
+    pub kick_late: bool,
     /// (wave 26b, D12) The ISO time of the last event-stream growth seen, `None` when none.
     pub last_event: Option<String>,
     /// (wave 26b, D12) Seconds without an event at the stall kill (`0` unless a stall fired).
@@ -100,6 +103,7 @@ impl TurnResult {
             started: false,
             exit_code: None,
             stop: TurnStop::Exited,
+            kick_late: false,
             last_event: None,
             silent_seconds: 0,
             survivors: Vec::new(),
@@ -112,6 +116,23 @@ impl TurnResult {
 
 fn round1(secs: f64) -> f64 {
     (secs * 10.0).round() / 10.0
+}
+
+/// `<kick file>.ack` — the acknowledgement the run writes for the `-Kick` command.
+pub fn kick_ack_path(kick_path: &Path) -> std::path::PathBuf {
+    let mut s = kick_path.as_os_str().to_os_string();
+    s.push(".ack");
+    std::path::PathBuf::from(s)
+}
+
+/// `Confirm-Kick` (wave 26c, D1): write `<kick>.ack` (`kicked` | `late`, then the time and this
+/// pid) and remove the kick file. Never fails the run.
+fn confirm_kick(kick_path: &Path, what: &str) {
+    let _ = std::fs::write(
+        kick_ack_path(kick_path),
+        format!("{what} {} pid {}\n", iso_now(), std::process::id()),
+    );
+    let _ = std::fs::remove_file(kick_path);
 }
 
 /// Build `(program, args)` for the launcher spawn.
@@ -149,6 +170,8 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
+    // (wave 27 / 27b) the reviewer CLI never inherits the coordinator's host markers.
+    super::scrub_host_markers(&mut cmd);
 
     let mut child: Child = match cmd.spawn() {
         Ok(c) => c,
@@ -177,6 +200,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
 
     let start = Instant::now();
     let mut stop = TurnStop::Exited;
+    let mut kick_late = false;
     let mut survivors = Vec::new();
     // Stall tracking (wave 26b D12 + 26c D3): byte offset consumed so far, the last time the
     // stream grew, the count of tool calls currently in flight, and the last event time seen.
@@ -200,70 +224,102 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         let _ = child.wait();
         s
     };
-    let exit_code = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status.code(),
-            Ok(None) => {
-                if start.elapsed() >= req.timeout {
+    // (wave 26c, D1) a kick that arrived before the wait loop, on a live turn, is taken at once.
+    if let Some(kp) = req.kick_path {
+        if kp.exists() {
+            match child.try_wait() {
+                Ok(Some(_)) => {} // already exited — handled after the loop as a late kick
+                _ => {
                     survivors = kill_now(&mut child);
-                    stop = TurnStop::Timeout;
-                    break None;
+                    stop = TurnStop::Kick;
+                    confirm_kick(kp, "kicked");
                 }
-                // (wave 26b, D10) the operator's kick, checked on every poll.
-                if let Some(kp) = req.kick_path {
-                    if kp.exists() {
+            }
+        }
+    }
+    let exit_code = if stop == TurnStop::Kick {
+        // A kick was taken before the loop; do not wait.
+        None
+    } else {
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code(),
+                Ok(None) => {
+                    if start.elapsed() >= req.timeout {
                         survivors = kill_now(&mut child);
-                        stop = TurnStop::Kick;
+                        stop = TurnStop::Timeout;
                         break None;
                     }
-                }
-                // (wave 26b, D12 / 26c D3) the stall cut.
-                if stall_on {
-                    let grew = read_stream_growth(
-                        req.events_path,
-                        &mut offset,
-                        &mut line_buf,
-                        req.tool_delta,
-                        &mut open_tools,
-                    );
-                    if grew {
-                        last_activity = Instant::now();
-                        last_event = Some(iso_now());
-                    }
-                    // The timer is suspended while a tool call is in flight.
-                    if open_tools <= 0 {
-                        let silent = last_activity.elapsed();
-                        if silent.as_secs() as i64 >= req.stall_sec {
-                            silent_seconds = silent.as_secs() as i64;
+                    // (wave 26b, D10 / 26c D1) the operator's kick, checked on every poll; on a live
+                    // turn it is taken at once and acknowledged.
+                    if let Some(kp) = req.kick_path {
+                        if kp.exists() {
                             survivors = kill_now(&mut child);
-                            stop = TurnStop::Stall;
+                            stop = TurnStop::Kick;
+                            confirm_kick(kp, "kicked");
                             break None;
                         }
                     }
+                    // (wave 26b, D12 / 26c D3) the stall cut.
+                    if stall_on {
+                        let grew = read_stream_growth(
+                            req.events_path,
+                            &mut offset,
+                            &mut line_buf,
+                            req.tool_delta,
+                            &mut open_tools,
+                        );
+                        if grew {
+                            last_activity = Instant::now();
+                            last_event = Some(iso_now());
+                        }
+                        // The timer is suspended while a tool call is in flight.
+                        if open_tools <= 0 {
+                            let silent = last_activity.elapsed();
+                            if silent.as_secs() as i64 >= req.stall_sec {
+                                silent_seconds = silent.as_secs() as i64;
+                                survivors = kill_now(&mut child);
+                                stop = TurnStop::Stall;
+                                break None;
+                            }
+                        }
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
                 }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => {
-                return TurnResult {
-                    started: true,
-                    exit_code: None,
-                    stop: TurnStop::Exited,
-                    last_event,
-                    silent_seconds: 0,
-                    survivors: Vec::new(),
-                    wall_seconds: round1(start.elapsed().as_secs_f64()),
-                    stderr: read_text(req.stderr_path),
-                    error: Some(format!("waiting on the child failed: {e}")),
-                };
+                Err(e) => {
+                    return TurnResult {
+                        started: true,
+                        exit_code: None,
+                        stop: TurnStop::Exited,
+                        last_event,
+                        silent_seconds: 0,
+                        survivors: Vec::new(),
+                        wall_seconds: round1(start.elapsed().as_secs_f64()),
+                        stderr: read_text(req.stderr_path),
+                        kick_late: false,
+                        error: Some(format!("waiting on the child failed: {e}")),
+                    };
+                }
             }
         }
     };
+    // (wave 26c, D1) check once more after the process ended on its own: a kick found now had no
+    // live turn to stop — it is taken LATE (the outcome is unchanged), acknowledged as `late`.
+    if stop == TurnStop::Exited {
+        if let Some(kp) = req.kick_path {
+            if kp.exists() {
+                kick_late = true;
+                confirm_kick(kp, "late");
+            }
+        }
+    }
     let wall_seconds = round1(start.elapsed().as_secs_f64());
 
     TurnResult {
         started: true,
         exit_code,
         stop,
+        kick_late,
         last_event,
         silent_seconds,
         survivors,

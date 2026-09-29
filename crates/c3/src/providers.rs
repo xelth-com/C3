@@ -2352,13 +2352,14 @@ pub(crate) fn run_with_timeout(
             args.iter().map(|s| s.to_string()).collect(),
         )
     };
-    let mut child = Command::new(&prog)
-        .args(&all_args)
+    let mut cmd = Command::new(&prog);
+    cmd.args(&all_args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .ok()?;
+        .stderr(Stdio::piped());
+    // (wave 27 / 27b) a launcher probe (login status, models, `--version`) gets no host marker.
+    crate::engines::scrub_host_markers(&mut cmd);
+    let mut child = cmd.spawn().ok()?;
     let mut out = child.stdout.take().unwrap();
     let mut err = child.stderr.take().unwrap();
     let out_h = std::thread::spawn(move || {

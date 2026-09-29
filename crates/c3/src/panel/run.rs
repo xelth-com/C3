@@ -226,6 +226,10 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         };
         return Err((msg, 1));
     }
+    // (wave 27) an unparseable CODEX_CONSULT_COORDINATOR refuses before any member is planned or
+    // started (each seated member's build_context records the coordinator; the top-level parse
+    // failure must fire once here so nothing is started).
+    crate::consult::orchestrate::resolve_coordinator(Some(&roster.entries[..]))?;
     // (D2) a missing brief is refused before any member is planned or started (no ledger).
     if !o.brief.is_empty() {
         let bp = if Path::new(&o.brief).is_absolute() {
@@ -2126,6 +2130,9 @@ fn routing_lines(rt: &RoutingRecord, purpose: &str) -> Vec<String> {
         rt.size,
         if rt.size_source == "purpose" {
             format!("the default of purpose {purpose_label}")
+        } else if rt.size_source == "required" {
+            // (wave 26c) the required reviewers raised the size above the asked size.
+            format!("required; asked {}", rt.size_asked)
         } else {
             rt.size_source.clone()
         }

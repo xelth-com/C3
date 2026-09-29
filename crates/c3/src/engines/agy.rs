@@ -98,11 +98,9 @@ impl AgyEngine {
             stderr_path: &files.stderr,
             timeout,
             stall_sec: if is_primary { self.stall_sec } else { 0 },
-            kick_path: if is_primary {
-                self.kick_path.as_deref()
-            } else {
-                None
-            },
+            // (wave 26c, D1) the caller scopes `kick_path` (primary always; the format-repair turn
+            // so a kicked repair leaves the first reply standing; a continuation passes None).
+            kick_path: self.kick_path.as_deref(),
             // agy step updates grow the stream on every tool step, so the byte-growth reset covers
             // its tool calls; no separate suspension classifier is needed.
             tool_delta: None,

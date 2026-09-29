@@ -62,6 +62,24 @@ fn refuse(msg: &str) -> i32 {
     1
 }
 
+/// (wave 27) Resolve the ledger `coordinator` record from the environment (`Get-CoordinatorHost` +
+/// `CODEX_CONSULT_COORDINATOR`). An unparseable value refuses (`Err`, exit 1) before anything is
+/// planned. `roster` is `None` when there is no reviewer roster file (for `#<n>`).
+pub(crate) fn resolve_coordinator(
+    roster: Option<&[c3_core::roster::RosterEntry]>,
+) -> Result<c3_core::ledger::Coordinator, (String, i32)> {
+    let host = c3_core::host::coordinator_host();
+    let value = std::env::var("CODEX_CONSULT_COORDINATOR").unwrap_or_default();
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(c3_core::host::build_coordinator(host, None));
+    }
+    match c3_core::host::parse_coordinator_matcher(trimmed, roster) {
+        Ok(m) => Ok(c3_core::host::build_coordinator(host, Some(&m))),
+        Err(why) => Err((c3_core::host::coordinator_refusal(trimmed, &why), 1)),
+    }
+}
+
 /// The two secondary-turn mechanisms' results (timeout continuation + format repair), gathered
 /// so [`render_handoff`], [`build_entry`] and the summary render at their exact points.
 #[derive(Default)]
@@ -83,6 +101,9 @@ struct Secondary {
     continue_killed: bool,
     /// The format-repair turn was killed on its timeout.
     repair_killed: bool,
+    /// (wave 26c, D1) the operator stopped the FORMAT REPAIR (-Kick): the first reply stands, not
+    /// converted; no operator class. A warning is emitted, the run stays a usable reply.
+    repair_kicked: bool,
     /// The `-ContinueSec` used, for the partial-footer `killed at ...` line.
     repair_timeout: i64,
     // --- format repair ---
@@ -437,6 +458,13 @@ pub(crate) struct Context {
     pub(crate) consult_n: i64,
     pub(crate) consult_id: String,
     pub(crate) identity: ReviewerIdentity,
+    /// (wave 27) The coordinator that started this run (`Resolve-CoordinatorIdentity`): the ledger
+    /// `coordinator` record and the dry-run `coordinator :` line.
+    pub(crate) coordinator: c3_core::ledger::Coordinator,
+    /// (wave 27) The host-marker variable NAMES removed from every reviewer child's environment
+    /// (`Get-HostMarkerNames`, captured once from this process's env). The ledger
+    /// `child_env_scrubbed` value and the dry-run `child env   :` line.
+    pub(crate) child_env_scrubbed: Vec<String>,
     pub(crate) effort: EffortPlan,
     pub(crate) transport: Transport,
     pub(crate) launcher: String,
@@ -1073,6 +1101,19 @@ fn build_context(
     // The reviewer roster (`Read-ReviewerRoster`). A missing `CODEX_CONSULT_ROSTER` file or an
     // unusable roster refuses before anything is planned (a dry run too — FILE).
     let roster = providers::read_reviewer_roster().map_err(|m| (m, 1))?;
+
+    // (wave 27) The coordinator that started this run and the host markers scrubbed from every
+    // reviewer child, both from THIS process's environment. An unparseable CODEX_CONSULT_COORDINATOR
+    // and a bad brief prefix refuse here, before anything is planned or written (a dry run too). A
+    // panel member / detached run inherits the coordinator's environment unchanged, so it recomputes
+    // the identical record and scrub list.
+    let coordinator = resolve_coordinator(if roster.exists {
+        Some(&roster.entries[..])
+    } else {
+        None
+    })?;
+    let child_env_scrubbed = c3_core::host::host_marker_names();
+
     let utc_now = c3_core::peak::consult_clock(0)
         .map(|(u, _, _)| u)
         .unwrap_or_else(|_| chrono::Utc::now());
@@ -1376,6 +1417,19 @@ fn build_context(
     }
     if !model_source_override.is_empty() {
         identity.model_source = model_source_override.clone();
+    }
+
+    // (wave 27) The reviewer being consulted IS the coordinator's own model
+    // (`Test-CoordinatorReviewer`/`Format-CoordinatorWarning`): a second opinion, not an
+    // independent one. A warning, never a refusal.
+    if let Some(w) = c3_core::host::coordinator_reviewer_warning(
+        &coordinator,
+        &identity.provider,
+        &identity.model,
+        &engine_name,
+        &identity.lineage,
+    ) {
+        run_warnings.push(w);
     }
 
     // An EXPLICIT `-Provider` whose table is unusable is refused up front with the scanner's
@@ -2063,6 +2117,8 @@ fn build_context(
         consult_n,
         consult_id,
         identity,
+        coordinator,
+        child_env_scrubbed,
         effort,
         transport,
         launcher,
@@ -2592,9 +2648,11 @@ fn get_codex_version(launcher: &str) -> String {
     } else {
         (launcher.into(), vec!["--version".into()])
     };
-    std::process::Command::new(prog)
-        .args(args)
-        .output()
+    let mut cmd = std::process::Command::new(prog);
+    cmd.args(args);
+    // (wave 27 / 27b) the `codex --version` probe gets no host marker either.
+    crate::engines::scrub_host_markers(&mut cmd);
+    cmd.output()
         .ok()
         .map(|o| {
             String::from_utf8_lossy(&o.stdout)
@@ -2950,6 +3008,11 @@ fn run_live(mut ctx: Context) -> i32 {
             crate::liveness::proc::pid_alive(pid, st)
         });
     }
+
+    // (wave 26c, D1) remove a stale kick file and its acknowledgement of THIS run's number before
+    // the primary turn, so a leftover from a prior run of the same handoff never fires.
+    let _ = std::fs::remove_file(&ctx.kick_path);
+    let _ = std::fs::remove_file(crate::engines::subprocess::kick_ack_path(&ctx.kick_path));
 
     // Run the primary turn through the selected engine adapter.
     let (outcome, detail) = match run_primary_turn(&ctx, Some(on_running)) {
@@ -3845,6 +3908,14 @@ fn finish(
         );
     }
 
+    // (wave 26c, D1) the operator stopped only the FORMAT REPAIR: the first reply stands (not
+    // converted), no operator class — a warning, and the run stays a usable reply.
+    if sec.repair_kicked {
+        ctx.run_warnings.push(
+            "kick: the operator stopped the format repair (-Kick); the first reply stands, not converted".to_string(),
+        );
+    }
+
     // Count the secondary engine turns that ran (the base primary + a denial retry counted in
     // `run_engine_denial_retry`; here the continuation and the format repair).
     if is_engine {
@@ -4159,6 +4230,48 @@ fn finish(
         }
         Err(e) => return refuse(&format!("could not take the write lock: {e}")),
     };
+    // (wave 26c, D2) record this run's outcome on its endpoint in the machine-wide health file
+    // BEFORE the ledger entry: a usable reply clears the endpoint (class ok), a provider failure
+    // marks it (class operator excepted). A lock timeout is retried once here at the commit and, if
+    // it still fails, recorded as the warning `machine-wide health not updated (lock timeout)` in
+    // `warnings[]` and printed as a `warning    :` summary line (the ledger keeps the truth either
+    // way). A failed update never fails the run; disabled with CODEX_CONSULT_HEALTH=none.
+    let mut health_lock_timeout = false;
+    if ctx.identity.resolved {
+        if let Some(hp) = c3_core::health::machine_health_path(&providers::get_codex_home()) {
+            let failure = provider_failure
+                .as_ref()
+                .map(|pf| c3_core::health::MachineFailure {
+                    class: pf.class.clone(),
+                    kind: pf.kind.clone().unwrap_or_default(),
+                    when: pf.when.clone(),
+                    retry_after: pf.retry_after.clone(),
+                    message: pf.message.clone(),
+                });
+            let write = || {
+                c3_core::health::add_machine_health_record(
+                    &hp,
+                    &ctx.identity.fingerprint,
+                    &bridge_outcome,
+                    failure.as_ref(),
+                    &ctx.repo_root.to_string_lossy(),
+                    &|pid, st| crate::liveness::proc::pid_alive(pid, st),
+                )
+            };
+            let mut res = write();
+            if res == c3_core::health::HealthUpdate::LockTimeout {
+                // retry once at the ledger commit.
+                res = write();
+            }
+            if res == c3_core::health::HealthUpdate::LockTimeout {
+                health_lock_timeout = true;
+                entry.warnings.push(serde_json::Value::String(
+                    "machine-wide health not updated (lock timeout)".to_string(),
+                ));
+            }
+        }
+    }
+
     // The write-lock wait (`commit_wait_ms`): 0 when the first attempt won it, else the measured
     // wait; a contended commit says so in a summary line (F11-3).
     let commit_wait_ms = write_lock.wait_ms() as i64;
@@ -4179,32 +4292,6 @@ fn finish(
     };
     drop(write_lock);
     let _ = receipt;
-
-    // (wave 26b, D13) record this run's outcome on its endpoint in the machine-wide health file:
-    // a usable reply clears the endpoint (class ok), a provider failure marks it (class operator
-    // excepted). A failed update only warns (never fails the run); disabled with
-    // CODEX_CONSULT_HEALTH=none.
-    if ctx.identity.resolved {
-        if let Some(hp) = c3_core::health::machine_health_path(&providers::get_codex_home()) {
-            let failure = provider_failure
-                .as_ref()
-                .map(|pf| c3_core::health::MachineFailure {
-                    class: pf.class.clone(),
-                    kind: pf.kind.clone().unwrap_or_default(),
-                    when: pf.when.clone(),
-                    retry_after: pf.retry_after.clone(),
-                    message: pf.message.clone(),
-                });
-            let _ = c3_core::health::add_machine_health_record(
-                &hp,
-                &ctx.identity.fingerprint,
-                &bridge_outcome,
-                failure.as_ref(),
-                &ctx.repo_root.to_string_lossy(),
-                &|pid, st| crate::liveness::proc::pid_alive(pid, st),
-            );
-        }
-    }
 
     // Telemetry: record this consultation to the spool (errors ignored). The env switch is
     // re-checked inside `record_consultation`; a dry run never reaches this point.
@@ -4370,7 +4457,15 @@ fn finish(
         events_path: ctx.events_path.to_string_lossy().to_string(),
         reply_body,
         section,
-        engine_warnings: sec.engine_warnings.clone(),
+        engine_warnings: {
+            // (wave 26c, D2) a health lock timeout prints as a `warning    :` summary line, after
+            // any engine-turn warnings.
+            let mut w = sec.engine_warnings.clone();
+            if health_lock_timeout {
+                w.push("machine-wide health not updated (lock timeout)".to_string());
+            }
+            w
+        },
         denial_retry_line: sec.denial_console.clone(),
         ..Default::default()
     };
@@ -4573,6 +4668,14 @@ fn run_codex_secondary(
         message: format!("the secondary turn could not be planned ({e:?})"),
     };
     let start = std::time::Instant::now();
+    // (wave 26c, D1) only the FORMAT REPAIR turn watches the kick file (a kicked repair leaves the
+    // first reply standing); a kicked continuation/denial retry fails the run and is handled on the
+    // primary turn's path, so those secondary turns do not watch it.
+    let secondary_kick = if matches!(kind, TurnKind::FormatRepair) {
+        Some(ctx.kick_path.clone())
+    } else {
+        None
+    };
     // `engine_outcome` is the engine turn's own framed outcome text (`AgyTurn`/`MuseTurn`
     // `.outcome`), used to frame an engine repair/continuation failure exactly; empty for codex.
     let (outcome, engine_outcome) = match ctx.engine.as_str() {
@@ -4585,7 +4688,7 @@ fn run_codex_secondary(
                 no_network: false,
                 models_timeout_sec: 45,
                 stall_sec: 0,
-                kick_path: None,
+                kick_path: secondary_kick.clone(),
                 on_running,
             };
             match eng.run_detailed(&turn) {
@@ -4600,7 +4703,7 @@ fn run_codex_secondary(
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
-                kick_path: None,
+                kick_path: secondary_kick.clone(),
                 on_running,
             };
             match eng.run_detailed(&turn) {
@@ -4616,7 +4719,7 @@ fn run_codex_secondary(
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
-                kick_path: None,
+                kick_path: secondary_kick.clone(),
                 on_running,
             };
             (eng.run(&turn).unwrap_or_else(plan_err), String::new())
@@ -4703,9 +4806,13 @@ fn run_timeout_continuation(
     if !ctx.r.raw {
         parts.push(prompt::FINAL_OUTPUT_CONTRACT.to_string());
     }
+    // (wave 26c, D3) a stall kill names the silence outside a tool call; a timeout names the limit.
+    let stopped_reason = match stalled_secs {
+        Some(n) => format!("stopped after no output for {n} s outside a tool call"),
+        None => format!("stopped by a time limit after {} s", ctx.r.timeout_sec),
+    };
     parts.push(format!(
-        "Your previous turn was stopped by a time limit after {} s. Do not start over and do not read more files than you must: finish now and output your final answer in the required format.",
-        ctx.r.timeout_sec
+        "Your previous turn was {stopped_reason}. Do not start over and do not read more files than you must: finish now and output your final answer in the required format.",
     ));
     if !ctx.r.raw && ctx.transport.transport == "prompt-only" {
         parts.push(prompt::schema_lines(
@@ -5008,6 +5115,15 @@ fn run_format_repair(
                     }
                 }
             }
+        }
+        AttemptOutcome::Stopped {
+            kind: c3_core::engine::StopKind::Kick,
+            ..
+        } => {
+            // (wave 26c, D1) the operator stopped the format repair only: the first reply STANDS
+            // (not converted). No operator class; a warning is emitted in the caller.
+            sec.repair_kicked = true;
+            repair_problem = "the operator stopped the format repair (-Kick)".to_string();
         }
         AttemptOutcome::TimedOut { .. } | AttemptOutcome::Stopped { .. } => {
             repair_problem = format!("timeout after {repair_timeout} s (process tree killed)");
@@ -6573,6 +6689,8 @@ fn build_entry(
         role: Some(ctx.role.clone()),
         consult_id: ctx.consult_id.clone(),
         lineage: ctx.identity.lineage.clone(),
+        // (wave 27) the coordinator record right after `lineage`.
+        coordinator: Some(ctx.coordinator.clone()),
         preflight: ctx.preflight.clone(),
         preflight_warning: ctx.preflight_warning.clone(),
         parent_thread: ctx.parent_thread.clone(),
@@ -6587,6 +6705,13 @@ fn build_entry(
         } else {
             ctx.argv_display.clone()
         },
+        // (wave 27) the scrubbed host-marker NAMES right after `command` (never a value).
+        child_env_scrubbed: Some(
+            ctx.child_env_scrubbed
+                .iter()
+                .map(|s| serde_json::Value::String(s.clone()))
+                .collect(),
+        ),
         brief: ctx.brief_ref.clone(),
         prompt_chars: ctx.prompt_text.chars().count() as i64,
         reply: handoff_rel.to_string(),

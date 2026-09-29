@@ -556,9 +556,15 @@ pub fn select_panel_routing_with(
         k = eligible_count;
     }
     let size_asked = k;
+    let mut size_source = size_source.to_string();
     let pinned_count = eligible_idx.iter().filter(|&&i| seated[i].required).count() as i64;
+    // (wave 26c) the required reviewers raise the size when they outnumber the asked size; the
+    // source becomes `required` and a warning is emitted.
+    let mut size_raised = false;
     if k < pinned_count {
         k = pinned_count;
+        size_raised = true;
+        size_source = "required".to_string();
     }
     if k > eligible_count {
         k = eligible_count;
@@ -654,6 +660,11 @@ pub fn select_panel_routing_with(
 
     // Warnings.
     let mut warnings: Vec<String> = Vec::new();
+    if size_raised {
+        warnings.push(format!(
+            "panel size raised: asked {size_asked}, required {pinned_count}"
+        ));
+    }
     if k < size_asked {
         warnings.push(format!(
             "panel size reduced: asked {size_asked}, eligible {eligible_count}"

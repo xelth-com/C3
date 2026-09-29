@@ -1,0 +1,40 @@
+{
+    "task_id":  "openrouter-live",
+    "findings":  [
+
+                 ],
+    "ratings":  [
+                    {
+                        "n":  1,
+                        "consult_id":  "c3a1e924-4a1d-45ef-9bb6-ee6a36b0f4ab",
+                        "lineage":  "openrouter :: stealth/space-bunny-alpha [http]",
+                        "provider":  "openrouter",
+                        "model":  "stealth/space-bunny-alpha",
+                        "engine":  "http",
+                        "purpose":  "diff-review",
+                        "topics":  [
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-09-29T17:46:58+02:00",
+                        "useful":  "yes",
+                        "note":  "Found the design hole of the C3_KEY_ escape hatch (any C3 key to any host) and the echo of key_env in refusals; precise line references; verified the known-key binding",
+                        "when":  "2026-09-29T18:06:54+02:00"
+                    },
+                    {
+                        "n":  3,
+                        "consult_id":  "f353a890-0176-4fcd-b34b-9405178b42d6",
+                        "lineage":  "openrouter :: nvidia/nemotron-3-ultra-550b-a55b:free [http]",
+                        "provider":  "openrouter",
+                        "model":  "nvidia/nemotron-3-ultra-550b-a55b:free",
+                        "engine":  "http",
+                        "purpose":  "diff-review",
+                        "topics":  [
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-09-29T17:53:17+02:00",
+                        "useful":  "partly",
+                        "note":  "Three valid findings of one root cause (raw JSON echoed in refusals); missed the C3_KEY_ hole; 450 s in the free queue, first attempt overloaded",
+                        "when":  "2026-09-29T18:06:55+02:00"
+                    }
+                ]
+}

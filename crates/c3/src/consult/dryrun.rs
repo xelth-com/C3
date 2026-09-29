@@ -308,6 +308,22 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         let body = st.strip_prefix("telemetry: ").unwrap_or(&st);
         out.push(format!("telemetry   : {body}"));
     }
+    // (wave 27) the coordinator, the scrubbed child environment and the brief prefix.
+    out.push(format!(
+        "coordinator : {}",
+        c3_core::host::format_coordinator_text(&ctx.coordinator)
+    ));
+    out.push(format!(
+        "child env   : {}",
+        if ctx.child_env_scrubbed.is_empty() {
+            "no host marker set - the environment is passed as it is".to_string()
+        } else {
+            format!(
+                "without the host markers {} (every other variable is kept)",
+                ctx.child_env_scrubbed.join(", ")
+            )
+        }
+    ));
     out.push(String::new());
     out.push("argv        :".into());
     // The argv block lists the launcher's arguments only (starting with `exec`); the launcher
@@ -376,6 +392,7 @@ fn preview(ctx: &Context) -> Value {
         "consult_id": ctx.consult_id,
         "reviewer": serde_json::to_value(super::orchestrate::build_reviewer(&ctx.identity, &ctx.harness)).unwrap_or(Value::Null),
         "lineage": ctx.identity.lineage,
+        "coordinator": serde_json::to_value(&ctx.coordinator).unwrap_or(Value::Null),
         "preflight": ctx.preflight,
         "preflight_warning": ctx.preflight_warning,
         "roster": ctx.roster_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
@@ -389,12 +406,15 @@ fn preview(ctx: &Context) -> Value {
         // (wave 26b, D16) the context-window fork/resume -> new downgrade, else null.
         "mode_fallback": ctx.mode_fallback.as_ref().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).unwrap_or(Value::Null),
         "command": command_str(ctx),
-        "reply": preview_rel(ctx, "md"),
-        "reply_json": if ctx.r.raw { Value::Null } else { Value::String(preview_rel(ctx, "reply.json")) },
-        "events": preview_rel(ctx, "events.jsonl"),
+        // (wave 27) child_env_scrubbed right after command; brief follows it, matching the plugin's
+        // dry-run preview and the ledger field order (reply/reply_json/events come after prompt_chars).
+        "child_env_scrubbed": ctx.child_env_scrubbed.iter().map(|s| Value::String(s.clone())).collect::<Vec<_>>(),
         "brief": ctx.brief_ref,
         "range": ctx.range_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
         "prompt_chars": ctx.prompt_text.chars().count(),
+        "reply": preview_rel(ctx, "md"),
+        "reply_json": if ctx.r.raw { Value::Null } else { Value::String(preview_rel(ctx, "reply.json")) },
+        "events": preview_rel(ctx, "events.jsonl"),
         "model": model_label(ctx),
         "effort": effort_sent,
         "effort_requested": ctx.effort.requested,
