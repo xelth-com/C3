@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 
+use crate::index;
 use crate::pack::reviewer::{self, PackOpts};
 use crate::providers;
 
@@ -35,6 +36,13 @@ pub struct PackArgs {
     /// The index is never required — any miss falls back to lexical.
     #[arg(long)]
     pub conn: Option<String>,
+    /// Include excerpts from a federation peer by name (repeatable; M11). The peer must be
+    /// allowed for this project in the configuration with `use_in_packs: true`.
+    #[arg(long = "peer")]
+    pub peer: Vec<String>,
+    /// Include every peer this project may use in packs (`--peers all`); any other value refused.
+    #[arg(long)]
+    pub peers: Option<String>,
 }
 
 /// Build the reviewer pack and its sidecar. Returns the process exit code.
@@ -71,7 +79,28 @@ pub fn run(args: PackArgs) -> i32 {
         conn,
     };
 
-    let pack = match reviewer::build(&opts) {
+    // Federation peers (M11): resolve the requested selection from the configuration, applying
+    // the `use_in_packs` gate. No `--peer` → a local pack, exactly as before.
+    let selection = match peer_selection(&args.peer, &args.peers) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("c3 pack: {e}");
+            return 1;
+        }
+    };
+    let peers = if selection.is_empty() {
+        Vec::new()
+    } else {
+        match reviewer::resolve_pack_peers(&opts.repo_root, &selection) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("c3 pack: {e}");
+                return 1;
+            }
+        }
+    };
+
+    let (pack, peer_stats) = match reviewer::build_with_peers(&opts, &peers) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("c3 pack: {e}");
@@ -89,6 +118,9 @@ pub fn run(args: PackArgs) -> i32 {
                 pack.periphery_shown,
                 pack.redactions
             );
+            for stat in &peer_stats {
+                println!("  {}", reviewer::peer_dry_run_line(stat));
+            }
             println!("Sidecar: {}", side.display());
             0
         }
@@ -97,4 +129,17 @@ pub fn run(args: PackArgs) -> i32 {
             1
         }
     }
+}
+
+/// Parse the peer selection from the flags, refusing an unknown `--peers` value.
+fn peer_selection(peer: &[String], peers: &Option<String>) -> Result<index::PeerSelection, String> {
+    let all = match peers.as_deref() {
+        None => false,
+        Some(v) if v.eq_ignore_ascii_case("all") => true,
+        Some(_) => return Err("--peers accepts only 'all'".to_string()),
+    };
+    Ok(index::PeerSelection {
+        all,
+        names: peer.to_vec(),
+    })
 }

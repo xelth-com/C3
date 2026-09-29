@@ -481,6 +481,7 @@ dependencies = [
  "surrealdb",
  "tokio",
  "ureq",
+ "url",
  "uuid",
 ]
 

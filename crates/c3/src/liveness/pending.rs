@@ -397,17 +397,132 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
             "state '{state}' from host {rec_host} without pids: treated as dead"
         ));
     }
-    // Reduced descendant/name scan: C3 does not run the machine-wide "looks like codex"
-    // scan; a record with no live recorded pid is judged inactive here.
-    let _ = is_panel;
-    let prefix = if recorded_gone.is_empty() {
-        String::new()
-    } else {
-        format!("{recorded_gone}; ")
+    let on_windows = cfg!(windows);
+    if is_panel && !on_windows {
+        // Orphans are reparented outside Windows: only the recorded pids tell.
+        let prefix = if recorded_gone.is_empty() {
+            String::new()
+        } else {
+            format!("{recorded_gone}; ")
+        };
+        return inactive(format!(
+            "{prefix}panel member record: judged by its recorded pids only (no process scan outside Windows)"
+        ));
+    }
+
+    // The machine-wide "looks like codex" scan (`Find-CodexProcesses`): the child may exist
+    // unregistered (launching) or as a descendant of a dead recorded process. READ-ONLY — it only
+    // enumerates and compares, it never stops anything.
+    let launcher = pv_str(record, "launcher", "");
+    let started = pv_str(record, "started", "");
+    let (since, since_text) = match chrono::DateTime::parse_from_rfc3339(&started) {
+        Ok(dt) => (
+            dt.with_timezone(&chrono::Utc),
+            dt.with_timezone(&chrono::Local)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string(),
+        ),
+        Err(_) => {
+            // No usable start: no age cut-off (everything counts), as the plugin's MinValue does.
+            let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap_or_default();
+            (
+                epoch,
+                epoch
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%dT%H:%M:%S")
+                    .to_string(),
+            )
+        }
     };
-    inactive(format!(
-        "{prefix}no live recorded process (C3 does not run the machine-wide codex scan)"
-    ))
+    let self_pid = std::process::id();
+
+    // Parent pids whose orphaned children would be ours: the bridge that wrote the record and every
+    // recorded pid (the launcher shim, the survivors). On Windows an orphan keeps its dead parent's
+    // pid; elsewhere only the command-line rule below can find them.
+    let mut parent_pids: Vec<u32> = Vec::new();
+    if writer_pid > 0 {
+        parent_pids.push(writer_pid as u32);
+    }
+    for p in &pids {
+        if p.pid > 0 && !parent_pids.contains(&p.pid) {
+            parent_pids.push(p.pid);
+        }
+    }
+
+    let all_procs = proc::enumerate_processes();
+    let mut checks: Vec<String> = Vec::new();
+    if !recorded_gone.is_empty() {
+        checks.push(recorded_gone.clone());
+    }
+    let mut scan: Option<proc::ScanOutcome> = None;
+    for parent in &parent_pids {
+        let s = proc::find_codex_processes(
+            &all_procs,
+            since,
+            &since_text,
+            &launcher,
+            *parent,
+            self_pid,
+            on_windows,
+        );
+        if !s.found.is_empty() {
+            scan = Some(s);
+            break;
+        }
+        checks.push(format!("{}: none found", s.check));
+    }
+
+    // A panel member's record stops here (recorded pids + their children only): the machine-wide
+    // name rule would take a live sibling member's reviewer for its orphan.
+    if is_panel && scan.as_ref().map(|s| s.found.is_empty()).unwrap_or(true) {
+        checks.push("panel member record: no machine-wide name scan".to_string());
+        return inactive(checks.join("; "));
+    }
+
+    // The parent-pid rule sees only direct children of a dead parent; a shim that died leaving its
+    // own child alive is found only by the name rule (labelled "task not verifiable"). No age
+    // cut-off.
+    if scan.as_ref().map(|s| s.found.is_empty()).unwrap_or(true) {
+        // Fetch command lines for the few recent candidates the name rules need (`Get-CodexRule`
+        // over the command line), then run the name-branch scan.
+        let mut procs = all_procs;
+        for p in procs.iter_mut() {
+            let recent = p.created.map(|c| c >= since).unwrap_or(false);
+            if recent && proc::codex_rule(&p.name, "", &launcher).is_empty() {
+                p.command_line = proc::process_command_line(p.pid);
+            }
+        }
+        scan = Some(proc::find_codex_processes(
+            &procs,
+            since,
+            &since_text,
+            &launcher,
+            0,
+            self_pid,
+            on_windows,
+        ));
+    }
+    let mut scan = scan.expect("scan is set by the name-branch fallback");
+    if !checks.is_empty() {
+        scan.check = format!("{}; then {}", checks.join("; "), scan.check);
+    }
+    if !scan.found.is_empty() {
+        let list = scan
+            .found
+            .iter()
+            .map(|f| format!("pid {} {} [{}]", f.pid, f.name, f.rule))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return active(
+            format!(
+                "an interrupted consultation ({what}) may still have its {cli} process running: {list}, found by {}. Wait for it to exit or stop it, then retry (or delete {} once you know it is unrelated).",
+                scan.check,
+                path.display()
+            ),
+            scan.check.clone(),
+        );
+    }
+    inactive(format!("{}: none found", scan.check))
 }
 
 fn pv_num(v: &Value) -> Option<i64> {

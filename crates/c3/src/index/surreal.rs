@@ -23,9 +23,23 @@ use surrealdb::engine::local::{Db, SurrealKv};
 use surrealdb::types::{RecordId, SurrealValue};
 use surrealdb::{Connection, Surreal};
 
+use std::time::Duration;
+
+use super::embed::{EmbedStats, Embedder};
 use super::extract::{derive_relations, extract_file, file_hash};
 use super::{Backend, Hit, IndexStats};
 use crate::pack::budget::estimate_tokens;
+
+/// Entities embedded per request to the local embedder.
+const EMBED_BATCH: usize = 64;
+/// Timeout for one `index embed` batch.
+const EMBED_TIMEOUT: Duration = Duration::from_secs(30);
+/// Timeout for embedding a retrieval query (retrieval falls back to BM25 if it is missed).
+const QUERY_EMBED_TIMEOUT: Duration = Duration::from_secs(2);
+/// Nearest neighbours the fifth retrieval leg contributes.
+const NN_TOP: usize = 20;
+/// KNN candidates fetched before stale vectors are filtered out.
+const NN_CANDIDATES: usize = 40;
 
 /// How many fused primary entities to open a retrieval on.
 const TOP_PRIMARY: usize = 12;
@@ -89,6 +103,13 @@ enum Handle {
 }
 
 /// A handle on an open SurrealDB index.
+///
+/// Note (RC1, surrealkv 0.21 on Windows): the embedded engine holds the store's OS file lock
+/// for the LIFETIME OF THE PROCESS — dropping the handle does not release it, so a given store
+/// path can be opened at most once per process (a re-open of the same path returns os error 33,
+/// regardless of drop or delay). Distinct store paths are independent, so federation opening a
+/// peer store (a different path from the local index) works; a peer opened by C3 in one command
+/// is that path's only open in that process.
 pub struct SurrealIndex {
     rt: tokio::runtime::Runtime,
     handle: Handle,
@@ -297,6 +318,141 @@ impl SurrealIndex {
                 match &self.handle {
                     Handle::Local(db) => do_stats(db, &name, &endpoint).await,
                     Handle::Any(db) => do_stats(db, &name, &endpoint).await,
+                }
+            })
+            .map_err(|e| redact_err(&e))
+    }
+
+    /// Whether the store carries the C3 index schema (an `entity` table that answers a count).
+    /// A store that is not a C3 index — a different schema, or an empty non-index store — makes
+    /// the probe fail, so `c3 index peers` reports `schema mismatch`.
+    pub fn schema_ok(&self) -> bool {
+        self.rt
+            .block_on(async {
+                match &self.handle {
+                    Handle::Local(db) => probe_schema(db).await,
+                    Handle::Any(db) => probe_schema(db).await,
+                }
+            })
+            .unwrap_or(false)
+    }
+
+    /// Compute and store vectors for entities that have none or whose text changed (M11).
+    ///
+    /// Text sent to the embedder is the entity's stored `code`, re-passed through the single
+    /// sanitizer, in batches of [`EMBED_BATCH`] with a 30 s timeout and no redirects. A batch
+    /// the embedder cannot answer, or whose response has the wrong count/dimension/finiteness,
+    /// stores NOTHING and is reported as failed; the run goes on. `limit` bounds the entities
+    /// processed. The HNSW index is (re)defined for the model's dimension.
+    pub fn embed(&self, embedder: &Embedder, limit: Option<usize>) -> Result<EmbedStats, String> {
+        let model = embedder.model().to_string();
+        let dim = embedder.dimension() as u32;
+
+        // 1. The entities that need a (fresh) vector.
+        let candidates = self
+            .rt
+            .block_on(async {
+                match &self.handle {
+                    Handle::Local(db) => fetch_embed_candidates(db, &model, dim).await,
+                    Handle::Any(db) => fetch_embed_candidates(db, &model, dim).await,
+                }
+            })
+            .map_err(|e| redact_err(&e))?;
+        let considered = candidates.len();
+        let work = match limit {
+            Some(l) => &candidates[..l.min(candidates.len())],
+            None => &candidates[..],
+        };
+
+        // 2. (Re)define the HNSW index for this dimension — best effort; if the store rejects
+        //    the definition retrieval still works via a brute-force cosine over current vectors.
+        let _ = self.rt.block_on(async {
+            match &self.handle {
+                Handle::Local(db) => ensure_hnsw(db, dim).await,
+                Handle::Any(db) => ensure_hnsw(db, dim).await,
+            }
+        });
+
+        // 3. Embed batch by batch; store only whole, well-formed batches.
+        let mut embedded = 0usize;
+        let mut failed_batches = 0usize;
+        for chunk in work.chunks(EMBED_BATCH) {
+            let texts: Vec<String> = chunk
+                .iter()
+                .map(|c| crate::pack::redact::redact(&c.code).0)
+                .collect();
+            match embedder.embed_batch(&texts, EMBED_TIMEOUT) {
+                Ok(vectors) if vectors.len() == chunk.len() => {
+                    self.rt
+                        .block_on(async {
+                            match &self.handle {
+                                Handle::Local(db) => {
+                                    store_vectors(db, chunk, &vectors, &model, dim).await
+                                }
+                                Handle::Any(db) => {
+                                    store_vectors(db, chunk, &vectors, &model, dim).await
+                                }
+                            }
+                        })
+                        .map_err(|e| redact_err(&e))?;
+                    embedded += chunk.len();
+                }
+                _ => failed_batches += 1,
+            }
+        }
+
+        // 4. Record the model/dimension so `stats` can report it and a change is detected.
+        self.rt
+            .block_on(async {
+                match &self.handle {
+                    Handle::Local(db) => store_emb_meta(db, &model, dim).await,
+                    Handle::Any(db) => store_emb_meta(db, &model, dim).await,
+                }
+            })
+            .map_err(|e| redact_err(&e))?;
+
+        Ok(EmbedStats {
+            embedded,
+            considered,
+            failed_batches,
+            model,
+            dimension: dim as usize,
+        })
+    }
+
+    /// Retrieval with the embedding leg (M11): embed the query on the local embedder within a
+    /// 2 s budget and join the nearest-neighbour leg to the four BM25 legs. If the embedder does
+    /// not answer, or has no current vectors, retrieval is the four BM25 legs, exactly as before.
+    pub fn retrieve_embedded(
+        &self,
+        query: &str,
+        budget: usize,
+        embedder: &Embedder,
+    ) -> Result<Vec<Hit>, String> {
+        let model = embedder.model().to_string();
+        let dim = embedder.dimension() as u32;
+        // Embed the query (sync HTTP, off the async core). A miss → no NN leg.
+        let qvec = match embedder.embed_batch(&[query.to_string()], QUERY_EMBED_TIMEOUT) {
+            Ok(mut v) if v.len() == 1 => Some(v.remove(0)),
+            _ => None,
+        };
+        let nn = match qvec {
+            Some(v) => self
+                .rt
+                .block_on(async {
+                    match &self.handle {
+                        Handle::Local(db) => nn_leg(db, &v, &model, dim).await,
+                        Handle::Any(db) => nn_leg(db, &v, &model, dim).await,
+                    }
+                })
+                .ok(),
+            None => None,
+        };
+        self.rt
+            .block_on(async {
+                match &self.handle {
+                    Handle::Local(db) => do_retrieve_with(db, query, budget, nn).await,
+                    Handle::Any(db) => do_retrieve_with(db, query, budget, nn).await,
                 }
             })
             .map_err(|e| redact_err(&e))
@@ -631,12 +787,31 @@ async fn do_retrieve<C: Connection>(
     query: &str,
     budget: usize,
 ) -> Result<Vec<Hit>, String> {
+    do_retrieve_with(db, query, budget, None).await
+}
+
+/// The shared retrieval, optionally joined by a fifth nearest-neighbour leg (M11): `nn_leg`
+/// is the ranked entity-id list from the embedding index. When present it is fused with the
+/// four BM25 legs by the same reciprocal-rank fusion; when absent retrieval is exactly the four
+/// BM25 legs, as before embeddings.
+async fn do_retrieve_with<C: Connection>(
+    db: &Surreal<C>,
+    query: &str,
+    budget: usize,
+    nn_leg: Option<Vec<String>>,
+) -> Result<Vec<Hit>, String> {
     let profile = std::env::var("C3_INDEX_PROFILE").is_ok();
 
-    // 1. The four BM25 legs in one round trip, fused by RRF.
+    // 1. The four BM25 legs in one round trip, fused by RRF; the NN leg (when embeddings are on
+    //    and the embedder answered) joins as a fifth leg.
     let t = std::time::Instant::now();
-    let rankings = bm25_legs(db, query).await?;
+    let mut rankings = bm25_legs(db, query).await?;
     prof(profile, "bm25_legs (4-in-1)", t);
+    if let Some(nn) = nn_leg {
+        if !nn.is_empty() {
+            rankings.push(nn);
+        }
+    }
 
     let fused = super::rrf(&rankings, 60.0);
     let primary_ids: Vec<String> = fused
@@ -853,6 +1028,13 @@ async fn do_stats<C: Connection>(
     let calls = count(db, "SELECT count() FROM calls GROUP ALL").await?;
     let relates_to = count(db, "SELECT count() FROM relates_to GROUP ALL").await?;
     let generation = read_generation(db).await?;
+    let vectors = count(
+        db,
+        "SELECT count() FROM entity WHERE embedding != NONE GROUP ALL",
+    )
+    .await
+    .unwrap_or(0);
+    let (vector_model, vector_dim) = read_emb_meta(db).await.unwrap_or((None, None));
     Ok(IndexStats {
         backend: backend_name.to_string(),
         path: Some(endpoint.to_string()),
@@ -863,6 +1045,9 @@ async fn do_stats<C: Connection>(
         calls,
         relates_to,
         generation,
+        vectors,
+        vector_model,
+        vector_dim,
     })
 }
 
@@ -881,6 +1066,247 @@ async fn read_generation<C: Connection>(db: &Surreal<C>) -> Result<Option<String
     Ok(rows.into_iter().next().map(|r| r.value))
 }
 
+// --------------------------------------------------------------------------- embeddings (M11)
+
+/// An entity that needs a (fresh) vector: its id, the stored code to embed and its content hash.
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
+struct EmbedCandidate {
+    id: String,
+    code: String,
+    content_hash: String,
+}
+
+/// The embedding provenance of a KNN candidate, used to drop stale vectors at retrieval.
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
+struct EmbNnRow {
+    id: String,
+    #[serde(default)]
+    emb_model: Option<String>,
+    #[serde(default)]
+    emb_dim: Option<i64>,
+    #[serde(default)]
+    emb_hash: Option<String>,
+    #[serde(default)]
+    content_hash: String,
+}
+
+/// A current-vector row for the brute-force fallback.
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
+struct EmbVecRow {
+    id: String,
+    #[serde(default)]
+    embedding: Vec<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
+struct EmbMetaRow {
+    value: String,
+    #[serde(default)]
+    dim: i64,
+}
+
+/// Whether the store answers a count over the `entity` table — the C3 index schema probe.
+async fn probe_schema<C: Connection>(db: &Surreal<C>) -> Result<bool, String> {
+    db.query("SELECT count() FROM entity GROUP ALL")
+        .await
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Entities that lack a current vector for `model`/`dim` (missing, a different model/dimension,
+/// or a content hash that no longer matches the vector). Dir/empty-code rows are skipped.
+async fn fetch_embed_candidates<C: Connection>(
+    db: &Surreal<C>,
+    model: &str,
+    dim: u32,
+) -> Result<Vec<EmbedCandidate>, String> {
+    let mut resp = db
+        .query(
+            "SELECT record::id(id) AS id, code, content_hash FROM entity \
+             WHERE code != '' AND (emb_hash = NONE OR emb_model != $model OR emb_dim != $dim OR emb_hash != content_hash) \
+             ORDER BY id",
+        )
+        .bind(("model", model.to_string()))
+        .bind(("dim", dim as i64))
+        .await
+        .map_err(|e| e.to_string())?;
+    resp.take(0).map_err(|e| e.to_string())
+}
+
+/// Store one batch of vectors on their entities (id → vector, model, dim, source hash).
+async fn store_vectors<C: Connection>(
+    db: &Surreal<C>,
+    chunk: &[EmbedCandidate],
+    vectors: &[Vec<f32>],
+    model: &str,
+    dim: u32,
+) -> Result<(), String> {
+    for (cand, vec) in chunk.iter().zip(vectors.iter()) {
+        let v: Vec<f64> = vec.iter().map(|x| *x as f64).collect();
+        let _: Option<serde_json::Value> = db
+            .update(("entity", cand.id.as_str()))
+            .merge(serde_json::json!({
+                "embedding": v,
+                "emb_model": model,
+                "emb_dim": dim as i64,
+                "emb_hash": cand.content_hash,
+            }))
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Record the current embedding model and dimension (for `stats` and dimension-change detection).
+async fn store_emb_meta<C: Connection>(
+    db: &Surreal<C>,
+    model: &str,
+    dim: u32,
+) -> Result<(), String> {
+    let _: Option<serde_json::Value> = db
+        .upsert(("meta", "embedding"))
+        .content(serde_json::json!({ "value": model, "dim": dim as i64 }))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The stored embedding model and dimension, or `(None, None)` when nothing was embedded.
+async fn read_emb_meta<C: Connection>(
+    db: &Surreal<C>,
+) -> Result<(Option<String>, Option<u32>), String> {
+    let mut resp = db
+        .query("SELECT `value`, dim FROM meta:embedding")
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<EmbMetaRow> = resp.take(0).map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .next()
+        .map(|r| (Some(r.value), Some(r.dim.max(0) as u32)))
+        .unwrap_or((None, None)))
+}
+
+/// (Re)define the HNSW index for `dim`, dropping the old one when the dimension changed. Best
+/// effort: on a store that rejects HNSW, retrieval falls back to a brute-force cosine.
+async fn ensure_hnsw<C: Connection>(db: &Surreal<C>, dim: u32) -> Result<(), String> {
+    let (_, stored_dim) = read_emb_meta(db).await.unwrap_or((None, None));
+    if stored_dim == Some(dim) {
+        return Ok(());
+    }
+    let sql = format!(
+        "REMOVE INDEX IF EXISTS emb_hnsw ON entity; \
+         DEFINE INDEX IF NOT EXISTS emb_hnsw ON entity FIELDS embedding HNSW DIMENSION {dim} DIST COSINE;"
+    );
+    db.query(sql)
+        .await
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// The nearest-neighbour leg: the ids of the top [`NN_TOP`] entities by cosine similarity to
+/// `qvec` whose vector is CURRENT (matching `model`/`dim` and its own content hash). Tries the
+/// HNSW KNN operator; on any store error falls back to a brute-force cosine over current rows.
+async fn nn_leg<C: Connection>(
+    db: &Surreal<C>,
+    qvec: &[f32],
+    model: &str,
+    dim: u32,
+) -> Result<Vec<String>, String> {
+    let q: Vec<f64> = qvec.iter().map(|x| *x as f64).collect();
+    match knn_candidates(db, &q).await {
+        Ok(rows) => {
+            let ids: Vec<String> = rows
+                .into_iter()
+                .filter(|r| {
+                    r.emb_model.as_deref() == Some(model)
+                        && r.emb_dim == Some(dim as i64)
+                        && r.emb_hash.as_deref() == Some(r.content_hash.as_str())
+                })
+                .map(|r| r.id)
+                .take(NN_TOP)
+                .collect();
+            Ok(ids)
+        }
+        Err(_) => brute_force_nn(db, &q, model, dim).await,
+    }
+}
+
+/// KNN candidates via the HNSW index. An error (no index, unsupported operator) makes the caller
+/// fall back to brute force.
+async fn knn_candidates<C: Connection>(
+    db: &Surreal<C>,
+    q: &[f64],
+) -> Result<Vec<EmbNnRow>, String> {
+    let sql = format!(
+        "SELECT record::id(id) AS id, emb_model, emb_dim, emb_hash, content_hash FROM entity \
+         WHERE embedding <|{NN_CANDIDATES}|> $q"
+    );
+    let mut resp = db
+        .query(sql)
+        .bind(("q", q.to_vec()))
+        .await
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| e.to_string())?;
+    resp.take(0).map_err(|e| e.to_string())
+}
+
+/// Brute-force cosine over current vectors (the fallback when HNSW is unavailable).
+async fn brute_force_nn<C: Connection>(
+    db: &Surreal<C>,
+    q: &[f64],
+    model: &str,
+    dim: u32,
+) -> Result<Vec<String>, String> {
+    let mut resp = db
+        .query(
+            "SELECT record::id(id) AS id, embedding FROM entity \
+             WHERE emb_model = $model AND emb_dim = $dim AND emb_hash = content_hash",
+        )
+        .bind(("model", model.to_string()))
+        .bind(("dim", dim as i64))
+        .await
+        .map_err(|e| e.to_string())?;
+    let rows: Vec<EmbVecRow> = resp.take(0).map_err(|e| e.to_string())?;
+    let mut scored: Vec<(f64, String)> = rows
+        .into_iter()
+        .filter_map(|r| {
+            let s = cosine(q, &r.embedding)?;
+            Some((s, r.id))
+        })
+        .collect();
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    Ok(scored.into_iter().take(NN_TOP).map(|(_, id)| id).collect())
+}
+
+/// Cosine similarity, or `None` when a vector is empty, mismatched or zero-norm.
+fn cosine(a: &[f64], b: &[f64]) -> Option<f64> {
+    if a.is_empty() || a.len() != b.len() {
+        return None;
+    }
+    let mut dot = 0.0;
+    let mut na = 0.0;
+    let mut nb = 0.0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        na += x * x;
+        nb += y * y;
+    }
+    if na == 0.0 || nb == 0.0 {
+        return None;
+    }
+    Some(dot / (na.sqrt() * nb.sqrt()))
+}
+
 fn row_to_hit(row: Row, score: f64, relations: Vec<String>) -> Hit {
     Hit {
         path: row.path,
@@ -891,6 +1317,7 @@ fn row_to_hit(row: Row, score: f64, relations: Vec<String>) -> Hit {
         snippet: row.code,
         score,
         relations,
+        source: "local".to_string(),
     }
 }
 

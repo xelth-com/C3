@@ -178,6 +178,17 @@ hash.
   directories (`.collab/`, `.eck/`, `.claude/`) never enter the periphery unless the focus names the path -
   a reviewer stays independent of the other reviewers' replies. A pack build never creates a store; with no
   index the pack is byte-identical to the lexical one.
+- RC1, refined (2026-09-30): the lock of an embedded store lasts for the LIFE OF THE PROCESS, not of the handle - a
+  second open of the same path in the same process fails with os error 33 even after the first was dropped. A command
+  therefore opens each store path once. The local index and every peer have different paths, so federation is not
+  affected; a long-lived process (the MCP server) reaches the index only through a child process per call.
+- Federation and embeddings as built (M11, `docs/port/m11-spec.md`): the user's `<codex home>/c3/config.json` names
+  peers and an embedder PER PROJECT (no wildcard; unknown keys refused; nothing in it is a secret). A peer is read-only
+  and invisible to a project it was not given to; a hit of a peer is an excerpt of the peer's index, never a file read
+  from another project; peer content enters a pack only when the peer says `use_in_packs` AND the command names it,
+  in its own section, through the single sanitizer. The embedder must listen on loopback (the parsed host and the
+  resolved address); a vector that is missing, of the wrong dimension or not finite is no vector; retrieval gains a
+  fifth leg only when the embedder answers, and falls back to the four BM25 legs otherwise.
 - Federation, opt-in: an index may read from or sync with another SurrealDB instance (another project's index, the
   per-user hub, a sibling tool such as xelixir) only when the user has allowed that connection explicitly, per
   connection, in config; never on by default. The xelth.rs `kb_sync` selective-sync pattern is the template; the

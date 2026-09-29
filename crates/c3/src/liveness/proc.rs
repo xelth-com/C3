@@ -131,6 +131,198 @@ pub fn same_start_time(a: &str, b: &str) -> bool {
     }
 }
 
+// ------------------------------------------------------------- machine-wide codex scan (rows (b))
+// Ported from `Find-CodexProcesses` / `Get-CodexRule` (`codex-consult-common.ps1:8022`, `:7943`).
+// A `launching` recovery record whose process is not registered yet — or a record whose every
+// recorded pid is gone — is judged by a READ-ONLY scan of the process table: it enumerates and
+// compares parents/start-times/names, it never stops anything. The rule logic is a pure function
+// over a process list so it is proven by unit tests without touching the machine.
+
+/// One process-table row for the scan: pid, parent pid, image name (with extension, as
+/// `Win32_Process.Name`), creation time (`None` when it could not be read), and command line
+/// (empty unless fetched for a candidate that passed the name+time rules).
+#[derive(Debug, Clone)]
+pub struct ScanProc {
+    pub pid: u32,
+    pub ppid: u32,
+    pub name: String,
+    pub created: Option<chrono::DateTime<chrono::Utc>>,
+    pub command_line: String,
+}
+
+/// A process the scan attributes to an interrupted run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundProc {
+    pub pid: u32,
+    pub name: String,
+    pub rule: String,
+}
+
+/// The outcome of one scan pass (`Find-CodexProcesses`'s return object).
+#[derive(Debug, Clone)]
+pub struct ScanOutcome {
+    pub found: Vec<FoundProc>,
+    pub check: String,
+    pub failed: bool,
+}
+
+/// `Get-CodexRule`: why a process looks like codex (the rule label), or `""` when it does not.
+/// `name` is the image name (with or without `.exe`), `cmd` its command line, `launcher` the
+/// recorded launcher path (empty when none).
+pub fn codex_rule(name: &str, cmd: &str, launcher: &str) -> String {
+    let name_l = name.to_ascii_lowercase();
+    if name_l == "codex" || name_l == "codex.exe" {
+        return "name codex".to_string();
+    }
+    if !launcher.is_empty() && !name.is_empty() {
+        let path = std::path::Path::new(launcher);
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        let base = path
+            .file_stem()
+            .map(|b| b.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let name_base = if name_l.ends_with(".exe") {
+            &name[..name.len() - 4]
+        } else {
+            name
+        };
+        if !base.is_empty()
+            && (ext.is_empty() || ext == "exe")
+            && name_base.eq_ignore_ascii_case(&base)
+        {
+            return format!("name {base} (the recorded launcher)");
+        }
+    }
+    if !launcher.is_empty()
+        && !cmd.is_empty()
+        && cmd
+            .to_ascii_lowercase()
+            .contains(&launcher.to_ascii_lowercase())
+    {
+        return "launcher in command line".to_string();
+    }
+    let cmd_l = cmd.to_ascii_lowercase();
+    if cmd_l.contains("@openai/codex") || cmd_l.contains("@openai\\codex") {
+        return "@openai/codex in command line".to_string();
+    }
+    String::new()
+}
+
+/// `Find-CodexProcesses` over a given process list (pure). `since_text` is the pre-formatted
+/// "started at or after" stamp for the message; `since` is the same instant for the comparison.
+/// With a bridge pid on Windows, a process counts when its parent is that pid and it started at or
+/// after `since` (and, if the pid was reused by a live process, before that reuse). Otherwise the
+/// machine-wide "looks like codex" rule applies (labelled "task not verifiable"). This process and
+/// its ancestors are never counted.
+#[allow(clippy::too_many_arguments)]
+pub fn find_codex_processes(
+    procs: &[ScanProc],
+    since: chrono::DateTime<chrono::Utc>,
+    since_text: &str,
+    launcher: &str,
+    bridge_pid: u32,
+    self_pid: u32,
+    on_windows: bool,
+) -> ScanOutcome {
+    let by_parent = on_windows && bridge_pid > 0;
+    let rules = if by_parent {
+        format!("children of the interrupted bridge pid {bridge_pid}")
+    } else {
+        "name codex*, or a command line containing the recorded launcher or @openai/codex"
+            .to_string()
+    };
+    let scanner = if on_windows {
+        "Win32_Process scan"
+    } else {
+        "ps scan"
+    };
+    let check = format!("{scanner} ({rules}; started at or after {since_text})");
+
+    use std::collections::{HashMap, HashSet};
+    let by_id: HashMap<u32, &ScanProc> = procs.iter().map(|p| (p.pid, p)).collect();
+    // Never count ourselves or our ancestors (a shell that started this run may carry the launcher
+    // path on its command line).
+    let mut excluded: HashSet<u32> = HashSet::new();
+    let mut cur = self_pid;
+    let mut guard = 0;
+    while guard < 64 && cur > 0 && !excluded.contains(&cur) {
+        excluded.insert(cur);
+        match by_id.get(&cur) {
+            Some(p) => cur = p.ppid,
+            None => break,
+        }
+        guard += 1;
+    }
+
+    let mut found = Vec::new();
+    if by_parent {
+        // A live process holding the bridge's pid now is a reuse; only children created before it
+        // started are ours.
+        let reused_at = by_id.get(&bridge_pid).and_then(|p| p.created);
+        for p in procs {
+            if excluded.contains(&p.pid) || p.ppid != bridge_pid {
+                continue;
+            }
+            match p.created {
+                None => continue,
+                Some(c) if c < since => continue,
+                Some(c) => {
+                    if let Some(r) = reused_at {
+                        if c >= r {
+                            continue;
+                        }
+                    }
+                }
+            }
+            found.push(FoundProc {
+                pid: p.pid,
+                name: p.name.clone(),
+                rule: format!("child of the interrupted bridge (ppid {bridge_pid})"),
+            });
+        }
+    } else {
+        for p in procs {
+            if excluded.contains(&p.pid) {
+                continue;
+            }
+            match p.created {
+                None => continue,
+                Some(c) if c < since => continue,
+                _ => {}
+            }
+            let rule = codex_rule(&p.name, &p.command_line, launcher);
+            if !rule.is_empty() {
+                found.push(FoundProc {
+                    pid: p.pid,
+                    name: p.name.clone(),
+                    rule: format!("{rule}, task not verifiable"),
+                });
+            }
+        }
+    }
+    ScanOutcome {
+        found,
+        check,
+        failed: false,
+    }
+}
+
+/// The whole process table for the scan (Toolhelp names/parents + `GetProcessTimes` start times on
+/// Windows; command lines are left empty and fetched per-candidate by [`process_command_line`]).
+pub fn enumerate_processes() -> Vec<ScanProc> {
+    imp::enumerate_processes()
+}
+
+/// A process's command line, best effort (empty when it cannot be read — another user's process, a
+/// protected process, or access denied). Windows: `NtQueryInformationProcess`
+/// `ProcessCommandLineInformation`.
+pub fn process_command_line(pid: u32) -> String {
+    imp::process_command_line(pid)
+}
+
 #[cfg(windows)]
 #[allow(clippy::upper_case_acronyms)]
 mod imp {
@@ -179,6 +371,122 @@ mod imp {
         fn CreateToolhelp32Snapshot(flags: DWORD, pid: DWORD) -> HANDLE;
         fn Process32FirstW(snap: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
         fn Process32NextW(snap: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
+    }
+
+    extern "system" {
+        // ntdll: NTSTATUS NtQueryInformationProcess(HANDLE, PROCESSINFOCLASS, PVOID, ULONG, PULONG)
+        fn NtQueryInformationProcess(
+            handle: HANDLE,
+            class: u32,
+            info: *mut core::ffi::c_void,
+            info_len: u32,
+            ret_len: *mut u32,
+        ) -> i32;
+    }
+
+    /// The whole process table (pid, ppid, image name, creation time). Command lines are left empty
+    /// and fetched per-candidate later (`process_command_line`).
+    pub fn enumerate_processes() -> Vec<super::ScanProc> {
+        let mut out = Vec::new();
+        // SAFETY: the snapshot handle is checked and closed; the PROCESSENTRY32W is owned and its
+        // dw_size is set as the API requires.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap == INVALID_HANDLE_VALUE || snap == 0 {
+                return out;
+            }
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dw_size = std::mem::size_of::<PROCESSENTRY32W>() as DWORD;
+            if Process32FirstW(snap, &mut entry) != 0 {
+                loop {
+                    let pid = entry.th32_process_id;
+                    let ppid = entry.th32_parent_process_id;
+                    let n = entry
+                        .sz_exe_file
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.sz_exe_file.len());
+                    let name = String::from_utf16_lossy(&entry.sz_exe_file[..n]);
+                    let created = super::process_start_iso(pid).and_then(|s| {
+                        if s.is_empty() {
+                            None
+                        } else {
+                            chrono::DateTime::parse_from_rfc3339(&s)
+                                .ok()
+                                .map(|d| d.with_timezone(&chrono::Utc))
+                        }
+                    });
+                    out.push(super::ScanProc {
+                        pid,
+                        ppid,
+                        name,
+                        created,
+                        command_line: String::new(),
+                    });
+                    if Process32NextW(snap, &mut entry) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snap);
+        }
+        out
+    }
+
+    /// The command line of `pid` via `NtQueryInformationProcess(ProcessCommandLineInformation)`
+    /// (class 60, Windows 8.1+). Best effort: `""` on any failure — a process of another user, a
+    /// protected process, or a denied query. The returned buffer is a `UNICODE_STRING` (16 bytes on
+    /// x64) whose string data follows it in the same allocation.
+    pub fn process_command_line(pid: u32) -> String {
+        const PROCESS_COMMAND_LINE_INFORMATION: u32 = 60;
+        const STATUS_INFO_LENGTH_MISMATCH: i32 = i32::from_ne_bytes(0xC000_0004u32.to_ne_bytes());
+        // SAFETY: the handle is closed on every path; NtQueryInformationProcess writes at most
+        // `info_len` bytes into a buffer we own, and reports the needed length via `ret_len`.
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h == 0 {
+                return String::new();
+            }
+            let mut ret_len: u32 = 0;
+            let status = NtQueryInformationProcess(
+                h,
+                PROCESS_COMMAND_LINE_INFORMATION,
+                std::ptr::null_mut(),
+                0,
+                &mut ret_len,
+            );
+            if (status != STATUS_INFO_LENGTH_MISMATCH && status != 0) || ret_len == 0 {
+                CloseHandle(h);
+                return String::new();
+            }
+            let mut buf = vec![0u8; ret_len as usize];
+            let status = NtQueryInformationProcess(
+                h,
+                PROCESS_COMMAND_LINE_INFORMATION,
+                buf.as_mut_ptr() as *mut core::ffi::c_void,
+                ret_len,
+                &mut ret_len,
+            );
+            CloseHandle(h);
+            if status != 0 {
+                return String::new();
+            }
+            // UNICODE_STRING { USHORT Length; USHORT MaximumLength; [pad] PWSTR Buffer }: 16 bytes
+            // on x64, 8 on x86 (= 2 * pointer size); the string bytes follow it in the same buffer.
+            let header = 2 * std::mem::size_of::<usize>();
+            if buf.len() < 2 {
+                return String::new();
+            }
+            let length = u16::from_ne_bytes([buf[0], buf[1]]) as usize; // bytes
+            if length == 0 || header + length > buf.len() {
+                return String::new();
+            }
+            let units: Vec<u16> = buf[header..header + length]
+                .chunks_exact(2)
+                .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+                .collect();
+            String::from_utf16_lossy(&units)
+        }
     }
 
     /// The parent pid of `pid` from a Toolhelp process snapshot, or `None`.
@@ -283,6 +591,58 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    /// The process table via `/proc` (best effort): pid, ppid, comm, start time. Command lines are
+    /// left empty and fetched per-candidate. Non-Windows is a best-effort fallback (the harnesses
+    /// run on Windows).
+    pub fn enumerate_processes() -> Vec<super::ScanProc> {
+        let mut out = Vec::new();
+        let rd = match std::fs::read_dir("/proc") {
+            Ok(r) => r,
+            Err(_) => return out,
+        };
+        for ent in rd.flatten() {
+            let name = ent.file_name();
+            let pid: u32 = match name.to_string_lossy().parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let ppid = super::imp::parent_pid(pid).unwrap_or(0);
+            let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            let created = super::process_start_iso(pid).and_then(|s| {
+                if s.is_empty() {
+                    None
+                } else {
+                    chrono::DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|d| d.with_timezone(&chrono::Utc))
+                }
+            });
+            out.push(super::ScanProc {
+                pid,
+                ppid,
+                name: comm,
+                created,
+                command_line: String::new(),
+            });
+        }
+        out
+    }
+
+    /// The command line of `pid` from `/proc/<pid>/cmdline` (NUL-separated), best effort.
+    pub fn process_command_line(pid: u32) -> String {
+        std::fs::read(format!("/proc/{pid}/cmdline"))
+            .map(|b| {
+                b.split(|&c| c == 0)
+                    .map(|s| String::from_utf8_lossy(s).to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default()
+    }
+
     /// Poll the bridge pid (best effort) and force-exit when it disappears. No held-handle wait on
     /// Unix; the start-time check guards against pid reuse.
     pub fn spawn_bridge_watchdog(pid: u32) {
@@ -345,5 +705,113 @@ mod tests {
         assert!(!is_ancestor_of_self(4));
         // This process's own pid is not its own ancestor.
         assert!(!is_ancestor_of_self(std::process::id()));
+    }
+
+    // ---- the machine-wide codex scan (rows (b)), proven over synthetic process lists ----
+
+    fn at(secs: i64) -> Option<chrono::DateTime<chrono::Utc>> {
+        chrono::DateTime::from_timestamp(1_700_000_000 + secs, 0)
+    }
+
+    fn p(pid: u32, ppid: u32, name: &str, created: i64, cmd: &str) -> ScanProc {
+        ScanProc {
+            pid,
+            ppid,
+            name: name.to_string(),
+            created: at(created),
+            command_line: cmd.to_string(),
+        }
+    }
+
+    #[test]
+    fn codex_rule_matches_the_plugin() {
+        assert_eq!(codex_rule("codex.exe", "", ""), "name codex");
+        assert_eq!(codex_rule("CODEX", "", ""), "name codex");
+        // recorded launcher basename: only an .exe/extensionless launcher matches by name (a .cmd
+        // launcher matches by command line instead, below).
+        assert_eq!(
+            codex_rule("zcode.exe", "", r"C:\tools\zcode.exe"),
+            "name zcode (the recorded launcher)"
+        );
+        assert_eq!(
+            codex_rule("zcode.exe", "", r"C:\tools\zcode.cmd"),
+            "",
+            "a .cmd launcher does not match by process name"
+        );
+        // launcher path on the command line
+        assert_eq!(
+            codex_rule(
+                "node.exe",
+                r"node C:\tools\zcode.cmd run",
+                r"C:\tools\zcode.cmd"
+            ),
+            "launcher in command line"
+        );
+        // the npm shim
+        assert_eq!(
+            codex_rule("node.exe", r"node C:\n\@openai\codex\bin\codex.js", ""),
+            "@openai/codex in command line"
+        );
+        // unrelated
+        assert_eq!(
+            codex_rule("powershell.exe", "powershell -File x.ps1", ""),
+            ""
+        );
+    }
+
+    #[test]
+    fn scan_by_parent_finds_children_since_and_honours_reuse_and_exclusion() {
+        let since = at(100).unwrap();
+        // bridge pid 1000 is gone (not in the list); its child 1200 started after `since`.
+        // 1300 is an unrelated child of another pid. self is 42 with parent 7 — both excluded.
+        let procs = vec![
+            p(1200, 1000, "codex.exe", 150, ""),
+            p(1300, 9, "codex.exe", 150, ""),
+            p(42, 7, "c3.exe", 150, ""),
+            p(7, 1, "shim.exe", 90, ""),
+        ];
+        let out = find_codex_processes(&procs, since, "2023-11-14T22:13:20", "", 1000, 42, true);
+        assert!(out
+            .check
+            .contains("children of the interrupted bridge pid 1000"));
+        assert_eq!(out.found.len(), 1);
+        assert_eq!(out.found[0].pid, 1200);
+        assert!(out.found[0]
+            .rule
+            .contains("child of the interrupted bridge (ppid 1000)"));
+
+        // A live process now HOLDS the reused bridge pid (started at 140): only children created
+        // before 140 count — 1200 (started 150) is now excluded.
+        let mut procs2 = procs.clone();
+        procs2.push(p(1000, 1, "other.exe", 140, ""));
+        let out2 = find_codex_processes(&procs2, since, "t", "", 1000, 42, true);
+        assert!(out2.found.is_empty(), "child after the reuse is not ours");
+    }
+
+    #[test]
+    fn scan_by_name_respects_since_and_self_exclusion() {
+        let since = at(100).unwrap();
+        let procs = vec![
+            p(2000, 1, "codex.exe", 150, ""),                // matches, recent
+            p(2001, 1, "codex.exe", 50, ""),                 // too old
+            p(2002, 1, "powershell.exe", 150, "powershell"), // not codex
+            p(42, 7, "codex.exe", 150, ""),                  // us — excluded
+        ];
+        let out = find_codex_processes(&procs, since, "t", "", 0, 42, true);
+        assert!(out.check.contains(
+            "name codex*, or a command line containing the recorded launcher or @openai/codex"
+        ));
+        assert_eq!(out.found.len(), 1);
+        assert_eq!(out.found[0].pid, 2000);
+        assert!(out.found[0].rule.ends_with(", task not verifiable"));
+    }
+
+    #[test]
+    fn scan_by_name_finds_a_launcher_on_the_command_line() {
+        let since = at(0).unwrap();
+        let procs = vec![p(3000, 1, "node.exe", 10, r"node C:\tools\zcode.cmd exec")];
+        let out = find_codex_processes(&procs, since, "t", r"C:\tools\zcode.cmd", 0, 1, true);
+        assert_eq!(out.found.len(), 1);
+        assert!(out.found[0].rule.starts_with("launcher in command line"));
     }
 }

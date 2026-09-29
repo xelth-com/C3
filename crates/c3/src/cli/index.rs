@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Subcommand};
 
+use crate::c3config;
 use crate::index::{self, IndexStats};
 use crate::providers;
 
@@ -32,6 +33,10 @@ pub enum Action {
     Query(QueryArgs),
     /// Counts per table, the generation, the backend and its path.
     Stats(StatsArgs),
+    /// List the federation peers this project may use, and whether each opens (M11).
+    Peers(PeersArgs),
+    /// Compute embedding vectors for entities that have none (local embedder only; M11).
+    Embed(EmbedArgs),
 }
 
 #[derive(Args, Debug, Default)]
@@ -64,6 +69,33 @@ pub struct QueryArgs {
     /// Emit JSON instead of the rendered hits.
     #[arg(long)]
     pub json: bool,
+    /// Also query a federation peer by name (repeatable; M11). The peer must be allowed for this
+    /// project in the configuration. Every hit is tagged `local` or `peer:<name>`.
+    #[arg(long = "peer")]
+    pub peer: Vec<String>,
+    /// Query every peer this project may use (`--peers all`); any other value is refused.
+    #[arg(long)]
+    pub peers: Option<String>,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct PeersArgs {
+    #[arg(long, default_value = ".collab")]
+    pub collab_dir: String,
+    /// Emit JSON instead of the rendered list.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug, Default)]
+pub struct EmbedArgs {
+    #[arg(long, default_value = ".collab")]
+    pub collab_dir: String,
+    #[arg(long)]
+    pub conn: Option<String>,
+    /// Bound the entities embedded in this run.
+    #[arg(long)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Args, Debug, Default)]
@@ -141,7 +173,22 @@ fn run_inner(args: IndexArgs) -> i32 {
         Action::Rebuild(a) => build(a, true),
         Action::Query(a) => query(a),
         Action::Stats(a) => stats(a),
+        Action::Peers(a) => peers(a),
+        Action::Embed(a) => embed(a),
     }
+}
+
+/// Resolve the requested peer selection from the flags, refusing an unknown `--peers` value.
+fn peer_selection(peer: &[String], peers: &Option<String>) -> Result<index::PeerSelection, String> {
+    let all = match peers.as_deref() {
+        None => false,
+        Some(v) if v.eq_ignore_ascii_case("all") => true,
+        Some(_) => return Err("c3 index: --peers accepts only 'all'".to_string()),
+    };
+    Ok(index::PeerSelection {
+        all,
+        names: peer.to_vec(),
+    })
 }
 
 fn build(args: BuildArgs, rebuild: bool) -> i32 {
@@ -253,7 +300,60 @@ fn query(args: QueryArgs) -> i32 {
             return 2;
         }
     };
-    query_backend(&ctx, backend, &queries, args.budget, args.json)
+    let selection = match peer_selection(&args.peer, &args.peers) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    // The federation peers and the local embedder come from the user configuration. A missing
+    // configuration is fine (local, as before); an invalid one is not used and the reason is
+    // printed. A `--peer` naming a peer this project may not use is a hard error.
+    let (peers, embedder) = match c3config::load() {
+        Ok(Some(cfg)) => {
+            let peers = if selection.is_empty() {
+                Vec::new()
+            } else {
+                match cfg.resolve_selection(&ctx.repo_root, &selection, false) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("c3 index query: {e}");
+                        return 2;
+                    }
+                }
+            };
+            let embedder = cfg.embedder_for_project(&ctx.repo_root).map(|e| {
+                index::Embedder::new(e.url.clone(), e.model.clone(), e.dimension as usize)
+            });
+            (peers, embedder)
+        }
+        Ok(None) => {
+            if !selection.is_empty() {
+                eprintln!(
+                    "c3 index query: no configuration, so no peer is allowed for this project"
+                );
+                return 2;
+            }
+            (Vec::new(), None)
+        }
+        Err(e) => {
+            eprintln!("c3 index query: {e}");
+            if !selection.is_empty() {
+                return 2;
+            }
+            (Vec::new(), None)
+        }
+    };
+    query_backend(
+        &ctx,
+        backend,
+        &queries,
+        args.budget,
+        args.json,
+        &peers,
+        embedder.as_ref(),
+    )
 }
 
 #[cfg(not(feature = "index-surreal"))]
@@ -263,7 +363,16 @@ fn query_backend(
     queries: &[String],
     _budget: usize,
     json: bool,
+    peers: &[index::ResolvedPeer],
+    _embedder: Option<&index::Embedder>,
 ) -> i32 {
+    // With the feature off there is no store to open, local or peer.
+    for p in peers {
+        eprintln!(
+            "c3 index query: peer {} skipped (index feature disabled)",
+            p.name
+        );
+    }
     for _ in queries {
         report_none_query(json);
     }
@@ -277,6 +386,8 @@ fn query_backend(
     queries: &[String],
     budget: usize,
     json: bool,
+    peers: &[index::ResolvedPeer],
+    embedder: Option<&index::Embedder>,
 ) -> i32 {
     if backend == index::Backend::None {
         for _ in queries {
@@ -307,10 +418,37 @@ fn query_backend(
             t.elapsed().as_secs_f64()
         );
     }
+    let federated = !peers.is_empty();
     for text in queries {
         let t = std::time::Instant::now();
-        match idx.retrieve(text, budget) {
-            Ok(hits) => print_hits(&hits, json),
+        // The local leg: BM25 (plus the embedding leg when an embedder is configured and
+        // answers). When peers are queried it is retrieved with no per-leg budget so the fused
+        // list is trimmed once, keeping the plain local path byte-identical to before M11.
+        let local_budget = if federated { 0 } else { budget };
+        let local = match embedder {
+            Some(e) => idx.retrieve_embedded(text, local_budget, e),
+            None => idx.retrieve(text, local_budget),
+        };
+        match local {
+            Ok(local_hits) => {
+                if !federated {
+                    print_hits(&local_hits, json);
+                } else {
+                    // Open each peer read-only for the shortest span, in turn; a peer that does
+                    // not open is skipped with one line on stderr — the query never fails.
+                    let mut peer_lists: Vec<(String, Vec<index::Hit>)> = Vec::new();
+                    for p in peers {
+                        match index::federation::retrieve_peer(p, text, 0) {
+                            Ok(h) => peer_lists.push((p.name.clone(), h)),
+                            Err(why) => {
+                                eprintln!("c3 index query: peer {} skipped ({why})", p.name)
+                            }
+                        }
+                    }
+                    let fused = index::fuse_sourced(local_hits, peer_lists, budget);
+                    print_hits(&fused, json);
+                }
+            }
             Err(reason) => report_none_query_reason(json, &reason),
         }
         if profile {
@@ -358,9 +496,15 @@ fn print_hits(hits: &[index::Hit], json: bool) {
         } else {
             format!("  [{}]", h.relations.join(", "))
         };
+        // A peer hit names its source; a plain local query prints exactly as before M11.
+        let src = if h.source.is_empty() || h.source == "local" {
+            String::new()
+        } else {
+            format!("  <{}>", h.source)
+        };
         println!(
-            "  {} {} ({}:{}-{})  score {:.4}{}",
-            h.kind, h.name, h.path, h.line_start, h.line_end, h.score, rel
+            "  {} {} ({}:{}-{})  score {:.4}{}{}",
+            h.kind, h.name, h.path, h.line_start, h.line_end, h.score, rel, src
         );
     }
 }
@@ -421,6 +565,14 @@ fn print_stats(s: &IndexStats, json: bool) {
         if let Some(g) = &s.generation {
             println!("  generation: {g}");
         }
+        if s.vectors > 0 || s.vector_model.is_some() {
+            let model = s.vector_model.as_deref().unwrap_or("none");
+            let dim = s.vector_dim.unwrap_or(0);
+            println!(
+                "  vectors: {} of {} entities, model {model}, dimension {dim}",
+                s.vectors, s.entities
+            );
+        }
     }
 }
 
@@ -438,6 +590,174 @@ fn discover_files(repo_root: &Path) -> Vec<(String, String)> {
         }
     }
     out
+}
+
+// --------------------------------------------------------------------------- peers (M11)
+
+/// `c3 index peers` — list the federation peers THIS project may use, and whether each opens.
+/// Peers configured for other projects only are not listed and their existence is not revealed.
+fn peers(args: PeersArgs) -> i32 {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let repo_root = providers::resolve_repo_root(&cwd);
+    let _ = &args.collab_dir;
+    let cfg = match c3config::load() {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            if args.json {
+                println!("{}", serde_json::json!({ "peers": [] }));
+            } else {
+                println!(
+                    "{} no configuration; no peers for this project",
+                    index::PREFIX
+                );
+            }
+            return 0;
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let selection = index::PeerSelection {
+        all: true,
+        names: Vec::new(),
+    };
+    let resolved = match cfg.resolve_selection(&repo_root, &selection, false) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if args.json {
+        let arr: Vec<_> = resolved
+            .iter()
+            .map(|p| {
+                serde_json::json!({
+                    "name": p.name,
+                    "location": p.location(),
+                    "use_in_packs": p.use_in_packs,
+                    "available": index::federation::probe_peer(p).as_str(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "peers": arr }));
+        return 0;
+    }
+    if resolved.is_empty() {
+        println!("{} no peers configured for this project", index::PREFIX);
+        return 0;
+    }
+    println!("{} {} peer(s):", index::PREFIX, resolved.len());
+    for p in &resolved {
+        let avail = index::federation::probe_peer(p);
+        println!(
+            "  {} ({})  use_in_packs: {}  [{}]",
+            p.name,
+            p.location(),
+            p.use_in_packs,
+            avail.as_str()
+        );
+    }
+    0
+}
+
+// --------------------------------------------------------------------------- embed (M11)
+
+fn embed(args: EmbedArgs) -> i32 {
+    let ctx = resolve(&args.collab_dir, args.conn);
+    let backend = match index::parse_conn(&ctx.conn) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if backend == index::Backend::None {
+        println!(
+            "{} {}",
+            index::PREFIX,
+            IndexStats::none("connection string is none").verdict()
+        );
+        return 0;
+    }
+    embed_backend(&ctx, backend, args.limit)
+}
+
+#[cfg(not(feature = "index-surreal"))]
+fn embed_backend(_ctx: &Ctx, _backend: index::Backend, _limit: Option<usize>) -> i32 {
+    println!(
+        "{} {}",
+        index::PREFIX,
+        IndexStats::none("index-surreal feature disabled").verdict()
+    );
+    1
+}
+
+#[cfg(feature = "index-surreal")]
+fn embed_backend(ctx: &Ctx, backend: index::Backend, limit: Option<usize>) -> i32 {
+    // The embedder is configured (and its URL loopback-validated) in the user configuration.
+    let embedder = match c3config::load() {
+        Ok(Some(cfg)) => match cfg.embedder_for_project(&ctx.repo_root) {
+            Some(e) => index::Embedder::new(e.url.clone(), e.model.clone(), e.dimension as usize),
+            None => {
+                eprintln!("c3 index embed: no embedder is configured for this project");
+                return 1;
+            }
+        },
+        Ok(None) => {
+            eprintln!("c3 index embed: no embedder is configured for this project");
+            return 1;
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+
+    // Embedding writes vectors, so it takes the single-writer lock like a build (RC1).
+    let _lock;
+    if let index::Backend::SurrealKv(_) = &backend {
+        match take_index_lock(&ctx.collab_root) {
+            Ok(l) => _lock = l,
+            Err(reason) => {
+                println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
+                return 1;
+            }
+        }
+    }
+    let ns = "c3";
+    let db_name = repo_db_name(&ctx.repo_root);
+    let idx = match index::SurrealIndex::open(backend, ns, &db_name) {
+        Ok(i) => i,
+        Err(reason) => {
+            println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
+            return 1;
+        }
+    };
+    match idx.embed(&embedder, limit) {
+        Ok(s) => {
+            println!(
+                "{} embedded {} of {} entities ({} batch(es) failed), model {}, dimension {}",
+                index::PREFIX,
+                s.embedded,
+                s.considered,
+                s.failed_batches,
+                s.model,
+                s.dimension
+            );
+            // Nothing embedded but work remained and every batch failed → the embedder was
+            // unavailable; report that as a failure (no vector, never a mock).
+            if s.embedded == 0 && s.considered > 0 && s.failed_batches > 0 {
+                return 1;
+            }
+            0
+        }
+        Err(reason) => {
+            println!("{} {}", index::PREFIX, IndexStats::none(reason).verdict());
+            1
+        }
+    }
 }
 
 // --------------------------------------------------------------------------- index lock

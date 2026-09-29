@@ -22,6 +22,7 @@ ed25519-dalek.workspace = true
 ureq.workspace = true
 ignore = { workspace = true }
 globset = { workspace = true }
+url = { workspace = true }
 surrealdb = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 

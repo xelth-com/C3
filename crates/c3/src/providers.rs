@@ -2394,6 +2394,18 @@ pub(crate) fn run_with_timeout(
 }
 
 pub(crate) fn get_codex_login_status(launcher: &str, timeout_sec: u64) -> CredentialResult {
+    // (wave 27c, D4) the launcher probe never fails open: if its start-info cannot be scrubbed of
+    // the host markers (only `CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL` forces this in C3, since the
+    // child command is scrubbed directly), the probe is SKIPPED — not started with the markers —
+    // and the credential is `unknown` (a real run is then refused, fail-closed).
+    if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
+    {
+        return CredentialResult::unknown(
+            "not checked - `codex login status` was skipped: the start-info block could not be scrubbed (test hook CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL)",
+        );
+    }
     if launcher.is_empty() {
         return CredentialResult::unknown(
             "codex CLI not found, `codex login status` could not run",

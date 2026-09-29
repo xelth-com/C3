@@ -1018,6 +1018,14 @@ fn update_machine_health(
     is_alive: &dyn Fn(u32, &str) -> bool,
     budget: LockBudget,
 ) -> HealthUpdate {
+    // (wave 27c, D7) a failure that is NOT a lock timeout is named by its cause. A missing parent
+    // directory is checked first (the plugin's `[IO.Directory]::Exists` guard) so it is not
+    // mistaken for a lock timeout when the `.lock` cannot be created.
+    if let Some(dir) = path.parent() {
+        if !dir.is_dir() {
+            return HealthUpdate::Failed(format!("the directory {} does not exist", dir.display()));
+        }
+    }
     let mut lock_os = path.as_os_str().to_os_string();
     lock_os.push(".lock");
     let lock_path = PathBuf::from(lock_os);

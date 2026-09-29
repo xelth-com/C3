@@ -512,7 +512,8 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
             if name.is_empty() || !seen.insert(name.clone()) {
                 continue;
             }
-            let ri = super::roles::resolve_role_file(name, &collab_root, "");
+            let ri =
+                super::roles::resolve_role_file(name, &collab_root, &super::roles::plugin_root());
             // Only a safety problem (reparse/containment) refuses the panel; a template-only role
             // (unknown to c3, which ships no templates) is tolerated — the willingness assignment
             // and its note stand.

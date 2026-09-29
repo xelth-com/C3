@@ -3,9 +3,10 @@
 //! A panel member's `role` (and a single-run `-Role`) is a slug that names a role file: the
 //! repository's `<collab-root>/roles/<name>.md` first, else the plugin's
 //! `<plugin-root>/templates/role-<name>.md`. The file's trimmed text becomes the role paragraph
-//! the prompt carries after the ask (`orchestrate` builds the line). C3 ships no plugin
-//! templates on disk, so `plugin_root` is normally empty and only repository roles resolve;
-//! the "unknown role" error still names both candidate paths as the plugin does.
+//! the prompt carries after the ask (`orchestrate` builds the line). C3 ships the built-in role
+//! templates under `plugin/templates/role-*.md`; [`plugin_root`] resolves the plugin root at run
+//! time (`CLAUDE_PLUGIN_ROOT`, else the parent of `CODEX_CONSULT_SCRIPTS_DIR`), so a shipped
+//! template resolves with `source = "plugin"`. The "unknown role" error names both candidate paths.
 
 use std::path::{Path, PathBuf};
 
@@ -100,6 +101,27 @@ pub fn role_file_problem(path: &Path, root: &Path) -> String {
             break;
         }
         dir = d.parent();
+    }
+    String::new()
+}
+
+/// The plugin root whose `templates/role-<name>.md` files ship the built-in roles (edge-cases,
+/// security, tests, docs). Resolved the way the plugin's own root is known at run time:
+/// `CLAUDE_PLUGIN_ROOT` (Claude Code sets it for a plugin's hooks and skills) if set, else the
+/// parent of `CODEX_CONSULT_SCRIPTS_DIR` (what the harness points at the shim copy), else empty.
+/// C3 ships the templates under `plugin/templates/` in the repository.
+pub fn plugin_root() -> String {
+    if let Ok(v) = std::env::var("CLAUDE_PLUGIN_ROOT") {
+        if !v.trim().is_empty() {
+            return v;
+        }
+    }
+    if let Ok(v) = std::env::var("CODEX_CONSULT_SCRIPTS_DIR") {
+        if !v.trim().is_empty() {
+            if let Some(parent) = Path::new(v.trim()).parent() {
+                return parent.to_string_lossy().to_string();
+            }
+        }
     }
     String::new()
 }
@@ -416,6 +438,25 @@ mod tests {
         let line = role_prompt_line(&r);
         assert!(line.starts_with("Your role in this review: adversary. Focus on what it asks for;"));
         assert!(line.ends_with("Attack the design."));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolves_a_plugin_template_with_source_plugin() {
+        // A role that exists only as a shipped plugin template resolves from <plugin_root>/templates
+        // with source "plugin" (ROLEFILE D1).
+        let root = scratch();
+        let plugin = root.join("plugin");
+        std::fs::create_dir_all(plugin.join("templates")).unwrap();
+        std::fs::write(
+            plugin.join("templates").join("role-security.md"),
+            "Hunt for security holes.\n",
+        )
+        .unwrap();
+        let r = resolve_role_file("security", &root, &plugin.to_string_lossy());
+        assert_eq!(r.error, "");
+        assert_eq!(r.source, "plugin");
+        assert_eq!(r.text, "Hunt for security holes.");
         let _ = std::fs::remove_dir_all(root);
     }
 

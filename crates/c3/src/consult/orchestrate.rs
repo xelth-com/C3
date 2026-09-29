@@ -99,6 +99,9 @@ struct Secondary {
     continue_ran: bool,
     /// The continuation turn was itself killed on its timeout.
     continue_killed: bool,
+    /// (wave 27c, D2) the operator stopped the TIMEOUT CONTINUATION (-Kick): the timeout outcome
+    /// and its salvage stay (never rewritten to an operator stop), and a warning is emitted.
+    continue_kicked: bool,
     /// The format-repair turn was killed on its timeout.
     repair_killed: bool,
     /// (wave 26c, D1) the operator stopped the FORMAT REPAIR (-Kick): the first reply stands, not
@@ -1178,13 +1181,10 @@ fn build_context(
         run_warnings.push(format!(
             "CODEX_CONSULT_COORDINATOR '{pos}' names no roster position here"
         ));
-    } else if coordinator.in_roster == Some(false) {
-        let id = std::env::var("CODEX_CONSULT_COORDINATOR").unwrap_or_default();
-        run_warnings.push(format!(
-            "coordinator: {} (not in the roster - no reviewer can match it)",
-            id.trim()
-        ));
     }
+    // (wave 27c, D11) a coordinator no roster entry matches is SAID on the console of a real run
+    // (printed in `run_live`, matching the plugin's `Write-Host`), and recorded in the ledger's
+    // `coordinator.in_roster: false` — it is NOT a warning and does not appear in warnings[].
     let mut extra_config_source = if r.extra_config.is_empty() {
         String::new()
     } else {
@@ -1943,7 +1943,11 @@ fn build_context(
     if let Some(m) = member {
         roles_note = m.roles_note.clone();
         if !m.role.is_empty() {
-            let ri = crate::panel::roles::resolve_role_file(&m.role, &collab_root, "");
+            let ri = crate::panel::roles::resolve_role_file(
+                &m.role,
+                &collab_root,
+                &crate::panel::roles::plugin_root(),
+            );
             // A safety problem (reparse/containment) refuses; a role that resolves only as a plugin
             // template (unknown to c3, which ships none) is tolerated with no role paragraph.
             if crate::panel::roles::is_role_refusal(&ri.error) {
@@ -1959,7 +1963,11 @@ fn build_context(
     } else if !o.role.is_empty() {
         // (wave 26b, D1) a single run's -Role resolves its role file too: a bad/reparse role file
         // (or a junctioned roles directory) refuses before anything is written.
-        let ri = crate::panel::roles::resolve_role_file(&o.role, &collab_root, "");
+        let ri = crate::panel::roles::resolve_role_file(
+            &o.role,
+            &collab_root,
+            &crate::panel::roles::plugin_root(),
+        );
         if crate::panel::roles::is_role_refusal(&ri.error) {
             return Err((format!("-Role: {}", ri.error), 1));
         }
@@ -2703,13 +2711,10 @@ fn resolve_artifacts(
         } else {
             bases.iter().map(|b| b.join(raw)).find(|c| c.is_file())
         };
-        // The ledger records the ABSOLUTE path (`Resolve-ArtifactPaths`), but without the
-        // Windows `\\?\` verbatim prefix that `canonicalize` adds — so use the clean joined
-        // absolute for `path` and the canonicalized form only for reading/hashing.
-        let clean_abs = match &resolved {
-            Some(p) => p.to_string_lossy().to_string(),
-            None => raw.clone(),
-        };
+        // The ledger records the RAW argument in `path` (`Resolve-ArtifactPaths` sets
+        // `path = $raw`), so a relative artifact reads back as e.g. `A.bin`/`build.bin` in the
+        // ledger and the "changed during the review" warning; the canonicalized form is kept
+        // only in `full` for reading/hashing.
         let full = match resolved {
             Some(p) => p.canonicalize().unwrap_or(p),
             None => {
@@ -2734,7 +2739,7 @@ fn resolve_artifacts(
             .map(|b| c3_core::sha256_hex(&b))
             .unwrap_or_else(|_| "missing".into());
         out.push(ArtifactHash {
-            path: clean_abs,
+            path: raw.clone(),
             full,
             sha256,
         });
@@ -2784,6 +2789,16 @@ fn run_live(mut ctx: Context) -> i32 {
     // The roster decision line prints before the lock on a real run (`codex-consult.ps1:2968`).
     if !ctx.roster_line.is_empty() {
         println!("{}", ctx.roster_line);
+    }
+    // (wave 27c, D11) a coordinator that parses but matches no roster entry is SAID on the console
+    // of a real run (`codex-consult.ps1:2274`), not refused; the ledger already carries
+    // `coordinator.in_roster: false`.
+    if ctx.coordinator.in_roster == Some(false) {
+        let id = std::env::var("CODEX_CONSULT_COORDINATOR").unwrap_or_default();
+        println!(
+            "coordinator: {} (not in the roster - no reviewer can match it)",
+            id.trim()
+        );
     }
     // The `-SkipPreflight` quota warning prints before the lock (never on a dry run, which
     // never reaches `run_live`).
@@ -2913,6 +2928,17 @@ fn run_live(mut ctx: Context) -> i32 {
         println!("WARNING: {}", ctx.peak_warning);
     }
 
+    // (wave 27c, D3) the host-marker hide is transactional and fail-closed: if it cannot hide every
+    // marker (only the `CODEX_CONSULT_TEST_HIDE_FAIL` hook forces this in C3), the engine start is
+    // refused before launch — nothing is started, no record is written, no ledger entry.
+    if let Some(why) = crate::engines::host_marker_hide_failure() {
+        let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+        return refuse(&format!(
+            "the {} run is refused before launch: bridge failure: {why}; nothing was started.",
+            ctx.engine
+        ));
+    }
+
     // (3) launching — from here on a crash may leave a codex process whose pid is not yet
     // recorded; the next run then scans the tree (`codex-consult.ps1:3299`).
     rec.state = PendingState::Launching;
@@ -2969,19 +2995,49 @@ fn run_live(mut ctx: Context) -> i32 {
     let events_rel_for_record = c3_core::paths::repo_relative(&ctx.repo_root, &ctx.events_path)
         .unwrap_or_else(|| ctx.events_path.to_string_lossy().to_string());
     let rec_arc = std::sync::Arc::new(std::sync::Mutex::new(rec));
+    // (rows (e)) The registration write can fail (a real I/O error, or the
+    // `CODEX_CONSULT_TEST_REGISTER_FAIL` hook). When it does, the run FAILS CLOSED: the just-spawned
+    // child tree is stopped by pid, the record is left at `launching`, and the outcome says the
+    // engine could not be registered. The error travels back to `finish` through this cell.
+    let register_error: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
     let on_running: std::sync::Arc<dyn Fn(u32, String) + Send + Sync> = {
         let cb_store = store.clone();
         let cb_pending = pending.clone();
         let cb_rec = std::sync::Arc::clone(&rec_arc);
         let cb_events = events_rel_for_record.clone();
+        let cb_error = std::sync::Arc::clone(&register_error);
         std::sync::Arc::new(move |child_pid: u32, child_start: String| {
+            // A forced failure (test hook) or a real write failure of the `running` record.
+            let forced = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_REGISTER_FAIL")
+                .map(|v| !v.trim().is_empty() && v.trim() != "0")
+                .unwrap_or(false);
             if let Ok(mut r) = cb_rec.lock() {
                 r.state = PendingState::Running;
                 r.child_pid = Some(child_pid);
                 r.child_start_time = child_start;
                 r.events = cb_events.clone();
                 r.note = String::new();
-                let _ = cb_store.write_pending(&cb_pending, &r);
+                let write = if forced {
+                    Err("injected: registration write failed".to_string())
+                } else {
+                    cb_store
+                        .write_pending(&cb_pending, &r)
+                        .map_err(|e| e.to_string())
+                };
+                if let Err(err) = write {
+                    // Fail closed: stop the child tree by pid, leave the record at `launching`.
+                    crate::engines::subprocess::kill_tree_by_pid(child_pid);
+                    r.state = PendingState::Launching;
+                    r.child_pid = None;
+                    r.child_start_time = String::new();
+                    r.note =
+                        "the engine process could not be registered; it was stopped".to_string();
+                    let _ = cb_store.write_pending(&cb_pending, &r);
+                    if let Ok(mut slot) = cb_error.lock() {
+                        *slot = Some(err);
+                    }
+                }
             }
         })
     };
@@ -3042,6 +3098,7 @@ fn run_live(mut ctx: Context) -> i32 {
     };
 
     let base_record = rec_arc.lock().map(|r| r.clone()).unwrap_or_default();
+    let register_failure = register_error.lock().ok().and_then(|g| g.clone());
     let code = finish(
         ctx,
         store,
@@ -3051,6 +3108,7 @@ fn run_live(mut ctx: Context) -> i32 {
         detail,
         collab_before,
         when_iso,
+        register_failure,
     );
     if let Some(hp) = &health_path {
         let _ = c3_core::health::unregister_machine_running(hp, bridge_pid, &|pid, st| {
@@ -3536,9 +3594,16 @@ fn member_accept(
 /// and the next run for the task is refused until it exits.
 fn confirm_tree_kill(base: &PendingRecord, survivors: &mut Vec<u32>) -> Option<(u32, String)> {
     let pid = base.child_pid.unwrap_or(0);
-    let unconfirmed = if let Some(v) =
-        c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_UNCONFIRMED")
-    {
+    // (D16, H4) `CODEX_CONSULT_TEST_KILL_DENIED=1` simulates a restricted host where process
+    // inspection and taskkill are denied, so the kill can never be confirmed; the generic
+    // `CODEX_CONSULT_TEST_KILL_UNCONFIRMED` hook forces it too (a fake whose tree cannot be
+    // enumerated). Otherwise the root pid is checked directly.
+    let denied = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_DENIED")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+    let unconfirmed = if denied {
+        Some("process inspection denied (test hook CODEX_CONSULT_TEST_KILL_DENIED)".to_string())
+    } else if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_UNCONFIRMED") {
         let t = v.trim();
         (!t.is_empty() && t != "0").then(|| "a test hook forced the kill unconfirmed".to_string())
     } else if pid > 0 && crate::liveness::proc::pid_alive(pid, &base.child_start_time) {
@@ -3566,8 +3631,18 @@ fn finish(
     detail: EngineDetail,
     collab_before: std::collections::HashMap<String, String>,
     when_iso: String,
+    // (rows (e)) `Some(err)` when the engine process could not be registered: the child was already
+    // stopped in the `on_running` callback, so this run fails closed — the outcome names the
+    // failure, no findings/verdict, and the recovery record is left at `launching`.
+    register_failure: Option<String>,
 ) -> i32 {
     let is_engine = !ctx.is_codex();
+    let register_failure_text = register_failure.map(|err| {
+        format!(
+            "failed: could not register the {} process ({err}); {} was stopped",
+            ctx.engine, ctx.engine
+        )
+    });
     // (M7b-b) The http seat's provider_config (`{engine, base_url, model, pack, pack_sha256}`) is
     // built by the adapter from the retained pack; apply it to the identity so `build_reviewer`
     // places it on the ledger's `reviewer.provider_config`.
@@ -3604,6 +3679,10 @@ fn finish(
     // stopped the root the bridge started: the outcome says so, the ledger records
     // `kill_confirmed: false`, a warning is written and no continuation turn runs on that thread.
     let mut kill_unconfirmed: Option<(u32, String)> = None;
+    // (wave 27c, D16) the ledger's `kill_confirmed`: `None` when no tree kill happened this run
+    // (recorded as JSON `null`), `Some(true)` when a kill was confirmed to have stopped the root,
+    // `Some(false)` when it could not be confirmed.
+    let mut kill_confirmed_state: Option<bool> = None;
 
     match outcome {
         AttemptOutcome::Completed(reply) => {
@@ -3646,6 +3725,7 @@ fn finish(
             timeout_survivors = survivors;
             // (wave 27c, D16) confirm the tree kill stopped the root the bridge started.
             kill_unconfirmed = confirm_tree_kill(&base_record, &mut timeout_survivors);
+            kill_confirmed_state = Some(kill_unconfirmed.is_none());
             bridge_outcome = if let Some((pid, why)) = &kill_unconfirmed {
                 format!(
                     "failed: timeout after {} s (kill not confirmed: {why}; pid {pid} may still run)",
@@ -3723,6 +3803,7 @@ fn finish(
             // (a kick sets no `main_timed_out`, so its own outcome text is left intact).
             if main_timed_out {
                 kill_unconfirmed = confirm_tree_kill(&base_record, &mut timeout_survivors);
+                kill_confirmed_state = Some(kill_unconfirmed.is_none());
                 if let Some((pid, why)) = &kill_unconfirmed {
                     bridge_outcome = format!(
                         "failed: stalled after {} s without an event (kill not confirmed: {why}; pid {pid} may still run)",
@@ -3837,6 +3918,19 @@ fn finish(
         artifacts_changed_paths,
     };
 
+    // (rows (e)) A registration failure overrides everything: the child is already stopped, so the
+    // outcome is the "could not register" text, no secondary turn runs, no findings are ingested.
+    if let Some(txt) = &register_failure_text {
+        bridge_outcome = txt.clone();
+        usable = false;
+        structured = None;
+        main_timed_out = false;
+        timeout_survivors.clear();
+        kill_unconfirmed = None;
+        kill_confirmed_state = None;
+        stall_record = None;
+    }
+
     // ------------------------------------------------------------- secondary turns
     // The two codex mechanisms (`codex-consult.ps1` waves 24/24b/24c): the timeout continuation
     // (one `resume <thread>` turn after the main turn was killed) and the format repair (one
@@ -3944,6 +4038,7 @@ fn finish(
             &ctx,
             &drift,
             &timeout_survivors,
+            kill_unconfirmed.as_ref(),
             &main_stderr,
             &main_event_error,
             wall_seconds,
@@ -3957,13 +4052,22 @@ fn finish(
             stall_record.as_ref().map(|s| s.seconds),
         );
     }
+    // (wave 27c, D2) a kick that cancelled the timeout continuation: warn, but keep the timeout
+    // outcome and its salvage (bridge_outcome is left as the main turn's timeout text).
+    if sec.continue_kicked {
+        ctx.run_warnings.push(
+            "kick: the operator stopped the timeout continuation (-Kick); the timeout outcome and its salvage stay".to_string(),
+        );
+    }
 
     // Structured / prose classification (`ConvertFrom-StructuredReply`), on a usable, non-raw
     // reply — the main reply, or a continuation that answered.
     if !ctx.r.raw && usable {
         match crate::engines::codex::parse_structured(&raw_text) {
             Some(s) => structured = Some(s),
-            None => validation_error = ingest::first_validation_error(&raw_text),
+            None => {
+                validation_error = ingest::first_validation_error_engine(&raw_text, &ctx.engine)
+            }
         }
     }
 
@@ -3995,6 +4099,36 @@ fn finish(
         ctx.run_warnings.push(
             "kick: the operator stopped the format repair (-Kick); the first reply stands, not converted".to_string(),
         );
+    }
+
+    // (F04-11) Preserve the raw reply as `.reply.json` at the handoff path BEFORE the write lock
+    // (README "Write order": `.reply.json` first), so a crash during the commit still leaves the
+    // raw reply recoverable. `raw_text` is now final (after any continuation and format repair).
+    // A copy that FAILS (e.g. the target path is blocked by a directory) is a total bridge
+    // failure: the original is kept, the outcome says so, and no findings/verdict are ingested.
+    let mut reply_json_rel = if !ctx.r.raw && !raw_text.is_empty() {
+        ctx.hf("reply.json")
+    } else {
+        String::new()
+    };
+    let mut keep_last_msg = false;
+    if !reply_json_rel.is_empty() {
+        if let Err(e) = c3_core::store::write_text_atomic(&ctx.reply_json_path, raw_text.as_bytes())
+        {
+            let note = format!(
+                "could not preserve the raw reply ({}); original kept at {}",
+                e,
+                ctx.last_msg_path.display()
+            );
+            if bridge_outcome == "usable reply" {
+                bridge_outcome = format!("failed: {note}");
+            }
+            reply_json_rel = String::new();
+            structured = None;
+            usable = false;
+            validation_error = String::new();
+            keep_last_msg = true;
+        }
     }
 
     // Count the secondary engine turns that ran (the base primary + a denial retry counted in
@@ -4176,18 +4310,8 @@ fn finish(
     );
     let handoff_rel = ctx.hf("md");
     let events_rel = ctx.hf("events.jsonl");
-    // The plugin writes `.reply.json` (the byte-for-byte raw reply) at the handoff path
-    // BEFORE the write lock is taken (README "Write order": `.reply.json` first), so a crash
-    // during the commit still leaves the raw reply recoverable. C3 writes it here, before the
-    // lock, at the handoff path — not staged under `.consult.reply.json`.
-    let reply_json_rel = if !ctx.r.raw && !raw_text.is_empty() {
-        ctx.hf("reply.json")
-    } else {
-        String::new()
-    };
-    if !reply_json_rel.is_empty() {
-        let _ = c3_core::store::write_text_atomic(&ctx.reply_json_path, raw_text.as_bytes());
-    }
+    // `.reply.json` was already written (or its failure handled as a total bridge failure) above,
+    // before the format-repair/findings work, so `reply_json_rel` is final here.
 
     // Build the ledger entry.
     let mut entry = build_entry(
@@ -4214,12 +4338,14 @@ fn finish(
     // first finish) hold for concurrent members.
     entry.when = when_iso;
     entry.thread_candidate = thread_candidate.clone();
-    // (wave 27c, D16) an unconfirmed process-tree kill: the ledger records `kill_confirmed: false`
-    // and a warning names the pid that may still run (the continuation was already suppressed).
+    // (wave 27c, D16) `kill_confirmed`: present as `null` when no tree kill happened this run,
+    // `true` when the kill was confirmed, `false` when it could not be. An unconfirmed kill also
+    // pushes the warning naming the pid that may still run (the continuation was already
+    // suppressed and the outcome already says so).
+    entry.kill_confirmed = Some(kill_confirmed_state);
     if let Some((pid, why)) = &kill_unconfirmed {
-        entry.kill_confirmed = Some(false);
         entry.warnings.push(serde_json::Value::String(format!(
-            "the process tree kill could not be confirmed: pid {pid} may still run ({why})"
+            "kill not confirmed (main turn): {why}; pid {pid} may still run - check it, and stop it by hand if it does"
         )));
     }
     // Prior-finding lifecycle records (F04-4): this reply's `prior_findings` reports, the
@@ -4258,7 +4384,17 @@ fn finish(
     // this run is still out there) so the commit does not delete it and the next run is
     // refused until they exit. Written before the write lock, as the plugin does after the
     // kill (`codex-consult.ps1:3375`).
-    let disposition = if timeout_survivors.is_empty() {
+    let disposition = if register_failure_text.is_some() {
+        // (rows (e)) leave the record at `launching` (child cleared) so the next run recovers it;
+        // the ledger entry below records the failed outcome.
+        let mut launching = base_record.clone();
+        launching.state = PendingState::Launching;
+        launching.child_pid = None;
+        launching.child_start_time = String::new();
+        launching.note = "the engine process could not be registered; it was stopped".to_string();
+        let _ = store.write_pending(&pending, &launching);
+        RecoveryDisposition::Retain
+    } else if timeout_survivors.is_empty() {
         RecoveryDisposition::Remove
     } else {
         let mut survivor_rec = base_record.clone();
@@ -4608,8 +4744,11 @@ fn finish(
             m.reply = reply_rel_final;
         });
     }
-    // temp file cleanup
-    let _ = std::fs::remove_file(&ctx.last_msg_path);
+    // temp file cleanup (F04-11: keep the raw last message when a failed `.reply.json` copy names
+    // it as the kept original).
+    if !keep_last_msg {
+        let _ = std::fs::remove_file(&ctx.last_msg_path);
+    }
     let _ = std::fs::remove_file(&ctx.stderr_path);
 
     if usable {
@@ -4857,6 +4996,9 @@ fn run_timeout_continuation(
     ctx: &Context,
     drift: &Drift,
     survivors: &[u32],
+    // (wave 27c, D16) `Some((pid, why))` when the main turn's tree kill could not be confirmed:
+    // no continuation is attempted (the orphan may still hold the thread).
+    kill_unconfirmed: Option<&(u32, String)>,
     main_stderr: &str,
     main_event_error: &str,
     main_wall: f64,
@@ -4878,7 +5020,13 @@ fn run_timeout_continuation(
 
     // Gate (the plugin's `$continueSkip`).
     let mut skip = String::new();
-    if ctx.r.continue_sec <= 0 {
+    if let Some((pid, why)) = kill_unconfirmed {
+        // (D16) the kill of the main turn was not confirmed: the orphan may still hold the thread,
+        // so no continuation runs on it.
+        skip = format!(
+            "the kill of the main turn was not confirmed ({why}) - pid {pid} may still hold the thread"
+        );
+    } else if ctx.r.continue_sec <= 0 {
         skip = "-ContinueSec 0".to_string();
     } else if continue_thread.is_empty() {
         skip = "the thread of the killed turn is not known".to_string();
@@ -5035,6 +5183,17 @@ fn run_timeout_continuation(
                 *thread = continue_thread.clone();
                 *thread_source = "events".to_string();
             }
+        }
+        AttemptOutcome::Stopped {
+            kind: c3_core::engine::StopKind::Kick,
+            ..
+        } => {
+            // (D2) the operator kicked the continuation: the continuation records the operator
+            // stop, but the RUN keeps the main turn's timeout outcome and its salvage. No operator
+            // provider_failure (the failure of record is the timeout, not the operator).
+            continue_problem = "stopped by the operator (-Kick)".to_string();
+            sec.continue_kicked = true;
+            let _ = std::fs::remove_file(&ctx.kick_path);
         }
         AttemptOutcome::TimedOut { .. } | AttemptOutcome::Stopped { .. } => {
             continue_problem = format!(
@@ -5223,8 +5382,10 @@ fn run_format_repair(
                         repaired = Some(s);
                     }
                     None => {
-                        repair_problem =
-                            format!("still not valid: {}", ingest::first_validation_error(rr));
+                        repair_problem = format!(
+                            "still not valid: {}",
+                            ingest::first_validation_error_engine(rr, &ctx.engine)
+                        );
                     }
                 }
             }

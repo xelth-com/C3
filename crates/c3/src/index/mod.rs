@@ -17,14 +17,18 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+pub mod embed;
 pub mod extract;
+pub mod federation;
 #[cfg(feature = "index-surreal")]
 mod surreal;
 
+pub use embed::{validate_embedder_url, EmbedStats, Embedder};
 pub use extract::{
     derive_relations, extract_file, file_hash, Entity, EntityKind, Extraction, Relation,
     RelationKind,
 };
+pub use federation::{fuse_sourced, PeerSelection, ResolvedPeer};
 
 /// Refusal / status prefix, matching the rest of C3.
 pub const PREFIX: &str = "codex-consult:";
@@ -119,6 +123,15 @@ pub struct IndexStats {
     pub relates_to: u64,
     /// The evidence generation the rows carry (git HEAD + dirty digest).
     pub generation: Option<String>,
+    /// Entities that carry a stored embedding vector (M11).
+    #[serde(default)]
+    pub vectors: u64,
+    /// The embedding model the stored vectors were computed with, when any exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_model: Option<String>,
+    /// The embedding dimension of the stored vectors, when any exist.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_dim: Option<u32>,
 }
 
 impl IndexStats {
@@ -164,6 +177,11 @@ pub struct Hit {
     pub score: f64,
     /// Relation labels for rows pulled in by expansion ("derived: calls", ...).
     pub relations: Vec<String>,
+    /// The hit's origin: `local` for the project's own index, `peer:<name>` for a federated
+    /// peer (M11). A peer hit's `path` is relative to the PEER's repository, never resolved
+    /// against the local one.
+    #[serde(default)]
+    pub source: String,
 }
 
 /// Reciprocal rank fusion of several ranked id lists (best first).

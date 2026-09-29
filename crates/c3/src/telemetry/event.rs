@@ -69,6 +69,9 @@ pub struct Details {
     pub structured: bool,
     pub format_retry: bool,
     pub panel_size: u32,
+    /// (M11) How many federation peers contributed to this consultation's pack — a COUNT only,
+    /// never a name, a path or a connection string. Nothing federated ever reaches the hub.
+    pub peers_used: u32,
     pub os: String,
     pub runtime: String,
     /// A tag from a fixed vocabulary; `None` for now (DESIGN §8). Never free text.
@@ -126,6 +129,9 @@ impl Event {
                 .map(|f| f.attempted)
                 .unwrap_or(false),
             panel_size,
+            // The consult path sets this (via `details.peers_used`) when it has brought peers
+            // into the pack; a ledger entry alone carries no peer count, so it defaults to 0.
+            peers_used: 0,
             os: os_label(),
             runtime: runtime_label(),
             topic_tag: None,

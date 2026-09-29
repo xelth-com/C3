@@ -127,6 +127,17 @@ pub fn not_attempted_suffix(gate: &ProseGate) -> String {
 /// wording is runtime-specific, a documented divergence), else the first schema error. Empty
 /// string when the text IS a valid reply object.
 pub fn first_validation_error(text: &str) -> String {
+    validation_error_inner(text, true)
+}
+
+/// As [`first_validation_error`], but the http-only normaliser suffix (`; normaliser: <reason>`)
+/// is appended ONLY for the http engine. codex/agy/muse replies get the plugin's validation text
+/// byte for byte, with no suffix — the normaliser and its reason belong to the http engine alone.
+pub fn first_validation_error_engine(text: &str, engine: &str) -> String {
+    validation_error_inner(text, engine == "http")
+}
+
+fn validation_error_inner(text: &str, append_normaliser: bool) -> String {
     let t = text.trim();
     if t.is_empty() {
         return "empty reply".to_string();
@@ -151,11 +162,11 @@ pub fn first_validation_error(text: &str) -> String {
     if strict.is_empty() {
         return String::new();
     }
-    // (N3) For a reply shaped as a JSON object (the http path — the engine sets the repaired text
-    // as the reply-of-record on success, so this fires only when the normaliser ALSO failed), keep
-    // the original strict error and append the normaliser's reason. A prose reply (not starting
-    // with `{`) never triggers the normaliser here, so codex/agy/muse replies are unaffected.
-    if body.trim_start().starts_with('{') {
+    // (N3) For the http path only, a reply shaped as a JSON object keeps the original strict error
+    // and appends the normaliser's reason (the engine sets the repaired text as the reply-of-record
+    // on success, so this fires only when the normaliser ALSO failed). codex/agy/muse never run the
+    // normaliser, so their validation text stays byte-for-byte the plugin's.
+    if append_normaliser && body.trim_start().starts_with('{') {
         if let Normalisation::Failed { reason } = normalise_reply(text) {
             return format!("{strict}; normaliser: {reason}");
         }
@@ -813,6 +824,19 @@ mod tests {
         // A prose reply (codex-shaped, not starting with `{`) is unaffected — no normaliser suffix.
         let ve = first_validation_error("Looks good overall, but the error path is untested.");
         assert!(!ve.contains("normaliser:"), "{ve}");
+    }
+
+    #[test]
+    fn normaliser_suffix_is_http_only_engine_gated() {
+        // A JSON-object reply the normaliser cannot repair: the suffix is appended for the http
+        // engine but NOT for codex/agy/muse (their validation text is the plugin's, byte for byte).
+        let dup = r#"{"schema_version":"1","verdict":"REJECT","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+        let http = first_validation_error_engine(dup, "http");
+        assert!(http.contains("; normaliser: "), "{http}");
+        for engine in ["codex", "agy", "muse"] {
+            let ve = first_validation_error_engine(dup, engine);
+            assert!(!ve.contains("normaliser:"), "{engine}: {ve}");
+        }
     }
 
     // ---- the reviewer's two open questions: idempotence and linear cost

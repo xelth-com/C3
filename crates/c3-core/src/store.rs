@@ -626,6 +626,41 @@ fn map_err(e: serde_json::Error) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, e)
 }
 
+/// `Read-JsonStore`'s refusal wording for an unusable sessions/findings store: an empty or
+/// unparseable file is refused (never replaced) with the path and the one-line reason. The
+/// consult run reads these through `next_numbers`, so the refusal lands before any lock or
+/// pending record is written.
+fn store_parse_err(path: &Path, bytes: &[u8], e: &serde_json::Error) -> io::Error {
+    let restore = "An existing store is never replaced by a new one - restore it (e.g. from git) or move it aside deliberately, then retry.";
+    let msg = if bytes.iter().all(|b| b.is_ascii_whitespace()) {
+        format!(
+            "refusing to use '{}': it is empty or could not be read. {restore}",
+            path.display()
+        )
+    } else {
+        format!(
+            "refusing to use '{}': it does not parse: {}. {restore}",
+            path.display(),
+            crate::one_line(&e.to_string())
+        )
+    };
+    io::Error::new(io::ErrorKind::InvalidData, msg)
+}
+
+/// `Read-PendingFile`'s refusal wording for an unusable recovery record, so the consult run's
+/// `recover_pending` refuses an unparseable `.consult.pending.json` with the plugin's text
+/// instead of a bare serde message.
+fn pending_parse_err(path: &Path, e: &serde_json::Error) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "the recovery record '{}' is unusable: it does not parse: {}. It describes an interrupted consultation - inspect it (and any codex process it may name), then repair or delete it deliberately.",
+            path.display(),
+            crate::one_line(&e.to_string())
+        ),
+    )
+}
+
 // --------------------------------------------------------------------------- platform locks
 
 /// Try to open `path` with the plugin's exclusive share mode. `Ok(Some(file))` when the
@@ -703,15 +738,21 @@ impl EvidenceStore for FilesStore {
     }
 
     fn read_sessions(&self, task: &TaskSlug) -> io::Result<Option<SessionsFile>> {
-        match read_opt(&self.task_dir(task).join("sessions.json"))? {
-            Some(b) => Ok(Some(SessionsFile::read(&b).map_err(map_err)?)),
+        let path = self.task_dir(task).join("sessions.json");
+        match read_opt(&path)? {
+            Some(b) => Ok(Some(
+                SessionsFile::read(&b).map_err(|e| store_parse_err(&path, &b, &e))?,
+            )),
             None => Ok(None),
         }
     }
 
     fn read_findings(&self, task: &TaskSlug) -> io::Result<Option<FindingsFile>> {
-        match read_opt(&self.task_dir(task).join("findings.json"))? {
-            Some(b) => Ok(Some(FindingsFile::read(&b).map_err(map_err)?)),
+        let path = self.task_dir(task).join("findings.json");
+        match read_opt(&path)? {
+            Some(b) => Ok(Some(
+                FindingsFile::read(&b).map_err(|e| store_parse_err(&path, &b, &e))?,
+            )),
             None => Ok(None),
         }
     }
@@ -734,7 +775,8 @@ impl EvidenceStore for FilesStore {
                 continue;
             }
             let bytes = fs::read(ent.path())?;
-            let record: PendingRecord = serde_json::from_slice(&bytes).map_err(map_err)?;
+            let record: PendingRecord =
+                serde_json::from_slice(&bytes).map_err(|e| pending_parse_err(&ent.path(), &e))?;
             let rp = RecoveredPending {
                 record,
                 path: ent.path(),

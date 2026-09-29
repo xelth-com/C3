@@ -52,6 +52,26 @@ pub struct PackOpts {
     pub conn: Option<String>,
 }
 
+/// What one federation peer contributed to a pack (M11): the peer's name (a slug — the only
+/// value that ever leaves this record), how many hits it returned and how many became excerpts,
+/// and the tokens they cost. The pack sidecar records these; the consult dry run prints one line
+/// per peer via [`peer_dry_run_line`].
+#[derive(Debug, Clone, Default)]
+pub struct PeerPackStat {
+    pub name: String,
+    pub hits: usize,
+    pub excerpts: usize,
+    pub tokens: usize,
+}
+
+/// The consult dry-run line for one peer used in a pack (M11 §2).
+pub fn peer_dry_run_line(stat: &PeerPackStat) -> String {
+    format!(
+        "peer        : {} - {} excerpts, about {} tokens from another project",
+        stat.name, stat.excerpts, stat.tokens
+    )
+}
+
 /// The assembled reviewer pack.
 #[derive(Debug, Clone)]
 pub struct ReviewerPack {
@@ -131,8 +151,48 @@ fn open_findings_snapshot(collab_root: &Path, task: &str) -> (String, usize) {
     (out, open.len())
 }
 
-/// Assemble the reviewer pack and its sidecar. Does not write anything.
+/// Assemble the reviewer pack and its sidecar (local only). Does not write anything.
 pub fn build(opts: &PackOpts) -> Result<ReviewerPack, String> {
+    build_inner(opts, &[]).map(|(pack, _)| pack)
+}
+
+/// Assemble a reviewer pack that may include federation-peer excerpts (M11). The peers must
+/// already be gated (`use_in_packs` + named by the command) — see [`resolve_pack_peers`].
+/// Returns the pack (whose sidecar already records the peers) and the per-peer stats for the
+/// consult dry run. With no peers the result is byte-for-byte the local [`build`] pack.
+pub fn build_with_peers(
+    opts: &PackOpts,
+    peers: &[crate::index::ResolvedPeer],
+) -> Result<(ReviewerPack, Vec<PeerPackStat>), String> {
+    build_inner(opts, peers)
+}
+
+/// Resolve, from the user configuration, the peers this project may use in a pack under the
+/// given selection (`use_in_packs: true` AND named by the command / `--peers all`). This is the
+/// single entry point the consult path calls to bring peers into a consultation pack (M11): it
+/// returns the resolved peers to hand to [`build_with_peers`], or a one-line refusal that echoes
+/// only a requested peer name. A missing configuration with peers requested is a refusal; a
+/// missing configuration with none requested yields an empty list (a local pack).
+pub fn resolve_pack_peers(
+    repo_root: &Path,
+    selection: &crate::index::PeerSelection,
+) -> Result<Vec<crate::index::ResolvedPeer>, String> {
+    match crate::c3config::load()? {
+        Some(cfg) => cfg.resolve_selection(repo_root, selection, true),
+        None => {
+            if selection.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Err("no configuration, so no peer is allowed for this project".to_string())
+            }
+        }
+    }
+}
+
+fn build_inner(
+    opts: &PackOpts,
+    peers: &[crate::index::ResolvedPeer],
+) -> Result<(ReviewerPack, Vec<PeerPackStat>), String> {
     // Resolve the brief path (repo-relative or absolute) and read it.
     let brief_abs = if opts.brief.is_absolute() {
         opts.brief.clone()
@@ -279,6 +339,17 @@ pub fn build(opts: &PackOpts) -> Result<ReviewerPack, String> {
         ));
     }
 
+    // Peer excerpts (M11): content from ANOTHER project's index, in its own section AFTER the
+    // local periphery, counted against the same budget, each excerpt through the single
+    // sanitizer, tool-state peer paths excluded. Empty (and byte-identical to the local pack)
+    // when no peer is used.
+    let (peer_section, peer_stats, peer_redactions) =
+        peer_sections(opts, peers, &brief_text, &focus, &mut used);
+    redactions += peer_redactions;
+    if !peer_section.is_empty() {
+        content.push_str(&peer_section);
+    }
+
     // Reply schema, then the instruction again.
     content.push_str("## Reply format\n\n");
     content.push_str(crate::consult::prompt::FINAL_OUTPUT_CONTRACT);
@@ -312,11 +383,18 @@ pub fn build(opts: &PackOpts) -> Result<ReviewerPack, String> {
         obj.insert("files_added".to_string(), json!(added));
     }
 
+    let peers_json: Vec<_> = peer_stats
+        .iter()
+        .map(|p| {
+            json!({ "name": p.name, "hits": p.hits, "excerpts": p.excerpts, "tokens": p.tokens })
+        })
+        .collect();
     let sidecar_value = json!({
         "pack_version": 1,
         "kind": "reviewer",
         "generated": chrono::Local::now().to_rfc3339(),
         "index": index_block,
+        "peers": peers_json,
         "recipe": {
             "brief": brief_rel,
             "focus": opts.focus,
@@ -340,15 +418,18 @@ pub fn build(opts: &PackOpts) -> Result<ReviewerPack, String> {
     let sidecar =
         serde_json::to_string_pretty(&sidecar_value).map_err(|e| format!("sidecar json: {e}"))?;
 
-    Ok(ReviewerPack {
-        redactions,
-        tokens,
-        size_bytes: content.len(),
-        focus_files: focus.iter().map(|f| f.rel.clone()).collect(),
-        periphery_shown,
-        content,
-        sidecar,
-    })
+    Ok((
+        ReviewerPack {
+            redactions,
+            tokens,
+            size_bytes: content.len(),
+            focus_files: focus.iter().map(|f| f.rel.clone()).collect(),
+            periphery_shown,
+            content,
+            sidecar,
+        },
+        peer_stats,
+    ))
 }
 
 /// Ask the configured index for the periphery: the entities most related to the brief and the
@@ -468,6 +549,99 @@ fn index_periphery(
         None,
         json!({ "used": false, "source": "feature-off", "hits": 0 }),
     )
+}
+
+/// Build the `## Peripheral context from other indexes` section (M11): excerpts from each
+/// federation peer, retrieved on the same code-first query the local periphery uses, in the
+/// peer's own retrieval order. Each excerpt is the peer entity's stored text (relative to the
+/// PEER's repository — never joined to the local root), tool-state peer paths are excluded, the
+/// single sanitizer runs on every excerpt, and the peers count against `opts.budget` AFTER the
+/// local periphery (the running `used` total). Returns `(section, per-peer stats, redactions)`;
+/// an empty section keeps the pack byte-identical to the local one.
+#[cfg(feature = "index-surreal")]
+fn peer_sections(
+    opts: &PackOpts,
+    peers: &[crate::index::ResolvedPeer],
+    brief_text: &str,
+    focus: &[FileEntry],
+    used: &mut usize,
+) -> (String, Vec<PeerPackStat>, usize) {
+    if peers.is_empty() {
+        return (String::new(), Vec::new(), 0);
+    }
+    let query = brief_query_terms(brief_text, focus).join(" ");
+    let mut section = String::new();
+    let mut stats: Vec<PeerPackStat> = Vec::new();
+    let mut redactions = 0usize;
+    for peer in peers {
+        let hits = match crate::index::federation::retrieve_peer(peer, &query, 0) {
+            Ok(h) => h,
+            // A peer that does not open contributes nothing; it is not a pack error.
+            Err(_) => {
+                stats.push(PeerPackStat {
+                    name: peer.name.clone(),
+                    ..Default::default()
+                });
+                continue;
+            }
+        };
+        let hit_count = hits.len();
+        let mut excerpts = 0usize;
+        let mut tokens = 0usize;
+        for h in hits {
+            // Tool-state peer paths never enter a pack (item 4); a peer path is never joined to
+            // a local root — it is used only as the excerpt heading.
+            if is_tool_state_path(&h.path) {
+                continue;
+            }
+            let (safe, n) = redact::redact(&h.snippet);
+            let ext = budget::ext_of(&h.path);
+            let toks = budget::estimate_tokens(&safe, &ext);
+            if opts.budget != 0 && *used + toks > opts.budget {
+                continue;
+            }
+            *used += toks;
+            tokens += toks;
+            redactions += n;
+            excerpts += 1;
+            if section.is_empty() {
+                section.push_str("## Peripheral context from other indexes\n\n");
+            }
+            section.push_str(&format!(
+                "### peer:{} / {}\n\n```{}\n{}\n```\n\n",
+                peer.name,
+                h.path,
+                ext,
+                safe.trim_end()
+            ));
+        }
+        stats.push(PeerPackStat {
+            name: peer.name.clone(),
+            hits: hit_count,
+            excerpts,
+            tokens,
+        });
+    }
+    (section, stats, redactions)
+}
+
+#[cfg(not(feature = "index-surreal"))]
+fn peer_sections(
+    _opts: &PackOpts,
+    peers: &[crate::index::ResolvedPeer],
+    _brief_text: &str,
+    _focus: &[FileEntry],
+    _used: &mut usize,
+) -> (String, Vec<PeerPackStat>, usize) {
+    // Without the store there is no way to read a peer; record the names with zero excerpts.
+    let stats = peers
+        .iter()
+        .map(|p| PeerPackStat {
+            name: p.name.clone(),
+            ..Default::default()
+        })
+        .collect();
+    (String::new(), stats, 0)
 }
 
 /// The identifiers a periphery file shares with the focus set (sorted, deterministic) — the

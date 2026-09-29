@@ -243,12 +243,17 @@ pub struct LedgerEntry {
         deserialize_with = "deserialize_present"
     )]
     pub stall: Option<Option<Stall>>,
-    /// (wave 27c, D16) `false` when a process-tree kill could not be confirmed to have stopped the
-    /// root the bridge started (`pid <n> may still run`): no continuation turn runs on that thread
-    /// and a warning is written. Absent (skipped) for every confirmed kill and every run with no
-    /// kill, so a pre-27c entry round-trips byte-identical.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kill_confirmed: Option<bool>,
+    /// (wave 27c, D16) whether a process-tree kill was confirmed to have stopped the root the
+    /// bridge started. `true` when confirmed, `false` when it could not be (`pid <n> may still
+    /// run` — no continuation turn runs and a warning is written), and JSON `null` (`Some(None)`)
+    /// for a run with no tree kill. Sits between `stall` and `base_commit`. Tri-state so a pre-27c
+    /// entry (no key, `None`) round-trips byte-identical.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub kill_confirmed: Option<Option<bool>>,
     #[serde(default)]
     pub base_commit: String,
     #[serde(default)]

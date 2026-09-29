@@ -1,5 +1,14 @@
 # M8c status — index performance and the index-fed reviewer pack
 
+> M11 (see `m11-status.md`) builds on this: opt-in read-only federation (`c3 index peers`,
+> `c3 index query --peer`, `c3 pack --peer`) and a local-only embedding leg (`c3 index embed`,
+> a fifth NN leg in retrieval). RC1 was confirmed absolute at the process level: an embedded
+> surrealkv store holds its OS lock for the whole process, so a store PATH opens at most once
+> per process (a re-open after drop still returns os error 33). Distinct paths are independent,
+> so opening the local index plus a peer store in one command is fine; only re-opening the same
+> path in one process is not (which is why M11's tests build a peer store in a child process).
+
+
 Milestone 8c: make a no-change `index build` touch no rows, cut `index query` latency, and let
 the index feed the reviewer-pack periphery (with index-off packs unchanged). Feature
 `index-surreal`; embedded surrealkv is single-process/fail-fast (RC1, DESIGN §7).

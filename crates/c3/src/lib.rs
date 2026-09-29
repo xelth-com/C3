@@ -32,6 +32,8 @@ pub mod panel;
 
 pub mod router;
 
+pub mod c3config;
+
 pub mod index;
 
 pub mod pack;

@@ -442,19 +442,61 @@ pub struct RawLocation {
     #[serde(default)]
     pub path: String,
     #[serde(default, deserialize_with = "deserialize_present_line")]
-    pub line: Option<Option<i64>>,
+    pub line: Option<Value>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 /// Deserialize `line` so a *present* value (including `null`) becomes `Some(..)` and an
-/// *absent* key stays `None` (the plain serde `Option<Option<i64>>` collapses both to
-/// `None`). This lets the validator require the `line` key while allowing a `null` value.
-fn deserialize_present_line<'de, D>(d: D) -> Result<Option<Option<i64>>, D::Error>
+/// *absent* key stays `None`. The value is kept as a raw JSON [`Value`] (not `i64`) so a
+/// float such as `1e30` — which `ConvertFrom-Json` in the plugin parses as a whole-numbered
+/// double — reaches the validator's own integer/bounds check instead of failing the parse
+/// outright with a serde "expected i64" message.
+fn deserialize_present_line<'de, D>(d: D) -> Result<Option<Value>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Ok(Some(Option::<i64>::deserialize(d)?))
+    Ok(Some(Value::deserialize(d)?))
+}
+
+/// `[double]::ToString()`'s default rendering for a JSON number, matching how the plugin
+/// interpolates `ConvertFrom-Json`'s value into a validation error (e.g. `1e30` -> `1E+30`).
+/// A large or tiny magnitude uses `E±NN` with a signed, at-least-two-digit exponent; anything
+/// in the ordinary range renders as the shortest plain decimal.
+fn dotnet_number_string(v: &serde_json::Number) -> String {
+    if let Some(i) = v.as_i64() {
+        return i.to_string();
+    }
+    if let Some(u) = v.as_u64() {
+        return u.to_string();
+    }
+    let x = match v.as_f64() {
+        Some(f) if f.is_finite() => f,
+        _ => return v.to_string(),
+    };
+    let abs = x.abs();
+    let use_exp = abs != 0.0 && !(1e-4..1e15).contains(&abs);
+    if use_exp {
+        let s = format!("{x:E}"); // e.g. "1E30", "1.5E-7"
+        if let Some(idx) = s.find('E') {
+            let (mant, rest) = s.split_at(idx);
+            let exp = &rest[1..];
+            let (sign, digits) = match exp.strip_prefix('-') {
+                Some(d) => ('-', d),
+                None => ('+', exp.trim_start_matches('+')),
+            };
+            let digits = if digits.len() < 2 {
+                format!("{digits:0>2}")
+            } else {
+                digits.to_string()
+            };
+            return format!("{mant}E{sign}{digits}");
+        }
+        s
+    } else {
+        let s = format!("{x}");
+        s.strip_suffix(".0").map(str::to_string).unwrap_or(s)
+    }
 }
 
 /// A piece of evidence in a raw v1 reply finding.
@@ -642,6 +684,18 @@ pub enum ReplyValidationError {
         finding: usize,
         location: usize,
     },
+    /// A finding's location `line` was present but not an integer (nor null).
+    LocationLineNotInteger {
+        finding: usize,
+        location: usize,
+        value: String,
+    },
+    /// A finding's location `line` was an integer outside `1..2147483647`.
+    LocationLineOutOfRange {
+        finding: usize,
+        location: usize,
+        value: String,
+    },
     /// A prior-finding report had an out-of-set status.
     BadPriorStatus {
         index: usize,
@@ -666,6 +720,14 @@ impl std::fmt::Display for ReplyValidationError {
             ReplyValidationError::LocationMissingLine { finding, location } => write!(
                 f,
                 "findings[{finding}].locations[{location}] is missing the required `line` key"
+            ),
+            ReplyValidationError::LocationLineNotInteger { finding, location, value } => write!(
+                f,
+                "findings[{finding}].locations[{location}].line '{value}' is not an integer or null"
+            ),
+            ReplyValidationError::LocationLineOutOfRange { finding, location, value } => write!(
+                f,
+                "findings[{finding}].locations[{location}].line '{value}' is outside 1..2147483647"
             ),
             ReplyValidationError::BadPriorStatus { index, value } => write!(
                 f,
@@ -696,10 +758,53 @@ impl TryFrom<RawReply> for StructuredReply {
                 })?;
             let mut locations = Vec::with_capacity(rf.locations.len());
             for (li, rl) in rf.locations.into_iter().enumerate() {
-                let line = rl.line.ok_or(ReplyValidationError::LocationMissingLine {
+                let raw_line = rl.line.ok_or(ReplyValidationError::LocationMissingLine {
                     finding: fi,
                     location: li,
                 })?;
+                // A present `line` is `integer | null`; a whole-numbered JSON float (e.g. `1e30`)
+                // is accepted as an integer and bounds-checked, matching the plugin's
+                // `Test-IsJsonInteger` + `1..2147483647` check.
+                let line: Option<i64> = match raw_line {
+                    Value::Null => None,
+                    Value::Number(n) => {
+                        // A whole number, as an integer or an integer-valued float (`1e30`).
+                        let whole: Option<f64> = if let Some(i) = n.as_i64() {
+                            Some(i as f64)
+                        } else if let Some(f) = n.as_f64() {
+                            (f.is_finite() && f.fract() == 0.0).then_some(f)
+                        } else {
+                            None
+                        };
+                        match whole {
+                            None => {
+                                return Err(ReplyValidationError::LocationLineNotInteger {
+                                    finding: fi,
+                                    location: li,
+                                    value: dotnet_number_string(&n),
+                                })
+                            }
+                            Some(x) if (1.0..=2_147_483_647.0).contains(&x) => Some(x as i64),
+                            Some(_) => {
+                                return Err(ReplyValidationError::LocationLineOutOfRange {
+                                    finding: fi,
+                                    location: li,
+                                    value: dotnet_number_string(&n),
+                                })
+                            }
+                        }
+                    }
+                    other => {
+                        return Err(ReplyValidationError::LocationLineNotInteger {
+                            finding: fi,
+                            location: li,
+                            value: match &other {
+                                Value::String(s) => s.clone(),
+                                _ => other.to_string(),
+                            },
+                        })
+                    }
+                };
                 locations.push(ReplyLocation {
                     path: rl.path,
                     line,
@@ -1276,7 +1381,7 @@ mod tests {
                 severity: "blocker".into(),
                 locations: vec![RawLocation {
                     path: "a.rs".into(),
-                    line: Some(Some(5)),
+                    line: Some(Value::from(5)),
                     extra: Map::new(),
                 }],
                 claim: "c".into(),
@@ -1393,5 +1498,64 @@ mod tests {
         .unwrap();
         let s = StructuredReply::try_from(raw2).unwrap();
         assert_eq!(s.findings[0].locations[0].line, None);
+    }
+
+    fn raw_with_line(line: serde_json::Value) -> RawReply {
+        let mut r = valid_raw();
+        r.findings[0].locations = vec![RawLocation {
+            path: "a.rs".into(),
+            line: Some(line),
+            extra: Map::new(),
+        }];
+        r
+    }
+
+    #[test]
+    fn line_1e30_is_out_of_range_rendered_dotnet_style() {
+        // A whole-numbered float (`1e30`) is accepted as an integer, then bounds-checked; the
+        // value renders as .NET's `1E+30` (matching the plugin's `ConvertFrom-Json` double).
+        let err = StructuredReply::try_from(raw_with_line(serde_json::json!(1e30))).unwrap_err();
+        assert_eq!(
+            err,
+            ReplyValidationError::LocationLineOutOfRange {
+                finding: 0,
+                location: 0,
+                value: "1E+30".into()
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "findings[0].locations[0].line '1E+30' is outside 1..2147483647"
+        );
+    }
+
+    #[test]
+    fn line_non_integer_float_is_rejected() {
+        let err = StructuredReply::try_from(raw_with_line(serde_json::json!(5.5))).unwrap_err();
+        assert_eq!(
+            err,
+            ReplyValidationError::LocationLineNotInteger {
+                finding: 0,
+                location: 0,
+                value: "5.5".into()
+            }
+        );
+    }
+
+    #[test]
+    fn line_integer_valued_float_and_zero_bounds() {
+        // `5.0` is a whole number in range -> accepted as 5.
+        let s = StructuredReply::try_from(raw_with_line(serde_json::json!(5.0))).unwrap();
+        assert_eq!(s.findings[0].locations[0].line, Some(5));
+        // 0 is below the 1..2147483647 range.
+        let err = StructuredReply::try_from(raw_with_line(serde_json::json!(0))).unwrap_err();
+        assert_eq!(
+            err,
+            ReplyValidationError::LocationLineOutOfRange {
+                finding: 0,
+                location: 0,
+                value: "0".into()
+            }
+        );
     }
 }

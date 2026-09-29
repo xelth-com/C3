@@ -35,3 +35,27 @@ pub fn scrub_host_markers(cmd: &mut std::process::Command) {
         }
     }
 }
+
+/// (wave 27c, D3) The transactional host-marker hide is fail-closed: a removal that cannot happen
+/// aborts the whole start (a child never launches with only part of the markers hidden). C3 removes
+/// the markers from the CHILD command, which cannot fail, so the only failure mode is the test hook
+/// `CODEX_CONSULT_TEST_HIDE_FAIL=<name>` (test mode only): when it names a host marker present in
+/// this process's environment, the start is refused. Returns the message body
+/// `host markers could not be hidden (<name>: <why>)`, or `None` when nothing forces a failure.
+pub fn host_marker_hide_failure() -> Option<String> {
+    let fail_on = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_HIDE_FAIL")?;
+    let fail_on = fail_on.trim();
+    if fail_on.is_empty() {
+        return None;
+    }
+    for (k, _) in std::env::vars_os() {
+        if let Some(name) = k.to_str() {
+            if name.eq_ignore_ascii_case(fail_on) && c3_core::host::is_host_marker(name) {
+                return Some(format!(
+                    "host markers could not be hidden ({name}: the removal was refused (test hook CODEX_CONSULT_TEST_HIDE_FAIL))"
+                ));
+            }
+        }
+    }
+    None
+}

@@ -570,6 +570,31 @@ fn kill_tree(child: &mut Child) -> Vec<u32> {
     }
 }
 
+/// Kill the process tree rooted at `pid` (a tree WE started, by pid — never by name). On Windows
+/// `taskkill /F /T /PID <pid>`; on Unix a best-effort `kill`. Used by the registration-failure path
+/// where only the child pid is known (the `Child` handle is owned by the running turn).
+pub fn kill_tree_by_pid(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
 /// The pids named by `CODEX_CONSULT_TEST_SURVIVORS` (comma-separated), for the survivor hook.
 fn test_survivor_pids() -> Vec<u32> {
     c3_core::test_hooks::hook("CODEX_CONSULT_TEST_SURVIVORS")
