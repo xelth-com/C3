@@ -259,6 +259,23 @@ fn one() -> i64 {
 impl DetachArgs {
     /// The background's options from this call (minus `-Detach`, paths absolute, prompt→file).
     fn from_options(o: &Options, collab_abs: &str, prompt_file: &str) -> DetachArgs {
+        // (D8) the background runs in the caller's directory but is handed ABSOLUTE artifact paths,
+        // resolved here in the foreground's cwd, so a relative `-Artifact art.bin` from a
+        // subdirectory binds to `<cwd>/art.bin` (its raw arg, which the ledger records) rather than
+        // a bare relative name the background could misresolve.
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let artifacts_abs: Vec<String> = o
+            .artifacts
+            .iter()
+            .map(|a| {
+                let p = std::path::Path::new(a);
+                if a.is_empty() || p.is_absolute() {
+                    a.clone()
+                } else {
+                    cwd.join(p).to_string_lossy().to_string()
+                }
+            })
+            .collect();
         DetachArgs {
             collab_dir: collab_abs.to_string(),
             mode: o.mode.clone(),
@@ -279,7 +296,7 @@ impl DetachArgs {
             continue_sec: o.continue_sec,
             range: o.range.clone(),
             reply_name: o.reply_name.clone(),
-            artifacts: o.artifacts.clone(),
+            artifacts: artifacts_abs,
             raw: o.raw,
             codex_exe: o.codex_exe.clone(),
             provider: o.provider.clone(),

@@ -378,6 +378,8 @@ pub enum StopKind {
     /// of the last event seen before the kill, `None` when none was seen.
     Stall {
         silent_seconds: i64,
+        /// (wave 27c, D6) Seconds a tool call had been open at the stall kill (`0` when none).
+        tool_open_seconds: i64,
         last_event: Option<String>,
     },
     /// The operator stopped the run with `-Kick`.

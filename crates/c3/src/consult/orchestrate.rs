@@ -315,11 +315,11 @@ fn resolve_preflight(
     // (wave 26b, D-auth) the selected reviewer's roster entry declares `auth: "none"`: a provider
     // whose table has no env_key/bearer is then "ok: declared anonymous in the roster".
     anonymous: bool,
-) -> (String, Option<(String, i32)>, String) {
+) -> (String, Option<(String, i32)>, String, Option<String>) {
     // The plugin refuses a preflight through `Stop-WithError` (exit 1, nothing written,
     // `codex-consult.ps1:304`); c3 matches that, not cli-surface.md's aspirational exit 2/3.
     if let Some(v) = verdict_pre_credential(id) {
-        return (v.preflight, Some((v.refusal, 1)), v.label);
+        return (v.preflight, Some((v.refusal, 1)), v.label, None);
     }
     // Endpoint health from every task ledger of THIS repository, read at the consult clock and
     // matched by the resolved identity's provider fingerprint: a recorded auth failure (within
@@ -359,11 +359,17 @@ fn resolve_preflight(
     } else {
         providers::engine_consult_credential(&id.engine, launcher, health.as_ref())
     };
+    // (wave 27c, D4) a launcher probe that was SKIPPED (its start-info could not be scrubbed) earns
+    // a run warning naming why — the same `a launcher probe was skipped: <why>` the plugin records.
+    let probe_warning = cred
+        .reason
+        .strip_prefix("not checked - `codex login status` was skipped: ")
+        .map(|why| format!("a launcher probe was skipped: {why}"));
     let v = verdict_with_credential(id, health.as_ref(), cred, false);
     if v.state == "available" {
-        (v.preflight, None, v.label)
+        (v.preflight, None, v.label, probe_warning)
     } else {
-        (v.preflight, Some((v.refusal, 1)), v.label)
+        (v.preflight, Some((v.refusal, 1)), v.label, probe_warning)
     }
 }
 
@@ -1174,6 +1180,13 @@ fn build_context(
     // matched roster entry's stall_sec below (unless --stall-sec was given).
     let mut stall_sec = r.stall_sec;
     let mut run_warnings: Vec<String> = Vec::new();
+    // (wave 27c, D14) a CODEX_CONSULT_TEST_* / CODEX_CONSULT_NOW hook set without
+    // CODEX_CONSULT_TEST_MODE=1 is IGNORED; the run names it once. build_context runs per member,
+    // so each panel member's preview carries its own copy (like the plugin's per-process warning).
+    let ignored_hooks_warning = c3_core::test_hooks::ignored_hooks_warning();
+    if !ignored_hooks_warning.is_empty() {
+        run_warnings.push(ignored_hooks_warning);
+    }
     // (wave 27c, D11/D12) a coordinator that parses but names no seat is SAID, not refused: a
     // roster position with no seat here warns and the run goes on; a coordinator no reviewer can
     // match warns and the ledger records `coordinator.in_roster: false`.
@@ -1621,8 +1634,15 @@ fn build_context(
                 .as_ref()
                 .map(|e| e.auth == "none")
                 .unwrap_or(false);
-            let (p, refusal, label) =
+            let (p, refusal, label, probe_warning) =
                 resolve_preflight(&identity, &engine_launcher, &config, &collab_root, anon);
+            // (D4) a skipped launcher probe warns (deduped), in both the dry-run preview and the
+            // real run's ledger warnings[].
+            if let Some(w) = probe_warning {
+                if !run_warnings.contains(&w) {
+                    run_warnings.push(w);
+                }
+            }
             (p, refusal, String::new(), label)
         };
 
@@ -3774,8 +3794,15 @@ fn finish(
                 }
                 _ => {}
             }
+            // (wave 27c, D6) the stall stop text, with the tool-open clause when a tool call was
+            // open at the kill; reused by the unconfirmed-kill tail below.
+            let mut stall_stop_text = String::new();
             match kind {
-                c3_core::engine::StopKind::Stall { last_event, .. } => {
+                c3_core::engine::StopKind::Stall {
+                    last_event,
+                    silent_seconds,
+                    tool_open_seconds,
+                } => {
                     // (wave 26b, D12) a stall is stopped like a timeout: one continuation turn
                     // follows (gated by --continue-sec) and the salvage is written.
                     main_timed_out = true;
@@ -3784,10 +3811,15 @@ fn finish(
                         last_event,
                         extra: Default::default(),
                     });
-                    bridge_outcome = format!(
-                        "failed: stalled after {} s without an event (process tree killed)",
-                        ctx.stall_sec
-                    );
+                    let mut stop_text =
+                        format!("stalled after {} s without an event", ctx.stall_sec);
+                    if tool_open_seconds > 0 {
+                        stop_text += &format!(
+                            " - no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s)"
+                        );
+                    }
+                    stall_stop_text = stop_text.clone();
+                    bridge_outcome = format!("failed: {stop_text} (process tree killed)");
                 }
                 c3_core::engine::StopKind::Kick => {
                     // (wave 26b, D10) the operator stopped it: no continuation; the salvage follows
@@ -3806,8 +3838,7 @@ fn finish(
                 kill_confirmed_state = Some(kill_unconfirmed.is_none());
                 if let Some((pid, why)) = &kill_unconfirmed {
                     bridge_outcome = format!(
-                        "failed: stalled after {} s without an event (kill not confirmed: {why}; pid {pid} may still run)",
-                        ctx.stall_sec
+                        "failed: {stall_stop_text} (kill not confirmed: {why}; pid {pid} may still run)"
                     );
                 }
             }

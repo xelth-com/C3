@@ -162,6 +162,7 @@ impl CodexEngine {
                 return Ok(AttemptOutcome::Stopped {
                     kind: StopKind::Stall {
                         silent_seconds: result.silent_seconds,
+                        tool_open_seconds: result.tool_open_seconds,
                         last_event: result.last_event.clone(),
                     },
                     partial: salvage_partial(&events_text),
@@ -329,10 +330,15 @@ pub fn find_thread_in_rollouts(
     if !root.is_dir() {
         return (String::new(), String::new());
     }
-    // The day directories for the run's start and now (the run may cross midnight).
-    let now = chrono::Utc::now();
+    // The day directories for the run's start and now (the run may cross midnight). Codex (and the
+    // fake, and the plugin's `Get-Date`) name the `sessions/YYYY/MM/DD` dirs by LOCAL date, so the
+    // day-dir names must be built in local time — a UTC date would miss the files whenever the run
+    // straddles the local-vs-UTC midnight boundary. The mtime `cutoff` below stays an instant
+    // comparison and is unaffected.
+    let now = chrono::Local::now();
+    let start_local = started_at.with_timezone(&chrono::Local);
     let mut days: Vec<PathBuf> = Vec::new();
-    for d in [started_at, now] {
+    for d in [start_local, now] {
         let p = root
             .join(format!("{:04}", d.year()))
             .join(format!("{:02}", d.month()))

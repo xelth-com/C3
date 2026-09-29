@@ -142,19 +142,50 @@ pub fn run(o: &Options) -> i32 {
     // writes a fresh id. A stale acknowledgement (older than 60 s) whose id is not ours is swept
     // first. The member acknowledges with `<kick>.ack` holding the id and result (`stopped`/`late`).
     crate::engines::subprocess::sweep_stale_ack(&kick_path, None, 60);
-    let (request_id, is_creator) = match crate::engines::subprocess::read_kick_id(&kick_path) {
-        Some(id) if kick_path.exists() => (id, false),
-        _ => {
-            let id = uuid::Uuid::new_v4().simple().to_string();
-            if crate::engines::subprocess::write_kick_atomic(&kick_path, &id).is_err() {
+    // (D1) Resolve the request id: JOIN an existing kick file's id, or CREATE a fresh one. The
+    // write never overwrites (hard_link), so two concurrent callers converge on ONE id — the loser
+    // of the create race re-reads and joins. Retry up to 20 x 100 ms, like `New-KickRequest`.
+    let mut request_id = String::new();
+    let mut is_creator = false;
+    for _ in 0..20 {
+        if let Some(id) = crate::engines::subprocess::read_kick_id(&kick_path) {
+            if kick_path.exists() {
+                request_id = id;
+                is_creator = false;
+                break;
+            }
+        }
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        match crate::engines::subprocess::write_kick_atomic(&kick_path, &id) {
+            Ok(()) => {
+                request_id = id;
+                is_creator = true;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Another caller created it first: re-read and join on the next pass.
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                continue;
+            }
+            Err(_) => {
                 return fail(&format!(
                     "could not write the kick file {}.",
                     kick_path.display()
                 ));
             }
-            (id, true)
         }
-    };
+    }
+    if request_id.is_empty() {
+        match crate::engines::subprocess::read_kick_id(&kick_path) {
+            Some(id) => request_id = id,
+            None => {
+                return fail(&format!(
+                    "could not write the kick file {}.",
+                    kick_path.display()
+                ))
+            }
+        }
+    }
     // Wait up to 10 s for an acknowledgement that names OUR request id, polling every 200 ms.
     let ack_matches = |id: &str| {
         crate::engines::subprocess::read_kick_ack(&ack_path)
@@ -189,10 +220,16 @@ pub fn run(o: &Options) -> i32 {
             o.task
         );
     }
-    // (wave 27c, D1) only the CREATOR of the request removes the acknowledgement after reading it;
-    // a joiner never does.
+    // (wave 27c, D1) only the CREATOR of the request retires the acknowledgement, and only after a
+    // 1 s grace + recheck (so a joiner has time to read it before it is swept); a joiner never does.
     if is_creator {
-        let _ = std::fs::remove_file(&ack_path);
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+        let still_ours = crate::engines::subprocess::read_kick_ack(&ack_path)
+            .map(|a| a.id == request_id)
+            .unwrap_or(false);
+        if still_ours {
+            let _ = std::fs::remove_file(&ack_path);
+        }
     }
     0
 }

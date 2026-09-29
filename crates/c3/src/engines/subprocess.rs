@@ -87,6 +87,9 @@ pub struct TurnResult {
     pub last_event: Option<String>,
     /// (wave 26b, D12) Seconds without an event at the stall kill (`0` unless a stall fired).
     pub silent_seconds: i64,
+    /// (wave 27c, D6) Seconds a tool call had been open at the stall kill (`0` when none was open);
+    /// the stall outcome names it: `no output for N s (a tool call open for M s)`.
+    pub tool_open_seconds: i64,
     /// (wave 27c, D5) How many over-long unfinished lines (> 1 MiB with no line end) the bounded
     /// stream reader discarded during the turn; `0` normally. A non-zero count warns once per run.
     pub oversized_lines: u64,
@@ -109,6 +112,7 @@ impl TurnResult {
             kick_late: false,
             last_event: None,
             silent_seconds: 0,
+            tool_open_seconds: 0,
             oversized_lines: 0,
             survivors: Vec::new(),
             wall_seconds: 0.0,
@@ -174,13 +178,13 @@ pub fn write_kick_atomic(kick_path: &Path, id: &str) -> std::io::Result<()> {
     tmp.push(format!(".tmp-{}", std::process::id()));
     let tmp = std::path::PathBuf::from(tmp);
     std::fs::write(&tmp, body.as_bytes())?;
-    match std::fs::rename(&tmp, kick_path) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
-        }
-    }
+    // (D1) Publish WITHOUT overwriting: `hard_link` fails with `AlreadyExists` when the kick file
+    // already exists, matching .NET's `File.Move` (which never overwrites). A second concurrent
+    // -Kick caller therefore does NOT clobber the first's request — it re-reads and JOINS that id
+    // (the caller's retry loop). `std::fs::rename` would silently replace on Windows, breaking that.
+    let res = std::fs::hard_link(&tmp, kick_path);
+    let _ = std::fs::remove_file(&tmp);
+    res
 }
 
 /// Write `<kick>.ack` holding the result and the request id it acknowledges (wave 27c, D1).
@@ -321,6 +325,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     let mut open_tools: i64 = 0;
     let mut last_event: Option<String> = None;
     let mut silent_seconds: i64 = 0;
+    let mut tool_open_seconds: i64 = 0;
     // (wave 27c, D5) over-long unfinished lines discarded, and whether we are skipping the tail of
     // one until its line end. (wave 27c, D6) when the current tool-call suspension began.
     let mut oversized_lines: u64 = 0;
@@ -407,11 +412,11 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         if fire {
                             silent_seconds = silent;
                             if open_tools > 0 {
-                                let tool_open = tool_open_since
+                                tool_open_seconds = tool_open_since
                                     .map(|t| t.elapsed().as_secs() as i64)
                                     .unwrap_or(0);
                                 eprintln!(
-                                    "codex-consult: no output for {silent_seconds} s (a tool call open for {tool_open} s)"
+                                    "codex-consult: no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s)"
                                 );
                             }
                             survivors = kill_now(&mut child);
@@ -428,6 +433,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         stop: TurnStop::Exited,
                         last_event,
                         silent_seconds: 0,
+                        tool_open_seconds: 0,
                         oversized_lines,
                         survivors: Vec::new(),
                         wall_seconds: round1(start.elapsed().as_secs_f64()),
@@ -465,6 +471,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         kick_late,
         last_event,
         silent_seconds,
+        tool_open_seconds,
         oversized_lines,
         survivors,
         wall_seconds,

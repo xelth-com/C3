@@ -48,6 +48,41 @@ pub fn hook(name: &str) -> Option<String> {
     None
 }
 
+/// `Get-IgnoredTestHooks`: the `CODEX_CONSULT_TEST_*` (other than the mode gate) and
+/// `CODEX_CONSULT_NOW` variables that are SET in this process but IGNORED because the mode is off,
+/// sorted ordinally. Empty when the mode is on (nothing is ignored). A run names them once in a
+/// warning so a hook that quietly did nothing is visible.
+pub fn ignored_hooks() -> Vec<String> {
+    if mode_on() {
+        return Vec::new();
+    }
+    let mut names: Vec<String> = Vec::new();
+    for (k, v) in std::env::vars() {
+        let u = k.to_ascii_uppercase();
+        let is_hook =
+            (u.starts_with("CODEX_CONSULT_TEST_") && u != MODE_VAR) || u == "CODEX_CONSULT_NOW";
+        if is_hook && !v.trim().is_empty() && !names.contains(&k) {
+            names.push(k);
+        }
+    }
+    names.sort();
+    names
+}
+
+/// The one-line warning naming the ignored hooks (`""` when none), as a run records it once:
+/// `test hook[s] ignored - CODEX_CONSULT_TEST_MODE=1 is not set: <names>`.
+pub fn ignored_hooks_warning() -> String {
+    let names = ignored_hooks();
+    if names.is_empty() {
+        return String::new();
+    }
+    let plural = if names.len() != 1 { "s" } else { "" };
+    format!(
+        "test hook{plural} ignored - {MODE_VAR}=1 is not set: {}",
+        names.join(", ")
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,6 +107,25 @@ mod tests {
         std::env::set_var(MODE_VAR, "0");
         assert_eq!(hook("CODEX_CONSULT_TEST_KICK_WAIT_MS"), None);
         std::env::remove_var("CODEX_CONSULT_TEST_KICK_WAIT_MS");
+        std::env::remove_var(MODE_VAR);
+    }
+
+    #[test]
+    fn ignored_hooks_named_only_when_mode_off() {
+        let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var(MODE_VAR);
+        std::env::set_var("CODEX_CONSULT_TEST_PANEL_SEED", "seed-27c");
+        // Mode off: the hook is named as ignored, with the singular wording.
+        assert!(ignored_hooks().contains(&"CODEX_CONSULT_TEST_PANEL_SEED".to_string()));
+        assert_eq!(
+            ignored_hooks_warning(),
+            "test hook ignored - CODEX_CONSULT_TEST_MODE=1 is not set: CODEX_CONSULT_TEST_PANEL_SEED"
+        );
+        // Mode on: nothing is ignored.
+        std::env::set_var(MODE_VAR, "1");
+        assert!(ignored_hooks().is_empty());
+        assert_eq!(ignored_hooks_warning(), "");
+        std::env::remove_var("CODEX_CONSULT_TEST_PANEL_SEED");
         std::env::remove_var(MODE_VAR);
     }
 

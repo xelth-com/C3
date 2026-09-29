@@ -145,6 +145,7 @@ impl AgyEngine {
                 TurnStop::Stall => AttemptOutcome::Stopped {
                     kind: c3_core::engine::StopKind::Stall {
                         silent_seconds: result.silent_seconds,
+                        tool_open_seconds: result.tool_open_seconds,
                         last_event: result.last_event.clone(),
                     },
                     partial,
