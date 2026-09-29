@@ -156,6 +156,69 @@ fn chunked_bulk_insert_over_one_chunk() {
 }
 
 #[test]
+fn incremental_matches_rebuild() {
+    // The incremental (file-hash skip) path must land the store in exactly the state a
+    // from-scratch rebuild would: a no-change build touches nothing and reports the same
+    // counts, and a changed-file build (here a removed and an added function, leaving one
+    // caller's target dangling) matches a full rebuild of the new file set.
+    let store = scratch_store();
+    let backend = Backend::SurrealKv(store.clone());
+    let files = files();
+    let generation = "incgen-0001";
+    let idx = SurrealIndex::open(backend, "c3", "inc").expect("open embedded index");
+
+    let s1 = idx.index(&files, generation).expect("build");
+
+    // No-change rebuild: identical counts (and, by construction, zero row writes).
+    let s2 = idx.index(&files, generation).expect("no-change");
+    assert_eq!(s1.entities, s2.entities);
+    assert_eq!(s1.files, s2.files);
+    assert_eq!(s1.belongs_to, s2.belongs_to);
+    assert_eq!(s1.calls, s2.calls);
+    assert_eq!(s1.relates_to, s2.relates_to);
+
+    // Change one file: drop `multiply` (so app.rs's call to it dangles) and add `subtract`.
+    let mut files2 = files.clone();
+    files2[0].1 = "\
+/// Adds two numbers.
+pub fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+/// Subtracts two numbers.
+pub fn subtract(a: i32, b: i32) -> i32 {
+    a - b
+}
+"
+    .to_string();
+
+    let s3 = idx.index(&files2, generation).expect("incremental change");
+    // A full rebuild of the same new file set on the same store.
+    let sr = idx.rebuild(&files2, generation).expect("rebuild");
+    assert_eq!(s3.entities, sr.entities, "entities incremental == rebuild");
+    assert_eq!(s3.files, sr.files, "files incremental == rebuild");
+    assert_eq!(
+        s3.belongs_to, sr.belongs_to,
+        "belongs_to incremental == rebuild"
+    );
+    assert_eq!(s3.calls, sr.calls, "calls incremental == rebuild");
+    assert_eq!(
+        s3.relates_to, sr.relates_to,
+        "relates_to incremental == rebuild"
+    );
+
+    // `subtract` is now retrievable; `multiply` is gone.
+    let hits = idx.retrieve("subtract", 4000).expect("retrieve");
+    assert!(
+        hits.iter().take(3).any(|h| h.name == "subtract"),
+        "'subtract' should rank near the top after the incremental change"
+    );
+
+    drop(idx);
+    let _ = std::fs::remove_dir_all(store.parent().unwrap_or(&store));
+}
+
+#[test]
 fn none_backend_is_noop() {
     // Parsing and the none backend need no feature-specific store.
     let b = c3::index::parse_conn("none").unwrap();

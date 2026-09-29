@@ -47,8 +47,13 @@ pub struct BuildArgs {
 
 #[derive(Args, Debug, Default)]
 pub struct QueryArgs {
-    /// The search text.
-    pub text: String,
+    /// The search text. Several queries may be given; they share one store open, so each
+    /// query after the first pays only its own retrieval, not another open.
+    pub text: Vec<String>,
+    /// A file of queries, one per line (blank lines and `#` comments ignored); appended after
+    /// any positional queries. All share the single open.
+    #[arg(long)]
+    pub queries_file: Option<String>,
     /// Token budget for the returned hits (0 = no cap).
     #[arg(long, default_value_t = 4000)]
     pub budget: usize,
@@ -220,6 +225,27 @@ fn build_backend(ctx: &Ctx, backend: index::Backend, rebuild: bool) -> i32 {
 
 fn query(args: QueryArgs) -> i32 {
     let ctx = resolve(&args.collab_dir, args.conn);
+    let mut queries: Vec<String> = args.text.clone();
+    if let Some(path) = &args.queries_file {
+        match std::fs::read_to_string(path) {
+            Ok(body) => {
+                for line in body.lines() {
+                    let t = line.trim();
+                    if !t.is_empty() && !t.starts_with('#') {
+                        queries.push(t.to_string());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("c3 index query: --queries-file {path}: {e}");
+                return 2;
+            }
+        }
+    }
+    if queries.is_empty() {
+        eprintln!("c3 index query: at least one query is required (positional or --queries-file)");
+        return 2;
+    }
     let backend = match index::parse_conn(&ctx.conn) {
         Ok(b) => b,
         Err(e) => {
@@ -227,48 +253,74 @@ fn query(args: QueryArgs) -> i32 {
             return 2;
         }
     };
-    query_backend(&ctx, backend, &args.text, args.budget, args.json)
+    query_backend(&ctx, backend, &queries, args.budget, args.json)
 }
 
 #[cfg(not(feature = "index-surreal"))]
 fn query_backend(
     _ctx: &Ctx,
     _backend: index::Backend,
-    _text: &str,
+    queries: &[String],
     _budget: usize,
     json: bool,
 ) -> i32 {
-    report_none_query(json);
+    for _ in queries {
+        report_none_query(json);
+    }
     0
 }
 
 #[cfg(feature = "index-surreal")]
-fn query_backend(ctx: &Ctx, backend: index::Backend, text: &str, budget: usize, json: bool) -> i32 {
+fn query_backend(
+    ctx: &Ctx,
+    backend: index::Backend,
+    queries: &[String],
+    budget: usize,
+    json: bool,
+) -> i32 {
     if backend == index::Backend::None {
-        report_none_query(json);
+        for _ in queries {
+            report_none_query(json);
+        }
         return 0;
     }
+    let profile = std::env::var("C3_INDEX_PROFILE").is_ok();
     let ns = "c3";
     let db_name = repo_db_name(&ctx.repo_root);
     // A read opens the embedded store exclusively too (no shared mode), so an open failure
-    // here means another process holds it — report none and exit 0, no retry.
-    let idx = match index::SurrealIndex::open(backend, ns, &db_name) {
+    // here means another process holds it — report none and exit 0, no retry. Reading opens
+    // without re-running the schema `DEFINE` (the build already wrote it). Every query in this
+    // invocation shares this one open.
+    let t = std::time::Instant::now();
+    let idx = match index::SurrealIndex::open_read(backend, ns, &db_name) {
         Ok(i) => i,
         Err(reason) => {
-            report_none_query_reason(json, &reason);
+            for _ in queries {
+                report_none_query_reason(json, &reason);
+            }
             return 0;
         }
     };
-    match idx.retrieve(text, budget) {
-        Ok(hits) => {
-            print_hits(&hits, json);
-            0
+    if profile {
+        eprintln!(
+            "[c3-index] open_read (no DEFINE): {:.3}s",
+            t.elapsed().as_secs_f64()
+        );
+    }
+    for text in queries {
+        let t = std::time::Instant::now();
+        match idx.retrieve(text, budget) {
+            Ok(hits) => print_hits(&hits, json),
+            Err(reason) => report_none_query_reason(json, &reason),
         }
-        Err(reason) => {
-            report_none_query_reason(json, &reason);
-            0
+        if profile {
+            eprintln!(
+                "[c3-index] retrieve({text:?}) total: {:.3}s",
+                t.elapsed().as_secs_f64()
+            );
         }
     }
+    0
 }
 
 fn report_none_query(json: bool) {
@@ -339,7 +391,7 @@ fn stats_backend(ctx: &Ctx, backend: index::Backend, json: bool) -> i32 {
     }
     let ns = "c3";
     let db_name = repo_db_name(&ctx.repo_root);
-    let idx = match index::SurrealIndex::open(backend, ns, &db_name) {
+    let idx = match index::SurrealIndex::open_read(backend, ns, &db_name) {
         Ok(i) => i,
         Err(reason) => {
             print_stats(&IndexStats::none(reason), json);

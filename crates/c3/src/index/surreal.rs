@@ -97,9 +97,8 @@ pub struct SurrealIndex {
 }
 
 /// An entity row read back from the store.
-#[derive(Debug, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Deserialize, SurrealValue)]
 struct Row {
-    #[allow(dead_code)]
     id: String,
     kind: String,
     path: String,
@@ -119,6 +118,13 @@ struct IdRow {
     id: String,
 }
 
+/// A `(src, dst)` edge id pair read back for batched 1-hop expansion.
+#[derive(Debug, Deserialize, SurrealValue)]
+struct EdgeRow {
+    src: String,
+    dst: String,
+}
+
 #[derive(Debug, Deserialize, SurrealValue)]
 struct CountRow {
     count: i64,
@@ -136,12 +142,28 @@ struct FhRow {
 }
 
 impl SurrealIndex {
-    /// Connect to `backend`, select the namespace/database and define the schema.
+    /// Connect to `backend` and select the namespace/database.
     ///
     /// `ns`/`db` are the repo identity the caller derives. For `ws://`, credentials come
     /// from `C3_INDEX_USER` / `C3_INDEX_PASS` in the environment only (never printed). On
     /// any failure the caller falls back to `Index: none`.
+    ///
+    /// A build opens with the cheap base-schema definition ([`open`]: the tables and the
+    /// analyser, `IF NOT EXISTS` and idempotent); the expensive BM25 full-text indexes are
+    /// defined once by the from-scratch load, not on every open. A plain read opens without
+    /// any `DEFINE` at all ([`open_read`]) — the tables, analyser and BM25 indexes are already
+    /// present from the build, so a query-only process must not spend its budget re-running
+    /// `DEFINE`. Both take the same fail-fast single-writer open (RC1).
     pub fn open(backend: Backend, ns: &str, db_name: &str) -> Result<Self, String> {
+        Self::open_with(backend, ns, db_name, true)
+    }
+
+    /// Open for reading only: no schema/index `DEFINE` on the connection (see [`open`]).
+    pub fn open_read(backend: Backend, ns: &str, db_name: &str) -> Result<Self, String> {
+        Self::open_with(backend, ns, db_name, false)
+    }
+
+    fn open_with(backend: Backend, ns: &str, db_name: &str, define: bool) -> Result<Self, String> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -161,9 +183,11 @@ impl SurrealIndex {
                         .use_db(&db_name)
                         .await
                         .map_err(|e| redact_err(&e.to_string()))?;
-                    define_schema(&db)
-                        .await
-                        .map_err(|e| redact_err(&e.to_string()))?;
+                    if define {
+                        define_base_schema(&db)
+                            .await
+                            .map_err(|e| redact_err(&e.to_string()))?;
+                    }
                     Ok::<_, String>(Handle::Local(db))
                 })?;
                 (handle, endpoint)
@@ -190,9 +214,11 @@ impl SurrealIndex {
                         .use_db(&db_name)
                         .await
                         .map_err(|e| redact_err(&e.to_string()))?;
-                    define_schema(&db)
-                        .await
-                        .map_err(|e| redact_err(&e.to_string()))?;
+                    if define {
+                        define_base_schema(&db)
+                            .await
+                            .map_err(|e| redact_err(&e.to_string()))?;
+                    }
                     Ok::<_, String>(Handle::Any(db))
                 })?;
                 (handle, endpoint)
@@ -311,72 +337,212 @@ async fn do_index<C: Connection>(
     //    build (a first `index` or the `rebuild` path, which cleared it) — then there is
     //    nothing to skip and we can drop the BM25 indexes for a one-pass bulk load.
     let stored = stored_file_hashes(db).await?;
-    let from_scratch = stored.is_empty();
-
-    // 3. Orphan cleanup: entities whose path is gone (never any when from scratch).
-    if !from_scratch {
-        let mut orphan_paths: Vec<String> = stored
-            .keys()
-            .filter(|p| !current_paths.contains(*p))
-            .cloned()
-            .collect();
-        orphan_paths.sort();
-        for p in &orphan_paths {
-            db.query("DELETE entity WHERE path = $p; DELETE file_hash WHERE path = $p;")
-                .bind(("p", p.clone()))
-                .await
-                .map_err(|e| e.to_string())?
-                .check()
-                .map_err(|e| e.to_string())?;
-        }
+    if stored.is_empty() {
+        return index_from_scratch(
+            db,
+            &entities,
+            &relations,
+            &hash_by_path,
+            generation,
+            backend_name,
+            endpoint,
+        )
+        .await;
     }
 
-    // 4. Entities. From scratch: drop the BM25 indexes, bulk-INSERT every entity in chunks,
-    //    then rebuild the four indexes in a single pass. Incremental: keep the indexes and
-    //    UPSERT only the rows of changed/new files (a file whose content hash is unchanged is
-    //    skipped — its rows are already present and identical).
-    if from_scratch {
-        remove_bm25_indexes(db).await?;
-        let rows: Vec<EntityIn> = entities.iter().map(|e| entity_in(e, generation)).collect();
-        for chunk in rows.chunks(CHUNK) {
-            let _: Vec<serde_json::Value> = db
-                .insert("entity")
-                .content(chunk.to_vec())
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-        define_bm25_indexes(db).await?;
-    } else {
-        for e in &entities {
-            let is_dir = e.lang == "dir";
-            if !is_dir {
-                if let Some(h) = stored.get(&e.path) {
-                    if hash_by_path.get(&e.path).map(|x| x.as_str()) == Some(h.as_str()) {
-                        continue;
-                    }
-                }
-            }
+    // 3. Incremental. Detect the files whose content changed and the files that disappeared;
+    //    everything else is byte-identical and its rows are left untouched.
+    let changed: Vec<String> = current_paths
+        .iter()
+        .filter(|p| hash_by_path.get(*p).map(|x| x.as_str()) != stored.get(*p).map(|x| x.as_str()))
+        .cloned()
+        .collect();
+    let deleted: Vec<String> = stored
+        .keys()
+        .filter(|p| !current_paths.contains(*p))
+        .cloned()
+        .collect();
+
+    // 4. Nothing changed on disk: the derived entities and every edge are identical to what is
+    //    stored, so a rebuild must touch no row. Only the generation string can differ (a git
+    //    op with no indexed-file change); update that one meta row when it does, nothing else.
+    if changed.is_empty() && deleted.is_empty() {
+        let stored_gen = read_generation(db).await?;
+        if stored_gen.as_deref() != Some(generation) {
             let _: Option<serde_json::Value> = db
-                .upsert(("entity", e.id.as_str()))
-                .content(serde_json::json!({
-                    "kind": e.kind.as_str(),
-                    "path": e.path,
-                    "name": e.name,
-                    "lang": e.lang,
-                    "line_start": e.line_start as i64,
-                    "line_end": e.line_end as i64,
-                    "summary": e.summary,
-                    "code": e.code,
-                    "content_hash": e.content_hash,
-                    "generation": generation,
-                }))
+                .upsert(("meta", "generation"))
+                .content(serde_json::json!({ "value": generation }))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        return do_stats(db, backend_name, endpoint).await;
+    }
+
+    // A changed file rewrites only its own entities and the edges that start or end in them;
+    // a deleted file removes its rows. Directory entities are diffed separately (they hang off
+    // the file set, not off any single file hash).
+    let mut dirty: BTreeSet<String> = BTreeSet::new();
+    dirty.extend(changed.iter().cloned());
+    dirty.extend(deleted.iter().cloned());
+    let dirty_vec: Vec<String> = dirty.iter().cloned().collect();
+
+    // 4a. The entity ids whose path is dirty (fetched before any delete, so edges into a
+    //     deleted file's now-removed entities are still resolvable).
+    let affected_ids: Vec<RecordId> = {
+        let mut resp = db
+            .query("SELECT record::id(id) AS id FROM entity WHERE path IN $paths")
+            .bind(("paths", dirty_vec.clone()))
+            .await
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<IdRow> = resp.take(0).map_err(|e| e.to_string())?;
+        rows.into_iter()
+            .map(|r| RecordId::new("entity", r.id))
+            .collect()
+    };
+
+    // 4b. Delete the edges that touch any dirty entity (only those can have changed: an edge
+    //     changes iff a referenced name in it appeared, disappeared or moved, which makes one
+    //     of its endpoint files dirty). Then delete the dirty files' entity and hash rows.
+    db.query("DELETE belongs_to WHERE in IN $ids OR out IN $ids; DELETE calls WHERE in IN $ids OR out IN $ids; DELETE relates_to WHERE in IN $ids OR out IN $ids;")
+        .bind(("ids", affected_ids.clone()))
+        .await
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| e.to_string())?;
+    db.query("DELETE entity WHERE path IN $paths; DELETE file_hash WHERE path IN $paths;")
+        .bind(("paths", dirty_vec.clone()))
+        .await
+        .map_err(|e| e.to_string())?
+        .check()
+        .map_err(|e| e.to_string())?;
+
+    // 4c. Insert the current entities of the changed files (non-directory rows).
+    let changed_set: BTreeSet<&str> = changed.iter().map(|s| s.as_str()).collect();
+    let new_rows: Vec<EntityIn> = entities
+        .iter()
+        .filter(|e| e.lang != "dir" && changed_set.contains(e.path.as_str()))
+        .map(|e| entity_in(e, generation))
+        .collect();
+    for chunk in new_rows.chunks(CHUNK) {
+        let _: Vec<serde_json::Value> = db
+            .insert("entity")
+            .content(chunk.to_vec())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    // 4d. Reconcile directory entities against the current file set (a new directory to add, a
+    //     directory whose last file went away to remove). Cheap: there are only a handful.
+    let target_dirs: Vec<&super::extract::Entity> =
+        entities.iter().filter(|e| e.lang == "dir").collect();
+    let target_dir_ids: BTreeSet<&str> = target_dirs.iter().map(|e| e.id.as_str()).collect();
+    let stored_dirs: BTreeSet<String> = {
+        let mut resp = db
+            .query("SELECT record::id(id) AS id FROM entity WHERE lang = 'dir'")
+            .await
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<IdRow> = resp.take(0).map_err(|e| e.to_string())?;
+        rows.into_iter().map(|r| r.id).collect()
+    };
+    for id in &stored_dirs {
+        if !target_dir_ids.contains(id.as_str()) {
+            let _: Option<serde_json::Value> = db
+                .delete(("entity", id.as_str()))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let mut add_dirs: Vec<EntityIn> = Vec::new();
+    for &e in &target_dirs {
+        if !stored_dirs.contains(e.id.as_str()) {
+            add_dirs.push(entity_in(e, generation));
+        }
+    }
+    for chunk in add_dirs.chunks(CHUNK) {
+        let _: Vec<serde_json::Value> = db
+            .insert("entity")
+            .content(chunk.to_vec())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    // 4e. Re-insert exactly the edges that start or end in a dirty file (the ones deleted in
+    //     4b). The full relation set was derived over every current entity, so an edge from an
+    //     unchanged file into a renamed symbol is present here and correctly reattached.
+    let path_of: BTreeMap<&str, &str> = entities
+        .iter()
+        .map(|e| (e.id.as_str(), e.path.as_str()))
+        .collect();
+    let touches_dirty = |r: &super::extract::Relation| -> bool {
+        path_of
+            .get(r.from.as_str())
+            .is_some_and(|p| dirty.contains(*p))
+            || path_of
+                .get(r.to.as_str())
+                .is_some_and(|p| dirty.contains(*p))
+    };
+    for table in ["belongs_to", "calls", "relates_to"] {
+        let edges: Vec<EdgeIn> = relations
+            .iter()
+            .filter(|r| r.kind.table() == table && touches_dirty(r))
+            .map(|r| EdgeIn {
+                in_: RecordId::new("entity", r.from.clone()),
+                out: RecordId::new("entity", r.to.clone()),
+            })
+            .collect();
+        for chunk in edges.chunks(CHUNK) {
+            let _: Vec<serde_json::Value> = db
+                .insert(table)
+                .relation(chunk.to_vec())
                 .await
                 .map_err(|e| e.to_string())?;
         }
     }
 
-    // 5. Rewrite all relation edges (deterministic; cheap for a lexical index). Grouped by
-    //    table and bulk-inserted in chunks, one `await` per chunk.
+    // 4f. Record the changed files' hashes and the generation.
+    for p in &changed {
+        if let Some(h) = hash_by_path.get(p) {
+            let _: Option<serde_json::Value> = db
+                .upsert(("file_hash", p.as_str()))
+                .content(serde_json::json!({ "path": p, "hash": h }))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let _: Option<serde_json::Value> = db
+        .upsert(("meta", "generation"))
+        .content(serde_json::json!({ "value": generation }))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    do_stats(db, backend_name, endpoint).await
+}
+
+/// The from-scratch bulk load: drop the BM25 indexes, chunk-`INSERT` every entity, edge and
+/// file hash, then rebuild the four indexes in a single pass. One `await` per chunk.
+async fn index_from_scratch<C: Connection>(
+    db: &Surreal<C>,
+    entities: &[super::extract::Entity],
+    relations: &[super::extract::Relation],
+    hash_by_path: &BTreeMap<String, String>,
+    generation: &str,
+    backend_name: &str,
+    endpoint: &str,
+) -> Result<IndexStats, String> {
+    // Ensure the tables and analyser exist (idempotent) before the bulk load, independent of
+    // how the handle was opened.
+    define_base_schema(db).await.map_err(|e| e.to_string())?;
+    remove_bm25_indexes(db).await?;
+    let rows: Vec<EntityIn> = entities.iter().map(|e| entity_in(e, generation)).collect();
+    for chunk in rows.chunks(CHUNK) {
+        let _: Vec<serde_json::Value> = db
+            .insert("entity")
+            .content(chunk.to_vec())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    define_bm25_indexes(db).await?;
+
     db.query("DELETE belongs_to; DELETE calls; DELETE relates_to;")
         .await
         .map_err(|e| e.to_string())?
@@ -400,35 +566,20 @@ async fn do_index<C: Connection>(
         }
     }
 
-    // 6. Record file hashes (bulk from scratch; only changed/new paths incrementally) and the
-    //    generation.
-    if from_scratch {
-        let rows: Vec<FhIn> = hash_by_path
-            .iter()
-            .map(|(p, h)| FhIn {
-                id: RecordId::new("file_hash", p.clone()),
-                path: p.clone(),
-                hash: h.clone(),
-            })
-            .collect();
-        for chunk in rows.chunks(CHUNK) {
-            let _: Vec<serde_json::Value> = db
-                .insert("file_hash")
-                .content(chunk.to_vec())
-                .await
-                .map_err(|e| e.to_string())?;
-        }
-    } else {
-        for (p, h) in &hash_by_path {
-            if stored.get(p).map(|x| x.as_str()) == Some(h.as_str()) {
-                continue;
-            }
-            let _: Option<serde_json::Value> = db
-                .upsert(("file_hash", p.as_str()))
-                .content(serde_json::json!({ "path": p, "hash": h }))
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+    let fh: Vec<FhIn> = hash_by_path
+        .iter()
+        .map(|(p, h)| FhIn {
+            id: RecordId::new("file_hash", p.clone()),
+            path: p.clone(),
+            hash: h.clone(),
+        })
+        .collect();
+    for chunk in fh.chunks(CHUNK) {
+        let _: Vec<serde_json::Value> = db
+            .insert("file_hash")
+            .content(chunk.to_vec())
+            .await
+            .map_err(|e| e.to_string())?;
     }
     let _: Option<serde_json::Value> = db
         .upsert(("meta", "generation"))
@@ -467,15 +618,26 @@ async fn stored_file_hashes<C: Connection>(
     Ok(rows.into_iter().map(|r| (r.path, r.hash)).collect())
 }
 
+/// The three relation tables walked in 1-hop expansion, in fixed order, with the label a
+/// pulled-in hit carries.
+const EXPAND_TABLES: [(&str, &str); 3] = [
+    ("calls", "derived: calls"),
+    ("belongs_to", "derived: belongs_to"),
+    ("relates_to", "derived: relates_to"),
+];
+
 async fn do_retrieve<C: Connection>(
     db: &Surreal<C>,
     query: &str,
     budget: usize,
 ) -> Result<Vec<Hit>, String> {
-    let mut rankings: Vec<Vec<String>> = Vec::new();
-    for field in ["code", "name", "path", "summary"] {
-        rankings.push(bm25_leg(db, field, query).await?);
-    }
+    let profile = std::env::var("C3_INDEX_PROFILE").is_ok();
+
+    // 1. The four BM25 legs in one round trip, fused by RRF.
+    let t = std::time::Instant::now();
+    let rankings = bm25_legs(db, query).await?;
+    prof(profile, "bm25_legs (4-in-1)", t);
+
     let fused = super::rrf(&rankings, 60.0);
     let primary_ids: Vec<String> = fused
         .iter()
@@ -484,37 +646,61 @@ async fn do_retrieve<C: Connection>(
         .collect();
     let score_of: BTreeMap<String, f64> = fused.into_iter().collect();
 
+    // 2. All primary rows in one round trip.
+    let t = std::time::Instant::now();
+    let primary_rows = fetch_rows(db, &primary_ids).await?;
+    prof(profile, "fetch_primary", t);
+
     let mut hits: Vec<Hit> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-
     for id in &primary_ids {
-        if let Some(row) = fetch_row(db, id).await? {
+        if let Some(row) = primary_rows.get(id) {
             seen.insert(id.clone());
             hits.push(row_to_hit(
-                row,
+                row.clone(),
                 *score_of.get(id).unwrap_or(&0.0),
                 Vec::new(),
             ));
         }
     }
 
-    // 1-hop expansion over the three relation tables (outgoing edges).
+    // 3. Outgoing neighbours of every primary, one round trip per relation table (three).
+    let t = std::time::Instant::now();
+    let primary_recs: Vec<RecordId> = primary_ids
+        .iter()
+        .map(|id| RecordId::new("entity", id.clone()))
+        .collect();
+    let mut adjacency: Vec<BTreeMap<String, Vec<String>>> = Vec::with_capacity(EXPAND_TABLES.len());
+    for (table, _) in EXPAND_TABLES {
+        let sql = format!(
+            "SELECT record::id(in) AS src, record::id(out) AS dst FROM {table} WHERE in IN $ids ORDER BY src, dst"
+        );
+        let mut resp = db
+            .query(sql)
+            .bind(("ids", primary_recs.clone()))
+            .await
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<EdgeRow> = resp.take(0).map_err(|e| e.to_string())?;
+        let mut m: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for r in rows {
+            m.entry(r.src).or_default().push(r.dst);
+        }
+        adjacency.push(m);
+    }
+
+    // Choose expansion targets in the deterministic primary-major, table-order walk (up to
+    // EXPAND_PER_RELATION per table per primary, capped at EXPAND_TOTAL_CAP).
+    let mut expand: Vec<(String, &'static str, String)> = Vec::new();
     let mut expanded = 0usize;
     'outer: for id in &primary_ids {
-        for (table, label) in [
-            ("calls", "derived: calls"),
-            ("belongs_to", "derived: belongs_to"),
-            ("relates_to", "derived: relates_to"),
-        ] {
-            let neighbours = neighbours(db, table, id).await?;
-            for nid in neighbours.into_iter().take(EXPAND_PER_RELATION) {
-                if seen.contains(&nid) {
-                    continue;
-                }
-                if let Some(row) = fetch_row(db, &nid).await? {
+        for (i, (_, label)) in EXPAND_TABLES.iter().enumerate() {
+            if let Some(list) = adjacency[i].get(id) {
+                for nid in list.iter().take(EXPAND_PER_RELATION) {
+                    if seen.contains(nid) {
+                        continue;
+                    }
                     seen.insert(nid.clone());
-                    let score = score_of.get(id).map(|s| s * 0.5).unwrap_or(0.0);
-                    hits.push(row_to_hit(row, score, vec![label.to_string()]));
+                    expand.push((nid.clone(), label, id.clone()));
                     expanded += 1;
                     if expanded >= EXPAND_TOTAL_CAP {
                         break 'outer;
@@ -523,6 +709,17 @@ async fn do_retrieve<C: Connection>(
             }
         }
     }
+
+    // 4. All expansion rows in one round trip.
+    let expand_ids: Vec<String> = expand.iter().map(|(nid, _, _)| nid.clone()).collect();
+    let expand_rows = fetch_rows(db, &expand_ids).await?;
+    for (nid, label, primary) in &expand {
+        if let Some(row) = expand_rows.get(nid) {
+            let score = score_of.get(primary).map(|s| s * 0.5).unwrap_or(0.0);
+            hits.push(row_to_hit(row.clone(), score, vec![label.to_string()]));
+        }
+    }
+    prof(profile, "expansion (3+1 round trips)", t);
 
     // Budget trim (0 = no cap): primaries are ordered by score, expansions follow.
     if budget > 0 {
@@ -542,49 +739,103 @@ async fn do_retrieve<C: Connection>(
     Ok(hits)
 }
 
-async fn bm25_leg<C: Connection>(
+/// The BM25 legs as one multi-statement query — one round trip. SurrealDB's `@@` match is
+/// conjunctive (a document must contain every term in the searched text), so a multi-word
+/// query is split into terms and each `(term × field)` pair is its own ranked leg; RRF
+/// ([`super::rrf`]) then fuses them, giving OR-style relevance where a document scores for
+/// each term it matches in any field. A single-term query is exactly the original four legs.
+/// `search::score(1)` references the inline `@1@` match within its own statement; a secondary
+/// `id` sort makes ties deterministic.
+async fn bm25_legs<C: Connection>(
     db: &Surreal<C>,
-    field: &str,
     query: &str,
-) -> Result<Vec<String>, String> {
-    // The `@1@` reference number is an inline literal (v3 Rule 2/6); the search text is
-    // bound so it is never concatenated into the SQL. `field` is from a fixed allowlist.
-    let sql = format!(
-        "SELECT record::id(id) AS id, search::score(1) AS s FROM entity WHERE {field} @1@ $q ORDER BY s DESC LIMIT {BM25_LIMIT}"
-    );
-    let mut resp = db
-        .query(sql)
-        .bind(("q", query.to_string()))
-        .await
-        .map_err(|e| e.to_string())?;
-    let rows: Vec<IdRow> = resp.take(0).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(|r| r.id).collect())
+) -> Result<Vec<Vec<String>>, String> {
+    let terms = tokenize_query(query);
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    // The `@N@` MATCHES clause needs a plain bound param on its right (an indexed array access
+    // is not recognised), so each term is its own named param `$tK`.
+    let fields = ["code", "name", "path", "summary"];
+    let keys: Vec<String> = (0..terms.len()).map(|i| format!("t{i}")).collect();
+    let mut sql = String::new();
+    for key in &keys {
+        for field in fields {
+            sql.push_str(&format!(
+                "SELECT record::id(id) AS id, search::score(1) AS s FROM entity WHERE {field} @1@ ${key} ORDER BY s DESC, id ASC LIMIT {BM25_LIMIT};"
+            ));
+        }
+    }
+    let mut q = db.query(sql);
+    for (key, term) in keys.iter().zip(terms.iter()) {
+        q = q.bind((key.as_str(), term.clone()));
+    }
+    let mut resp = q.await.map_err(|e| e.to_string())?;
+    let leg_count = terms.len() * fields.len();
+    let mut out = Vec::with_capacity(leg_count);
+    for i in 0..leg_count {
+        let rows: Vec<IdRow> = resp.take(i).map_err(|e| e.to_string())?;
+        out.push(rows.into_iter().map(|r| r.id).collect());
+    }
+    Ok(out)
 }
 
-async fn neighbours<C: Connection>(
+/// Split a query into distinct search terms: maximal `[A-Za-z0-9_]` runs, lowercased, order
+/// preserved, deduped, and capped so a long natural-language brief cannot explode the number
+/// of legs. A single identifier tokenises to itself, so a one-word query is unchanged.
+fn tokenize_query(query: &str) -> Vec<String> {
+    const MAX_TERMS: usize = 32;
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let flush = |cur: &mut String, out: &mut Vec<String>, seen: &mut BTreeSet<String>| {
+        if !cur.is_empty() {
+            let t = std::mem::take(cur).to_lowercase();
+            if seen.insert(t.clone()) {
+                out.push(t);
+            }
+        }
+    };
+    for c in query.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            cur.push(c);
+        } else {
+            flush(&mut cur, &mut out, &mut seen);
+        }
+        if out.len() >= MAX_TERMS {
+            return out;
+        }
+    }
+    flush(&mut cur, &mut out, &mut seen);
+    out
+}
+
+/// Fetch the entity rows for a set of ids in one round trip, keyed by id.
+async fn fetch_rows<C: Connection>(
     db: &Surreal<C>,
-    table: &str,
-    id: &str,
-) -> Result<Vec<String>, String> {
-    let sql =
-        format!("SELECT record::id(out) AS id FROM {table} WHERE in = type::record('entity', $id)");
+    ids: &[String],
+) -> Result<BTreeMap<String, Row>, String> {
+    if ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let recs: Vec<RecordId> = ids
+        .iter()
+        .map(|id| RecordId::new("entity", id.clone()))
+        .collect();
     let mut resp = db
-        .query(sql)
-        .bind(("id", id.to_string()))
-        .await
-        .map_err(|e| e.to_string())?;
-    let rows: Vec<IdRow> = resp.take(0).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(|r| r.id).collect())
-}
-
-async fn fetch_row<C: Connection>(db: &Surreal<C>, id: &str) -> Result<Option<Row>, String> {
-    let mut resp = db
-        .query("SELECT record::id(id) AS id, kind, path, name, line_start, line_end, code, summary FROM (type::record('entity', $id))")
-        .bind(("id", id.to_string()))
+        .query("SELECT record::id(id) AS id, kind, path, name, line_start, line_end, code, summary FROM entity WHERE id IN $ids")
+        .bind(("ids", recs))
         .await
         .map_err(|e| e.to_string())?;
     let rows: Vec<Row> = resp.take(0).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().next())
+    Ok(rows.into_iter().map(|r| (r.id.clone(), r)).collect())
+}
+
+/// Emit a phase timing line to stderr when `C3_INDEX_PROFILE` is set (measurement only).
+fn prof(on: bool, label: &str, since: std::time::Instant) {
+    if on {
+        eprintln!("[c3-index] {label}: {:.3}s", since.elapsed().as_secs_f64());
+    }
 }
 
 async fn do_stats<C: Connection>(
@@ -643,9 +894,11 @@ fn row_to_hit(row: Row, score: f64, relations: Vec<String>) -> Hit {
     }
 }
 
-/// Define the lexical schema (tables, the analyser and the four BM25 indexes on it; no
-/// HNSW/embeddings). Called once at open so a query-only process finds the indexes present.
-async fn define_schema<C: Connection>(db: &Surreal<C>) -> Result<(), surrealdb::Error> {
+/// Define the base lexical schema — the tables and the code analyser only (no BM25 indexes,
+/// no HNSW/embeddings). `IF NOT EXISTS` throughout, so it is idempotent and cheap; a build
+/// runs it at open, and the far more expensive BM25 full-text indexes are defined once by the
+/// from-scratch load ([`define_bm25_indexes`]) rather than on every open.
+async fn define_base_schema<C: Connection>(db: &Surreal<C>) -> Result<(), surrealdb::Error> {
     db.query(
         "DEFINE TABLE IF NOT EXISTS entity SCHEMALESS;
          DEFINE ANALYZER IF NOT EXISTS code_analyzer TOKENIZERS blank,class,camel,punct FILTERS lowercase,ascii;
@@ -657,7 +910,7 @@ async fn define_schema<C: Connection>(db: &Surreal<C>) -> Result<(), surrealdb::
     )
     .await?
     .check()?;
-    define_bm25_indexes_e(db).await
+    Ok(())
 }
 
 /// Define the four BM25 full-text indexes (idempotent). On a from-scratch build this runs

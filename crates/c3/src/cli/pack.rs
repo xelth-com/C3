@@ -30,6 +30,11 @@ pub struct PackArgs {
     /// Where consultations are stored; a relative path resolves against the repo root.
     #[arg(long, default_value = ".collab")]
     pub collab_dir: String,
+    /// Index connection for the periphery: `none` | `surrealkv:<path>` | `ws://host`. Default:
+    /// the embedded store at `<collab>/.c3/index/` if it exists, else the lexical neighbourhood.
+    /// The index is never required — any miss falls back to lexical.
+    #[arg(long)]
+    pub conn: Option<String>,
 }
 
 /// Build the reviewer pack and its sidecar. Returns the process exit code.
@@ -42,6 +47,17 @@ pub fn run(args: PackArgs) -> i32 {
     let repo_root = providers::resolve_repo_root(&cwd);
     let collab_root = providers::resolve_collab_root(&repo_root, &args.collab_dir);
 
+    // Default the index connection to the embedded store `c3 index` builds, so a pack uses the
+    // index automatically when one is present; `--conn none` opts out. reviewer::build treats an
+    // absent store, a held lock or an empty index as a lexical fallback.
+    let conn = args.conn.or_else(|| {
+        let dir = collab_root.join(".c3").join("index");
+        Some(format!(
+            "surrealkv:{}",
+            dir.to_string_lossy().replace('\\', "/")
+        ))
+    });
+
     let out = PathBuf::from(&args.out);
     let opts = PackOpts {
         repo_root,
@@ -52,6 +68,7 @@ pub fn run(args: PackArgs) -> i32 {
         task: args.task,
         out: out.clone(),
         max_file_size: 2 * 1024 * 1024,
+        conn,
     };
 
     let pack = match reviewer::build(&opts) {
