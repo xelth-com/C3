@@ -92,6 +92,40 @@ someone with no subscriptions who consults rarely (OpenRouter by default).
   keeps the brief+artifacts-only pack. The dry run prints the pack size and one line
   `billing : per token - this request sends about <N> tokens` (pack + reply-schema estimate).
 
+## First live run — six defects fixed
+
+The engine ran live for the first time against two OpenRouter models and showed six defects, now
+fixed (see `docs/port/http-engine.md` for the mechanics):
+
+1. **Wall time (item 1).** The clock stopped after the response headers, not the body, so a
+   100 s / 450 s run was logged as 1.9 s / 0.8 s. `http_engine::post` now stops the clock after
+   the body has been read on every path.
+2. **Near-valid replies discarded (item 2).** Both live replies were real structured reviews
+   recorded as `structured: INVALID` (one had `findings[].evidence` as a single object, the other
+   raw line breaks inside JSON strings). A deterministic, local normaliser
+   (`consult::ingest::normalise_reply`) runs ONLY after the strict parse fails and only for the
+   http path: fence strip, outermost object, control-char escaping inside strings, single-value →
+   array wrapping, `schema_version` default/coerce; it never invents content. A repaired reply
+   records a `reply normalised: <list>` warning in the ledger and the summary. Regression fixtures:
+   `crates/c3/tests/fixtures/http/{01,03}-http-reply.reply.json`.
+3. **Named-but-unwritten events file (item 3).** The summary and handoff named
+   `handoffs/<NN>-http-reply.events.jsonl`, never written. The engine now writes it: `request` /
+   `response` / `normalised` / `error` JSON lines, header NAMES only, never the key or the body.
+4. **Body error class (item 4).** A provider error in the body (`{"error":{"code":…}}`, sometimes
+   under HTTP 200) was classed `unknown`. Classification is now by the numeric code (body, else
+   HTTP status) then the message: 401/403 → auth, 402 → quota, 429 → burst (+retry_after), 408/5xx
+   /overloaded/timeout → unavailable, 400 context-length → capability.
+5. **S1 `C3_KEY_` escape hatch (item 5, security).** A `C3_KEY_*` variable could be sent to ANY
+   https host. Now a custom key is bound by its NAME to exactly one host (`C3_KEY_` + host
+   upper-cased, `.`→`_`, `-`→`__`; injective; an IP literal cannot use one), enforced in
+   `roster_ext::check_key_host`. The refusal names the variable to create for the host in hand.
+6. **Refusals echoing secrets (item 6, security).** Refusals echoed field values (`compact(value)`,
+   the `key_env` name) that could be pasted keys. No refusal now carries a `key_env`/`base_url`
+   /`headers`/header value or a wrong-typed field's bytes — it reports the JSON type; a `key_env` is
+   named only when known or a well-formed `C3_KEY_` name, with a hint (not an echo) when it looks
+   like a key value. Header NAMES that suggest a credential are refused. A canary test asserts no
+   marker fed into any field leaks.
+
 ## Known limitations / follow-ups
 
 - **Format repair / timeout continuation for `http` is not wired via replay.** The adapter

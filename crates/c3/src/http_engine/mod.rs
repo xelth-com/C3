@@ -146,6 +146,9 @@ pub struct HttpAttempt {
     pub pack_json: PathBuf,
     /// `{engine, base_url, model, pack, pack_sha256}` — built here, placed by the orchestrator.
     pub provider_config: Value,
+    /// (item 2) Warnings produced by the attempt — the one `reply normalised: <list>` line when a
+    /// near-valid reply was locally repaired into a structured object; empty otherwise.
+    pub warnings: Vec<String>,
 }
 
 impl HttpEngine {
@@ -319,8 +322,20 @@ impl HttpEngine {
             .map_err(EngineError::Precheck)?;
         let provider_config = self.provider_config(&pack_md);
 
+        // (item 3) The event stream for this attempt: one JSON line per event, started fresh.
+        let events_path = self.events_path();
+        let _ = std::fs::write(&events_path, b"");
+
         // The key: read now, from the environment only, never logged.
         let Some(key) = self.resolve_key() else {
+            self.append_event(
+                &events_path,
+                &json!({
+                    "event": "error",
+                    "class": "auth",
+                    "message": format!("env {} not set", self.config.key_env),
+                }),
+            );
             return Ok(HttpAttempt {
                 outcome: AttemptOutcome::LaunchFailed {
                     child_exists: false,
@@ -329,21 +344,70 @@ impl HttpEngine {
                 pack_md,
                 pack_json,
                 provider_config,
+                warnings: Vec::new(),
             });
         };
 
-        let outcome = self.post(&key, &url, &body_str);
+        // (item 3) The request event: header NAMES only, the body size in bytes, the pack hash —
+        // never the key, never a header value, never the body.
+        let mut header_names = vec!["content-type".to_string(), "authorization".to_string()];
+        for (k, _) in &self.config.headers {
+            header_names.push(k.clone());
+        }
+        self.append_event(
+            &events_path,
+            &json!({
+                "event": "request",
+                "method": "POST",
+                "url": strip_query(&url),
+                "model": self.config.model,
+                "messages": messages.len(),
+                "body_bytes": body_str.len(),
+                "pack_sha256": c3_core::sha256_hex(self.pack.content.as_bytes()),
+                "headers": header_names,
+            }),
+        );
+
+        let (outcome, warnings) = self.post(&key, &url, &body_str, &events_path);
         Ok(HttpAttempt {
             outcome,
             pack_md,
             pack_json,
             provider_config,
+            warnings,
         })
     }
 
-    /// POST the request and map the response/error to an [`AttemptOutcome`]. Every string that
-    /// could carry the key is scrubbed.
-    fn post(&self, key: &str, url: &str, body: &str) -> AttemptOutcome {
+    /// The `<stem>.events.jsonl` path (item 3): the request/response/error record for this attempt.
+    pub fn events_path(&self) -> PathBuf {
+        append_ext(&self.handoff_stem, "events.jsonl")
+    }
+
+    /// Append one event as a JSON line (best-effort; a failed write never fails the run).
+    fn append_event(&self, path: &Path, event: &Value) {
+        use std::io::Write;
+        if let Ok(line) = serde_json::to_string(event) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = writeln!(f, "{line}");
+            }
+        }
+    }
+
+    /// POST the request and map the response/error to an [`AttemptOutcome`] plus any warnings.
+    /// (item 1) The wall clock stops only after the response BODY has been read (OpenRouter answers
+    /// the headers at once and streams keep-alive whitespace while the model works). Every string
+    /// that could carry the key is scrubbed, and each outcome writes its event line.
+    fn post(
+        &self,
+        key: &str,
+        url: &str,
+        body: &str,
+        events_path: &Path,
+    ) -> (AttemptOutcome, Vec<String>) {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(self.config.timeout)
             .timeout(self.config.timeout)
@@ -365,24 +429,41 @@ impl HttpEngine {
 
         let started = Instant::now();
         let res = req.send_string(body);
-        let wall = started.elapsed().as_secs_f64();
 
         match res {
             Ok(resp) if (300..=399).contains(&resp.status()) => {
                 // (S4) `redirects(0)` returns a 3xx as `Ok`; treat it as an unavailable endpoint.
-                AttemptOutcome::ProviderFailure {
-                    failure: ProviderFailure {
-                        class: "unavailable".to_string(),
-                        code: resp.status().to_string(),
-                        message: "the endpoint answered with a redirect (not followed)".to_string(),
-                        ..Default::default()
+                let status = resp.status();
+                let wall = round1(started.elapsed().as_secs_f64());
+                let failure = ProviderFailure {
+                    class: "unavailable".to_string(),
+                    code: status.to_string(),
+                    message: "the endpoint answered with a redirect (not followed)".to_string(),
+                    ..Default::default()
+                };
+                self.append_event(
+                    events_path,
+                    &json!({ "event": "error", "class": failure.class, "code": failure.code,
+                        "message": failure.message, "elapsed_seconds": wall }),
+                );
+                (
+                    AttemptOutcome::ProviderFailure {
+                        failure,
+                        exit_code: None,
                     },
-                    exit_code: None,
-                }
+                    Vec::new(),
+                )
             }
             Ok(resp) => {
+                let status = resp.status();
+                let req_id = resp
+                    .header("x-request-id")
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+                // (item 1) The body is read HERE; the clock stops after it.
                 let text = resp.into_string().unwrap_or_default();
-                self.parse_response(Some(key), &text, wall)
+                let wall = round1(started.elapsed().as_secs_f64());
+                self.parse_response(Some(key), &text, wall, status, req_id, events_path)
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let retry_after = resp
@@ -390,49 +471,124 @@ impl HttpEngine {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
                 let body_text = resp.into_string().unwrap_or_default();
-                let message = self.scrub(
-                    Some(key),
-                    &c3_core::one_line(&format!("HTTP {code}: {body_text}")),
+                let wall = round1(started.elapsed().as_secs_f64());
+                let failure =
+                    self.classified_failure(Some(key), Some(code), &body_text, retry_after);
+                self.append_event(
+                    events_path,
+                    &json!({ "event": "error", "class": failure.class, "code": failure.code,
+                        "message": failure.message, "elapsed_seconds": wall,
+                        "retry_after": failure.retry_after }),
                 );
-                AttemptOutcome::ProviderFailure {
-                    failure: ProviderFailure {
-                        class: classify_status(code, &message),
-                        code: code.to_string(),
-                        message,
-                        retry_after,
-                        ..Default::default()
+                (
+                    AttemptOutcome::ProviderFailure {
+                        failure,
+                        exit_code: None,
                     },
-                    exit_code: None,
-                }
+                    Vec::new(),
+                )
             }
             Err(ureq::Error::Transport(t)) => {
+                let wall = round1(started.elapsed().as_secs_f64());
                 let message = self.scrub(Some(key), &c3_core::one_line(&t.to_string()));
                 if is_timeout(&message) {
-                    AttemptOutcome::TimedOut {
-                        partial: None,
-                        survivors: Vec::new(),
-                        conversation: ConversationTrust::Candidate(new_conversation()),
-                        wall_seconds: (wall * 10.0).round() / 10.0,
-                    }
-                } else {
-                    AttemptOutcome::ProviderFailure {
-                        failure: ProviderFailure {
-                            class: "transport".to_string(),
-                            message,
-                            ..Default::default()
+                    self.append_event(
+                        events_path,
+                        &json!({ "event": "error", "class": "unavailable", "message": message,
+                            "elapsed_seconds": wall }),
+                    );
+                    (
+                        AttemptOutcome::TimedOut {
+                            partial: None,
+                            survivors: Vec::new(),
+                            conversation: ConversationTrust::Candidate(new_conversation()),
+                            wall_seconds: wall,
                         },
-                        exit_code: None,
-                    }
+                        Vec::new(),
+                    )
+                } else {
+                    let failure = ProviderFailure {
+                        class: "transport".to_string(),
+                        message,
+                        ..Default::default()
+                    };
+                    self.append_event(
+                        events_path,
+                        &json!({ "event": "error", "class": failure.class,
+                            "message": failure.message, "elapsed_seconds": wall }),
+                    );
+                    (
+                        AttemptOutcome::ProviderFailure {
+                            failure,
+                            exit_code: None,
+                        },
+                        Vec::new(),
+                    )
                 }
             }
+        }
+    }
+
+    /// (item 4) Build a classified [`ProviderFailure`] from an error — either a body
+    /// `{"error":{code,message,metadata}}` envelope (which OpenRouter can return under HTTP 200) or
+    /// a non-2xx HTTP status. The numeric code is taken from the body when present, else the HTTP
+    /// status; the message is scrubbed and one line. A `retry_after` is taken from the header, else
+    /// from the envelope's `metadata`.
+    fn classified_failure(
+        &self,
+        key: Option<&str>,
+        http_status: Option<u16>,
+        body: &str,
+        retry_after_header: Option<String>,
+    ) -> ProviderFailure {
+        let parsed: Option<Value> = serde_json::from_str(body).ok();
+        let err = parsed
+            .as_ref()
+            .and_then(|v| v.get("error"))
+            .filter(|e| !e.is_null());
+        let body_code = err.and_then(|e| e.get("code")).and_then(json_i64);
+        let em = err.and_then(|e| e.get("message")).and_then(Value::as_str);
+        let meta_retry = err
+            .and_then(|e| e.get("metadata"))
+            .and_then(|m| {
+                m.get("retry_after")
+                    .or_else(|| m.get("retryAfter"))
+                    .or_else(|| m.get("retry-after"))
+            })
+            .map(retry_to_string)
+            .filter(|s| !s.is_empty());
+        let code_num = body_code.or_else(|| http_status.map(|s| s as i64));
+        let raw_msg = match (em, http_status) {
+            (Some(e), _) => format!("provider error: {e}"),
+            (None, Some(s)) => format!("HTTP {s}: {body}"),
+            (None, None) => format!("provider error: {body}"),
+        };
+        let message = self.scrub(key, &c3_core::one_line(&raw_msg));
+        ProviderFailure {
+            class: classify_provider_failure(code_num, &message),
+            code: code_num.map(|c| c.to_string()).unwrap_or_default(),
+            message,
+            retry_after: retry_after_header.or(meta_retry).filter(|s| !s.is_empty()),
+            ..Default::default()
         }
     }
 
     /// Parse a 200 body: an `{"error":...}` envelope (OpenRouter returns these with 200) is a
     /// classified [`ProviderFailure`]; otherwise `choices[0].message.content` (falling back to
     /// `.reasoning`) is the reply text, parsed into a [`StructuredReply`] when it is one v1 JSON
-    /// object (a fenced object is tolerated).
-    fn parse_response(&self, key: Option<&str>, text: &str, wall: f64) -> AttemptOutcome {
+    /// object (a fenced object is tolerated). (item 2) When the strict parse fails, a deterministic
+    /// LOCAL normaliser runs — the http engine has no enforced output schema — and, when it makes
+    /// the reply valid, records a `reply normalised: <list>` warning. Writes the response event and,
+    /// for an error envelope, the error event.
+    fn parse_response(
+        &self,
+        key: Option<&str>,
+        text: &str,
+        wall: f64,
+        status: u16,
+        req_id: Option<String>,
+        events_path: &Path,
+    ) -> (AttemptOutcome, Vec<String>) {
         let json: Value = match serde_json::from_str(text) {
             Ok(v) => v,
             Err(_) => {
@@ -440,38 +596,53 @@ impl HttpEngine {
                     key,
                     &c3_core::one_line(&format!("non-JSON response: {text}")),
                 );
-                return AttemptOutcome::ProviderFailure {
-                    failure: ProviderFailure {
-                        class: provider_failure_class(&message),
-                        message,
-                        ..Default::default()
+                self.append_event(
+                    events_path,
+                    &json!({ "event": "error", "class": provider_failure_class(&message),
+                        "message": message, "elapsed_seconds": wall }),
+                );
+                return (
+                    AttemptOutcome::ProviderFailure {
+                        failure: ProviderFailure {
+                            class: provider_failure_class(&message),
+                            message,
+                            ..Default::default()
+                        },
+                        exit_code: None,
                     },
-                    exit_code: None,
-                };
+                    Vec::new(),
+                );
             }
         };
 
-        if let Some(err) = json.get("error").filter(|e| !e.is_null()) {
-            let code = err
-                .get("code")
-                .map(|c| c.to_string())
-                .unwrap_or_default()
-                .trim_matches('"')
-                .to_string();
-            let em = err
-                .get("message")
+        // (item 3) The response event: status, the OpenRouter `x-request-id` (else the body `id`),
+        // the body size and the elapsed seconds. Never a header value, never the body.
+        let id = req_id.or_else(|| {
+            json.get("id")
                 .and_then(Value::as_str)
-                .unwrap_or("(no message)");
-            let message = self.scrub(key, &c3_core::one_line(&format!("provider error: {em}")));
-            return AttemptOutcome::ProviderFailure {
-                failure: ProviderFailure {
-                    class: provider_failure_class(&message),
-                    code,
-                    message,
-                    ..Default::default()
+                .map(|s| s.to_string())
+        });
+        self.append_event(
+            events_path,
+            &json!({ "event": "response", "status": status, "id": id,
+                "body_bytes": text.len(), "elapsed_seconds": wall }),
+        );
+
+        if json.get("error").filter(|e| !e.is_null()).is_some() {
+            let failure = self.classified_failure(key, Some(status), text, None);
+            self.append_event(
+                events_path,
+                &json!({ "event": "error", "class": failure.class, "code": failure.code,
+                    "message": failure.message, "elapsed_seconds": wall,
+                    "retry_after": failure.retry_after }),
+            );
+            return (
+                AttemptOutcome::ProviderFailure {
+                    failure,
+                    exit_code: None,
                 },
-                exit_code: None,
-            };
+                Vec::new(),
+            );
         }
 
         let content = json
@@ -489,16 +660,34 @@ impl HttpEngine {
             .unwrap_or("")
             .to_string();
 
-        let structured = crate::engines::codex::parse_structured(&content);
-        AttemptOutcome::Completed(Reply {
-            raw_text: content,
-            structured,
-            // The `http` engine has no event stream; its record is the retained pack sidecar.
-            events_path: self.pack_json_path(),
-            usage: parse_usage(&json),
-            wall_seconds: (wall * 10.0).round() / 10.0,
-            conversation: ConversationTrust::Candidate(new_conversation()),
-        })
+        // (item 2) Strict parse first; only on failure does the local normaliser run.
+        let mut warnings = Vec::new();
+        let structured = match crate::engines::codex::parse_structured(&content) {
+            Some(s) => Some(s),
+            None => match crate::consult::ingest::normalise_reply(&content) {
+                Some((s, notes)) => {
+                    self.append_event(
+                        events_path,
+                        &json!({ "event": "normalised", "notes": notes }),
+                    );
+                    warnings.push(crate::consult::ingest::normalised_note(&notes));
+                    Some(s)
+                }
+                None => None,
+            },
+        };
+
+        (
+            AttemptOutcome::Completed(Reply {
+                raw_text: content,
+                structured,
+                events_path: self.events_path(),
+                usage: parse_usage(&json),
+                wall_seconds: wall,
+                conversation: ConversationTrust::Candidate(new_conversation()),
+            }),
+            warnings,
+        )
     }
 }
 
@@ -562,16 +751,63 @@ fn new_conversation() -> ConversationId {
     ConversationId(uuid::Uuid::new_v4().to_string())
 }
 
-/// Classify an HTTP status into a [`ProviderFailure`] class: 401/403 → auth, 429 → quota,
-/// 5xx → transport (a provider/network failure); anything else falls back to the message-based
-/// classifier.
-fn classify_status(code: u16, message: &str) -> String {
-    match code {
-        401 | 403 => "auth".to_string(),
-        429 => "quota".to_string(),
-        500..=599 => "transport".to_string(),
-        _ => provider_failure_class(message),
+/// (item 4) Classify a provider failure by the numeric code (from the body envelope when present,
+/// else the HTTP status) and the scrubbed message. 401/403 → auth; 402 → quota; 429 → burst; 408
+/// and 5xx → unavailable; 400 with a context-length message → the `capability` class the other
+/// engines use for an oversized brief; messages that say overloaded / unavailable / timeout →
+/// unavailable. Everything else stays `unknown`.
+fn classify_provider_failure(code: Option<i64>, message: &str) -> String {
+    if let Some(c) = code {
+        match c {
+            401 | 403 => return "auth".to_string(),
+            402 => return "quota".to_string(),
+            429 => return "burst".to_string(),
+            408 => return "unavailable".to_string(),
+            500..=599 => return "unavailable".to_string(),
+            400 if c3_core::health::is_context_overflow(message) => {
+                return "capability".to_string()
+            }
+            _ => {}
+        }
     }
+    let m = message.to_ascii_lowercase();
+    if m.contains("overloaded")
+        || m.contains("unavailable")
+        || m.contains("temporarily")
+        || m.contains("timeout")
+        || m.contains("timed out")
+    {
+        return "unavailable".to_string();
+    }
+    if c3_core::health::is_context_overflow(message) {
+        return "capability".to_string();
+    }
+    "unknown".to_string()
+}
+
+/// Round to one decimal place (the ledger's wall-time precision).
+fn round1(x: f64) -> f64 {
+    (x * 10.0).round() / 10.0
+}
+
+/// A JSON code as an i64: a number directly, or a numeric string (`"429"`).
+fn json_i64(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+/// A `retry_after` value as a string (a number of seconds, or a string), else empty.
+fn retry_to_string(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.trim().to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// A URL with any query or fragment removed (the events file records the path only).
+fn strip_query(url: &str) -> String {
+    url.split(['?', '#']).next().unwrap_or(url).to_string()
 }
 
 /// Whether a (already scrubbed) transport error message names a timeout. Matches the English
@@ -620,11 +856,29 @@ mod tests {
     }
 
     #[test]
-    fn classify_status_maps_auth_quota_transport() {
-        assert_eq!(classify_status(401, ""), "auth");
-        assert_eq!(classify_status(403, ""), "auth");
-        assert_eq!(classify_status(429, ""), "quota");
-        assert_eq!(classify_status(503, ""), "transport");
+    fn classify_provider_failure_maps_codes_and_messages() {
+        assert_eq!(classify_provider_failure(Some(401), ""), "auth");
+        assert_eq!(classify_provider_failure(Some(403), ""), "auth");
+        assert_eq!(classify_provider_failure(Some(402), ""), "quota");
+        assert_eq!(classify_provider_failure(Some(429), ""), "burst");
+        assert_eq!(classify_provider_failure(Some(408), ""), "unavailable");
+        assert_eq!(classify_provider_failure(Some(503), ""), "unavailable");
+        // 400 with a context-length message is the oversized-brief class the other engines use.
+        assert_eq!(
+            classify_provider_failure(Some(400), "prompt is too long for this model"),
+            "capability"
+        );
+        // A plain 400 is not context overflow.
+        assert_eq!(
+            classify_provider_failure(Some(400), "bad request"),
+            "unknown"
+        );
+        // Message-based fallback: an overloaded/unavailable/timeout text with no useful code.
+        assert_eq!(
+            classify_provider_failure(Some(200), "Upstream error: Service temporarily overloaded"),
+            "unavailable"
+        );
+        assert_eq!(classify_provider_failure(None, "nothing useful"), "unknown");
     }
 
     #[test]

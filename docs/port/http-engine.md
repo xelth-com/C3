@@ -26,10 +26,17 @@ step** owned by the orchestrator; this document is the contract that step wires 
   `ProviderFailure` of class `unavailable` ("the endpoint answered with a redirect (not
   followed)") — a followed redirect would re-send the pack to another host.
 - **Key-to-host binding** (M7b-b S1, in `c3_core::roster_ext`). A `key_env` may be sent only to
-  the host it belongs to (a known key to its provider, or a `C3_KEY_*` variable to any https
-  host); enforced by the roster parser and the CLI flags, so the config the engine receives is
-  already bound. Reserved/malformed headers (S5) are refused at the source and skipped by the
-  adapter as defence in depth.
+  the host it belongs to: a known key to its provider (exact host or subdomain), or a custom
+  variable whose NAME encodes the exact host — `C3_KEY_` + the host upper-cased, `.`→`_`, `-`→`__`
+  (the roster and flags are agent-writable, so the hand-created variable NAME, not the roster,
+  carries the destination host; an IP literal cannot use a custom key). Enforced by the roster
+  parser and the CLI flags, so the config the engine receives is already bound.
+- **No secret ever echoed** (M7b-b S6). No refusal contains the bytes of a `key_env`, `base_url`,
+  `headers` or header value, or of any wrong-typed field — it reports the JSON type found. A
+  `key_env` is named only when it is a known key or a well-formed `C3_KEY_` name; a value that
+  looks like a pasted key earns a hint, not an echo. Header NAMES that suggest a credential
+  (`key`/`token`/`secret`/`auth`/`password`/`credential`/`session`) are refused; reserved/malformed
+  headers (S5) are refused at the source and skipped by the adapter as defence in depth.
 - **Repo-relative POSIX paths** (invariant 9) in the sidecar and `provider_config`.
 
 ## Configuration — `HttpConfig`
@@ -89,20 +96,39 @@ file prefix `http`.
 | provider result                    | outcome |
 |------------------------------------|---------|
 | 200, `choices[0].message.content` is one v1 JSON object (fenced tolerated) | `Completed(Reply { structured: Some, .. })` |
+| 200, content is *near*-valid (single-object array field, raw control chars, prose around the object, missing/numeric `schema_version`) | `Completed(Reply { structured: Some, .. })` after the local normaliser; a `reply normalised: <list>` warning |
 | 200, content is prose              | `Completed(Reply { structured: None, .. })` (orchestrator repairs) |
-| 200 with `{"error":…}` envelope    | `ProviderFailure` (class from message) |
+| 200 with `{"error":…}` envelope    | `ProviderFailure` (class by the body `code`, else the message) |
 | 401 / 403                          | `ProviderFailure { class: "auth", code }` |
-| 429                                | `ProviderFailure { class: "quota", retry_after }` (from `Retry-After`) |
-| 5xx                                | `ProviderFailure { class: "transport" }` |
+| 402                                | `ProviderFailure { class: "quota", code }` |
+| 429                                | `ProviderFailure { class: "burst", retry_after }` (from `Retry-After`, else `metadata`) |
+| 408 / 5xx / overloaded / unavailable / timeout text | `ProviderFailure { class: "unavailable" }` |
+| 400 with a context-length message  | `ProviderFailure { class: "capability" }` (the oversized-brief class the other engines use) |
 | transport timeout                  | `TimedOut { partial: None, survivors: [], conversation: Candidate }` |
 | connection refused / other transport | `ProviderFailure { class: "transport" }` |
+| anything else                      | `ProviderFailure { class: "unknown" }` |
 
-Usage maps `prompt_tokens → input_tokens`, `completion_tokens → output_tokens`,
+Class is decided by the numeric code — the body `{"error":{"code":…}}` when present, else the
+HTTP status — then by the scrubbed message (item 4); `unknown` is only the true fallback. The
+local **reply normaliser** (item 2) runs ONLY after the strict parse fails and NEVER invents
+content: it strips a fence, takes the outermost object, escapes raw control characters inside
+strings, wraps a single value into the array the schema requires (`evidence`, `locations`,
+`supersedes`, `findings`, `prior_findings`, `unproven`; `null` → `[]`), and defaults/coerces
+`schema_version` to `"1"`; then it validates strictly again, and on failure the reply stays
+INVALID. Usage maps `prompt_tokens → input_tokens`, `completion_tokens → output_tokens`,
 `total_tokens → total_tokens`, `completion_tokens_details.reasoning_tokens →
-reasoning_output_tokens`. Wall time is measured and rounded to 1 decimal. The conversation is a
-fresh **client-owned** `ConversationId` tagged `ConversationTrust::Candidate` (`http` has no
-native thread; `resume_supported: false`). `Reply.events_path` points at the `.pack.json`
-sidecar (the engine has no event stream; the pack is its record).
+reasoning_output_tokens`. **Wall time** is measured from just before the request to just after the
+response BODY has been read (item 1 — the headers arrive at once while the model streams keep-alive
+whitespace), rounded to 1 decimal. The conversation is a fresh **client-owned** `ConversationId`
+tagged `ConversationTrust::Candidate` (`http` has no native thread; `resume_supported: false`).
+
+## Event stream (`<stem>.events.jsonl`, item 3)
+
+The engine writes one JSON line per event, so the file the summary/handoff name exists: `request`
+(method, URL without query, model, message count, body size in bytes, pack sha256, header NAMES
+only), `response` (status, the `x-request-id` header or the body `id`, body size, elapsed seconds),
+`normalised` (the normaliser's note list), and `error` (class, code, scrubbed message, elapsed).
+Never the key, never a header value, never the body. `Reply.events_path` points at this file.
 
 ## Pack / sidecar contract (retained BEFORE the request)
 

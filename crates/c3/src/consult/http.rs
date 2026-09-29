@@ -65,6 +65,9 @@ pub(crate) struct SeatRun {
     pub bridge_outcome: String,
     /// The reply text a failing turn produced (kept as `.reply.json`); empty on success.
     pub reply_text: String,
+    /// (item 2) Engine warnings — the `reply normalised: <list>` line when a near-valid reply was
+    /// locally repaired; empty otherwise. Recorded in the ledger `warnings[]` and printed.
+    pub warnings: Vec<String>,
 }
 
 /// Resolve the seat's config: a roster `ext.c3.reviewers` entry matching the resolved identity
@@ -295,6 +298,7 @@ pub(crate) fn run_seat(ctx: &Context) -> Result<SeatRun, String> {
         provider_config: att.provider_config,
         bridge_outcome,
         reply_text,
+        warnings: att.warnings,
     })
 }
 

@@ -1525,11 +1525,11 @@ fn build_context(
         // parser uses: the base URL is parsed strictly and the key may go only to the host it
         // belongs to. A roster-matched seat's config is already validated at load, so these
         // checks bind the direct-run flags (and their defaults). Refused in the pre-launch style.
-        if !o.key_env.trim().is_empty() && !c3_core::roster_ext::is_env_name(o.key_env.trim()) {
-            return Err((format!(
-                "--key-env must be an environment-variable name (letters, digits and underscore, not starting with a digit; got '{}'). The key value itself is never a flag.",
-                o.key_env
-            ), 1));
+        if !o.key_env.trim().is_empty() {
+            // (S6) The same check the roster parser uses, with the same message that never echoes
+            // the value (it may itself be a pasted key).
+            c3_core::roster_ext::check_key_env_name(o.key_env.trim())
+                .map_err(|why| (format!("--key-env: {why}"), 1))?;
         }
         let base_url = if o.base_url.trim().is_empty() {
             c3_core::roster_ext::DEFAULT_BASE_URL.to_string()
@@ -3193,6 +3193,7 @@ fn run_primary_turn(
                 turn_outcome: seat.bridge_outcome,
                 reply: seat.reply_text,
                 http_provider_config: Some(seat.provider_config),
+                warnings: seat.warnings,
                 ..EngineDetail::default()
             };
             Ok((seat.outcome, d))

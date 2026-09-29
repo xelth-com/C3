@@ -209,11 +209,17 @@ ignores — C3 reads and validates it and appends the reviewer after the plugin'
   name), never the key. **c3 sends a variable only to the host it belongs to:** a known key
   (`OPENROUTER_API_KEY`→openrouter.ai, `OPENAI_API_KEY`→api.openai.com, and the Anthropic /
   Gemini / Google / Mistral / DeepSeek / Groq / Together / xAI keys to their hosts) must go to
-  that host or a subdomain; any other endpoint needs a variable the user created for c3, named
-  `C3_KEY_<NAME>` (then any https host is allowed). Anything else is refused, naming the
-  variable — e.g. `OPENAI_API_KEY` with an openrouter base_url, or `GITHUB_TOKEN` anywhere.
-  Header names/values carry no CR/LF, must be RFC 7230 tokens, and c3 refuses the ones it
-  controls (`Authorization`, `Cookie`, `Host`, `Content-Type`, …). `json_object` (default
+  that host or a subdomain; any other endpoint needs a variable the user created for c3 whose
+  NAME encodes the one host it may be sent to: `C3_KEY_` + the host upper-cased, `.` written `_`
+  and `-` written `__` (so `api.example.com` → `C3_KEY_API_EXAMPLE_COM`, `my-llm.internal.example`
+  → `C3_KEY_MY__LLM_INTERNAL_EXAMPLE`). A custom key works only for that exact host (no subdomain
+  rule; an IP literal cannot use one), and a refusal names the variable to create for the host in
+  hand. Anything else is refused — e.g. `OPENAI_API_KEY` with an openrouter base_url, or a
+  `C3_KEY_` variable pointed at a host its name does not encode. Header names/values carry no
+  CR/LF, must be RFC 7230 tokens, and c3 refuses the ones it controls (`Authorization`, `Cookie`,
+  `Host`, `Content-Type`, …) and any name that suggests a credential (`key`, `token`, `secret`,
+  `auth`, `password`, `credential`, `session`) — the roster holds no secrets. Refusals report the
+  JSON type found, never the value, so a key accidentally pasted into a field is never echoed. `json_object` (default
   `true`) sends `response_format: {"type":"json_object"}`. `pack_tokens` (0..=200000, default
   12000) sizes the pack's periphery for this reviewer; `--pack-budget <n>` overrides per run.
 - **Billing guard.** A subscription-engine label (`codex`, `chatgpt`, `muse`, `agy`,

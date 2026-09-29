@@ -30,6 +30,10 @@ enum Resp {
     Raw(String),
     /// Read the request, then sleep past the client timeout to force a transport timeout.
     Hang,
+    /// Write the response HEADERS at once, then sleep, then write the BODY: the client returns from
+    /// `send_string` on the headers and blocks in `into_string` for the body (item 1: the wall
+    /// clock must include the body wait, as OpenRouter streams keep-alive whitespace meanwhile).
+    SlowBody(String, Duration),
 }
 
 struct Mock {
@@ -61,6 +65,19 @@ fn start_mock(responses: Vec<Resp>) -> Mock {
                     let _ = stream.flush();
                 }
                 Resp::Hang => thread::sleep(Duration::from_millis(1500)),
+                Resp::SlowBody(full, delay) => {
+                    if let Some(idx) = full.find("\r\n\r\n") {
+                        let (head, body) = full.split_at(idx + 4);
+                        let _ = stream.write_all(head.as_bytes());
+                        let _ = stream.flush();
+                        thread::sleep(delay);
+                        let _ = stream.write_all(body.as_bytes());
+                        let _ = stream.flush();
+                    } else {
+                        let _ = stream.write_all(full.as_bytes());
+                        let _ = stream.flush();
+                    }
+                }
             }
         }
     });
@@ -328,11 +345,12 @@ fn quota_429_maps_with_retry_after() {
 
     match eng.attempt(&primary_turn()).unwrap().outcome {
         AttemptOutcome::ProviderFailure { failure, .. } => {
-            assert_eq!(failure.class, "quota");
+            // (item 4) 429 is a burst rate-limit, carrying the Retry-After.
+            assert_eq!(failure.class, "burst");
             assert_eq!(failure.code, "429");
             assert_eq!(failure.retry_after.as_deref(), Some("42"));
         }
-        other => panic!("expected ProviderFailure quota, got {other:?}"),
+        other => panic!("expected ProviderFailure burst, got {other:?}"),
     }
     let _ = mock.last_body();
     std::env::remove_var("C3_HTTP_KEY_429");
@@ -533,4 +551,169 @@ fn precheck_guards_subscription_and_missing_key() {
     std::env::remove_var("C3_HTTP_KEY_MISSING");
 
     let _ = std::fs::remove_dir_all(&d);
+}
+
+const FIXTURE_01: &str = include_str!("fixtures/http/01-http-reply.reply.json");
+
+#[test]
+fn wall_seconds_includes_the_body_read() {
+    // (item 1) The clock stops after the BODY is read, not after the headers: the server delays
+    // the body, so the measured wall time must include the delay.
+    std::env::set_var("C3_HTTP_KEY_WALL", FAKE_KEY);
+    let delay = Duration::from_millis(400);
+    let mock = start_mock(vec![Resp::SlowBody(
+        completion_response(&structured_reply_json()),
+        delay,
+    )]);
+    let d = scratch("wall");
+    let mut eng = engine(&mock.base_url, "C3_HTTP_KEY_WALL", &d);
+    eng.config.timeout = Duration::from_secs(5); // well past the body delay
+
+    match eng.attempt(&primary_turn()).unwrap().outcome {
+        AttemptOutcome::Completed(reply) => {
+            assert!(
+                reply.wall_seconds >= 0.3,
+                "wall must include the body wait, got {}",
+                reply.wall_seconds
+            );
+        }
+        other => panic!("expected Completed, got {other:?}"),
+    }
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_WALL");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn near_valid_reply_is_normalised_to_structured() {
+    // (item 2) A real Space Bunny reply whose findings[].evidence is a single object (invalid) is
+    // locally normalised into a structured reply with 2 findings, and a warning records it.
+    std::env::set_var("C3_HTTP_KEY_NORM", FAKE_KEY);
+    let mock = start_mock(vec![Resp::Raw(completion_response(FIXTURE_01))]);
+    let d = scratch("norm");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_NORM", &d);
+
+    let att = eng.attempt(&primary_turn()).unwrap();
+    match &att.outcome {
+        AttemptOutcome::Completed(reply) => {
+            let s = reply
+                .structured
+                .as_ref()
+                .expect("reply normalised to structured");
+            assert_eq!(s.findings.len(), 2);
+        }
+        other => panic!("expected Completed structured, got {other:?}"),
+    }
+    assert!(
+        att.warnings
+            .iter()
+            .any(|w| w.starts_with("reply normalised:")),
+        "warnings: {:?}",
+        att.warnings
+    );
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_NORM");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn events_file_is_written_with_request_and_response() {
+    // (item 3) The events file the summary/handoff name is actually written: one request event
+    // (header NAMES only, body size, pack hash) and one response event (status, id, elapsed). No
+    // key, no header value, no body.
+    std::env::set_var("C3_HTTP_KEY_EV", FAKE_KEY);
+    let mock = start_mock(vec![Resp::Raw(completion_response(
+        &structured_reply_json(),
+    ))]);
+    let d = scratch("events");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_EV", &d);
+    let _ = eng.attempt(&primary_turn()).unwrap();
+    let _ = mock.last_body();
+
+    let ev = std::fs::read_to_string(eng.events_path()).expect("events file written");
+    let lines: Vec<Value> = ev
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).expect("each event is one JSON line"))
+        .collect();
+    assert_eq!(lines[0]["event"], "request");
+    assert_eq!(lines[0]["method"], "POST");
+    // Header NAMES only — never a value; the authorization name is present but no bearer token.
+    let names: Vec<String> = lines[0]["headers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(names.contains(&"authorization".to_string()));
+    assert!(lines.iter().any(|l| l["event"] == "response"));
+    assert!(
+        !ev.contains(FAKE_KEY) && !ev.contains("sk-or-"),
+        "events leaked a key"
+    );
+    assert!(!ev.contains("Bearer"), "events must carry no header value");
+
+    std::env::remove_var("C3_HTTP_KEY_EV");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn provider_error_classes_map_by_code_and_body() {
+    // (item 4) Each mapping through the fake server.
+    fn run(name: &str, resp: Resp) -> c3_core::ledger::ProviderFailure {
+        let key = format!("C3_HTTP_KEY_{name}");
+        std::env::set_var(&key, FAKE_KEY);
+        let mock = start_mock(vec![resp]);
+        let d = scratch(name);
+        let eng = engine(&mock.base_url, &key, &d);
+        let out = eng.attempt(&primary_turn()).unwrap().outcome;
+        let _ = mock.last_body();
+        std::env::remove_var(&key);
+        let _ = std::fs::remove_dir_all(&d);
+        match out {
+            AttemptOutcome::ProviderFailure { failure, .. } => failure,
+            other => panic!("{name}: expected ProviderFailure, got {other:?}"),
+        }
+    }
+
+    // 402 Payment Required -> quota.
+    let f = run(
+        "P402",
+        Resp::Raw(http_response("402 Payment Required", &[], "no credits")),
+    );
+    assert_eq!(f.class, "quota");
+    assert_eq!(f.code, "402");
+
+    // 408 Request Timeout -> unavailable.
+    let f = run(
+        "P408",
+        Resp::Raw(http_response("408 Request Timeout", &[], "slow")),
+    );
+    assert_eq!(f.class, "unavailable");
+
+    // 503 -> unavailable.
+    let f = run(
+        "P503",
+        Resp::Raw(http_response("503 Service Unavailable", &[], "down")),
+    );
+    assert_eq!(f.class, "unavailable");
+    assert_eq!(f.code, "503");
+
+    // A body error envelope under HTTP 200 (the live Nvidia case): code 503 in the body ->
+    // unavailable, not unknown.
+    let body = serde_json::json!({
+        "error": { "code": 503, "message": "Upstream error from Nvidia: Service temporarily overloaded" }
+    })
+    .to_string();
+    let f = run(
+        "PENV",
+        Resp::Raw(http_response(
+            "200 OK",
+            &[("content-type", "application/json")],
+            &body,
+        )),
+    );
+    assert_eq!(f.class, "unavailable");
+    assert_eq!(f.code, "503");
+    assert!(f.message.contains("overloaded"), "{}", f.message);
 }

@@ -11,6 +11,7 @@
 
 use c3_core::engine::StructuredReply;
 use regex::Regex;
+use serde_json::{Map, Value};
 
 /// The prose gate's verdict (`Get-ProseGate` fields).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,6 +158,191 @@ fn strip_fence(t: &str) -> String {
     }
 }
 
+// ------------------------------------------------------------- local reply normalisation (item 2)
+
+/// A deterministic, LOCAL repair of a reply from an engine WITHOUT an enforced output schema (the
+/// http engine). It runs ONLY after the strict parse has already failed, and it NEVER invents
+/// content: it repairs *shape* — a Markdown fence, prose around the object, raw control characters
+/// inside string literals, a single value where the schema wants an array, and a missing or numeric
+/// `schema_version` — then validates strictly again. It returns the validated reply and a
+/// human-readable list of every change, or `None` when the reply still does not validate (it then
+/// stays INVALID, exactly as today).
+///
+/// This is the "no enforced output schema" capability: codex/agy/muse enforce the schema at the
+/// engine and the plugin does no such repair, so their replies never pass through here — only the
+/// http path calls it, and only on a failed strict parse.
+pub fn normalise_reply(raw_text: &str) -> Option<(StructuredReply, Vec<String>)> {
+    let mut notes: Vec<String> = Vec::new();
+
+    // a. strip a Markdown code fence around the whole reply (reuses the existing fence net).
+    let trimmed = raw_text.trim();
+    let unfenced = strip_fence(trimmed);
+    if unfenced != trimmed {
+        notes.push("stripped a code fence".to_string());
+    }
+
+    // b. take the outermost JSON object when there is prose before or after it.
+    let (obj_text, dropped_prose) = outermost_object(&unfenced)?;
+    if dropped_prose {
+        notes.push("took the outermost JSON object (dropped surrounding prose)".to_string());
+    }
+
+    // c. escape raw control characters (U+0000..U+001F) that occur INSIDE string literals.
+    let (escaped, escaped_count) = escape_control_chars_in_strings(&obj_text);
+    if escaped_count > 0 {
+        notes.push(format!(
+            "escaped {escaped_count} control character(s) inside string(s)"
+        ));
+    }
+
+    // The text must now be valid JSON; if not, the reply stays INVALID.
+    let mut value: Value = serde_json::from_str(&escaped).ok()?;
+
+    // d/e. structural repairs on the parsed value (array wrapping, schema_version).
+    structural_repairs(&mut value, &mut notes);
+
+    // Validate strictly again — the same RawReply -> StructuredReply path parse_structured uses.
+    let raw: c3_core::engine::RawReply = serde_json::from_value(value).ok()?;
+    let structured = StructuredReply::try_from(raw).ok()?;
+    Some((structured, notes))
+}
+
+/// The single-line note recorded and printed when a reply was normalised (`reply normalised: a; b`).
+pub fn normalised_note(notes: &[String]) -> String {
+    format!("reply normalised: {}", notes.join("; "))
+}
+
+/// Return the slice from the first `{` to its matching `}` (a string-aware brace scan), and whether
+/// any prose was dropped from before or after it. `None` when there is no balanced object.
+fn outermost_object(text: &str) -> Option<(String, bool)> {
+    let bytes = text.as_bytes();
+    let start = text.find('{')?;
+    let (mut depth, mut in_str, mut esc, mut end) = (0i32, false, false, None);
+    for (i, &b) in bytes.iter().enumerate().skip(start) {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if b == b'\\' {
+                esc = true;
+            } else if b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    let dropped = start > 0 || end < bytes.len() - 1;
+    Some((text[start..=end].to_string(), dropped))
+}
+
+/// Escape every raw control character (U+0000..U+001F) that occurs INSIDE a string literal, using
+/// a byte/char state machine (never a regex over the whole text). Control characters OUTSIDE a
+/// string (JSON whitespace between tokens) are left untouched. Returns the text and the count.
+fn escape_control_chars_in_strings(text: &str) -> (String, usize) {
+    let mut out = String::with_capacity(text.len());
+    let (mut in_str, mut esc, mut count) = (false, false, 0usize);
+    for ch in text.chars() {
+        if in_str {
+            if esc {
+                out.push(ch);
+                esc = false;
+            } else if ch == '\\' {
+                out.push(ch);
+                esc = true;
+            } else if ch == '"' {
+                out.push(ch);
+                in_str = false;
+            } else if (ch as u32) < 0x20 {
+                count += 1;
+                match ch {
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    _ => out.push_str(&format!("\\u{:04x}", ch as u32)),
+                }
+            } else {
+                out.push(ch);
+            }
+        } else {
+            if ch == '"' {
+                in_str = true;
+            }
+            out.push(ch);
+        }
+    }
+    (out, count)
+}
+
+/// Structural repairs on the parsed value: `schema_version` default/coercion, and wrapping a single
+/// object or string (or a `null`) into the array the schema requires for the named fields.
+fn structural_repairs(value: &mut Value, notes: &mut Vec<String>) {
+    let Some(obj) = value.as_object_mut() else {
+        return;
+    };
+    // e. schema_version: a missing key becomes "1"; a number 1 becomes "1".
+    match obj.get("schema_version") {
+        None => {
+            obj.insert("schema_version".into(), Value::String("1".into()));
+            notes.push("schema_version defaulted to \"1\"".into());
+        }
+        Some(Value::Number(n)) if n.as_i64() == Some(1) => {
+            obj.insert("schema_version".into(), Value::String("1".into()));
+            notes.push("schema_version coerced from 1 to \"1\"".into());
+        }
+        _ => {}
+    }
+    // d. top-level array fields.
+    for field in [
+        "findings",
+        "prior_findings",
+        "unproven",
+        "first_run_checklist",
+    ] {
+        wrap_array_field(obj, field, notes);
+    }
+    // d. per-finding array fields.
+    if let Some(Value::Array(findings)) = obj.get_mut("findings") {
+        for f in findings.iter_mut() {
+            if let Some(fo) = f.as_object_mut() {
+                for field in ["locations", "evidence", "supersedes"] {
+                    wrap_array_field(fo, field, notes);
+                }
+            }
+        }
+    }
+}
+
+/// Where the schema requires an array: a single object or string is wrapped in a one-element array,
+/// and a `null` becomes `[]`. Any other value (already an array, a number, a bool) is left as is —
+/// no content is invented.
+fn wrap_array_field(obj: &mut Map<String, Value>, field: &str, notes: &mut Vec<String>) {
+    match obj.get(field) {
+        Some(Value::Null) => {
+            obj.insert(field.into(), Value::Array(Vec::new()));
+            notes.push(format!("{field}: null replaced with []"));
+        }
+        Some(Value::Object(_)) | Some(Value::String(_)) => {
+            let v = obj.remove(field).unwrap();
+            let kind = if v.is_object() { "object" } else { "string" };
+            obj.insert(field.into(), Value::Array(vec![v]));
+            notes.push(format!("{field}: {kind} wrapped in an array"));
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +391,77 @@ mod tests {
             not_attempted_suffix(&g),
             "(format repair not attempted: reply too short (2 words))"
         );
+    }
+
+    // ------------------------------------------------------------------ item 2: normalisation
+
+    const FIXTURE_01: &str = include_str!("../../tests/fixtures/http/01-http-reply.reply.json");
+    const FIXTURE_03: &str = include_str!("../../tests/fixtures/http/03-http-reply.reply.json");
+
+    #[test]
+    fn normalise_wraps_single_evidence_object_space_bunny() {
+        // Space Bunny: findings[].evidence is ONE object where the schema wants an array; the
+        // strict parse fails, the normaliser wraps it, and the reply becomes structured (2 findings).
+        assert!(
+            crate::engines::codex::parse_structured(FIXTURE_01).is_none(),
+            "the fixture must fail the strict parse first"
+        );
+        let (s, notes) = normalise_reply(FIXTURE_01).expect("fixture 01 normalises");
+        assert_eq!(s.findings.len(), 2);
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("evidence") && n.contains("wrapped in an array")),
+            "notes: {notes:?}"
+        );
+    }
+
+    #[test]
+    fn normalise_escapes_raw_control_chars_nemotron() {
+        // Nemotron: raw line breaks inside JSON strings (invalid JSON) plus single-object evidence;
+        // the normaliser escapes the control chars and wraps evidence -> structured (3 findings).
+        assert!(crate::engines::codex::parse_structured(FIXTURE_03).is_none());
+        let (s, notes) = normalise_reply(FIXTURE_03).expect("fixture 03 normalises");
+        assert_eq!(s.findings.len(), 3);
+        assert!(
+            notes.iter().any(|n| n.contains("control character")),
+            "notes: {notes:?}"
+        );
+    }
+
+    #[test]
+    fn normalise_leaves_truncated_json_invalid() {
+        // A truncated object cannot be balanced -> the reply stays INVALID (None), never invented.
+        let truncated = r#"{"schema_version":"1","verdict":"ACCEPT","verdict_reason":"r","findings":[{"severity":"note""#;
+        assert!(normalise_reply(truncated).is_none());
+    }
+
+    #[test]
+    fn normalise_ignores_control_chars_outside_strings() {
+        // A raw newline OUTSIDE any string is legal JSON whitespace: it is left as is, so the
+        // escape step reports nothing.
+        let with_outer_newline = "{\n  \"schema_version\": \"1\",\n  \"verdict\": \"ACCEPT\",\n  \"verdict_reason\": \"r\",\n  \"reply_markdown\": \"m\",\n  \"findings\": [],\n  \"prior_findings\": [],\n  \"unproven\": [],\n  \"first_run_checklist\": []\n}";
+        let (_, notes) =
+            normalise_reply(with_outer_newline).expect("valid-with-whitespace normalises");
+        assert!(
+            !notes.iter().any(|n| n.contains("control character")),
+            "no control chars were inside a string: {notes:?}"
+        );
+    }
+
+    #[test]
+    fn normalise_is_idempotent_on_a_valid_object() {
+        // Running the normaliser on an already-valid v1 object is a no-op: it validates and reports
+        // no change (so normalising twice yields the same result — nothing is invented or altered).
+        let valid = r#"{"schema_version":"1","verdict":"ADVISE","verdict_reason":"r","reply_markdown":"m","findings":[{"severity":"note","locations":[{"path":"a.rs","line":1}],"claim":"c","trigger":"t","evidence":[{"kind":"read-code","reference":"r","observation":"o"}],"verification":"v","remedy":"rm","supersedes":[]}],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+        let (s1, notes) = normalise_reply(valid).expect("valid object normalises");
+        assert!(
+            notes.is_empty(),
+            "a valid object needs no repair: {notes:?}"
+        );
+        // A second pass over the same text produces the identical structured reply.
+        let (s2, _) = normalise_reply(valid).unwrap();
+        assert_eq!(s1, s2);
     }
 
     #[test]

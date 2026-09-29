@@ -131,12 +131,11 @@ pub fn parse_base_url(raw: &str) -> Result<String, String> {
     if raw.chars().any(|c| c.is_control()) {
         return Err("base_url must not contain control characters".to_string());
     }
-    let u = url::Url::parse(raw).map_err(|e| format!("base_url is not a valid URL ({e})"))?;
+    // (S6) The url crate's parse error can echo the input, so it is dropped: the value may be a
+    // pasted secret.
+    let u = url::Url::parse(raw).map_err(|_| "base_url is not a valid URL".to_string())?;
     if u.scheme() != "https" {
-        return Err(format!(
-            "base_url must be https:// (got scheme '{}')",
-            u.scheme()
-        ));
+        return Err("base_url must be https://".to_string());
     }
     if !u.username().is_empty() || u.password().is_some() {
         return Err("base_url must not contain a username or password".to_string());
@@ -154,28 +153,122 @@ pub fn parse_base_url(raw: &str) -> Result<String, String> {
 }
 
 /// (S1) Refuse sending an environment variable to a host it is not bound to. A known key must go
-/// to its provider's host (exact or a subdomain); any other variable must be named `C3_KEY_<X>`
-/// (then any https host is allowed, the scheme already checked by [`parse_base_url`]). Names the
-/// variable and the rule, never a value.
+/// to its provider's host (exact or a subdomain). A custom key is bound by its NAME to exactly one
+/// host: `C3_KEY_` + the host upper-cased, `.` written `_` and `-` written `__` (no subdomain
+/// rule). The variable NAME is what the user created by hand; the roster and the flags are
+/// agent-writable, so the name — not the roster — carries the destination host. Names the variable
+/// and the rule, never a value.
 pub fn check_key_host(key_env: &str, host: &str) -> Result<(), String> {
     let host = host.to_ascii_lowercase();
+    // A compile-time known key is bound to its provider's host (exact or a subdomain).
     if let Some((_, bound)) = KNOWN_KEYS.iter().find(|(k, _)| *k == key_env) {
         if host == *bound || host.ends_with(&format!(".{bound}")) {
             return Ok(());
         }
-        return Err(format!("{key_env} is bound to {bound}; got host {host}"));
+        return Err(format!(
+            "{key_env} is bound to {bound}; got host {}",
+            cap64(&host)
+        ));
     }
-    if key_env.starts_with("C3_KEY_") && key_env.len() > "C3_KEY_".len() {
-        return Ok(());
+    // A custom key: its name must encode this exact host.
+    if is_wellformed_c3_key(key_env) {
+        return match c3_key_name_for_host(&host) {
+            Some(expected) if expected == key_env => Ok(()),
+            Some(expected) => Err(format!(
+                "{key_env} is bound by its name to a different host; for {} create a variable named {expected}",
+                cap64(&host)
+            )),
+            None => Err(format!(
+                "a custom C3_KEY_ variable is bound to a DNS host, but {} is not one (an IP literal, or a host with any other character, cannot use a custom key)",
+                cap64(&host)
+            )),
+        };
     }
+    // Neither a known key nor a well-formed custom key name: never echo the name.
+    Err(key_env_not_known_message(key_env))
+}
+
+/// (S1/S6) Whether `key_env` is a NAME c3 will name in a message and use as a key variable: one of
+/// the compile-time known keys, or a well-formed `C3_KEY_` name.
+pub fn check_key_env_name(key_env: &str) -> Result<(), String> {
+    if KNOWN_KEYS.iter().any(|(k, _)| *k == key_env) || is_wellformed_c3_key(key_env) {
+        Ok(())
+    } else {
+        Err(key_env_not_known_message(key_env))
+    }
+}
+
+/// A well-formed custom key NAME: `C3_KEY_` + a non-empty suffix, a valid environment-variable
+/// name, at most 64 characters (bounds what a refusal may echo).
+fn is_wellformed_c3_key(name: &str) -> bool {
+    name.starts_with("C3_KEY_")
+        && name.len() > "C3_KEY_".len()
+        && name.len() <= 64
+        && is_env_name(name)
+}
+
+/// (S1) The `C3_KEY_` variable name a host is bound to, or `None` when the host is not a DNS name
+/// (an IP literal or a host with any character outside a DNS label cannot use a custom key). The
+/// encoding is injective over DNS hosts: a `.` becomes one `_`, a `-` becomes `__`, so a maximal
+/// run of underscores is either a single dot (odd length 1) or whole hyphens (an even length).
+fn c3_key_name_for_host(host: &str) -> Option<String> {
+    if !is_dns_host(host) {
+        return None;
+    }
+    let mut s = String::from("C3_KEY_");
+    for ch in host.chars() {
+        match ch {
+            '.' => s.push('_'),
+            '-' => s.push_str("__"),
+            c if c.is_ascii_alphanumeric() => s.push(c.to_ascii_uppercase()),
+            _ => return None,
+        }
+    }
+    Some(s)
+}
+
+/// A DNS name: dot-separated labels of `[a-z0-9-]`, none empty, none starting or ending with `-`,
+/// and not an IP literal (an IPv4 dotted-decimal or a bracketed/colon IPv6 address is refused: an
+/// IP literal cannot use a custom key at all).
+fn is_dns_host(host: &str) -> bool {
+    if host.is_empty() || host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return false;
+    }
+    host.split('.').all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    })
+}
+
+/// (S6) The refusal for a `key_env` that is neither a known key nor a well-formed `C3_KEY_` name.
+/// Never echoes the name (it may itself be a pasted credential); adds a hint when the string looks
+/// like a key VALUE rather than a variable name.
+fn key_env_not_known_message(key_env: &str) -> String {
     let known = KNOWN_KEYS
         .iter()
         .map(|(k, _)| *k)
         .collect::<Vec<_>>()
         .join(", ");
-    Err(format!(
-        "key_env {key_env} is refused: c3 sends a variable only to the provider it belongs to (known keys: {known}); for another endpoint create a variable named C3_KEY_<NAME>"
-    ))
+    let mut m = format!(
+        "key_env is not the name of a variable c3 knows (known keys: {known}; for another endpoint create a variable named C3_KEY_<HOST>, e.g. C3_KEY_API_EXAMPLE_COM for api.example.com)"
+    );
+    if looks_like_credential(key_env) {
+        m.push_str(
+            ". it looks like a key value: put the key into an environment variable and name that variable here",
+        );
+    }
+    m
+}
+
+/// (S6) Whether a string given as a variable name looks instead like a key VALUE: it contains a
+/// `-` (no environment-variable name does), is longer than 64 characters, or carries a known key
+/// prefix such as `sk-`.
+fn looks_like_credential(s: &str) -> bool {
+    s.contains('-') || s.len() > 64 || s.starts_with("sk-") || s.starts_with("sk_")
 }
 
 /// (S5) Why a header name is refused: a reserved name c3 controls, or a name that is not an
@@ -183,15 +276,38 @@ pub fn check_key_host(key_env: &str, host: &str) -> Result<(), String> {
 pub fn header_name_problem(name: &str) -> Option<String> {
     if RESERVED_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
         return Some(format!(
-            "a header named '{name}' is refused; the http engine controls it (it sets Authorization from key_env, and c3 sets content-type/host/length itself)"
+            "a header named '{}' is refused; the http engine controls it (it sets Authorization from key_env, and c3 sets content-type/host/length itself)",
+            cap64(name)
         ));
     }
     if !is_http_token(name) {
         return Some(format!(
-            "header name '{name}' is not a valid HTTP token (RFC 7230: letters, digits and !#$%&'*+-.^_`|~)"
+            "header name '{}' is not a valid HTTP token (RFC 7230: letters, digits and !#$%&'*+-.^_`|~)",
+            cap64(name)
         ));
     }
+    // (S6) A header name that suggests a credential is refused: the roster must not hold secrets.
+    if header_name_suggests_credential(name) {
+        return Some("a header that carries a credential cannot live in the roster".to_string());
+    }
     None
+}
+
+/// (S6) Whether a header NAME suggests it carries a credential (case-insensitive, anywhere in the
+/// name). `X-Title` and `HTTP-Referer` match none of these and stay allowed.
+fn header_name_suggests_credential(name: &str) -> bool {
+    let n = name.to_ascii_lowercase();
+    [
+        "key",
+        "token",
+        "secret",
+        "auth",
+        "password",
+        "credential",
+        "session",
+    ]
+    .iter()
+    .any(|w| n.contains(w))
 }
 
 /// An RFC 7230 header-name token: `1*tchar`.
@@ -253,8 +369,28 @@ fn is_json_integer(v: &Value) -> bool {
     false
 }
 
-fn compact(v: &Value) -> String {
-    serde_json::to_string(v).unwrap_or_default()
+/// (S6) The JSON *type* of a value, for a refusal that must never echo the value's content
+/// (it may be a pasted credential). A string's length is safe to report (`a string of N
+/// characters`), never its bytes.
+fn json_type(v: &Value) -> String {
+    match v {
+        Value::Null => "null".to_string(),
+        Value::Bool(_) => "a boolean".to_string(),
+        Value::Number(_) => "a number".to_string(),
+        Value::String(s) => format!("a string of {} characters", s.chars().count()),
+        Value::Array(_) => "an array".to_string(),
+        Value::Object(_) => "an object".to_string(),
+    }
+}
+
+/// (S6) Cap an echoed label (a provider/model/host name) at 64 characters so a refusal never
+/// carries an unbounded string, even for values the roster string rules already restrict.
+fn cap64(s: &str) -> String {
+    if s.chars().count() > 64 {
+        s.chars().take(64).collect::<String>() + "..."
+    } else {
+        s.to_string()
+    }
 }
 
 /// The first reserved roster delimiter found in a string (`::`, `[`, `]`, `|`, `,`, `#`), else
@@ -292,7 +428,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
         None => {
             return Err(format!(
                 "ext.c3.reviewers must be an array (got {})",
-                compact(reviewers)
+                json_type(reviewers)
             ))
         }
     };
@@ -317,7 +453,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
             if ev.as_str() != Some("http") {
                 return Err(format!(
                     "{at}: engine must be \"http\" (ext.c3.reviewers is the http engine's extension; got {})",
-                    compact(ev)
+                    json_type(ev)
                 ));
             }
         }
@@ -363,7 +499,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
             if !is_json_integer(wv) || wv.as_f64().unwrap_or(0.0) < 1.0 {
                 return Err(format!(
                     "{at}: weight must be an integer >= 1 (the panel routing weight; got {})",
-                    compact(wv)
+                    json_type(wv)
                 ));
             }
             weight = wv.as_i64().unwrap_or(1);
@@ -380,7 +516,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
                 None => {
                     return Err(format!(
                         "{at}: base_url must be a string (got {})",
-                        compact(bv)
+                        json_type(bv)
                     ))
                 }
             }
@@ -394,11 +530,16 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
         let mut key_env = DEFAULT_KEY_ENV.to_string();
         if let Some(kv) = iobj.get("key_env") {
             match kv.as_str() {
-                Some(s) if is_env_name(s) => key_env = s.to_string(),
-                _ => {
+                Some(s) => {
+                    // (S6) The value is a string: it must be the NAME of a variable c3 knows. A
+                    // pasted key value is refused here and never echoed.
+                    check_key_env_name(s).map_err(|why| format!("{at}: {why}"))?;
+                    key_env = s.to_string();
+                }
+                None => {
                     return Err(format!(
-                        "{at}: key_env must be an environment-variable name (letters, digits and underscore, not starting with a digit; got {}). The key value is never stored in the roster.",
-                        compact(kv)
+                        "{at}: key_env must be a string (got {}). The key value is never stored in the roster.",
+                        json_type(kv)
                     ))
                 }
             }
@@ -415,7 +556,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
                 None => {
                     return Err(format!(
                         "{at}: json_object must be true or false (got {})",
-                        compact(jv)
+                        json_type(jv)
                     ))
                 }
             }
@@ -428,26 +569,30 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
                 None => {
                     return Err(format!(
                         "{at}: headers must be an object of string values (e.g. {{\"X-Title\": \"c3\"}}; got {})",
-                        compact(hv)
+                        json_type(hv)
                     ))
                 }
             };
             for (name, val) in hobj {
+                // (S6) Vet the name first (a reserved / malformed / credential-suggesting name is
+                // refused regardless of its value), then the value's type — the value-type refusal
+                // never echoes the header name, which may itself be an attacker-chosen string.
+                if let Some(why) = header_name_problem(name) {
+                    return Err(format!("{at}: {why}"));
+                }
                 let value = match val.as_str() {
                     Some(s) => s,
                     None => {
                         return Err(format!(
-                            "{at}: header '{name}' must be a string (got {})",
-                            compact(val)
+                            "{at}: a header value must be a string (got {})",
+                            json_type(val)
                         ))
                     }
                 };
-                if let Some(why) = header_name_problem(name) {
-                    return Err(format!("{at}: {why}"));
-                }
                 if value.contains(['\r', '\n']) {
                     return Err(format!(
-                        "{at}: header '{name}' value must not contain a carriage return or line feed"
+                        "{at}: header '{}' value must not contain a carriage return or line feed",
+                        cap64(name)
                     ));
                 }
                 headers.push((name.clone(), value.to_string()));
@@ -517,7 +662,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
                 _ => {
                     return Err(format!(
                         "{at}: api_billing may only be \"accepted\" (it accepts per-token billing at a lab that also sells a subscription; omit it otherwise; got {})",
-                        compact(av)
+                        json_type(av)
                     ))
                 }
             }
@@ -531,7 +676,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
             {
                 return Err(format!(
                     "{at}: pack_tokens must be an integer from 0 to {MAX_PACK_TOKENS} (the reviewer pack's periphery budget; got {})",
-                    compact(tv)
+                    json_type(tv)
                 ));
             }
             pack_tokens = tv.as_i64().unwrap_or(-1);
@@ -543,9 +688,10 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
             .find(|e| e.provider == provider && e.model == model)
         {
             return Err(format!(
-                "ext.c3.reviewers entries {} and {i} are the same reviewer {} :: {model} [http]",
+                "ext.c3.reviewers entries {} and {i} are the same reviewer {} :: {} [http]",
                 dup.position - plugin_count,
-                provider
+                cap64(&provider),
+                cap64(&model)
             ));
         }
         out.push(HttpReviewer {
@@ -664,13 +810,16 @@ mod tests {
         );
         assert!(one(r#"{"provider":"or","model":"m","base_url":"https://"}"#).contains("base_url"));
         assert!(one(r#"{"provider":"or","model":"m","key_env":"1BAD"}"#)
-            .contains("key_env must be an environment-variable name"));
+            .contains("key_env is not the name of a variable c3 knows"));
+        // A non-string key_env is a type refusal, never echoing the value.
+        assert!(one(r#"{"provider":"or","model":"m","key_env":123}"#)
+            .contains("key_env must be a string (got a number)"));
         assert!(one(r#"{"provider":"or","model":"m","json_object":"yes"}"#)
             .contains("json_object must be true or false"));
         assert!(one(r#"{"provider":"or","model":"m","headers":[]}"#)
             .contains("headers must be an object"));
         assert!(one(r#"{"provider":"or","model":"m","headers":{"X":1}}"#)
-            .contains("header 'X' must be a string"));
+            .contains("a header value must be a string"));
         assert!(
             one(r#"{"provider":"or","model":"m","headers":{"Authorization":"Bearer x"}}"#)
                 .contains("a header named 'Authorization' is refused")
@@ -745,18 +894,84 @@ mod tests {
             let e = check_key_host(key, "openrouter.ai").unwrap_err();
             // ANTHROPIC is a known key bound elsewhere; the others are unknown, non-C3_KEY_.
             assert!(
-                e.contains("bound to") || e.contains("is refused"),
+                e.contains("bound to") || e.contains("is not the name of a variable c3 knows"),
                 "{key}: {e}"
             );
         }
     }
 
     #[test]
-    fn s1_c3_key_prefix_allows_any_https_host() {
-        assert!(check_key_host("C3_KEY_LOCAL", "anything.example").is_ok());
-        assert!(check_key_host("C3_KEY_X", "127-0-0-1.nip.io").is_ok());
-        // The bare prefix with no suffix is not a C3 key.
+    fn s1_custom_key_bound_to_its_encoded_host() {
+        // The two worked examples from the brief.
+        assert!(check_key_host("C3_KEY_API_EXAMPLE_COM", "api.example.com").is_ok());
+        assert!(
+            check_key_host("C3_KEY_MY__LLM_INTERNAL_EXAMPLE", "my-llm.internal.example").is_ok()
+        );
+        // The same variable sent to a different host is refused and names the right variable.
+        let e = check_key_host("C3_KEY_API_EXAMPLE_COM", "evil.example").unwrap_err();
+        assert!(
+            e.contains("create a variable named C3_KEY_EVIL_EXAMPLE"),
+            "{e}"
+        );
+        // A near-miss host: api-example.com (one hyphen) does not match C3_KEY_API_EXAMPLE_COM.
+        assert!(check_key_host("C3_KEY_API_EXAMPLE_COM", "api-example.com").is_err());
+        // An IP literal cannot use a custom key at all.
+        let e = check_key_host("C3_KEY_10_0_0_1", "10.0.0.1").unwrap_err();
+        assert!(e.contains("is not one"), "{e}");
+        let e = check_key_host("C3_KEY_X", "[::1]").unwrap_err();
+        assert!(e.contains("is not one"), "{e}");
+        // The bare prefix with no suffix is not a well-formed C3 key.
         assert!(check_key_host("C3_KEY_", "anything.example").is_err());
+    }
+
+    #[test]
+    fn s1_host_encoding_round_trips_and_is_injective() {
+        let hosts = [
+            "api.example.com",
+            "my-llm.internal.example",
+            "openrouter.ai",
+            "eu.api.openai.com",
+            "a--b.example",
+            "api-example.com",
+            "x.y.z",
+        ];
+        let mut names = std::collections::HashSet::new();
+        for h in hosts {
+            let name = c3_key_name_for_host(h).unwrap_or_else(|| panic!("{h} should encode"));
+            // Round-trip: the encoded variable is accepted for its own host only.
+            assert!(check_key_host(&name, h).is_ok(), "{name} for {h}");
+            for other in hosts {
+                if other != h {
+                    assert!(
+                        check_key_host(&name, other).is_err(),
+                        "{name} must not be accepted for {other}"
+                    );
+                }
+            }
+            // Injective: no two distinct hosts share a variable name.
+            assert!(names.insert(name.clone()), "duplicate encoding {name}");
+        }
+        // An IP literal and a host with an illegal character do not encode.
+        assert!(
+            c3_key_name_for_host("10.0.0.1").is_none(),
+            "IPv4 literal is not a DNS host"
+        );
+        assert!(c3_key_name_for_host("under_score.example").is_none());
+        assert!(c3_key_name_for_host("-bad.example").is_none());
+        assert!(c3_key_name_for_host("bad-.example").is_none());
+    }
+
+    #[test]
+    fn s6_key_env_value_that_looks_like_a_key_is_not_echoed() {
+        // A pasted key value as key_env: refused, hinted, never echoed.
+        let secret = "sk-or-v1-0123456789abcdef0123456789abcdef";
+        let e = check_key_env_name(secret).unwrap_err();
+        assert!(!e.contains(secret), "the value leaked: {e}");
+        assert!(
+            e.contains("key_env is not the name of a variable c3 knows"),
+            "{e}"
+        );
+        assert!(e.contains("it looks like a key value"), "{e}");
     }
 
     // ------------------------------------------------------------------ S2 base URL parsing
@@ -799,17 +1014,22 @@ mod tests {
         assert!(one(
             r#"{"provider":"or","model":"m","key_env":"GITHUB_TOKEN","base_url":"https://openrouter.ai"}"#
         )
-        .contains("GITHUB_TOKEN is refused"));
+        .contains("key_env is not the name of a variable c3 knows"));
         assert!(one(
             r#"{"provider":"or","model":"m","key_env":"OPENAI_API_KEY","base_url":"https://evil.example"}"#
         )
         .contains("OPENAI_API_KEY is bound to api.openai.com"));
-        // A C3_KEY_ variable to any https host is accepted.
+        // A C3_KEY_ variable is accepted only for the host its name encodes.
         assert!(parse(
-            r#"{"ext":{"c3":{"reviewers":[{"provider":"local","model":"m","key_env":"C3_KEY_LOCAL","base_url":"https://my.host/v1"}]}}}"#,
+            r#"{"ext":{"c3":{"reviewers":[{"provider":"local","model":"m","key_env":"C3_KEY_MY_HOST","base_url":"https://my.host/v1"}]}}}"#,
             0
         )
         .is_ok());
+        // The same variable at a different host is refused at parse time.
+        assert!(one(
+            r#"{"provider":"local","model":"m","key_env":"C3_KEY_MY_HOST","base_url":"https://other.host/v1"}"#
+        )
+        .contains("create a variable named C3_KEY_OTHER_HOST"));
         // A well-formed openai pair is accepted.
         assert!(parse(
             r#"{"ext":{"c3":{"reviewers":[{"provider":"openai","model":"gpt-5","key_env":"OPENAI_API_KEY","base_url":"https://api.openai.com/v1"}]}}}"#,
@@ -829,6 +1049,18 @@ mod tests {
         }
         assert!(header_name_problem("X-Title").is_none());
         assert!(header_name_problem("HTTP-Referer").is_none());
+        // (S6) A header name that suggests a credential is refused (the roster holds no secrets).
+        for h in [
+            "X-Api-Key",
+            "X-Auth-Token",
+            "My-Secret",
+            "Session-Id",
+            "X-Password",
+            "X-Credential",
+        ] {
+            let p = header_name_problem(h).unwrap_or_else(|| panic!("{h} must be refused"));
+            assert!(p.contains("carries a credential"), "{h}: {p}");
+        }
         assert!(
             header_name_problem("Bad Header").is_some(),
             "space not a token"
@@ -847,6 +1079,39 @@ mod tests {
             one(r#"{"provider":"or","model":"m","headers":{"Bad Name":"x"}}"#)
                 .contains("not a valid HTTP token")
         );
+    }
+
+    // ------------------------------------------------------------------ S6 no-secret canary
+
+    #[test]
+    fn s6_no_refusal_echoes_a_field_value() {
+        // A unique marker fed into each protected field, in a wrong type or an invalid value:
+        // no returned refusal may contain the marker (it could be a pasted secret). base_url and
+        // key_env, a header value, and every wrong-typed field are covered; a header NAME that
+        // carries the marker but suggests a credential is refused with a fixed message too.
+        const M: &str = "qzcanary-7f3a9c-secretmarker";
+        let cases = [
+            format!(r#"{{"provider":"p","model":"m","weight":"{M}"}}"#),
+            format!(r#"{{"provider":"p","model":"m","json_object":"{M}"}}"#),
+            format!(r#"{{"provider":"p","model":"m","headers":"{M}"}}"#),
+            format!(r#"{{"provider":"p","model":"m","headers":{{"X-Data":{{"k":"{M}"}}}}}}"#),
+            format!(r#"{{"provider":"p","model":"m","headers":{{"X-{M}-Key":"v"}}}}"#),
+            format!(r#"{{"provider":"p","model":"m","key_env":"{M}"}}"#),
+            format!(r#"{{"provider":"p","model":"m","key_env":{{"k":"{M}"}}}}"#),
+            format!(r#"{{"provider":"p","model":"m","base_url":"{M}"}}"#),
+            format!(r#"{{"provider":"p","model":"m","base_url":{{"k":"{M}"}}}}"#),
+            format!(r#"{{"provider":"p","model":"m","engine":"{M}"}}"#),
+            format!(r#"{{"provider":"p","model":"m","api_billing":"{M}"}}"#),
+            format!(r#"{{"provider":"p","model":"m","pack_tokens":"{M}"}}"#),
+        ];
+        for inner in cases {
+            let e = one(&inner);
+            assert!(!e.is_empty(), "expected a refusal for: {inner}");
+            assert!(!e.contains(M), "the marker leaked into a refusal: {e}");
+        }
+        // check_key_host and check_key_env_name never echo the key_env name either.
+        assert!(!check_key_env_name(M).unwrap_err().contains(M));
+        assert!(!check_key_host(M, "openrouter.ai").unwrap_err().contains(M));
     }
 
     // ------------------------------------------------------------------ S6 pack_tokens

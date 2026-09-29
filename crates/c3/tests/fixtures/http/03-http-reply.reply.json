@@ -1,0 +1,77 @@
+{
+  "reply_markdown": "# Security Review: HTTP Engine Key-to-Host Binding\n\n## Summary\n\nThe validation logic in `roster_ext.rs` is **largely sound** for its core security property: preventing a known provider key (e.g., `OPENAI_API_KEY`) from being sent to a host other than that provider's domain or a subdomain thereof. The `url` crate is used correctly for parsing, the subdomain check is correct, and the `C3_KEY_` escape hatch works as designed.\n\nHowever, **three concrete secret-leakage bugs** exist in error-message formatting, and one **header-value validation gap** allows non-string header values to be accepted into the roster (though they are later rejected with leakage).\n\n## Findings by Category\n\n### 1. Exfiltration — Key-to-Host Binding\n\n**Verdict: HOLDS** — no bypass found.\n\n- `parse_base_url` (lines 121–154) uses `url::Url::parse()`, which normalizes the host (lowercases, strips trailing dot, decodes IDNA/punycode to ASCII). The returned `host_str()` is the canonical host without port, userinfo, or path.\n- `check_key_host` (lines 160–179) lowercases the host again (idempotent) and checks `host == bound || host.ends_with(\".{bound}\")`. This correctly accepts `api.openai.com` and `eu.api.openai.com` but rejects `api.openai.com.evil.example`, `evilopenrouter.ai`, and `openrouter.ai.evil.example` (tested at lines 735–740).\n- IP literals (`https://1.2.3.4`) yield host `\"1.2.3.4\"`, which matches no known bound domain → rejected.\n- The `C3_KEY_` prefix rule (line 168) requires at least one character after the prefix (`len > 7`), so `C3_KEY_` alone is rejected (tested line 759).\n- **No parsing differential** between validator and `ureq`: both use the `url` crate. The validator stores the original URL string (line 377) and re-parses it once for the host (line 391); `ureq` will parse the same string at request time.\n\n### 2. Header Injection / Smuggling\n\n**Verdict: HOLDS** — no injection vector found.\n\n- Header names are validated by `header_name_problem` (lines 183–195) against `RESERVED_HEADERS` (case-insensitive) and RFC 7230 `tchar` via `is_http_token` (lines 198–220). The token set matches the RFC exactly.\n- Header values are checked only for CR/LF (lines 448–452). RFC 7230 allows any VCHAR/obs-text; `ureq` will percent-encode or reject invalid bytes. No smuggling vector via values alone.\n- Reserved headers (`Authorization`, `Host`, `Cookie`, etc.) are blocked (line 107–115), so the engine's own `Authorization: Bearer <key>` and `Host` cannot be overridden.\n\n### 3. Validator vs. HTTP Client Interpretation Differences\n\n**Verdict: HOLDS** — no difference found.\n\n- Both validator and `ureq` 2.x use the `url` crate for parsing. The validator extracts `host_str()` for the binding check; `ureq` uses the full URL for the request. The host component is identical.\n- The validator permits a path (e.g., `/api/v1`); `ureq` will append the request path (`/chat/completions`) to it. This is by design (line 119: \"a port and a path are allowed\").\n\n### 4. Secret Leakage in Refusal Messages\n\n**Verdict: THREE LEAKS FOUND** — error messages serialize user-supplied JSON values via `compact()` (lines 256–258), which calls `serde_json::to_string()`. If a roster author (or prompt-injected agent) places a secret in a header **value** that is not a string, or in the `headers` field as a non-object, or in `base_url` as a non-string, the secret appears verbatim in the refusal string returned to the caller (and potentially logged).\n\n| Location | Trigger | Leaked Value |
+|----------|---------|--------------|
+| `roster_ext.rs:441` | Header value is not a JSON string (e.g., `{\"X-Key\": {\"secret\": \"sk-...\"}}`) | Entire JSON value via `compact(val)` |
+| `roster_ext.rs:431` | `headers` field is not an object (e.g., `\"headers\": {\"Authorization\": \"Bearer sk-...\"}`) | Entire `headers` value via `compact(hv)` |
+| `roster_ext.rs:382` | `base_url` field is not a string (e.g., `\"base_url\": {\"url\": \"https://evil.com\", \"token\": \"...\"}`) | Entire `base_url` value via `compact(bv)` |
+
+The `key_env` field (line 400) only leaks the **variable name**, not its value — correct.\n\n## Recommended Fixes\n\n1. **Replace `compact()` in error paths with a safe summarizer** that never includes string contents (e.g., show JSON type only: `\"object\"`, `\"number\"`, `\"string\"`).\n2. **Validate header values are strings earlier** (before the loop) and refuse non-strings with a generic message.\n3. **Validate `base_url` and `headers` types before any `compact()` call** — already done for `base_url` (line 375) but the error path at 382 still uses `compact`; move the type check before the parse attempt.\n4. **Consider redacting header values in all error messages** as a defense-in-depth measure.\n\n## Additional Notes\n\n- The `C3_KEY_` escape hatch is working as designed: any variable named `C3_KEY_<SUFFIX>` (with non-empty suffix) may be sent to any HTTPS host. This is a **user-controlled** variable; prompt injection cannot create environment variables, only roster entries.\n- No findings for prior open issues (none listed).\n- Unproven: behavior of `ureq` with extremely long header values, or with Unicode in header values (RFC 7230 allows only ASCII tokens for names; values may contain obs-text). The validator does not limit header value length.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/roster_ext.rs",
+          "line": 441
+        }
+      ],
+      "claim": "Header value secrets leaked in error message when value is not a JSON string",
+      "trigger": "Roster entry with a header whose value is a JSON object/number/boolean, e.g., `{\"headers\": {\"X-Custom\": {\"secret\": \"sk-123\"}}}`",
+      "evidence": {
+        "kind": "read-code",
+        "reference": "roster_ext.rs:435-446",
+        "observation": "Line 441 calls `compact(val)` where `val` is the raw `serde_json::Value` of the header value. If `val.as_str()` is None (non-string), the error at line 440 includes the full JSON serialization of the value."
+      },
+      "verification": "Add a test case with a non-string header value and assert the error message does not contain the secret.",
+      "remedy": "Replace `compact(val)` with a type-only description (e.g., `format!(\"expected string, got {}\", val_type(val))`) or redact the value entirely.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/roster_ext.rs",
+          "line": 431
+        }
+      ],
+      "claim": "Entire headers object leaked in error message when headers field is not an object",
+      "trigger": "Roster entry with `headers` set to a non-object, e.g., `\"headers\": {\"Authorization\": \"Bearer sk-123\"}` (an object but with reserved header) — actually any non-object like a string or array containing secrets",
+      "evidence": {
+        "kind": "read-code",
+        "reference": "roster_ext.rs:426-433",
+        "observation": "Line 431 calls `compact(hv)` where `hv` is the raw `headers` field value. If it's not an object, the error includes the full JSON."
+      },
+      "verification": "Provide a roster with `\"headers\": \"not-an-object\"` and check error output.",
+      "remedy": "Check `hv.is_object()` before any `compact()` call; on failure, emit a generic message like `\"headers must be an object\"` without serializing the value.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/roster_ext.rs",
+          "line": 382
+        }
+      ],
+      "claim": "base_url value leaked in error message when base_url is not a string",
+      "trigger": "Roster entry with `base_url` as a non-string JSON value containing a secret, e.g., `\"base_url\": {\"url\": \"https://evil.com\", \"token\": \"secret\"}`",
+      "evidence": {
+        "kind": "read-code",
+        "reference": "roster_ext.rs:374-386",
+        "observation": "Line 382 calls `compact(bv)` in the error path when `bv.as_str()` is None. The raw JSON value is serialized into the error."
+      },
+      "verification": "Provide a roster with a non-string `base_url` and observe the error.",
+      "remedy": "Validate `bv.is_string()` first and return a generic type error without `compact()`.",
+      "supersedes": []
+    }
+  ],
+  "verdict": "HOLD",
+  "verdict_reason": "Core key-to-host binding is correct and cannot be bypassed; however, three secret-leakage bugs in error messages must be fixed before acceptance.",
+  "prior_findings": [],
+  "unproven": [
+    "ureq 2.x behavior with header values containing non-ASCII bytes (obs-text) — validator only checks for CR/LF",
+    "ureq 2.x behavior with extremely long header names/values (potential DoS)",
+    "Interaction with command-line flags `--key-env` / `--base-url` — not visible in this file but brief says they use the same validation"
+  ],
+  "schema_version": "1"
+}
