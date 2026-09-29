@@ -224,14 +224,12 @@ pub fn convert_to_slug_list(values: &[String], what: &str) -> (Vec<String>, Stri
 /// ordinal, the engine), never on a display string. Returns `(positions, error)`; `positions`
 /// is in roster order, `error` is the plugin's exact refusal (empty on success).
 pub fn resolve_reviewer_matcher(entries: &[RosterEntry], matcher: &str) -> (Vec<i64>, String) {
-    let t = matcher.trim();
     let fail = |why: String| (Vec::new(), why);
-    if t.is_empty() {
-        return fail("an empty reviewer matcher".to_string());
-    }
-    let pos_re = regex::Regex::new(r"^#(\d+)$").unwrap();
-    if let Some(c) = pos_re.captures(t) {
-        let pos: i64 = c[1].parse().unwrap_or(0);
+    let g = match parse_reviewer_matcher_grammar(matcher) {
+        Ok(g) => g,
+        Err(why) => return fail(why),
+    };
+    if let Some(pos) = g.position {
         let hit: Vec<i64> = entries
             .iter()
             .filter(|e| e.position as i64 == pos)
@@ -239,41 +237,20 @@ pub fn resolve_reviewer_matcher(entries: &[RosterEntry], matcher: &str) -> (Vec<
             .collect();
         if hit.is_empty() {
             return fail(format!(
-                "'{t}' names no roster position (the roster has {} entries)",
+                "'{}' names no roster position (the roster has {} entries)",
+                matcher.trim(),
                 entries.len()
             ));
         }
         return (hit, String::new());
     }
-    let mut rest = t.to_string();
-    let mut engine = String::new();
-    let eng_re = regex::Regex::new(r"^(.*\S)\s+\[([A-Za-z0-9_-]+)\]$").unwrap();
-    if let Some(c) = eng_re.captures(t) {
-        rest = c[1].to_string();
-        engine = c[2].to_lowercase();
-        if !ENGINE_NAMES.contains(&engine.as_str()) {
-            return fail(format!(
-                "'{matcher}' names the engine '{engine}' (known: {})",
-                ENGINE_NAMES.join(", ")
-            ));
-        }
-    }
-    let mut provider = rest.clone();
-    let mut model: Option<String> = None;
-    if let Some(sep) = rest.find(" :: ") {
-        provider = rest[..sep].trim().to_string();
-        let m = rest[sep + 4..].trim().to_string();
-        if provider.is_empty() || m.is_empty() {
-            return fail(format!("'{matcher}' is not '<provider> :: <model>'"));
-        }
-        model = Some(m);
-    }
+    let provider = g.provider.unwrap_or_default();
     let hits: Vec<i64> = entries
         .iter()
         .filter(|e| {
             e.provider == provider
-                && model.as_ref().is_none_or(|m| &e.model == m)
-                && (engine.is_empty() || e.engine == engine)
+                && g.model.as_ref().is_none_or(|m| &e.model == m)
+                && g.engine.as_ref().is_none_or(|en| &e.engine == en)
         })
         .map(|e| e.position as i64)
         .collect();
@@ -281,6 +258,81 @@ pub fn resolve_reviewer_matcher(entries: &[RosterEntry], matcher: &str) -> (Vec<
         return fail(format!("'{matcher}' matches no roster entry"));
     }
     (hits, String::new())
+}
+
+/// The parsed shape of a reviewer matcher, independent of any roster (`parse_reviewer_matcher_grammar`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MatcherGrammar {
+    /// A `#<n>` roster position, when the matcher is one.
+    pub position: Option<i64>,
+    /// The provider label (`None` only for a `#<n>` position).
+    pub provider: Option<String>,
+    /// The model, when the matcher is `<provider> :: <model>`.
+    pub model: Option<String>,
+    /// The engine of a ` [<engine>]` suffix.
+    pub engine: Option<String>,
+}
+
+/// (wave 27c, D10) The ONE grammar of a reviewer matcher — a `#<n>` position, a bare provider
+/// label, or `<provider> :: <model>`, any form with an optional ` [<engine>]` suffix — shared by
+/// the roster's `Resolve-ReviewerMatcher` and the `CODEX_CONSULT_COORDINATOR` matcher, so what the
+/// roster accepts as a provider/model/engine string the coordinator value accepts. `Err` carries
+/// the plugin's exact refusal `<why>` (the caller wraps it). Membership is NOT checked here — that
+/// is the roster's (or the coordinator's) job.
+pub fn parse_reviewer_matcher_grammar(matcher: &str) -> Result<MatcherGrammar, String> {
+    let t = matcher.trim();
+    if t.is_empty() {
+        return Err("an empty reviewer matcher".to_string());
+    }
+    let pos_re = regex::Regex::new(r"^#(\d+)$").unwrap();
+    if let Some(c) = pos_re.captures(t) {
+        return Ok(MatcherGrammar {
+            position: Some(c[1].parse().unwrap_or(0)),
+            ..Default::default()
+        });
+    }
+    let mut rest = t.to_string();
+    let mut engine: Option<String> = None;
+    let eng_re = regex::Regex::new(r"^(.*\S)\s+\[([A-Za-z0-9_-]+)\]$").unwrap();
+    if let Some(c) = eng_re.captures(t) {
+        rest = c[1].to_string();
+        let e = c[2].to_lowercase();
+        if !ENGINE_NAMES.contains(&e.as_str()) {
+            return Err(format!(
+                "'{t}' names the engine '{e}' (known: {})",
+                ENGINE_NAMES.join(", ")
+            ));
+        }
+        engine = Some(e);
+    }
+    let mut provider = rest.clone();
+    let mut model: Option<String> = None;
+    if let Some(sep) = rest.find(" :: ") {
+        let p = rest[..sep].trim().to_string();
+        let m = rest[sep + 4..].trim().to_string();
+        if p.is_empty() || m.is_empty() {
+            return Err(format!("'{t}' is not '<provider> :: <model>'"));
+        }
+        provider = p;
+        model = Some(m);
+    }
+    let label_re = regex::Regex::new(r"^[A-Za-z0-9._-]+$").unwrap();
+    if !label_re.is_match(&provider) {
+        return Err(format!(
+            "the provider '{provider}' is not a provider label (letters, digits, dot, dash, underscore)"
+        ));
+    }
+    if let Some(m) = &model {
+        if m.chars().any(|c| c.is_whitespace()) {
+            return Err(format!("the model '{m}' contains white space"));
+        }
+    }
+    Ok(MatcherGrammar {
+        position: None,
+        provider: Some(provider),
+        model,
+        engine,
+    })
 }
 
 /// Validate the roster JSON text of a file known to exist and be readable.

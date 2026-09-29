@@ -688,8 +688,7 @@ fn write_lock_record(file: &mut File, record: &LockRecord) -> io::Result<()> {
 /// The write-lock wait ceiling in seconds (`Get-WriteLockTimeout`): the default, or the
 /// `CODEX_CONSULT_TEST_WRITE_LOCK_SEC` test override. The "commit blocked" message quotes it.
 pub fn write_lock_timeout_secs() -> u64 {
-    std::env::var("CODEX_CONSULT_TEST_WRITE_LOCK_SEC")
-        .ok()
+    crate::test_hooks::hook("CODEX_CONSULT_TEST_WRITE_LOCK_SEC")
         .and_then(|s| s.trim().parse::<u64>().ok())
         .unwrap_or(WRITE_LOCK_TIMEOUT_SEC)
 }

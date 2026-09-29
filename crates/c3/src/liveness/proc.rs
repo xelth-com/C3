@@ -57,8 +57,7 @@ static VALIDATED_BRIDGE: std::sync::OnceLock<Option<(u32, String)>> = std::sync:
 /// `CODEX_CONSULT_TEST_BRIDGE_PID`, else `None`.
 fn validated_bridge() -> &'static Option<(u32, String)> {
     VALIDATED_BRIDGE.get_or_init(|| {
-        let pid = std::env::var("CODEX_CONSULT_TEST_BRIDGE_PID")
-            .ok()
+        let pid = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_BRIDGE_PID")
             .and_then(|s| s.trim().parse::<u32>().ok())
             .filter(|p| *p > 0 && *p != std::process::id())?;
         if !pid_alive(pid, "") {

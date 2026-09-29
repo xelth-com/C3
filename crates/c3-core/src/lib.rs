@@ -38,6 +38,7 @@ pub mod roster_ext;
 pub mod schema;
 pub mod store;
 pub mod task_slug;
+pub mod test_hooks;
 pub mod verdict;
 
 use sha2::{Digest, Sha256};

@@ -1330,3 +1330,54 @@ The harness-host `ENV` panel row also asserts `coordinator.host -eq 'codex'` (fr
 c3 does not infer the codex host (single-host decision), so it records `unknown`. That row therefore
 still fails on the host assertion — **out of scope: operator decision 2026-09-29 (single host)** — but
 the coordinator warning it requires is now emitted (verified in the log).
+
+---
+
+## Wave 27c re-measurement (single-host port of the plugin's wave-27c decisions)
+
+Run against the plugin at its current main (`c6f6966`) through the C3 shims in
+`crates/c3/tests/shim/` (copied into a scratch `scripts/` dir), with `$env:C3_EXE` pointed at the
+wave-27c worktree's `target\debug\c3.exe`. One harness at a time; counts read from each harness's
+own summary line. Skipped per the brief: `harness-3b`, `harness-fixes`, `harness-pending`,
+`harness-host`.
+
+Shim change for D14: every C3 shim now sets `CODEX_CONSULT_TEST_MODE=1` when the caller did not
+(the plugin's harnesses set the `CODEX_CONSULT_TEST_*` hooks but not — yet — the mode; c3 now
+honours a hook only with the mode set, D14).
+
+| Harness | Before (brief) | After 27c | Notes |
+|---|---|---|---|
+| harness-lock2   | 11 / 0  | 11 / 0  | unchanged |
+| harness-panel   | 54 / 0  | 54 / 0  | unchanged (the shim now sets the test mode, D14) |
+| harness-roster  | 119 / 0 | 119 / 0 | unchanged (roster matcher now shares the coordinator grammar, D10) |
+| harness-detach  | 50 / 1  | 50 / 1  | unchanged; the one failure is the pre-existing `CARRY F11-2` (below), not kick-related |
+| harness-fixes26b| 51 / 0  | 49 / 2  | one row is 27c-ahead (HEALTHLOCK), one is pre-existing and untouched by 27c (ROLEFILE) |
+| harness-0.3     | 228 / 1 | (pending) | not run in this window: 228 rows could not finish before the machine-scan harnesses; queued for after the scan run |
+
+### Failing rows, verbatim, with class
+
+- **harness-detach — pre-existing, unchanged by 27c** (matches the brief's expected 50/1):
+  `FAIL CARRY    F11-2: the `starting` record of a detached run with an inline -Prompt names only
+  its prompt file ...` — the detached-run prompt-file carry; no wave-27c code touches
+  `consult/detach.rs` beyond routing one test hook, and the row does not involve a hook. Same
+  failure the brief already lists.
+
+- **harness-fixes26b — "27c ahead of the plugin's harness"**:
+  `FAIL HEALTHLOCK 26c D2: the health file's lock held elsewhere (3 attempts of the hook's 1 s each,
+  then the one retry at the ledger commit): the run still delivers (usable reply, exit 0), warnings[]
+  and the summary say "machine-wide health not updated (lock timeout)", the ledger keeps the truth;
+  nothing was written to the file` — the run still delivers (exit 0), and the summary line is exactly
+  `machine-wide health not updated (lock timeout)` as before (D7). The mismatch is the LEDGER warning,
+  which wave-27c D8 changed to `machine-wide health not updated at the commit (lock timeout); retried
+  after it`, and the in-lock attempt is now ONE bounded attempt (≤1 s) with the full 3× retry after
+  the task write lock is released. The plugin's harness at `c6f6966` still expects the pre-27c
+  wording, so it will re-green once the plugin lands 27c.
+
+- **harness-fixes26b — pre-existing / NOT wave-27c**:
+  `FAIL ROLEFILE D1: a file outside the roles directory is refused ("... is outside ..."); the
+  plugin's templates/role-<name>.md likewise inside the plugin's templates directory (a templates
+  junction refused); the shipped template still resolves` — the role-file / templates-junction refusal
+  lives in `crates/c3/src/panel/roles.rs`, which no wave-27c change touches. It failed identically in
+  both the pre-shim-fix and post-shim-fix runs and carries no test-hook warning; it is an environmental
+  / pre-existing divergence (junction handling on this machine), not introduced by 27c. Flagged for the
+  supervisor to confirm against a clean-HEAD baseline in the same environment.

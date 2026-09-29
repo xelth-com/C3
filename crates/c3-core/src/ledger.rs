@@ -243,6 +243,12 @@ pub struct LedgerEntry {
         deserialize_with = "deserialize_present"
     )]
     pub stall: Option<Option<Stall>>,
+    /// (wave 27c, D16) `false` when a process-tree kill could not be confirmed to have stopped the
+    /// root the bridge started (`pid <n> may still run`): no continuation turn runs on that thread
+    /// and a warning is written. Absent (skipped) for every confirmed kill and every run with no
+    /// kill, so a pre-27c entry round-trips byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kill_confirmed: Option<bool>,
     #[serde(default)]
     pub base_commit: String,
     #[serde(default)]
@@ -374,6 +380,15 @@ pub struct Coordinator {
     pub host: String,
     #[serde(default)]
     pub source: String,
+    /// (wave 27c, D11) `false` when the coordinator parses but no reviewer of the roster can match
+    /// it — said, not refused. Absent (skipped) when there is no roster to check or the coordinator
+    /// was only inferred, so a pre-27c entry round-trips byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_roster: Option<bool>,
+    /// (wave 27c, D12) `"#n"` when the coordinator is a roster position that names no seat here:
+    /// the run goes on with a warning. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unresolved: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

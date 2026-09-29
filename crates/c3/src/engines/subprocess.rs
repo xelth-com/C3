@@ -87,6 +87,9 @@ pub struct TurnResult {
     pub last_event: Option<String>,
     /// (wave 26b, D12) Seconds without an event at the stall kill (`0` unless a stall fired).
     pub silent_seconds: i64,
+    /// (wave 27c, D5) How many over-long unfinished lines (> 1 MiB with no line end) the bounded
+    /// stream reader discarded during the turn; `0` normally. A non-zero count warns once per run.
+    pub oversized_lines: u64,
     /// Pids that survived the kill (best-effort; empty when the tree died cleanly).
     pub survivors: Vec<u32>,
     /// Wall time, rounded to one decimal.
@@ -106,12 +109,23 @@ impl TurnResult {
             kick_late: false,
             last_event: None,
             silent_seconds: 0,
+            oversized_lines: 0,
             survivors: Vec::new(),
             wall_seconds: 0.0,
             stderr: String::new(),
             error: Some(error),
         }
     }
+}
+
+/// (wave 27c, D5) The bounded stream reader's carry cap: the text after the last line end is kept
+/// only up to 1 MiB; a longer unfinished line is discarded up to its end and counted.
+const STREAM_CARRY_CAP: usize = 1024 * 1024;
+
+/// (wave 27c, D6) An open tool call cannot suspend the stall timer for ever: it may hold the timer
+/// for at most `max(3 x stall seconds, 1800 s)` with no growth of the stream at all.
+fn tool_suspension_cap_secs(stall_sec: i64) -> i64 {
+    (stall_sec.saturating_mul(3)).max(1800)
 }
 
 fn round1(secs: f64) -> f64 {
@@ -125,13 +139,109 @@ pub fn kick_ack_path(kick_path: &Path) -> std::path::PathBuf {
     std::path::PathBuf::from(s)
 }
 
-/// `Confirm-Kick` (wave 26c, D1): write `<kick>.ack` (`kicked` | `late`, then the time and this
-/// pid) and remove the kick file. Never fails the run.
-fn confirm_kick(kick_path: &Path, what: &str) {
+/// One acknowledgement of a kick request (wave 27c, D1): the result (`stopped` | `late`) and the
+/// request id it acknowledges.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KickAck {
+    pub result: String,
+    pub id: String,
+}
+
+/// Parse the `id=<request id>` line of a kick file (wave 27c, D1). `None` when the file is absent
+/// or carries no id.
+pub fn read_kick_id(kick_path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(kick_path).ok()?;
+    for line in text.lines() {
+        if let Some(v) = line.trim().strip_prefix("id=") {
+            let v = v.trim();
+            if !v.is_empty() {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Write the kick file atomically (temp file, then rename) so a caller never reads a half-written
+/// request (wave 27c, D1). The file carries the request `id` and a human line.
+pub fn write_kick_atomic(kick_path: &Path, id: &str) -> std::io::Result<()> {
+    let body = format!(
+        "id={id}\n{} -Kick from pid {}\n",
+        iso_now(),
+        std::process::id()
+    );
+    let mut tmp = kick_path.as_os_str().to_os_string();
+    tmp.push(format!(".tmp-{}", std::process::id()));
+    let tmp = std::path::PathBuf::from(tmp);
+    std::fs::write(&tmp, body.as_bytes())?;
+    match std::fs::rename(&tmp, kick_path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Write `<kick>.ack` holding the result and the request id it acknowledges (wave 27c, D1).
+pub fn write_kick_ack(kick_path: &Path, result: &str, id: &str) {
     let _ = std::fs::write(
         kick_ack_path(kick_path),
-        format!("{what} {} pid {}\n", iso_now(), std::process::id()),
+        format!(
+            "result={result}\nid={id}\n{} pid {}\n",
+            iso_now(),
+            std::process::id()
+        ),
     );
+}
+
+/// Read `<kick>.ack` (wave 27c, D1). `None` when it is absent or unreadable.
+pub fn read_kick_ack(ack_path: &Path) -> Option<KickAck> {
+    let text = std::fs::read_to_string(ack_path).ok()?;
+    let mut ack = KickAck::default();
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some(v) = l.strip_prefix("result=") {
+            ack.result = v.trim().to_string();
+        } else if let Some(v) = l.strip_prefix("id=") {
+            ack.id = v.trim().to_string();
+        }
+    }
+    Some(ack)
+}
+
+/// Sweep a stale acknowledgement (wave 27c, D1): remove `<kick>.ack` when it is older than
+/// `max_age_secs` and its id is NOT `my_id` (a caller never sweeps its own live acknowledgement).
+/// Best-effort; never fails.
+pub fn sweep_stale_ack(kick_path: &Path, my_id: Option<&str>, max_age_secs: u64) {
+    let ack_path = kick_ack_path(kick_path);
+    let meta = match std::fs::metadata(&ack_path) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    let age = meta
+        .modified()
+        .ok()
+        .and_then(|m| m.elapsed().ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if age < max_age_secs {
+        return;
+    }
+    if let Some(mine) = my_id {
+        if read_kick_ack(&ack_path).map(|a| a.id).as_deref() == Some(mine) {
+            return; // never sweep the caller's own acknowledgement
+        }
+    }
+    let _ = std::fs::remove_file(&ack_path);
+}
+
+/// `Confirm-Kick` (wave 26c D1 / 27c D1): the member acknowledges the kick with `<kick>.ack`
+/// holding the `result` (`stopped` | `late`) and the request id read from the kick file, then
+/// removes the kick file. Never fails the run.
+fn confirm_kick(kick_path: &Path, result: &str) {
+    let id = read_kick_id(kick_path).unwrap_or_default();
+    write_kick_ack(kick_path, result, &id);
     let _ = std::fs::remove_file(kick_path);
 }
 
@@ -211,6 +321,11 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     let mut open_tools: i64 = 0;
     let mut last_event: Option<String> = None;
     let mut silent_seconds: i64 = 0;
+    // (wave 27c, D5) over-long unfinished lines discarded, and whether we are skipping the tail of
+    // one until its line end. (wave 27c, D6) when the current tool-call suspension began.
+    let mut oversized_lines: u64 = 0;
+    let mut discarding = false;
+    let mut tool_open_since: Option<Instant> = None;
     let kill_now = |child: &mut Child| -> Vec<u32> {
         let mut s = kill_tree(child);
         // TEST HOOK: CODEX_CONSULT_TEST_SURVIVORS=<pid>[,<pid>] — these pids, when alive, are
@@ -232,7 +347,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                 _ => {
                     survivors = kill_now(&mut child);
                     stop = TurnStop::Kick;
-                    confirm_kick(kp, "kicked");
+                    confirm_kick(kp, "stopped");
                 }
             }
         }
@@ -256,11 +371,11 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         if kp.exists() {
                             survivors = kill_now(&mut child);
                             stop = TurnStop::Kick;
-                            confirm_kick(kp, "kicked");
+                            confirm_kick(kp, "stopped");
                             break None;
                         }
                     }
-                    // (wave 26b, D12 / 26c D3) the stall cut.
+                    // (wave 26b, D12 / 26c D3 / 27c D5+D6) the stall cut.
                     if stall_on {
                         let grew = read_stream_growth(
                             req.events_path,
@@ -268,20 +383,40 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                             &mut line_buf,
                             req.tool_delta,
                             &mut open_tools,
+                            &mut oversized_lines,
+                            &mut discarding,
                         );
                         if grew {
                             last_activity = Instant::now();
                             last_event = Some(iso_now());
                         }
-                        // The timer is suspended while a tool call is in flight.
-                        if open_tools <= 0 {
-                            let silent = last_activity.elapsed();
-                            if silent.as_secs() as i64 >= req.stall_sec {
-                                silent_seconds = silent.as_secs() as i64;
-                                survivors = kill_now(&mut child);
-                                stop = TurnStop::Stall;
-                                break None;
+                        // (wave 27c, D6) track when the current tool-call suspension began.
+                        if open_tools > 0 {
+                            tool_open_since.get_or_insert_with(Instant::now);
+                        } else {
+                            tool_open_since = None;
+                        }
+                        let silent = last_activity.elapsed().as_secs() as i64;
+                        // The timer is suspended while a tool call is in flight — but only up to
+                        // `max(3 x stall, 1800 s)` with no growth of the stream at all (wave 27c D6).
+                        let fire = if open_tools <= 0 {
+                            silent >= req.stall_sec
+                        } else {
+                            silent >= tool_suspension_cap_secs(req.stall_sec)
+                        };
+                        if fire {
+                            silent_seconds = silent;
+                            if open_tools > 0 {
+                                let tool_open = tool_open_since
+                                    .map(|t| t.elapsed().as_secs() as i64)
+                                    .unwrap_or(0);
+                                eprintln!(
+                                    "codex-consult: no output for {silent_seconds} s (a tool call open for {tool_open} s)"
+                                );
                             }
+                            survivors = kill_now(&mut child);
+                            stop = TurnStop::Stall;
+                            break None;
                         }
                     }
                     std::thread::sleep(Duration::from_millis(50));
@@ -293,6 +428,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         stop: TurnStop::Exited,
                         last_event,
                         silent_seconds: 0,
+                        oversized_lines,
                         survivors: Vec::new(),
                         wall_seconds: round1(start.elapsed().as_secs_f64()),
                         stderr: read_text(req.stderr_path),
@@ -315,6 +451,13 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     }
     let wall_seconds = round1(start.elapsed().as_secs_f64());
 
+    // (wave 27c, D5) one warning per run when an over-long unfinished line was discarded.
+    if oversized_lines > 0 {
+        eprintln!(
+            "codex-consult: {oversized_lines} over-long unfinished line(s) (> 1 MiB) were discarded from the event stream"
+        );
+    }
+
     TurnResult {
         started: true,
         exit_code,
@@ -322,6 +465,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         kick_late,
         last_event,
         silent_seconds,
+        oversized_lines,
         survivors,
         wall_seconds,
         stderr: read_text(req.stderr_path),
@@ -333,12 +477,15 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
 /// partial-line buffer. Applies `tool_delta` to each COMPLETE new line to keep `open_tools`
 /// (the count of tool calls in flight) current. Returns whether the stream grew at all (any new
 /// bytes) — the caller resets the silent timer on that (wave 26c D3: reset on byte growth).
+#[allow(clippy::too_many_arguments)]
 fn read_stream_growth(
     path: &Path,
     offset: &mut u64,
     line_buf: &mut String,
     tool_delta: Option<&dyn Fn(&str) -> i64>,
     open_tools: &mut i64,
+    oversized: &mut u64,
+    discarding: &mut bool,
 ) -> bool {
     use std::io::{Seek, SeekFrom};
     let mut f = match File::open(path) {
@@ -365,13 +512,31 @@ fn read_stream_growth(
     }
     *offset += n as u64;
     if let Some(delta) = tool_delta {
-        line_buf.push_str(&String::from_utf8_lossy(&buf));
+        let mut chunk = String::from_utf8_lossy(&buf).into_owned();
+        // (wave 27c, D5) if we are discarding the tail of an over-long line, skip to its end.
+        if *discarding {
+            match chunk.find('\n') {
+                Some(nl) => {
+                    *discarding = false;
+                    chunk = chunk[nl + 1..].to_string();
+                }
+                None => return true, // still no line end — keep discarding; the stream grew
+            }
+        }
+        line_buf.push_str(&chunk);
         while let Some(nl) = line_buf.find('\n') {
             let line: String = line_buf.drain(..=nl).collect();
             let line = line.trim();
             if !line.is_empty() {
                 *open_tools = (*open_tools + delta(line)).max(0);
             }
+        }
+        // (wave 27c, D5) the carry is the text after the last line end, capped at 1 MiB: a longer
+        // unfinished line is discarded up to its end and counted.
+        if line_buf.len() > STREAM_CARRY_CAP {
+            line_buf.clear();
+            *oversized += 1;
+            *discarding = true;
         }
     }
     true
@@ -407,8 +572,7 @@ fn kill_tree(child: &mut Child) -> Vec<u32> {
 
 /// The pids named by `CODEX_CONSULT_TEST_SURVIVORS` (comma-separated), for the survivor hook.
 fn test_survivor_pids() -> Vec<u32> {
-    std::env::var("CODEX_CONSULT_TEST_SURVIVORS")
-        .ok()
+    c3_core::test_hooks::hook("CODEX_CONSULT_TEST_SURVIVORS")
         .map(|v| {
             v.split(',')
                 .filter_map(|s| s.trim().parse::<u32>().ok())
@@ -444,14 +608,23 @@ mod tests {
         let mut offset = 0u64;
         let mut line_buf = String::new();
         let mut open = 0i64;
+        let mut oversized = 0u64;
+        let mut discarding = false;
+        let grow = |offset: &mut u64,
+                    line_buf: &mut String,
+                    open: &mut i64,
+                    oversized: &mut u64,
+                    discarding: &mut bool| {
+            read_stream_growth(&path, offset, line_buf, td, open, oversized, discarding)
+        };
 
         // No growth yet.
-        assert!(!read_stream_growth(
-            &path,
+        assert!(!grow(
             &mut offset,
             &mut line_buf,
-            td,
-            &mut open
+            &mut open,
+            &mut oversized,
+            &mut discarding
         ));
 
         // A plain agent-message line: growth, no open tool call.
@@ -461,16 +634,95 @@ mod tests {
         )
         .unwrap();
         f.flush().unwrap();
+        assert!(grow(
+            &mut offset,
+            &mut line_buf,
+            &mut open,
+            &mut oversized,
+            &mut discarding
+        ));
+        assert_eq!(open, 0);
+
+        // A tool call starts: the count rises (the timer would suspend).
+        writeln!(
+            f,
+            r#"{{"type":"item.started","item":{{"type":"command_execution"}}}}"#
+        )
+        .unwrap();
+        f.flush().unwrap();
+        assert!(grow(
+            &mut offset,
+            &mut line_buf,
+            &mut open,
+            &mut oversized,
+            &mut discarding
+        ));
+        assert_eq!(open, 1);
+
+        // It completes: back to zero (the timer resumes).
+        writeln!(
+            f,
+            r#"{{"type":"item.completed","item":{{"type":"command_execution"}}}}"#
+        )
+        .unwrap();
+        f.flush().unwrap();
+        assert!(grow(
+            &mut offset,
+            &mut line_buf,
+            &mut open,
+            &mut oversized,
+            &mut discarding
+        ));
+        assert_eq!(open, 0);
+
+        // No further growth.
+        assert!(!grow(
+            &mut offset,
+            &mut line_buf,
+            &mut open,
+            &mut oversized,
+            &mut discarding
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 27c, D5) an unfinished line longer than the 1 MiB carry cap is discarded up to its
+    // end and counted; the carry never grows without bound.
+    #[test]
+    fn oversized_unfinished_line_is_capped_and_counted() {
+        let dir = std::env::temp_dir().join(format!("c3-sg-cap-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("events.jsonl");
+        let mut f = File::create(&path).unwrap();
+        let delta = |line: &str| crate::engines::codex::codex_tool_delta(line);
+        let td: Option<&dyn Fn(&str) -> i64> = Some(&delta);
+
+        let mut offset = 0u64;
+        let mut line_buf = String::new();
+        let mut open = 0i64;
+        let mut oversized = 0u64;
+        let mut discarding = false;
+
+        // A run of > 1 MiB with NO line end: the carry is discarded up to its end and counted.
+        let blob = "x".repeat(STREAM_CARRY_CAP + 4096);
+        f.write_all(blob.as_bytes()).unwrap();
+        f.flush().unwrap();
         assert!(read_stream_growth(
             &path,
             &mut offset,
             &mut line_buf,
             td,
-            &mut open
+            &mut open,
+            &mut oversized,
+            &mut discarding
         ));
-        assert_eq!(open, 0);
+        assert_eq!(oversized, 1, "the over-long line was counted");
+        assert!(discarding, "still discarding until the line end");
+        assert!(line_buf.is_empty(), "the carry did not grow without bound");
 
-        // A tool call starts: the count rises (the timer would suspend).
+        // The line end arrives with a fresh valid line after it: discarding stops and the count
+        // does not rise again.
+        writeln!(f, "tail-of-huge-line").unwrap();
         writeln!(
             f,
             r#"{{"type":"item.started","item":{{"type":"command_execution"}}}}"#
@@ -482,34 +734,55 @@ mod tests {
             &mut offset,
             &mut line_buf,
             td,
-            &mut open
+            &mut open,
+            &mut oversized,
+            &mut discarding
         ));
-        assert_eq!(open, 1);
+        assert_eq!(oversized, 1, "no double-count of the same over-long line");
+        assert!(!discarding);
+        assert_eq!(
+            open, 1,
+            "the tool-call line after the discard is still parsed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
-        // It completes: back to zero (the timer resumes).
-        writeln!(
-            f,
-            r#"{{"type":"item.completed","item":{{"type":"command_execution"}}}}"#
-        )
-        .unwrap();
-        f.flush().unwrap();
-        assert!(read_stream_growth(
-            &path,
-            &mut offset,
-            &mut line_buf,
-            td,
-            &mut open
-        ));
-        assert_eq!(open, 0);
+    // (wave 27c, D6) an open tool call suspends the stall timer for at most max(3 x stall, 1800 s).
+    #[test]
+    fn tool_suspension_cap_is_bounded() {
+        assert_eq!(tool_suspension_cap_secs(10), 1800); // 30 < 1800 -> 1800 floor
+        assert_eq!(tool_suspension_cap_secs(0), 1800);
+        assert_eq!(tool_suspension_cap_secs(1000), 3000); // 3 x 1000
+    }
 
-        // No further growth.
-        assert!(!read_stream_growth(
-            &path,
-            &mut offset,
-            &mut line_buf,
-            td,
-            &mut open
-        ));
+    // (wave 27c, D1) a kick request carries an id written atomically; the member acknowledges with
+    // `<kick>.ack` holding that id and the result; the id round-trips through the helpers.
+    #[test]
+    fn kick_request_and_ack_carry_the_request_id() {
+        let dir = std::env::temp_dir().join(format!("c3-kick-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let kick = dir.join(".consult.kick-03");
+
+        write_kick_atomic(&kick, "req-123").unwrap();
+        assert_eq!(read_kick_id(&kick).as_deref(), Some("req-123"));
+
+        // The member acknowledges (`stopped`) with the id read from the kick file, then removes it.
+        confirm_kick(&kick, "stopped");
+        assert!(
+            !kick.exists(),
+            "the kick file is removed on acknowledgement"
+        );
+        let ack = read_kick_ack(&kick_ack_path(&kick)).unwrap();
+        assert_eq!(ack.result, "stopped");
+        assert_eq!(ack.id, "req-123");
+
+        // A `late` acknowledgement of a fresh request carries its own id.
+        write_kick_atomic(&kick, "req-456").unwrap();
+        confirm_kick(&kick, "late");
+        let ack = read_kick_ack(&kick_ack_path(&kick)).unwrap();
+        assert_eq!(ack.result, "late");
+        assert_eq!(ack.id, "req-456");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

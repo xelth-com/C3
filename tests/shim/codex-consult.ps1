@@ -138,6 +138,11 @@ if (-not $c3) {
 # records. c3 runs as a child of this shim, so it would otherwise record its own (different) pid and
 # outlive this shim when killed. Export this shim's pid as the bridge so c3 records it and shares
 # this shim's fate (a test-only hook; unset in production, where c3 is launched directly).
+# (wave 27c, D14) a CODEX_CONSULT_TEST_* hook is honoured by c3 only when CODEX_CONSULT_TEST_MODE
+# is set too. This shim drives the plugin's harnesses, which set the hooks but not (yet) the mode,
+# so it sets the mode when the caller did not (the plugin's harnesses set it themselves once 27c
+# lands; a caller-set value wins).
+if (-not $env:CODEX_CONSULT_TEST_MODE) { $env:CODEX_CONSULT_TEST_MODE = "1" }
 $env:CODEX_CONSULT_TEST_BRIDGE_PID = "$PID"
 
 # The harnesses run fake consultations: nothing of them may reach the telemetry hub and no

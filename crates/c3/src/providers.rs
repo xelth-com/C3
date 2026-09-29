@@ -870,7 +870,7 @@ impl Ctx {
             return c.clone();
         }
         let mut timeout = 45u64;
-        if let Ok(hook) = std::env::var("CODEX_CONSULT_TEST_LOGIN_TIMEOUT") {
+        if let Some(hook) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_LOGIN_TIMEOUT") {
             if let Ok(n) = hook.trim().parse::<u64>() {
                 if n > 0 {
                     timeout = n;
@@ -2648,7 +2648,7 @@ pub(crate) fn engine_consult_credential(
         return get_muse_sign_in();
     }
     let mut timeout = 45u64;
-    if let Ok(hook) = std::env::var("CODEX_CONSULT_TEST_LOGIN_TIMEOUT") {
+    if let Some(hook) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_LOGIN_TIMEOUT") {
         if let Ok(n) = hook.trim().parse::<u64>() {
             if n > 0 {
                 timeout = n;

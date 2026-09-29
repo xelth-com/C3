@@ -21,8 +21,7 @@ const TOOL: &str = "codex-consult";
 /// How long the command waits for the run to acknowledge the kick (`codex-consult.ps1`, wave 26c:
 /// 10 s). A test may shorten it with `CODEX_CONSULT_TEST_KICK_WAIT_MS`.
 fn kick_wait_ms() -> u64 {
-    std::env::var("CODEX_CONSULT_TEST_KICK_WAIT_MS")
-        .ok()
+    c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KICK_WAIT_MS")
         .and_then(|s| s.trim().parse::<u64>().ok())
         .filter(|v| *v > 0)
         .unwrap_or(10_000)
@@ -138,36 +137,48 @@ pub fn run(o: &Options) -> i32 {
         ));
     }
 
-    // (wave 26c, D1) remove a stale acknowledgement, write the kick file, then wait up to 10 s for
-    // the run to write `<kick>.ack` (its acknowledgement) polling every 200 ms.
-    let _ = std::fs::remove_file(&ack_path);
-    let stamp = c3_core::health::format_offset_iso(chrono::Local::now().into());
-    if std::fs::write(
-        &kick_path,
-        format!("{stamp} -Kick from pid {}\n", std::process::id()),
-    )
-    .is_err()
-    {
-        return fail(&format!(
-            "could not write the kick file {}.",
-            kick_path.display()
-        ));
-    }
+    // (wave 26c D1 / 27c D1) the kick carries a request id and is written atomically. A caller that
+    // finds a kick file present JOINS it (reads its id) and never overwrites it; only a creator
+    // writes a fresh id. A stale acknowledgement (older than 60 s) whose id is not ours is swept
+    // first. The member acknowledges with `<kick>.ack` holding the id and result (`stopped`/`late`).
+    crate::engines::subprocess::sweep_stale_ack(&kick_path, None, 60);
+    let (request_id, is_creator) = match crate::engines::subprocess::read_kick_id(&kick_path) {
+        Some(id) if kick_path.exists() => (id, false),
+        _ => {
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            if crate::engines::subprocess::write_kick_atomic(&kick_path, &id).is_err() {
+                return fail(&format!(
+                    "could not write the kick file {}.",
+                    kick_path.display()
+                ));
+            }
+            (id, true)
+        }
+    };
+    // Wait up to 10 s for an acknowledgement that names OUR request id, polling every 200 ms.
+    let ack_matches = |id: &str| {
+        crate::engines::subprocess::read_kick_ack(&ack_path)
+            .map(|a| a.id == id || id.is_empty())
+            .unwrap_or(false)
+    };
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(kick_wait_ms());
-    while !ack_path.exists() && std::time::Instant::now() < deadline {
+    while !ack_matches(&request_id) && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    if !ack_path.exists() {
-        // Exit 3: no acknowledgement in time. The kick file STAYS for the member's next poll (a run
-        // that has ended leaves it to the next run of that number, which removes it).
-        eprintln!(
-            "{TOOL}: -Kick: the run with handoff {nn} did not acknowledge the kick within 10 s - the kick file stays ({}): the member takes it at its next poll; a run that has ended leaves it to the next run of that number, which removes it.",
-            kick_path.display()
-        );
-        return 3;
-    }
-    let ack = std::fs::read_to_string(&ack_path).unwrap_or_default();
-    if ack.trim_start().starts_with("late") {
+    let ack = crate::engines::subprocess::read_kick_ack(&ack_path);
+    let ack = match ack {
+        Some(a) if a.id == request_id || request_id.is_empty() => a,
+        _ => {
+            // Exit 3: no acknowledgement in time. The kick file STAYS for the member's next poll (a
+            // run that has ended leaves it to the next run of that number, which removes it).
+            eprintln!(
+                "{TOOL}: -Kick: the run with handoff {nn} did not acknowledge the kick within 10 s - the kick file stays ({}): the member takes it at its next poll; a run that has ended leaves it to the next run of that number, which removes it.",
+                kick_path.display()
+            );
+            return 3;
+        }
+    };
+    if ack.result == "late" {
         println!(
             "{TOOL}: -Kick: member {nn} of task {} had already finished - the kick is recorded as kick_late in its warnings, its outcome unchanged.",
             o.task
@@ -177,6 +188,11 @@ pub fn run(o: &Options) -> i32 {
             "{TOOL}: -Kick: member {nn} of task {} stopped - it took the kick; its engine's process tree is being stopped and its partial output salvaged; it records \"failed: stopped by the operator (-Kick)\" (a format repair only: its first reply stands) - the panel goes on with the others.",
             o.task
         );
+    }
+    // (wave 27c, D1) only the CREATOR of the request removes the acknowledgement after reading it;
+    // a joiner never does.
+    if is_creator {
+        let _ = std::fs::remove_file(&ack_path);
     }
     0
 }

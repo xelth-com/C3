@@ -85,6 +85,8 @@ fn survivor_hook_adds_a_live_pid_to_the_kill() {
         .spawn()
         .unwrap();
     let helper_pid = helper.id();
+    // (wave 27c, D14) a test hook is honoured only with the mode set.
+    std::env::set_var("CODEX_CONSULT_TEST_MODE", "1");
     std::env::set_var("CODEX_CONSULT_TEST_SURVIVORS", helper_pid.to_string());
 
     let req = SpawnRequest {
@@ -104,6 +106,7 @@ fn survivor_hook_adds_a_live_pid_to_the_kill() {
     let result = run_turn(&req);
 
     std::env::remove_var("CODEX_CONSULT_TEST_SURVIVORS");
+    std::env::remove_var("CODEX_CONSULT_TEST_MODE");
     let _ = helper.kill();
     let _ = helper.wait();
 

@@ -26,6 +26,12 @@ param(
     [switch]$Json
 )
 
+# (wave 27c, D14) c3 honours a CODEX_CONSULT_TEST_* hook only when CODEX_CONSULT_TEST_MODE is
+# set too; the plugin harnesses set the hooks but not (yet) the mode, so this shim sets it when the
+# caller did not (a caller-set value wins).
+if (-not $env:CODEX_CONSULT_TEST_MODE) { $env:CODEX_CONSULT_TEST_MODE = "1" }
+
+
 $ErrorActionPreference = 'Stop'
 
 function Resolve-C3Exe {

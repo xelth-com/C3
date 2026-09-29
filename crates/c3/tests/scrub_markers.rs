@@ -17,8 +17,20 @@ fn seeded_names() -> Vec<String> {
         .map(|s| s.to_string())
         .collect();
     v.push("CODEX_SANDBOX_NETWORK".to_string()); // CODEX_SANDBOX*
-    v.push("ZCODE_PLUGIN_ROOT".to_string()); // ZCODE_PLUGIN*
-    v.push("ZCODE_PLUGIN_DATA".to_string());
+                                                 // (wave 27c, D21) the whole ZCODE_ prefix is scrubbed: the former exact names, the plugin
+                                                 // roots, the provider-config / build / process names, and any name a later build adds.
+    for z in [
+        "ZCODE_PLUGIN_ROOT",
+        "ZCODE_PLUGIN_DATA",
+        "ZCODE_SESSION_ID",
+        "ZCODE_PROJECT_DIR",
+        "ZCODE_APP_VERSION",
+        "ZCODE_BASE_URL",
+        "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE",
+        "ZCODE_A_LATER_BUILD_ADDS_THIS",
+    ] {
+        v.push(z.to_string());
+    }
     v
 }
 

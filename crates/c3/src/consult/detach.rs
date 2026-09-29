@@ -423,7 +423,7 @@ pub fn start_detached_run(
     // The detach id: a guid whose id8 names no status/log/prompt file of the task yet (D7). TEST
     // HOOK CODEX_CONSULT_TEST_DETACH_GUIDS=<guid>[,<guid>...] is tried first, in that order.
     let mut tries: Vec<String> = Vec::new();
-    if let Ok(guids) = std::env::var("CODEX_CONSULT_TEST_DETACH_GUIDS") {
+    if let Some(guids) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_DETACH_GUIDS") {
         for g in guids.split(',') {
             let g = g.trim();
             if is_guid(g) {

@@ -93,8 +93,7 @@ pub fn detach_foreground(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
             return 1;
         }
     }
-    let guard_hook: f64 = std::env::var("CODEX_CONSULT_TEST_PANEL_GUARD_SEC")
-        .ok()
+    let guard_hook: f64 = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PANEL_GUARD_SEC")
         .and_then(|s| s.trim().parse::<f64>().ok())
         .filter(|v| *v > 0.0)
         .unwrap_or(0.0);
@@ -880,8 +879,7 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
 
     // Build the slots (seat order).
     let mut slots: Vec<Slot> = Vec::new();
-    let guard_hook: f64 = std::env::var("CODEX_CONSULT_TEST_PANEL_GUARD_SEC")
-        .ok()
+    let guard_hook: f64 = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PANEL_GUARD_SEC")
         .and_then(|s| s.trim().parse::<f64>().ok())
         .filter(|v| *v > 0.0)
         .unwrap_or(0.0);
@@ -2096,7 +2094,7 @@ fn panel_nonce(o: &Options, utc_now: chrono::DateTime<chrono::Utc>) -> (String, 
     if !seed.is_empty() {
         return (seed.to_string(), "-PanelSeed");
     }
-    if let Ok(env) = std::env::var("CODEX_CONSULT_TEST_PANEL_SEED") {
+    if let Some(env) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PANEL_SEED") {
         let env = env.trim().to_string();
         if !env.is_empty() {
             return (env, "CODEX_CONSULT_TEST_PANEL_SEED");

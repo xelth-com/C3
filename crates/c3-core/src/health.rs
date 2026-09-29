@@ -730,6 +730,49 @@ pub fn add_machine_health_record(
     repo: &str,
     is_alive: &dyn Fn(u32, &str) -> bool,
 ) -> HealthUpdate {
+    add_machine_health_record_with(
+        path,
+        fingerprint,
+        outcome,
+        failure,
+        repo,
+        is_alive,
+        LockBudget::full(),
+    )
+}
+
+/// (wave 27c, D8) `add_machine_health_record` with the BOUNDED in-lock budget (one attempt of at
+/// most one second): used at the ledger commit while the task write lock is held, so the health
+/// retry never extends the hold on it. The caller does the full retry after releasing the lock.
+pub fn add_machine_health_record_bounded(
+    path: &Path,
+    fingerprint: &str,
+    outcome: &str,
+    failure: Option<&MachineFailure>,
+    repo: &str,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> HealthUpdate {
+    add_machine_health_record_with(
+        path,
+        fingerprint,
+        outcome,
+        failure,
+        repo,
+        is_alive,
+        LockBudget::bounded(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_machine_health_record_with(
+    path: &Path,
+    fingerprint: &str,
+    outcome: &str,
+    failure: Option<&MachineFailure>,
+    repo: &str,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+    budget: LockBudget,
+) -> HealthUpdate {
     if fingerprint.is_empty() {
         return HealthUpdate::Skipped;
     }
@@ -790,7 +833,7 @@ pub fn add_machine_health_record(
     } else {
         return HealthUpdate::Skipped;
     };
-    update_machine_health(path, Some(record), None, 0, is_alive)
+    update_machine_health(path, Some(record), None, 0, is_alive, budget)
 }
 
 /// `Register-MachineRunning`: removes any existing row for `row.pid`, then adds it.
@@ -800,7 +843,8 @@ pub fn register_machine_running(
     is_alive: &dyn Fn(u32, &str) -> bool,
 ) -> bool {
     let pid = row.pid;
-    update_machine_health(path, None, Some(row), pid, is_alive) == HealthUpdate::Written
+    update_machine_health(path, None, Some(row), pid, is_alive, LockBudget::full())
+        == HealthUpdate::Written
 }
 
 /// `Unregister-MachineRunning`: drops any running row for `pid`.
@@ -809,7 +853,8 @@ pub fn unregister_machine_running(
     pid: u32,
     is_alive: &dyn Fn(u32, &str) -> bool,
 ) -> bool {
-    update_machine_health(path, None, None, pid, is_alive) == HealthUpdate::Written
+    update_machine_health(path, None, None, pid, is_alive, LockBudget::full())
+        == HealthUpdate::Written
 }
 
 /// `Get-MachineRunningCount`: the live running rows (per `is_alive`) whose endpoint is one of
@@ -830,9 +875,10 @@ pub fn machine_running_count(
         .collect()
 }
 
-/// The outcome of a machine-health update: written, skipped (nothing to record), or blocked by a
-/// lock timeout — the caller retries the latter once and warns (wave 26c, D2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The outcome of a machine-health update: written, skipped (nothing to record), blocked by a lock
+/// timeout, or a write failure (wave 26c D2, wave 27c D7). Every non-`Written`/`Skipped` outcome
+/// carries a cause the caller names in `machine-wide health not updated (<cause>)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HealthUpdate {
     /// The file was updated.
     Written,
@@ -840,13 +886,30 @@ pub enum HealthUpdate {
     Skipped,
     /// `<file>.lock` could not be acquired within the retry budget (`MachineHealthLastError`).
     LockTimeout,
+    /// The lock was held but the read-modify-write itself failed (serialize/atomic-write); the
+    /// string is the cause (wave 27c, D7).
+    Failed(String),
+}
+
+impl HealthUpdate {
+    /// (wave 27c, D7) The cause to name in the warning, or `None` for `Written`/`Skipped`.
+    pub fn cause(&self) -> Option<String> {
+        match self {
+            HealthUpdate::Written | HealthUpdate::Skipped => None,
+            HealthUpdate::LockTimeout => Some("lock timeout".to_string()),
+            HealthUpdate::Failed(why) => Some(why.clone()),
+        }
+    }
+    /// Whether the update did not happen for a real reason (a cause the caller warns about).
+    pub fn failed(&self) -> bool {
+        matches!(self, HealthUpdate::LockTimeout | HealthUpdate::Failed(_))
+    }
 }
 
 /// Seconds per lock attempt (`CODEX_CONSULT_TEST_HEALTH_LOCK_SEC`, else 5); three attempts are
 /// made (wave 26c, D2).
 fn machine_lock_attempt_secs() -> f64 {
-    std::env::var("CODEX_CONSULT_TEST_HEALTH_LOCK_SEC")
-        .ok()
+    crate::test_hooks::hook("CODEX_CONSULT_TEST_HEALTH_LOCK_SEC")
         .and_then(|s| s.trim().parse::<f64>().ok())
         .filter(|v| *v > 0.0)
         .unwrap_or(5.0)
@@ -854,11 +917,38 @@ fn machine_lock_attempt_secs() -> f64 {
 
 const MACHINE_LOCK_ATTEMPTS: u32 = 3;
 
-/// Acquire the machine-health lock file (`<path>.lock`, wave 26c D2): three attempts of five
-/// seconds each (`CODEX_CONSULT_TEST_HEALTH_LOCK_SEC` shortens an attempt), each attempt polling
-/// with a doubling back-off (25 ms, capped at 500 ms). `None` when the lock could never be taken.
+/// (wave 27c, D8) The lock budget of a machine-health update. The FULL budget — three attempts of
+/// five seconds each (`CODEX_CONSULT_TEST_HEALTH_LOCK_SEC` shortens an attempt) — runs only OUTSIDE
+/// the task write lock. Inside the write lock a run takes the BOUNDED budget (one attempt of at
+/// most one second) so the health retry never extends the hold on the commit lock.
+#[derive(Debug, Clone, Copy)]
+pub struct LockBudget {
+    attempts: u32,
+    attempt_secs: f64,
+}
+
+impl LockBudget {
+    /// The full budget: three attempts of `CODEX_CONSULT_TEST_HEALTH_LOCK_SEC` (else 5) seconds.
+    pub fn full() -> Self {
+        LockBudget {
+            attempts: MACHINE_LOCK_ATTEMPTS,
+            attempt_secs: machine_lock_attempt_secs(),
+        }
+    }
+    /// The bounded in-lock budget: one attempt of at most one second.
+    pub fn bounded() -> Self {
+        LockBudget {
+            attempts: 1,
+            attempt_secs: machine_lock_attempt_secs().min(1.0),
+        }
+    }
+}
+
+/// Acquire the machine-health lock file (`<path>.lock`, wave 26c D2 / 27c D8) within `budget`, each
+/// attempt polling with a doubling back-off (25 ms, capped at 500 ms). `None` when the lock could
+/// never be taken.
 #[cfg(windows)]
-fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
+fn acquire_machine_lock(lock_path: &Path, budget: LockBudget) -> Option<std::fs::File> {
     use std::os::windows::fs::OpenOptionsExt;
     let open = || {
         OpenOptions::new()
@@ -869,8 +959,8 @@ fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
             .share_mode(0)
             .open(lock_path)
     };
-    let attempt = std::time::Duration::from_secs_f64(machine_lock_attempt_secs());
-    for _ in 0..MACHINE_LOCK_ATTEMPTS {
+    let attempt = std::time::Duration::from_secs_f64(budget.attempt_secs);
+    for _ in 0..budget.attempts {
         let started = std::time::Instant::now();
         let mut delay = std::time::Duration::from_millis(25);
         loop {
@@ -890,15 +980,15 @@ fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
 }
 
 #[cfg(not(windows))]
-fn acquire_machine_lock(lock_path: &Path) -> Option<std::fs::File> {
+fn acquire_machine_lock(lock_path: &Path, budget: LockBudget) -> Option<std::fs::File> {
     let open = || {
         OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(lock_path)
     };
-    let attempt = std::time::Duration::from_secs_f64(machine_lock_attempt_secs());
-    for _ in 0..MACHINE_LOCK_ATTEMPTS {
+    let attempt = std::time::Duration::from_secs_f64(budget.attempt_secs);
+    for _ in 0..budget.attempts {
         let started = std::time::Instant::now();
         let mut delay = std::time::Duration::from_millis(25);
         loop {
@@ -926,13 +1016,14 @@ fn update_machine_health(
     add_running: Option<MachineRunning>,
     remove_pid: u32,
     is_alive: &dyn Fn(u32, &str) -> bool,
+    budget: LockBudget,
 ) -> HealthUpdate {
     let mut lock_os = path.as_os_str().to_os_string();
     lock_os.push(".lock");
     let lock_path = PathBuf::from(lock_os);
-    // (wave 26c, D2) a lock timeout is a distinct outcome: the caller retries it once at the ledger
-    // commit and warns `machine-wide health not updated (lock timeout)`.
-    let lock = match acquire_machine_lock(&lock_path) {
+    // (wave 26c D2 / 27c D8) a lock timeout is a distinct outcome; inside the task write lock the
+    // caller passes the BOUNDED budget and does the full retry after the lock is released.
+    let lock = match acquire_machine_lock(&lock_path, budget) {
         Some(f) => f,
         None => return HealthUpdate::LockTimeout,
     };
@@ -994,7 +1085,9 @@ fn update_machine_health(
     if result {
         HealthUpdate::Written
     } else {
-        HealthUpdate::Skipped
+        // (wave 27c, D7) the lock was held but the read-modify-write failed: a named failure, not a
+        // silent skip, so the caller sets the retry flag and warns.
+        HealthUpdate::Failed("the health file could not be written".to_string())
     }
 }
 
@@ -1163,6 +1256,34 @@ mod machine_health_tests {
         let when = DateTime::parse_from_rfc3339(&rec.when).unwrap();
         let until = DateTime::parse_from_rfc3339(rec.until.as_deref().unwrap()).unwrap();
         assert_eq!((until - when).num_minutes(), QUOTA_OUT_MINUTES);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // (wave 27c, D8) the bounded in-lock budget is one attempt of at most one second; the full
+    // budget is three attempts. Both write when the lock is uncontended, and a real failure names
+    // its cause (D7) rather than reporting a silent skip.
+    #[test]
+    fn bounded_and_full_budgets_and_named_failure() {
+        assert_eq!(LockBudget::bounded().attempts, 1);
+        assert!(LockBudget::bounded().attempt_secs <= 1.0);
+        assert_eq!(LockBudget::full().attempts, MACHINE_LOCK_ATTEMPTS);
+
+        let path = temp_path("bounded");
+        let ok = add_machine_health_record_bounded(
+            &path,
+            "fp-bounded",
+            "usable reply",
+            None,
+            "repo-a",
+            &alive_true,
+        );
+        assert_eq!(ok, HealthUpdate::Written);
+        assert!(!ok.failed());
+        assert!(ok.cause().is_none());
+        // A named failure carries a cause for the warning.
+        let failed = HealthUpdate::LockTimeout;
+        assert!(failed.failed());
+        assert_eq!(failed.cause().as_deref(), Some("lock timeout"));
         let _ = std::fs::remove_file(&path);
     }
 

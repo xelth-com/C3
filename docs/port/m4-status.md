@@ -240,3 +240,26 @@ lives in the plugin's `Read-AllTaskRatings`, exercised via the copied common).
 Removed after the single-host decision: `consult/explain.rs` and `--explain`, the `--brief-prefix`
 surface, the SessionStart hook's second (pointer) line, and the multi-host host inference. The
 `plugin/skills/coordinate/` skill is kept, trimmed to Claude Code.
+
+## Wave 27c — host markers, the child-environment scrub (D3/D4/D21)
+
+- **D3/D4 — the scrub is transactional, adapted for C3.** The plugin snapshots the host markers,
+  removes them from *its own* process inside a `try`, and restores them in a `finally` at every
+  child start, because a PowerShell child inherits the parent's live environment. C3 does not touch
+  its own process at all: `c3::engines::scrub_host_markers` calls `Command::env_remove` on the
+  child's *builder* (`engines/subprocess.rs` uses it for every reviewer turn and every probe), so
+  the markers are absent from the child alone and there is **nothing to restore** — the transaction
+  and its `finally` are structurally unnecessary here.
+- What remains ported is the **failure side**. A child that cannot be started is a bridge failure in
+  the plugin's wording (`TurnResult::not_started` → the orchestrator's `could not start <program>`
+  outcome), never a silent success; a preflight probe that cannot run is recorded **"not checked"**
+  with the reason in `warnings[]` (`providers.rs` availability probes), never silently "available".
+  Because `env_remove` on a `Command` cannot itself fail, C3 has no "removal that failed → refuse
+  the engine start" branch; the plugin's `bridge failure: host markers could not be hidden` has no
+  reachable analogue and is intentionally not emitted.
+- **D21 — the scrub list takes the whole `ZCODE_` prefix.** `c3_core::host::HOST_MARKER_PREFIXES`
+  is now `["CODEX_SANDBOX", "ZCODE_"]`; the two exact `ZCODE_SESSION_ID`/`ZCODE_PROJECT_DIR` names
+  and the narrower `ZCODE_PLUGIN` prefix of 27b are dropped (subsumed). No reviewer engine reads any
+  `ZCODE_` variable, so removing the whole prefix loses nothing and covers a name a later Z Code
+  build adds; the `CLAUDE_CODE_` names stay **exact** so a future claude engine's settings survive.
+  Covered by `crates/c3/tests/scrub_markers.rs` (ZCODE_ witnesses) and `host::tests::markers_and_kept`.

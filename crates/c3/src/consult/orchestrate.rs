@@ -339,8 +339,7 @@ fn resolve_preflight(
     // `env_key` (`env X not set`) / bearer token. `-SkipPreflight` bypasses this whole function.
     // The `codex login status` timeout is 15 s (`codex-consult-common.ps1:3035`); the refusal
     // names it, so the default must be 15, not a safer-looking rounder value.
-    let timeout = std::env::var("CODEX_CONSULT_TEST_LOGIN_TIMEOUT")
-        .ok()
+    let timeout = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_LOGIN_TIMEOUT")
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(15);
     // A CLI engine checks its own sign-in (`agy models` / muse `auth.json`), with the recorded
@@ -900,7 +899,7 @@ fn member_early_accept(mo: &Options, m: &crate::panel::member::MemberSpec) -> Re
 
     // TEST HOOK: CODEX_CONSULT_TEST_MEMBER_PAUSE_MS - a pause between the rewrite and the parent
     // check (the harness kills the parent inside it).
-    if let Ok(ms) = std::env::var("CODEX_CONSULT_TEST_MEMBER_PAUSE_MS") {
+    if let Some(ms) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_MEMBER_PAUSE_MS") {
         if let Ok(ms) = ms.trim().parse::<u64>() {
             if ms > 0 {
                 std::thread::sleep(Duration::from_millis(ms));
@@ -1172,6 +1171,20 @@ fn build_context(
     // matched roster entry's stall_sec below (unless --stall-sec was given).
     let mut stall_sec = r.stall_sec;
     let mut run_warnings: Vec<String> = Vec::new();
+    // (wave 27c, D11/D12) a coordinator that parses but names no seat is SAID, not refused: a
+    // roster position with no seat here warns and the run goes on; a coordinator no reviewer can
+    // match warns and the ledger records `coordinator.in_roster: false`.
+    if let Some(pos) = &coordinator.unresolved {
+        run_warnings.push(format!(
+            "CODEX_CONSULT_COORDINATOR '{pos}' names no roster position here"
+        ));
+    } else if coordinator.in_roster == Some(false) {
+        let id = std::env::var("CODEX_CONSULT_COORDINATOR").unwrap_or_default();
+        run_warnings.push(format!(
+            "coordinator: {} (not in the roster - no reviewer can match it)",
+            id.trim()
+        ));
+    }
     let mut extra_config_source = if r.extra_config.is_empty() {
         String::new()
     } else {
@@ -3515,6 +3528,33 @@ fn member_accept(
     Ok(rec)
 }
 
+/// (wave 27c, D16) Confirm a process-tree kill actually stopped the root the bridge started
+/// (`Confirm-TreeKill`). The kill acts only on the tree c3 started, by pid — never by name, never
+/// machine-wide. Returns `Some((pid, why))` when it could NOT be confirmed — the root is still
+/// alive after the kill, or the `CODEX_CONSULT_TEST_KILL_UNCONFIRMED` hook forces it (a fake whose
+/// tree cannot be enumerated) — and adds the root pid to `survivors` so no continuation turn runs
+/// and the next run for the task is refused until it exits.
+fn confirm_tree_kill(base: &PendingRecord, survivors: &mut Vec<u32>) -> Option<(u32, String)> {
+    let pid = base.child_pid.unwrap_or(0);
+    let unconfirmed = if let Some(v) =
+        c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_UNCONFIRMED")
+    {
+        let t = v.trim();
+        (!t.is_empty() && t != "0").then(|| "a test hook forced the kill unconfirmed".to_string())
+    } else if pid > 0 && crate::liveness::proc::pid_alive(pid, &base.child_start_time) {
+        Some(format!(
+            "the root process {pid} did not exit after the tree kill"
+        ))
+    } else {
+        None
+    };
+    let why = unconfirmed?;
+    if pid > 0 && !survivors.contains(&pid) {
+        survivors.push(pid);
+    }
+    Some((pid, why))
+}
+
 /// Ingest the outcome, render, commit and print the summary.
 #[allow(clippy::too_many_arguments)]
 fn finish(
@@ -3560,6 +3600,10 @@ fn finish(
     // Pids that survived a timeout kill: their recovery record is kept (`survivors`) so the
     // next run for this task is refused until they exit.
     let mut timeout_survivors: Vec<u32> = Vec::new();
+    // (wave 27c, D16) `Some((pid, why))` when a process-tree kill could not be confirmed to have
+    // stopped the root the bridge started: the outcome says so, the ledger records
+    // `kill_confirmed: false`, a warning is written and no continuation turn runs on that thread.
+    let mut kill_unconfirmed: Option<(u32, String)> = None;
 
     match outcome {
         AttemptOutcome::Completed(reply) => {
@@ -3599,7 +3643,15 @@ fn finish(
                 }
                 _ => {}
             }
-            bridge_outcome = if survivors.is_empty() {
+            timeout_survivors = survivors;
+            // (wave 27c, D16) confirm the tree kill stopped the root the bridge started.
+            kill_unconfirmed = confirm_tree_kill(&base_record, &mut timeout_survivors);
+            bridge_outcome = if let Some((pid, why)) = &kill_unconfirmed {
+                format!(
+                    "failed: timeout after {} s (kill not confirmed: {why}; pid {pid} may still run)",
+                    ctx.r.timeout_sec
+                )
+            } else if timeout_survivors.is_empty() {
                 format!(
                     "failed: timeout after {} s (process tree killed)",
                     ctx.r.timeout_sec
@@ -3608,15 +3660,14 @@ fn finish(
                 format!(
                     "failed: timeout after {} s (process tree killed; {} processes survived: pid {}; the next run for this task is refused until they exit)",
                     ctx.r.timeout_sec,
-                    survivors.len(),
-                    survivors
+                    timeout_survivors.len(),
+                    timeout_survivors
                         .iter()
                         .map(|p| p.to_string())
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
             };
-            timeout_survivors = survivors;
         }
         AttemptOutcome::Stopped {
             kind,
@@ -3668,6 +3719,17 @@ fn finish(
                 }
             }
             timeout_survivors = survivors;
+            // (wave 27c, D16) a stall kill is a process-tree kill too — confirm the root stopped
+            // (a kick sets no `main_timed_out`, so its own outcome text is left intact).
+            if main_timed_out {
+                kill_unconfirmed = confirm_tree_kill(&base_record, &mut timeout_survivors);
+                if let Some((pid, why)) = &kill_unconfirmed {
+                    bridge_outcome = format!(
+                        "failed: stalled after {} s without an event (kill not confirmed: {why}; pid {pid} may still run)",
+                        ctx.stall_sec
+                    );
+                }
+            }
         }
         AttemptOutcome::ProviderFailure {
             failure: pf,
@@ -4152,6 +4214,14 @@ fn finish(
     // first finish) hold for concurrent members.
     entry.when = when_iso;
     entry.thread_candidate = thread_candidate.clone();
+    // (wave 27c, D16) an unconfirmed process-tree kill: the ledger records `kill_confirmed: false`
+    // and a warning names the pid that may still run (the continuation was already suppressed).
+    if let Some((pid, why)) = &kill_unconfirmed {
+        entry.kill_confirmed = Some(false);
+        entry.warnings.push(serde_json::Value::String(format!(
+            "the process tree kill could not be confirmed: pid {pid} may still run ({why})"
+        )));
+    }
     // Prior-finding lifecycle records (F04-4): this reply's `prior_findings` reports, the
     // unchecked prior blockers, and — when the semantics contradict the verdict — the blanked
     // verdict and the `validation_error` naming the contradiction (the findings stay ingested).
@@ -4221,7 +4291,7 @@ fn finish(
     // the commit, between findings.json and sessions.json (the ORPHAN window a kill can hit; the
     // write-lock contention window), applied by the store (`codex-consult.ps1:5176`).
     let commit_pause_ms = test_hook_ms(
-        &std::env::var("CODEX_CONSULT_TEST_COMMIT_PAUSE_MS").unwrap_or_default(),
+        &c3_core::test_hooks::hook("CODEX_CONSULT_TEST_COMMIT_PAUSE_MS").unwrap_or_default(),
         &ctx.identity.model,
     )
     .unwrap_or(0);
@@ -4255,7 +4325,16 @@ fn finish(
     // it still fails, recorded as the warning `machine-wide health not updated (lock timeout)` in
     // `warnings[]` and printed as a `warning    :` summary line (the ledger keeps the truth either
     // way). A failed update never fails the run; disabled with CODEX_CONSULT_HEALTH=none.
-    let mut health_lock_timeout = false;
+    // (wave 27c, D7/D8) inside the task write lock only ONE bounded attempt (≤1 s) is made, so the
+    // health retry never extends the hold on the commit lock; every failure class sets the retry
+    // flag and the ledger warning names the real cause. The FULL retry (3×5 s) runs after the lock
+    // is released (below). A failed update never fails the run; disabled with CODEX_CONSULT_HEALTH=none.
+    let mut health_warn_cause: Option<String> = None;
+    let mut health_retry: Option<(std::path::PathBuf, Option<c3_core::health::MachineFailure>)> =
+        None;
+    let health_fingerprint = ctx.identity.fingerprint.clone();
+    let health_outcome_text = bridge_outcome.clone();
+    let health_repo = ctx.repo_root.to_string_lossy().to_string();
     if ctx.identity.resolved {
         if let Some(hp) = c3_core::health::machine_health_path(&providers::get_codex_home()) {
             let failure = provider_failure
@@ -4267,26 +4346,21 @@ fn finish(
                     retry_after: pf.retry_after.clone(),
                     message: pf.message.clone(),
                 });
-            let write = || {
-                c3_core::health::add_machine_health_record(
-                    &hp,
-                    &ctx.identity.fingerprint,
-                    &bridge_outcome,
-                    failure.as_ref(),
-                    &ctx.repo_root.to_string_lossy(),
-                    &|pid, st| crate::liveness::proc::pid_alive(pid, st),
-                )
-            };
-            let mut res = write();
-            if res == c3_core::health::HealthUpdate::LockTimeout {
-                // retry once at the ledger commit.
-                res = write();
-            }
-            if res == c3_core::health::HealthUpdate::LockTimeout {
-                health_lock_timeout = true;
-                entry.warnings.push(serde_json::Value::String(
-                    "machine-wide health not updated (lock timeout)".to_string(),
-                ));
+            let res = c3_core::health::add_machine_health_record_bounded(
+                &hp,
+                &health_fingerprint,
+                &health_outcome_text,
+                failure.as_ref(),
+                &health_repo,
+                &|pid, st| crate::liveness::proc::pid_alive(pid, st),
+            );
+            if res.failed() {
+                let cause = res.cause().unwrap_or_default();
+                entry.warnings.push(serde_json::Value::String(format!(
+                    "machine-wide health not updated at the commit ({cause}); retried after it"
+                )));
+                health_warn_cause = Some(cause);
+                health_retry = Some((hp, failure));
             }
         }
     }
@@ -4311,6 +4385,20 @@ fn finish(
     };
     drop(write_lock);
     let _ = receipt;
+
+    // (wave 27c, D8) the FULL machine-health retry (3×5 s), now that the task write lock is
+    // released, so the earlier bounded attempt never held up the commit. Best-effort; never fails
+    // the run — the ledger already carries the truth either way.
+    if let Some((hp, failure)) = health_retry.take() {
+        let _ = c3_core::health::add_machine_health_record(
+            &hp,
+            &health_fingerprint,
+            &health_outcome_text,
+            failure.as_ref(),
+            &health_repo,
+            &|pid, st| crate::liveness::proc::pid_alive(pid, st),
+        );
+    }
 
     // Telemetry: record this consultation to the spool (errors ignored). The env switch is
     // re-checked inside `record_consultation`; a dry run never reaches this point.
@@ -4477,11 +4565,11 @@ fn finish(
         reply_body,
         section,
         engine_warnings: {
-            // (wave 26c, D2) a health lock timeout prints as a `warning    :` summary line, after
-            // any engine-turn warnings.
+            // (wave 26c D2 / 27c D7) a failed machine-health update prints as a `warning    :`
+            // summary line naming the cause, after any engine-turn warnings.
             let mut w = sec.engine_warnings.clone();
-            if health_lock_timeout {
-                w.push("machine-wide health not updated (lock timeout)".to_string());
+            if let Some(cause) = &health_warn_cause {
+                w.push(format!("machine-wide health not updated ({cause})"));
             }
             w
         },

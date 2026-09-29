@@ -371,8 +371,8 @@ fn task_lock_refusal(path: &Path, task: &str) -> String {
 }
 
 fn write_lock_timeout() -> f64 {
-    std::env::var("CODEX_CONSULT_TEST_WRITE_LOCK_SEC")
-        .ok()
+    // (wave 27c, D14) a test hook counts only together with CODEX_CONSULT_TEST_MODE=1.
+    c3_core::test_hooks::hook("CODEX_CONSULT_TEST_WRITE_LOCK_SEC")
         .and_then(|s| s.trim().parse::<f64>().ok())
         .filter(|v| *v > 0.0)
         .unwrap_or(60.0)

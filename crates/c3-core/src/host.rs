@@ -9,7 +9,6 @@
 //! ledger records only the NAMES removed, never a value.
 
 use crate::ledger::Coordinator;
-use crate::lineage::ENGINE_NAMES;
 use crate::roster::RosterEntry;
 
 /// The exact host-marker names, in `$script:HostMarkerNames` source order (wave 27 + 27b). These
@@ -31,13 +30,16 @@ pub const HOST_MARKER_NAMES: &[&str] = &[
     "CLAUDE_CODE_EXECPATH",
     "CLAUDE_PID",
     "CLAUDE_EFFORT",
-    "ZCODE_SESSION_ID",
-    "ZCODE_PROJECT_DIR",
 ];
 
-/// The wildcard marker prefixes (`$script:HostMarkerPrefixes`): every `CODEX_SANDBOX*` and every
-/// `ZCODE_PLUGIN*` (`ZCODE_PLUGIN_ROOT`/`ZCODE_PLUGIN_DATA` included).
-pub const HOST_MARKER_PREFIXES: &[&str] = &["CODEX_SANDBOX", "ZCODE_PLUGIN"];
+/// The wildcard marker prefixes (`$script:HostMarkerPrefixes`): every `CODEX_SANDBOX*` and (wave
+/// 27c, D21) the WHOLE `ZCODE_` prefix — it replaces the two exact `ZCODE_SESSION_ID`/
+/// `ZCODE_PROJECT_DIR` names and the narrower `ZCODE_PLUGIN` prefix of 27b. Read live inside a Z
+/// Code session on 2026-09-29: two `ZCODE_*` names point at the operator's provider-config files,
+/// no reviewer engine reads any `ZCODE_` variable, so removing the whole prefix loses nothing and
+/// covers a name a later build adds. The `CLAUDE_CODE_` names stay EXACT (a future claude engine's
+/// settings must survive).
+pub const HOST_MARKER_PREFIXES: &[&str] = &["CODEX_SANDBOX", "ZCODE_"];
 
 /// `Test-HostMarkerName`: on Windows env names are case-insensitive, so the plugin uppercases the
 /// name before an ordinal exact/prefix compare against the (uppercase) lists.
@@ -101,6 +103,13 @@ pub struct CoordinatorMatch {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub engine: Option<String>,
+    /// (wave 27c, D11) `Some(true)` when the value resolves to a seated reviewer, `Some(false)`
+    /// when it parses but no roster entry can match it (a coordinator outside the roster — said,
+    /// not refused); `None` when there is no roster to check against.
+    pub in_roster: Option<bool>,
+    /// (wave 27c, D12) `Some("#n")` when the value is a roster position that names no seat here:
+    /// not a refusal — the run goes on with a warning, the coordinator recorded `unresolved`.
+    pub unresolved: Option<String>,
 }
 
 /// `ConvertFrom-ReviewerMatcher` for `CODEX_CONSULT_COORDINATOR`: a `#<n>` roster position, a
@@ -115,74 +124,51 @@ pub fn parse_coordinator_matcher(
     if t.is_empty() {
         return Err("an empty value".to_string());
     }
-    let pos_re = regex::Regex::new(r"^#(\d+)$").unwrap();
-    if let Some(c) = pos_re.captures(t) {
-        let pos: i64 = c[1].parse().unwrap_or(0);
+    // (wave 27c, D10) the grammar of a reviewer matcher — `#<n>`, a bare provider label, or
+    // `<provider> :: <model>`, any with an optional ` [<engine>]` — is parsed by ONE function that
+    // the roster validator shares (`c3_core::roster::parse_reviewer_matcher_grammar`); what the
+    // roster accepts as a provider/model/engine string, the coordinator value accepts.
+    let g = crate::roster::parse_reviewer_matcher_grammar(t)?;
+    if let Some(pos) = g.position {
+        // (wave 27c, D12) a `#<n>` resolves through the same code as a seated reviewer: the entry's
+        // model, else the default the bridge would run. Naming no seat here is NOT a refusal.
         return match roster {
-            None => Err(format!(
-                "'{t}' names no roster position (there is no reviewer roster)"
-            )),
+            None => Ok(CoordinatorMatch {
+                unresolved: Some(format!("#{pos}")),
+                ..Default::default()
+            }),
             Some(entries) => match entries.iter().find(|e| e.position as i64 == pos) {
                 Some(e) => Ok(CoordinatorMatch {
                     provider: Some(e.provider.clone()),
-                    model: if e.model.is_empty() {
-                        None
-                    } else {
-                        Some(e.model.clone())
-                    },
-                    engine: if e.engine.is_empty() {
-                        None
-                    } else {
-                        Some(e.engine.clone())
-                    },
+                    model: (!e.model.is_empty()).then(|| e.model.clone()),
+                    engine: (!e.engine.is_empty()).then(|| e.engine.clone()),
+                    in_roster: Some(true),
+                    unresolved: None,
                 }),
-                None => Err(format!(
-                    "'{t}' names no roster position (the roster has {} entries)",
-                    entries.len()
-                )),
+                None => Ok(CoordinatorMatch {
+                    unresolved: Some(format!("#{pos}")),
+                    in_roster: Some(false),
+                    ..Default::default()
+                }),
             },
         };
     }
-    let mut rest = t.to_string();
-    let mut engine: Option<String> = None;
-    let eng_re = regex::Regex::new(r"^(.*\S)\s+\[([A-Za-z0-9_-]+)\]$").unwrap();
-    if let Some(c) = eng_re.captures(t) {
-        rest = c[1].to_string();
-        let e = c[2].to_lowercase();
-        if !ENGINE_NAMES.contains(&e.as_str()) {
-            return Err(format!(
-                "'{t}' names the engine '{e}' (known: {})",
-                ENGINE_NAMES.join(", ")
-            ));
-        }
-        engine = Some(e);
-    }
-    let mut provider = rest.clone();
-    let mut model: Option<String> = None;
-    if let Some(sep) = rest.find(" :: ") {
-        let p = rest[..sep].trim().to_string();
-        let m = rest[sep + 4..].trim().to_string();
-        if p.is_empty() || m.is_empty() {
-            return Err(format!("'{t}' is not '<provider> :: <model>'"));
-        }
-        provider = p;
-        model = Some(m);
-    }
-    let label_re = regex::Regex::new(r"^[A-Za-z0-9._-]+$").unwrap();
-    if !label_re.is_match(&provider) {
-        return Err(format!(
-            "the provider '{provider}' is not a provider label (letters, digits, dot, dash, underscore)"
-        ));
-    }
-    if let Some(m) = &model {
-        if m.chars().any(|c| c.is_whitespace()) {
-            return Err(format!("the model '{m}' contains white space"));
-        }
-    }
+    let provider = g.provider.unwrap_or_default();
+    // (wave 27c, D11) a coordinator whose provider (and model, when named) matches no roster entry
+    // is SAID (`in_roster: false`), not refused; a run with no roster leaves `in_roster` unknown.
+    let in_roster = roster.map(|entries| {
+        entries.iter().any(|e| {
+            e.provider == provider
+                && g.model.as_ref().is_none_or(|m| &e.model == m)
+                && g.engine.as_ref().is_none_or(|en| &e.engine == en)
+        })
+    });
     Ok(CoordinatorMatch {
         provider: Some(provider),
-        model,
-        engine,
+        model: g.model,
+        engine: g.engine,
+        in_roster,
+        unresolved: None,
     })
 }
 
@@ -205,6 +191,10 @@ pub fn build_coordinator(host: &str, matched: Option<&CoordinatorMatch>) -> Coor
             engine: m.engine.clone(),
             host: host.to_string(),
             source: "explicit".to_string(),
+            // (wave 27c, D11/D12) recorded after `source`: `in_roster: false` for a coordinator no
+            // reviewer can match, `unresolved: "#n"` for a position naming no seat here.
+            in_roster: m.in_roster,
+            unresolved: m.unresolved.clone(),
             extra: Default::default(),
         },
         None => Coordinator {
@@ -218,6 +208,8 @@ pub fn build_coordinator(host: &str, matched: Option<&CoordinatorMatch>) -> Coor
                 "inferred"
             }
             .to_string(),
+            in_roster: None,
+            unresolved: None,
             extra: Default::default(),
         },
     }
@@ -270,21 +262,23 @@ pub fn coordinator_reviewer_warning(
     if p != reviewer_provider {
         return None;
     }
-    if let Some(m) = &c.model {
-        if m != reviewer_model {
-            return None;
-        }
-    }
     if let Some(e) = &c.engine {
         if e != reviewer_engine {
             return None;
         }
     }
-    // The warning names the REVIEWER's lineage (the model actually being consulted), which the
-    // coordinator matched — not the coordinator's own (possibly bare-label) spelling.
-    Some(format!(
-        "coordinator: {reviewer_lineage} is the coordinator's own model (CODEX_CONSULT_COORDINATOR) - a second opinion from the coordinator's own model, not an independent one"
-    ))
+    // (wave 27c, D9) "own model" is said only when provider, model AND engine are equal. A bare
+    // provider label without a resolvable model gives the WEAKER warning — the reviewer comes from
+    // the coordinator's own provider, but which model the coordinator ran was not named.
+    match &c.model {
+        Some(m) if m == reviewer_model => Some(format!(
+            "coordinator: {reviewer_lineage} is the coordinator's own model (CODEX_CONSULT_COORDINATOR) - a second opinion from the coordinator's own model, not an independent one"
+        )),
+        Some(_) => None,
+        None => Some(format!(
+            "coordinator: {reviewer_lineage} is a reviewer from the coordinator's own provider (model not named) (CODEX_CONSULT_COORDINATOR) - CODEX_CONSULT_COORDINATOR named the provider but not the model"
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -314,9 +308,20 @@ mod tests {
         assert!(is_host_marker("CLAUDE_CODE_MESSAGING_TOKEN"));
         assert!(is_host_marker("CODEX_SANDBOX_NETWORK"));
         assert!(is_host_marker("ZCODE_PLUGIN_DATA"));
+        // (wave 27c, D21) the whole ZCODE_ prefix is a marker: the former exact names, the plugin
+        // roots, and the provider-config / build / process names read live in a Z Code session.
+        assert!(is_host_marker("ZCODE_SESSION_ID"));
+        assert!(is_host_marker("ZCODE_PROJECT_DIR"));
+        assert!(is_host_marker("ZCODE_APP_VERSION"));
+        assert!(is_host_marker("ZCODE_BASE_URL"));
+        assert!(is_host_marker("ZCODE_PERSONAL_PROVIDER_CONFIG_FILE"));
+        assert!(is_host_marker("ZCODE_ANYTHING_A_LATER_BUILD_ADDS"));
+        // The CLAUDE_CODE_ names stay EXACT — a future claude engine's settings survive.
         assert!(!is_host_marker("CLAUDE_CODE_USE_BEDROCK"));
         assert!(!is_host_marker("CLAUDE_PLUGIN_ROOT"));
         assert!(!is_host_marker("CODEX_HOME"));
+        // A different prefix is never swept by ZCODE_.
+        assert!(!is_host_marker("ZCODEX_SOMETHING"));
     }
 
     #[test]
@@ -330,16 +335,72 @@ mod tests {
             "the model 'gpt 5' contains white space"
         );
         assert_eq!(
-            parse_coordinator_matcher("#5", Some(&[])).unwrap_err(),
-            "'#5' names no roster position (the roster has 0 entries)"
-        );
-        assert_eq!(
             parse_coordinator_matcher("openai :: gpt-5.1 [bad]", None).unwrap_err(),
             "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse)"
         );
         let ok = parse_coordinator_matcher("openai :: gpt-5.1", None).unwrap();
         assert_eq!(ok.provider.as_deref(), Some("openai"));
         assert_eq!(ok.model.as_deref(), Some("gpt-5.1"));
+    }
+
+    #[test]
+    fn coordinator_position_and_roster_membership() {
+        use crate::roster::RosterEntry;
+        let roster = [RosterEntry {
+            position: 1,
+            provider: "openai".into(),
+            model: "gpt-5.1".into(),
+            engine: "codex".into(),
+            ..Default::default()
+        }];
+        // (D12) `#n` that names no seat here is NOT a refusal: recorded unresolved, run goes on.
+        let m = parse_coordinator_matcher("#5", Some(&roster)).unwrap();
+        assert_eq!(m.unresolved.as_deref(), Some("#5"));
+        assert_eq!(m.in_roster, Some(false));
+        // `#n` with no roster at all is also unresolved (not a refusal).
+        let m = parse_coordinator_matcher("#1", None).unwrap();
+        assert_eq!(m.unresolved.as_deref(), Some("#1"));
+        // (D12) `#n` naming a seat resolves through the seated reviewer's lineage.
+        let m = parse_coordinator_matcher("#1", Some(&roster)).unwrap();
+        assert_eq!(m.provider.as_deref(), Some("openai"));
+        assert_eq!(m.model.as_deref(), Some("gpt-5.1"));
+        assert_eq!(m.in_roster, Some(true));
+        assert!(m.unresolved.is_none());
+        // (D11) a coordinator no reviewer can match is said, not refused.
+        let m = parse_coordinator_matcher("anthropic :: opus", Some(&roster)).unwrap();
+        assert_eq!(m.in_roster, Some(false));
+        assert!(m.unresolved.is_none());
+        // A bare provider label that the roster seats: in_roster true, model not named.
+        let m = parse_coordinator_matcher("openai", Some(&roster)).unwrap();
+        assert_eq!(m.in_roster, Some(true));
+        assert!(m.model.is_none());
+    }
+
+    #[test]
+    fn coordinator_own_model_vs_own_provider_warning() {
+        // Own model: provider + model equal → the strong warning.
+        let full = build_coordinator(
+            "claude-code",
+            Some(&parse_coordinator_matcher("openai :: gpt-5.1", None).unwrap()),
+        );
+        let w =
+            coordinator_reviewer_warning(&full, "openai", "gpt-5.1", "codex", "openai :: gpt-5.1")
+                .unwrap();
+        assert!(w.contains("the coordinator's own model"));
+        // Bare provider label → the weaker "own provider (model not named)" warning.
+        let bare = build_coordinator(
+            "claude-code",
+            Some(&parse_coordinator_matcher("openai", None).unwrap()),
+        );
+        let w =
+            coordinator_reviewer_warning(&bare, "openai", "gpt-5.1", "codex", "openai :: gpt-5.1")
+                .unwrap();
+        assert!(w.contains("the coordinator's own provider (model not named)"));
+        // A named-but-different model does not warn at all.
+        assert!(
+            coordinator_reviewer_warning(&full, "openai", "gpt-6", "codex", "openai :: gpt-6")
+                .is_none()
+        );
     }
 
     #[test]
@@ -350,6 +411,7 @@ mod tests {
                 provider: Some("openai".into()),
                 model: Some("gpt-5.1".into()),
                 engine: None,
+                ..Default::default()
             }),
         );
         assert_eq!(
