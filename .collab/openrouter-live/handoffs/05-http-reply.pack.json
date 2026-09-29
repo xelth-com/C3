@@ -1,0 +1,58 @@
+{
+  "pack_version": 1,
+  "kind": "reviewer",
+  "generated": "2026-09-29T21:45:10.801432500+02:00",
+  "index": {
+    "used": false,
+    "source": "absent",
+    "hits": 0,
+    "files_added": 0
+  },
+  "recipe": {
+    "brief": "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief3.md",
+    "focus": [
+      "crates/c3/src/consult/http.rs"
+    ],
+    "budget": 12000,
+    "task": "openrouter-live",
+    "anchor": null
+  },
+  "revision": {
+    "reviewed_revision": "3503b51",
+    "content_sha256": "17a5f257335f4c73824a86b40c6292d50ac32c8a6123d2dc17dbf47a51458538"
+  },
+  "redactions": 1,
+  "coverage": {
+    "focus_files": 1,
+    "periphery_shown": 1,
+    "periphery_candidates": 186
+  },
+  "files": [
+    {
+      "path": "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief3.md",
+      "sha256": "0829cd2cddf9f1a2fa46e1712340b33df7c5d932e8fccf18ac2a98e7ec9046f1",
+      "role": "brief"
+    },
+    {
+      "path": "crates/c3/src/consult/http.rs",
+      "sha256": "dfd619bf4e8c3f23fea5e1e0fef0505865507828ca6e96bedb1eee7538efb8c3",
+      "role": "focus"
+    },
+    {
+      "path": "plugin/templates/role-tests.md",
+      "sha256": "b994791a48a6d8f947e9949c5cbc6de1b95c440f7543a761f0a2beaf8748c97f",
+      "role": "periphery"
+    }
+  ],
+  "path_map": {
+    "C:/Users/Dmytro/AppData/Local/Temp/claude/C--Users-Dmytro-c3/bada5a2a-1f73-431a-9181-cdc1eb2b5914/scratchpad/http-live/brief3.md": "0829cd2cddf9f1a2fa46e1712340b33df7c5d932e8fccf18ac2a98e7ec9046f1",
+    "crates/c3/src/consult/http.rs": "dfd619bf4e8c3f23fea5e1e0fef0505865507828ca6e96bedb1eee7538efb8c3",
+    "plugin/templates/role-tests.md": "b994791a48a6d8f947e9949c5cbc6de1b95c440f7543a761f0a2beaf8748c97f"
+  },
+  "request": {
+    "url": "https://openrouter.ai/api/v1/chat/completions",
+    "model": "stealth/space-bunny-alpha",
+    "response_format": "json_object",
+    "prompt_sha256": "38c0b744aee05b1cd5c2de4a663af0a3b17637c4742d7f0483228fc87cd7db94"
+  }
+}

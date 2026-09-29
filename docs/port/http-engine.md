@@ -157,10 +157,14 @@ orchestrator's thread-based secondary path stays a no-op for `http`.
 
 - **Format repair** — a substantive prose reply the normaliser could not structure earns ONE
   `Continuation::Replay` (the pack, the prior reply, and the shared convert-only prompt
-  `orchestrate::format_repair_prompt`). The first prose is kept as `<stem>.original.md`; the
-  normaliser runs on the repaired reply; on success the repaired JSON is the reply-of-record. The
-  ledger records `format_retry` + `engine_turns: 2`, and the events file gets a second
-  `request`/`response` pair tagged `"turn":"format-repair"`. A failed repair keeps the prose.
+  `orchestrate::format_repair_prompt`). The first prose is kept as `<stem>.original.md` BEFORE the
+  repair request; if that write fails, NO repair request is sent — the prose stays the
+  reply-of-record and the run carries `format repair not attempted: the first reply could not be
+  kept (<io error kind>)` (F05-1). The normaliser runs on the repaired reply; on success the
+  repaired JSON is the reply-of-record. The ledger records `format_retry` + `engine_turns: 2`, and
+  the events file gets a second `request`/`response` pair tagged `"turn":"format-repair"`. A failed
+  repair keeps the prose. The handoff's format-repair line says the http turn `replayed the
+  conversation (the http engine keeps no thread)` rather than resuming a thread.
 - **Timeout retry** — an `unavailable` failure (a request timeout, a 5xx, or an
   overloaded/unavailable answer) is retried once (the same request resent), after
   `http_engine::retry_pause` (provider `retry_after`, else 20 s, capped at 120 s); `auth`, `quota`
@@ -178,7 +182,9 @@ Because a repaired reply replaces the reply-of-record, the model's EXACT bytes a
 repaired text becomes the record — but only when the normaliser actually changed the text. The
 `normalised` event names it (`original`), and the `reply normalised: <notes>` warning gains
 `; the reviewer's own text: handoffs/<NN>-http-reply.original.json`, so the summary and handoff
-name it. A reply that needed no repair leaves no `.original.json`.
+name it. A reply that needed no repair leaves no `.original.json`. If that write fails (F05-1), the
+repaired text is NOT used: the reply stays exactly as the model wrote it, recorded INVALID, with
+`normalised text not used: the reviewer's own text could not be kept (<io error kind>)`.
 
 ## Pack / sidecar contract (retained BEFORE the request)
 

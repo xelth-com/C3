@@ -1,7 +1,134 @@
 {
     "task_id":  "openrouter-live",
     "findings":  [
+                     {
+                         "id":  "F05-1",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/http.rs",
+                                               "line":  324
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/http.rs",
+                                               "line":  351
+                                           }
+                                       ],
+                         "claim":  "A failure to persist the first substantive reply is discarded, so the handoff can omit the promised `.original.md` file while still returning format-repair metadata that names that file and preserves it as the original prose.",
+                         "trigger":  "Provider answer 1 is a 200 completion containing substantive prose; provider answer 2 is a 200 completion containing valid structured JSON; `write_text_atomic(sc.original_md, ...)` fails because of permissions, disk exhaustion, or another I/O error.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/http.rs:323-325,351-367",
+                                              "observation":  "`write_text_atomic` is called with `let _ =`, so an I/O failure is ignored; the code then unconditionally constructs `HttpSecondary` with `original_rel` and `original_prose`."
+                                          }
+                                      ],
+                         "verification":  "Inject an `original.md` write failure into `drive_seat_turns`, return PROSE followed by VALID from the mock endpoint, and assert that the function does not return repair metadata claiming a preserved original.",
+                         "remedy":  "Handle the write result rather than discarding it. Return the persistence error before recording a successful repair attempt, or omit/clear `original_rel` and surface an explicit persistence-failure status. Add a fault-injection test for an unwritable original path.",
+                         "supersedes":  [
 
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/05-http-reply.md",
+                                        "thread":  "",
+                                        "base_commit":  "3503b519ee8f416531637cca6f5a25890927d9c9",
+                                        "tree_sha256":  "e005811ce70faad7c1898c02187204e438b56cc153ef4f0a0449057e0b4ec245"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-29T21:47:47+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "3503b519ee8f416531637cca6f5a25890927d9c9",
+                                             "tree_sha256":  "e005811ce70faad7c1898c02187204e438b56cc153ef4f0a0449057e0b4ec245"
+                                         },
+                                         {
+                                             "when":  "2026-09-29T22:06:17+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "The first reply is written before the repair request; a write error sends no repair and is said in warnings; the same for .original.json in the normaliser path",
+                                             "evidence":  "",
+                                             "base_commit":  "3503b519ee8f416531637cca6f5a25890927d9c9",
+                                             "tree_sha256":  "3ec7db51669c06ccbacfb13b87e557bc349e15b8395f39dc4af3d3974749698f"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-2",
+                         "status":  "rejected",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/http.rs",
+                                               "line":  342
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/http.rs",
+                                               "line":  346
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/http.rs",
+                                               "line":  449
+                                           }
+                                       ],
+                         "claim":  "When a format-repair request fails, the final handoff status can claim `usable reply` even though the retained outcome has no structured reply and the repair is explicitly recorded as unsuccessful.",
+                         "trigger":  "Provider answer 1 is a 200 completion containing substantive prose such as the test\u0027s `PROSE`; provider answer 2 is `503 Service Unavailable` with `Retry-After: 0`. The repair cannot produce a structured object, `repaired_ok` is false, and the first unstructured `Completed` outcome remains final.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/http.rs:342-350,449-450",
+                                              "observation":  "A repair outcome replaces the primary outcome only when it contains structured data; otherwise the first prose remains `Completed`. `run_seat` maps every `Completed` outcome, including this unstructured one, to the literal bridge status `usable reply`."
+                                          }
+                                      ],
+                         "verification":  "Run a mock-server test with PROSE followed by a 503 and inspect the `SeatRun.outcome` plus `SeatRun.bridge_outcome`; assert that the status is not `usable reply` while the prose remains available at `.original.md`.",
+                         "remedy":  "Keep the first prose in `.original.md`, but do not expose the consultation as usable when repair failed. Return the repair failure as the final attempt outcome, or introduce/use an explicit incomplete/non-usable completion status and map it to a truthful bridge message; retain `FormatRetry.succeeded = false`.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/05-http-reply.md",
+                                        "thread":  "",
+                                        "base_commit":  "3503b519ee8f416531637cca6f5a25890927d9c9",
+                                        "tree_sha256":  "e005811ce70faad7c1898c02187204e438b56cc153ef4f0a0449057e0b4ec245"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-09-29T21:47:47+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "3503b519ee8f416531637cca6f5a25890927d9c9",
+                                             "tree_sha256":  "e005811ce70faad7c1898c02187204e438b56cc153ef4f0a0449057e0b4ec245"
+                                         },
+                                         {
+                                             "when":  "2026-09-29T21:48:37+02:00",
+                                             "status":  "rejected",
+                                             "by":  "coordinator",
+                                             "note":  "By design, as in the plugin: a prose reply is a usable reply without structured findings; the ledger says structured false and the repair is recorded as not succeeded. The consultation is not made to fail because a convert-only turn failed",
+                                             "evidence":  "",
+                                             "base_commit":  "3503b519ee8f416531637cca6f5a25890927d9c9",
+                                             "tree_sha256":  "e005811ce70faad7c1898c02187204e438b56cc153ef4f0a0449057e0b4ec245"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     }
                  ],
     "ratings":  [
                     {
@@ -51,6 +178,22 @@
                         "useful":  "yes",
                         "note":  "Found two real defects of the normaliser: the first balanced object wins over the real reply; duplicate keys collapse silently. Exact triggers given",
                         "when":  "2026-09-29T20:09:23+02:00"
+                    },
+                    {
+                        "n":  5,
+                        "consult_id":  "9190fe6c-64b9-4a58-99df-f249b4391b8a",
+                        "lineage":  "openrouter :: stealth/space-bunny-alpha [http]",
+                        "provider":  "openrouter",
+                        "model":  "stealth/space-bunny-alpha",
+                        "engine":  "http",
+                        "purpose":  "diff-review",
+                        "topics":  [
+                                       "correctness"
+                                   ],
+                        "consult_when":  "2026-09-29T21:45:01+02:00",
+                        "useful":  "yes",
+                        "note":  "End to end for the first time: the normaliser repaired the reply and two findings were recorded. F05-1 is real (a write error of the first reply is discarded); F05-2 contradicts the plugin\u0027s rule that prose is usable",
+                        "when":  "2026-09-29T21:48:37+02:00"
                     }
                 ]
 }

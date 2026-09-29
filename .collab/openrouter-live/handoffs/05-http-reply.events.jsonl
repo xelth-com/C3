@@ -1,0 +1,3 @@
+{"event":"request","method":"POST","url":"https://openrouter.ai/api/v1/chat/completions","model":"stealth/space-bunny-alpha","messages":2,"body_bytes":51532,"pack_sha256":"3a089e6b37bd9eecf6507d2b17da551498c22f0e20b7ac79d3b360f15fa85213","headers":["content-type","authorization","X-Title"]}
+{"event":"response","status":200,"id":"gen-1790711110-JTMmHUQ8kl9Wc0lcdaVr","body_bytes":81902,"elapsed_seconds":155.3}
+{"event":"normalised","notes":["evidence: object wrapped in an array","evidence: object wrapped in an array"],"original":"05-http-reply.original.json"}

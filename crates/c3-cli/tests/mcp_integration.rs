@@ -1,7 +1,9 @@
 //! Spawns the real `c3 mcp` stdio server and drives a short JSON-RPC session:
-//! `initialize`, `tools/list`, and two read-only `tools/call`s. The `c3` binary
-//! is built by the `c3-cli` crate, so it is located relative to the test binary
-//! (`target/debug/deps/<test>` → `target/debug/c3[.exe]`).
+//! `initialize`, `tools/list`, and two read-only `tools/call`s.
+//!
+//! This test lives in `c3-cli` (the crate that builds the `c3` binary) so cargo builds the binary
+//! with the test's own feature set and hands its path to the test through `CARGO_BIN_EXE_c3`. The
+//! test therefore never depends on whatever stale `c3` happens to lie in `target/debug`.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -9,23 +11,14 @@ use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
-/// The path to the built `c3` executable, next to the test binary's target dir.
-fn c3_bin() -> Option<PathBuf> {
-    let mut dir = std::env::current_exe().ok()?;
-    dir.pop(); // the test binary file
-    if dir.ends_with("deps") {
-        dir.pop();
-    }
-    let exe = dir.join(format!("c3{}", std::env::consts::EXE_SUFFIX));
-    exe.exists().then_some(exe)
+/// The `c3` executable cargo built for this test (never a stale on-disk binary).
+fn c3_bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_c3"))
 }
 
 #[test]
 fn mcp_stdio_session() {
-    let Some(bin) = c3_bin() else {
-        eprintln!("skipping: c3 binary not built at target/debug — run `cargo build` first");
-        return;
-    };
+    let bin = c3_bin();
 
     let mut child = Command::new(&bin)
         .arg("mcp")

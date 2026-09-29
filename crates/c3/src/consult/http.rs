@@ -320,52 +320,61 @@ fn drive_seat_turns(
             && crate::consult::ingest::prose_gate(&reply.raw_text).substantive
         {
             let prose = reply.raw_text.clone();
-            // Keep the first reply byte for byte as <stem>.original.md (as the codex path does).
-            let _ = c3_core::store::write_text_atomic(&sc.original_md, prose.as_bytes());
-            let mut reason = crate::consult::ingest::first_validation_error(&prose);
-            if reason.chars().count() > 200 {
-                reason = reason.chars().take(200).collect();
+            // (F05-1) Persist the first reply byte for byte as <stem>.original.md BEFORE the repair
+            // request. If it cannot be kept, send NO repair request: the first reply stays the
+            // reply-of-record as prose and the run carries the reason.
+            if let Err(e) = c3_core::store::write_text_atomic(&sc.original_md, prose.as_bytes()) {
+                warnings.push(format!(
+                    "format repair not attempted: the first reply could not be kept ({})",
+                    e.kind()
+                ));
+            } else {
+                let mut reason = crate::consult::ingest::first_validation_error(&prose);
+                if reason.chars().count() > 200 {
+                    reason = reason.chars().take(200).collect();
+                }
+                let mut repair_turn = primary.clone();
+                repair_turn.request.prompt =
+                    super::orchestrate::format_repair_prompt(&sc.consult_id);
+                repair_turn.kind = TurnKind::FormatRepair;
+                repair_turn.continuation = Some(Continuation::Replay {
+                    pack_hash: String::new(),
+                    prior_reply: prose.clone(),
+                });
+                let started = Instant::now();
+                let repair = eng
+                    .attempt(&repair_turn)
+                    .map_err(|e| format!("the http repair request could not be planned: {e}"))?;
+                let wall = (started.elapsed().as_secs_f64() * 10.0).round() / 10.0;
+                warnings.extend(repair.warnings.clone());
+                let repaired_ok = matches!(
+                    &repair.outcome,
+                    AttemptOutcome::Completed(r) if r.structured.is_some()
+                );
+                if repaired_ok {
+                    // The repaired object (raw_text = repaired JSON) becomes the reply-of-record.
+                    outcome = repair.outcome;
+                }
+                // else: the first prose stays the reply of record, exactly as today.
+                secondary = Some(HttpSecondary {
+                    engine_turns: 2,
+                    repaired_ok,
+                    repair_reason: reason.clone(),
+                    original_rel: sc.original_rel.clone(),
+                    original_prose: prose,
+                    drift_notes: Vec::new(),
+                    format_retry: Some(c3_core::ledger::FormatRetry {
+                        attempted: true,
+                        reason,
+                        succeeded: repaired_ok,
+                        thread: String::new(),
+                        wall_seconds: wall,
+                        events: Some(sc.events_rel.clone()),
+                        schema_transport: sc.transport.clone(),
+                        ..Default::default()
+                    }),
+                });
             }
-            let mut repair_turn = primary.clone();
-            repair_turn.request.prompt = super::orchestrate::format_repair_prompt(&sc.consult_id);
-            repair_turn.kind = TurnKind::FormatRepair;
-            repair_turn.continuation = Some(Continuation::Replay {
-                pack_hash: String::new(),
-                prior_reply: prose.clone(),
-            });
-            let started = Instant::now();
-            let repair = eng
-                .attempt(&repair_turn)
-                .map_err(|e| format!("the http repair request could not be planned: {e}"))?;
-            let wall = (started.elapsed().as_secs_f64() * 10.0).round() / 10.0;
-            warnings.extend(repair.warnings.clone());
-            let repaired_ok = matches!(
-                &repair.outcome,
-                AttemptOutcome::Completed(r) if r.structured.is_some()
-            );
-            if repaired_ok {
-                // The repaired object (raw_text = repaired JSON) becomes the reply-of-record.
-                outcome = repair.outcome;
-            }
-            // else: the first prose stays the reply of record, exactly as today.
-            secondary = Some(HttpSecondary {
-                engine_turns: 2,
-                repaired_ok,
-                repair_reason: reason.clone(),
-                original_rel: sc.original_rel.clone(),
-                original_prose: prose,
-                drift_notes: Vec::new(),
-                format_retry: Some(c3_core::ledger::FormatRetry {
-                    attempted: true,
-                    reason,
-                    succeeded: repaired_ok,
-                    thread: String::new(),
-                    wall_seconds: wall,
-                    events: Some(sc.events_rel.clone()),
-                    schema_transport: sc.transport.clone(),
-                    ..Default::default()
-                }),
-            });
         }
     }
 
@@ -918,6 +927,41 @@ mod tests {
         }
         assert!(secondary.is_none(), "auth is never retried");
         std::env::remove_var("C3_SEAT_401");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn format_repair_not_attempted_when_the_first_reply_cannot_be_kept() {
+        // (F05-1) A directory occupying the .original.md path makes the write fail: NO repair
+        // request is sent (the mock only ever answers once), the prose stays the reply-of-record,
+        // and the run carries the reason.
+        std::env::set_var("C3_SEAT_ORIGFAIL", FAKE_KEY);
+        let base = start_mock(vec![completion(PROSE)]);
+        let d = scratch("origfail");
+        let eng = mk_engine(&base, "C3_SEAT_ORIGFAIL", &d);
+        let sc = mk_sc(&d, true, 900);
+        // Occupy the .original.md path with a directory so the atomic write cannot rename onto it.
+        std::fs::create_dir_all(&sc.original_md).unwrap();
+
+        let (outcome, _pc, warnings, secondary) =
+            drive_seat_turns(&eng, mk_primary(), &sc).unwrap();
+        match &outcome {
+            AttemptOutcome::Completed(reply) => {
+                assert!(
+                    reply.structured.is_none(),
+                    "the prose stays the reply-of-record"
+                );
+                assert_eq!(reply.raw_text, PROSE);
+            }
+            other => panic!("expected Completed prose, got {other:?}"),
+        }
+        assert!(secondary.is_none(), "no repair turn ran");
+        assert!(
+            warnings.iter().any(|w| w
+                .starts_with("format repair not attempted: the first reply could not be kept (")),
+            "warnings: {warnings:?}"
+        );
+        std::env::remove_var("C3_SEAT_ORIGFAIL");
         let _ = std::fs::remove_dir_all(&d);
     }
 

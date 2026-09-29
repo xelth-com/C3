@@ -6276,12 +6276,19 @@ fn render_handoff(
                 sec.drift_notes.join("; ")
             )
         };
+        // The http engine keeps no thread: its repair turn replays the conversation rather than
+        // resuming a thread.
+        let repair_how = if ctx.engine == "http" {
+            "replayed the conversation (the http engine keeps no thread)".to_string()
+        } else {
+            format!("resumed thread `{thread}`")
+        };
         records.format_repair = Some(if sec.repaired_ok {
             format!(
-                "Format repair: succeeded in {} s - the first reply was prose ({}); one repair turn resumed thread `{}` and converted it. Drift: {}. The original prose follows the structured section and is kept as `{}`.",
+                "Format repair: succeeded in {} s - the first reply was prose ({}); one repair turn {} and converted it. Drift: {}. The original prose follows the structured section and is kept as `{}`.",
                 fmt_wall(fr.wall_seconds),
                 c3_core::one_line(&sec.repair_reason),
-                thread,
+                repair_how,
                 drift_text,
                 sec.original_rel,
             )

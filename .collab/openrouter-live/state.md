@@ -111,3 +111,21 @@ Conclusion: Space Bunny Alpha tokenizes with the MiniMax M2 / M2.5 tokenizer, so
 the next MiniMax text model. Tokenizer files are shared between laboratories now and then (Step
 uses DeepSeek's, Phi-4 uses `o200k`, Hunyuan and MiMo share one), so strictly this identifies the
 tokenizer family, not the owner. About 150 hidden tokens are the provider's own system text.
+
+## Third run (2026-09-29, the binary of 3503b51): the whole path works
+
+| n | reviewer | question | result | wall recorded / real | mark |
+|---|---|---|---|---|---|
+| 5 | `openrouter :: stealth/space-bunny-alpha [http]` | the second request of the http engine (`brief3.md`) | usable, HOLD, F05-1..F05-2 recorded | 155.3 s / 178 s | yes |
+
+For the first time a reply of an API reviewer became STRUCTURED: the normaliser wrapped `evidence`
+(one object, twice) into arrays, the reviewer's own text is kept as `05-http-reply.original.json`,
+and the two findings are in `findings.json` under their ids.
+
+| id | severity | claim | decision |
+|---|---|---|---|
+| F05-1 | major | the result of writing the first reply (`.original.md`) is discarded, so a write error is hidden while the record names the file | accepted: the write error is handled before the repair request is sent |
+| F05-2 | major | after a failed format repair the first prose reply is still reported as a usable reply | rejected: by design, as in the plugin - prose is a usable reply without structured findings; the ledger says `structured: false` and records the repair as not succeeded |
+
+Verified by the reviewer as holding: `drive_seat_turns` sends at most two requests for one
+consultation; no retry after `auth`; `--no-continue` suppresses the retry.

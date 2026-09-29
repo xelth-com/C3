@@ -22,3 +22,7 @@ clap.workspace = true
 [features]
 default = ["index-surreal"]
 index-surreal = ["c3/index-surreal"]
+
+[dev-dependencies]
+# The moved mcp_integration test drives the JSON-RPC session with serde_json.
+serde_json.workspace = true

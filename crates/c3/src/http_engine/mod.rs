@@ -722,30 +722,46 @@ impl HttpEngine {
             Some(s) => Some(s),
             None => match crate::consult::ingest::normalise_reply(&content) {
                 crate::consult::ingest::Normalisation::Repaired { reply, json, notes } => {
-                    if !notes.is_empty() {
-                        // (STEP 1) Preserve the model's EXACT bytes before the repaired text becomes
-                        // the reply-of-record, so the record can show what the reviewer really wrote.
+                    if notes.is_empty() {
+                        // No change was needed (unreachable after a failed strict parse).
+                        raw_text = json;
+                        Some(reply)
+                    } else {
+                        // (STEP 1 / F05-1) Preserve the model's EXACT bytes BEFORE the repaired text
+                        // becomes the reply-of-record. If they cannot be written, the repaired text
+                        // is NOT used: the reply stays as the model wrote it, recorded INVALID with
+                        // the reason.
                         let original = self.original_json_path();
-                        let _ = std::fs::write(&original, content.as_bytes());
-                        let original_name = original
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        self.append_event(
-                            events_path,
-                            &tag(
-                                label,
-                                json!({ "event": "normalised", "notes": notes,
-                                "original": original_name }),
-                            ),
-                        );
-                        warnings.push(format!(
-                            "{}; the reviewer's own text: handoffs/{original_name}",
-                            crate::consult::ingest::normalised_note(&notes)
-                        ));
+                        match std::fs::write(&original, content.as_bytes()) {
+                            Ok(()) => {
+                                let original_name = original
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_default();
+                                self.append_event(
+                                    events_path,
+                                    &tag(
+                                        label,
+                                        json!({ "event": "normalised", "notes": notes,
+                                        "original": original_name }),
+                                    ),
+                                );
+                                warnings.push(format!(
+                                    "{}; the reviewer's own text: handoffs/{original_name}",
+                                    crate::consult::ingest::normalised_note(&notes)
+                                ));
+                                raw_text = json;
+                                Some(reply)
+                            }
+                            Err(e) => {
+                                warnings.push(format!(
+                                    "normalised text not used: the reviewer's own text could not be kept ({})",
+                                    e.kind()
+                                ));
+                                None
+                            }
+                        }
                     }
-                    raw_text = json;
-                    Some(reply)
                 }
                 // The reply stays INVALID; the orchestrator's summary keeps the strict error and
                 // appends the normaliser's reason (via `ingest::first_validation_error`).

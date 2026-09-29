@@ -744,6 +744,39 @@ fn repair_writes_the_models_exact_bytes_to_original_json() {
 }
 
 #[test]
+fn normalised_text_not_used_when_the_original_cannot_be_kept() {
+    // (F05-1) A directory occupying the .original.json path makes the write fail: the repaired text
+    // is NOT used — the reply stays as the model wrote it, recorded INVALID, with the reason.
+    std::env::set_var("C3_HTTP_KEY_ORIGJSON", FAKE_KEY);
+    let mock = start_mock(vec![Resp::Raw(completion_response(FIXTURE_01))]);
+    let d = scratch("origjson");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_ORIGJSON", &d);
+    // Occupy the .original.json path with a directory so `std::fs::write` fails.
+    std::fs::create_dir_all(eng.original_json_path()).unwrap();
+
+    let att = eng.attempt(&primary_turn()).unwrap();
+    match &att.outcome {
+        AttemptOutcome::Completed(reply) => {
+            assert!(reply.structured.is_none(), "the repaired text is not used");
+            assert_eq!(
+                reply.raw_text, FIXTURE_01,
+                "the reply stays as the model wrote it"
+            );
+        }
+        other => panic!("expected Completed, got {other:?}"),
+    }
+    assert!(
+        att.warnings.iter().any(|w| w
+            .starts_with("normalised text not used: the reviewer's own text could not be kept (")),
+        "warnings: {:?}",
+        att.warnings
+    );
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_ORIGJSON");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn a_valid_reply_writes_no_original_json() {
     // (STEP 1) A reply that needed no repair leaves no .original.json.
     std::env::set_var("C3_HTTP_KEY_NOORIG", FAKE_KEY);
