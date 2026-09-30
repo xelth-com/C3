@@ -12,8 +12,32 @@
 //! mock or zero vector, and discards a whole batch whose response is the wrong shape,
 //! dimension or count.
 
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::time::Duration;
+
+/// Resolve the embedder URL's host:port to loopback addresses NOW, refusing if the name resolves to
+/// any non-loopback address (or to none). The returned addresses are pinned onto the request agent's
+/// resolver so the connection reaches only what was validated here — a name that flips between
+/// validation and the request (a rebound `localhost`) cannot reach another host. Never echoes the URL.
+fn resolve_loopback_addrs(raw_url: &str) -> Result<Vec<SocketAddr>, String> {
+    let u = url::Url::parse(raw_url).map_err(|_| CLOUD_EMBEDDER_MSG.to_string())?;
+    let host = u.host_str().ok_or_else(|| CLOUD_EMBEDDER_MSG.to_string())?;
+    let port = u.port_or_known_default().unwrap_or(80);
+    let mut out = Vec::new();
+    for a in (host, port)
+        .to_socket_addrs()
+        .map_err(|_| CLOUD_EMBEDDER_MSG.to_string())?
+    {
+        if !a.ip().is_loopback() {
+            return Err(CLOUD_EMBEDDER_MSG.to_string());
+        }
+        out.push(a);
+    }
+    if out.is_empty() {
+        return Err(CLOUD_EMBEDDER_MSG.to_string());
+    }
+    Ok(out)
+}
 
 /// The single refusal for a non-loopback / cloud embedder (never echoes the URL).
 pub const CLOUD_EMBEDDER_MSG: &str =
@@ -127,11 +151,16 @@ impl Embedder {
         if inputs.is_empty() {
             return Ok(Vec::new());
         }
+        // Resolve NOW and pin: the connection reaches only the loopback address(es) validated here,
+        // never a name re-resolved at request time (a `localhost` that rebounds elsewhere is refused
+        // before any connection). `ureq` would otherwise resolve the host a second time itself.
+        let pinned = resolve_loopback_addrs(&self.url)?;
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(timeout)
             .timeout(timeout)
             // Never follow a redirect: a 3xx would re-send project text to another host.
             .redirects(0)
+            .resolver(move |_netloc: &str| Ok(pinned.clone()))
             .build();
         let body = serde_json::json!({ "model": self.model, "input": inputs }).to_string();
         let resp = match agent
@@ -273,5 +302,53 @@ mod tests {
         // Non-finite.
         let nan = r#"{"data":[{"index":0,"embedding":[1.0,null,3.0]}]}"#;
         assert!(e.parse_batch(nan, 1).is_err());
+    }
+
+    #[test]
+    fn embed_reaches_a_loopback_fake_via_localhost() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        // An in-process fake bound on `localhost` (the same loopback address the pinned resolver
+        // returns, in the same order the OS gives), so the request to `localhost` reaches it
+        // regardless of the 127.0.0.1-vs-::1 ordering on this host.
+        let listener = TcpListener::bind("localhost:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let body = r#"{"data":[{"index":0,"embedding":[1.0,2.0,3.0]}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        let e = Embedder::new(format!("http://localhost:{port}/v1/embeddings"), "m", 3);
+        let v = e
+            .embed_batch(&["hi".to_string()], Duration::from_secs(5))
+            .expect("the request reaches the loopback fake via localhost");
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0], vec![1.0, 2.0, 3.0]);
+        let _ = handle.join();
+    }
+
+    #[test]
+    fn a_non_loopback_resolution_is_refused_before_connecting() {
+        // A non-loopback address (an IP literal here; a rebound name resolves the same way) is a
+        // resolver answer that must be refused before any connection.
+        assert!(resolve_loopback_addrs("http://8.8.8.8:9/v1/embeddings").is_err());
+        // localhost resolves to loopback and is pinned to those addresses.
+        let addrs =
+            resolve_loopback_addrs("http://localhost:11434/v1/embeddings").expect("loopback");
+        assert!(!addrs.is_empty() && addrs.iter().all(|a| a.ip().is_loopback()));
+        // embed_batch refuses the non-loopback host before sending anything.
+        let e = Embedder::new("http://8.8.8.8:9/v1/embeddings", "m", 3);
+        assert!(e
+            .embed_batch(&["hi".to_string()], Duration::from_secs(1))
+            .is_err());
     }
 }

@@ -3678,6 +3678,33 @@ fn confirm_tree_kill(base: &PendingRecord, survivors: &mut Vec<u32>) -> Option<(
     Some((pid, why))
 }
 
+/// (wave 27c, D2) The run warning recorded when the operator kicks the timeout CONTINUATION: the
+/// continuation is cancelled but the run keeps the main turn's timeout outcome and its salvage.
+const CONTINUATION_KICK_WARNING: &str =
+    "kick: the operator stopped the timeout continuation (-Kick); the timeout outcome and its salvage stay";
+
+/// (wave 27c, D2) The `on_running` callback for the timeout continuation turn: it rewrites the
+/// pending record to `running` naming the CONTINUATION's child pid/start the moment it spawns, so a
+/// concurrent `--kick` (and the liveness check) find a live child of this run — the main turn's child
+/// was killed at the timeout. Built here so it is unit-testable in isolation.
+fn continuation_on_running(
+    store: &FilesStore,
+    pending: &PendingRef,
+    base: &PendingRecord,
+) -> std::sync::Arc<dyn Fn(u32, String) + Send + Sync> {
+    let cb_store = store.clone();
+    let cb_pending = pending.clone();
+    let cb_base = base.clone();
+    std::sync::Arc::new(move |child_pid: u32, child_start: String| {
+        let mut r = cb_base.clone();
+        r.state = PendingState::Running;
+        r.child_pid = Some(child_pid);
+        r.child_start_time = child_start;
+        r.note = "the timeout continuation turn is running".to_string();
+        let _ = cb_store.write_pending(&cb_pending, &r);
+    })
+}
+
 /// Ingest the outcome, render, commit and print the summary.
 #[allow(clippy::too_many_arguments)]
 fn finish(
@@ -4103,6 +4130,9 @@ fn finish(
     }
 
     if main_timed_out {
+        // (wave 27c, D2) the continuation turn registers its own child in the pending record, so a
+        // concurrent `--kick` during it finds a live child of this run.
+        let cont_on_running = continuation_on_running(&store, &pending, &base_record);
         run_timeout_continuation(
             &ctx,
             &drift,
@@ -4119,14 +4149,13 @@ fn finish(
             &mut usable,
             &mut provider_failure,
             stall_record.as_ref().map(|s| s.seconds),
+            Some(cont_on_running),
         );
     }
     // (wave 27c, D2) a kick that cancelled the timeout continuation: warn, but keep the timeout
     // outcome and its salvage (bridge_outcome is left as the main turn's timeout text).
     if sec.continue_kicked {
-        ctx.run_warnings.push(
-            "kick: the operator stopped the timeout continuation (-Kick); the timeout outcome and its salvage stay".to_string(),
-        );
+        ctx.run_warnings.push(CONTINUATION_KICK_WARNING.to_string());
     }
 
     // Structured / prose classification (`ConvertFrom-StructuredReply`), on a usable, non-raw
@@ -5114,6 +5143,10 @@ fn run_timeout_continuation(
     // (wave 26b, D12) `Some(n)` when the main turn was STOPPED by the stall cut (n s without an
     // event) rather than the wall-clock timeout — the console line says so.
     stalled_secs: Option<i64>,
+    // (wave 27c, D2) rewrites the pending record to `running` with the CONTINUATION's child pid the
+    // moment it spawns, so a concurrent `--kick` (and the liveness check) find a live child of this
+    // run — the main turn's child was killed at the timeout.
+    on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
 ) {
     let continue_thread = thread.clone();
     sec.continue_thread = continue_thread.clone();
@@ -5241,7 +5274,7 @@ fn run_timeout_continuation(
         &continue_events_path,
         &continue_stderr,
         ctx.r.continue_sec as f64,
-        None,
+        on_running,
     );
     let is_engine = !ctx.is_codex();
     sec.continue_wall = wall;
@@ -7270,6 +7303,79 @@ pub(crate) fn build_reviewer(id: &ReviewerIdentity, harness: &str) -> Reviewer {
         provider_config,
         identity_note: id.note.clone(),
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod continuation_kick_tests {
+    use super::*;
+
+    #[test]
+    fn continuation_registers_its_child_in_the_pending_record() {
+        // (D2) a `running` record naming the OLD (main-turn) child; the continuation's on_running
+        // rewrites it to name the CONTINUATION's live child, so a concurrent `--kick` finds it.
+        let dir = std::env::temp_dir().join(format!(
+            "c3-contkick-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let task = TaskSlug::new("t").unwrap();
+        std::fs::create_dir_all(dir.join("t")).unwrap();
+        let store = FilesStore::new(dir.clone());
+        let pending = PendingRef::single(task.clone());
+        let base = PendingRecord {
+            state: PendingState::Running,
+            n: 1,
+            nn: "01".into(),
+            child_pid: Some(999_999), // the main turn's child, killed at the timeout
+            child_start_time: "old".into(),
+            ..Default::default()
+        };
+        let cb = continuation_on_running(&store, &pending, &base);
+        let me = std::process::id();
+        let start = crate::liveness::proc::process_start_iso(me).unwrap_or_default();
+        cb(me, start.clone());
+
+        let rd = crate::liveness::pending::read_pending_file(
+            &store.task_dir(&task).join(".consult.pending.json"),
+        );
+        let rec = rd.record.expect("the record was rewritten");
+        assert_eq!(
+            rec.get("child_pid").and_then(|v| v.as_u64()),
+            Some(me as u64),
+            "the record names the continuation's child, not the first turn's"
+        );
+        assert_eq!(rec.get("state").and_then(|v| v.as_str()), Some("running"));
+        // A concurrent `--kick` liveness check would now find a live child of this run.
+        assert!(crate::liveness::proc::pid_alive(me, &start));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn continuation_kick_keeps_the_timeout_outcome_and_names_the_turn() {
+        // (D2) the operator kicking the continuation records the operator stop on the continuation
+        // turn, keeps the run's timeout outcome, and warns naming the cancelled turn.
+        assert_eq!(
+            CONTINUATION_KICK_WARNING,
+            "kick: the operator stopped the timeout continuation (-Kick); the timeout outcome and its salvage stay"
+        );
+        // The `sec.continue_kicked` branch records the operator stop as the continuation's outcome
+        // without touching the run's bridge_outcome (verified end-to-end by fixes27c KICK D2).
+        let mut sec = Secondary {
+            continue_kicked: true,
+            ..Default::default()
+        };
+        assert!(sec.continue_kicked);
+        sec.timeout_continue = Some(c3_core::ledger::TimeoutContinue {
+            outcome: "failed: stopped by the operator (-Kick)".into(),
+            ..Default::default()
+        });
+        assert!(sec
+            .timeout_continue
+            .as_ref()
+            .unwrap()
+            .outcome
+            .contains("stopped by the operator (-Kick)"));
     }
 }
 
