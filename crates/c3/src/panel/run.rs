@@ -1843,6 +1843,10 @@ fn build_spec(
         "range": o.range,
         "reply_name": s.reply_name,
         "artifact": o.artifacts,
+        // (M11) `--peer`/`--peers` reach a reviewer only through a pack, which only the http engine
+        // builds — so a panel forwards them to its http members only; other members get none.
+        "peer": if ru.entry.engine == "http" { o.peer.clone() } else { Vec::new() },
+        "peers": if ru.entry.engine == "http" { o.peers.clone() } else { None },
         "raw": r.raw,
         "codex_exe": o.codex_exe,
         "native_effort": o.native_effort,

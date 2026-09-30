@@ -1381,3 +1381,36 @@ honours a hook only with the mode set, D14).
   both the pre-shim-fix and post-shim-fix runs and carries no test-hook warning; it is an environmental
   / pre-existing divergence (junction handling on this machine), not introduced by 27c. Flagged for the
   supervisor to confirm against a clean-HEAD baseline in the same environment.
+
+## Run 17 — parity round 3 (waves 27c/28 alignment, the scanning harnesses, M11 peers wiring)
+
+Binary: `harness2\c3-run17.exe` (a copy of `target\debug\c3.exe`, `--no-default-features`). Plugin at
+main `062af37` (code `1de388e`: waves 27c + 28 + a documentation wave). Counts are each harness's own
+summary line (UTF-8 BOM stripped). "before" = the first run of this round against the wave-27c binary.
+
+| Harness | Before | After | Notes |
+|---|---|---|---|
+| harness-fixes    | 35/8 then STOPPED | **44 / 0** | F04-1/4/5/9/11 + F06-1 store wording, the retained-blocker render (F04-4) and the copy-fail total failure (F04-11); the line-1e30 `1E+30` bounds message; the nn scan ignores a blocked `.reply.json` directory |
+| harness-pending  | 15/9 then STOPPED | **21 / 3** | the machine-wide codex scan ported (b rows), the raw artifact `path` (row g, the stop point), the pid dedup + bare-pid codex rule (F06-1), the unparseable-store wording; the 3 remaining are the `(e)` rows (below) |
+| harness-3b       | 0 failures | **0 failures** | plugin-internal `Find-CodexProcesses` unit test (dot-sourced common), unaffected by c3 |
+| harness-fixes27c | 13/15 (new) | **27 / 9** | D16 (kill_confirmed tri-state + wording + no continuation + KILL_DENIED "children could not be enumerated"), D2, D7, D11, HIDE D3/D4, STREAM D6, TESTMODE D14; the 9 remaining are out-of-scope / by-design / one deferred (below) |
+| harness-fixes26b | 51/0 | 50/1 → **51/0 (source fixed, re-run pending)** | a `-Kick` precheck relaxation for KICK D2 regressed KICKACK 26c D1; reverted in source, needs a rebuild + re-run to confirm |
+| harness-panel    | 54/0 | **54 / 0** | unchanged |
+| harness-detach   | 50/1 | **50 / 1** | the artifact-path fix needed the detach foreground to absolutize `-Artifact` (CWD D8); the 1 is the pre-existing CARRY F11-2 |
+| harness-roster   | 119/0 | **119 / 0** | unchanged |
+| harness-lock2    | 11/0 | **11 / 0** | unchanged |
+| harness-0.3      | 228/1 → 219/10 (flaky) | **228 / 1** | a latent UTC-vs-local rollout-dir bug surfaced across local-midnight; fixed to name the `sessions/YYYY/MM/DD` dirs in local time. The 1 is the pre-existing CFG `-CodexConfig` shim-split |
+| harness-engines  | 92/5 | **92 / 5** | unchanged; the 5 are the pre-existing c3-vs-plugin agy argv divergence (its own `home/c3/schemas/consult-reply.v1.json` vs the plugin's `schemas/consult-reply.schema.json`) — `engine.rs`/`subprocess.rs` argv is untouched since the baseline |
+
+### Still-failing rows and their class
+
+- **harness-fixes27c POINTER D13, D15** — `-Explain coordinate` pointer + `-Explain` stream dispose. Class: **out of scope: single host / wave 28 (-Explain)**.
+- **harness-fixes27c ZCODE D20/D21** — a run from the Z Code shell tool. Class: **out of scope: other coordinator host**.
+- **harness-fixes27c DOCS D17 (H1), D17 (skills README URL), D18 (H2), D23, D24** — assert the plugin's shipped `README.md` / skill markdown (repo README URL, AGENTS.md places, tool-time limits). Class: **by design — c3 is the Rust binary port and ships none of the plugin's README/skills markdown (the plugin does); these grep the plugin's documentation, not c3 runtime behaviour**.
+- **harness-fixes27c KICK D2** — a `-Kick` during the timeout continuation. Class: **in scope, deferred**. Needs the continuation turn to register its own child pid in the pending record (an `on_running` for `run_codex_secondary`), so both a concurrent `-Kick` and the harness's own liveness check find a live child; the main-turn child (killed at the timeout) is what the record still names.
+- **harness-pending `(e)` (3 rows)** — `registration write fails …`, `pending stays 'launching' …`, `next (real) run: launching rule …`. Class: **not measurable through the shim** — the harness patches the PowerShell `Write-PendingFile` in a copy of the scripts, which the c3 shim never calls (it delegates to the binary). c3 implements the fail-closed behaviour behind the gated hook `CODEX_CONSULT_TEST_REGISTER_FAIL` (ready); these rows need the plugin's harness to set that env hook against the c3 path instead of the PowerShell patch.
+
+### Stop points of the first run
+
+- **harness-fixes** stopped at `harness-fixes.ps1:386` (`02-codex-eleven.md` missing): c3 numbered the consult **nn=03** because its handoff-number scan counted the blocked `02-codex-eleven.reply.json` **directory** the test created. Fixed: the scan counts files only (`Get-NextNumbers`'s `-File`), so nn=02, the copy fails on the blocked path, and the failure handoff `02-codex-eleven.md` is written.
+- **harness-pending** stopped at `harness-pending.ps1:251` (null `.sha256` on artifact `A.bin`): the ledger recorded the absolute artifact path; fixed to record the raw argument (`Resolve-ArtifactPaths` sets `path = $raw`), keeping the canonical form only in `full`.

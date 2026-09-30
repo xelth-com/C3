@@ -169,7 +169,25 @@ fn prior_status_token(s: c3_core::engine::PriorStatus) -> &'static str {
 /// Render the handoff's structured section (`Format-StructuredSection`) for a validated
 /// reply, given the finding ids assigned to its findings (`ids[i]` is `findings[i]`'s id).
 /// Lines join with `\n`, matching the plugin.
-pub fn format_structured_section(reply: &StructuredReply, ids: &[String]) -> String {
+/// (F04-4) A prior blocker carried into `### Blockers` — an OPEN blocker finding this reply either
+/// reported (`still-open`/`fixed`) or omitted (`not-checked`). Its location and claim come from the
+/// stored finding, not the reply.
+#[derive(Debug, Clone)]
+pub struct PriorBlockerLine {
+    pub id: String,
+    /// `still-open` | `not-checked` | `fixed`.
+    pub disposition: String,
+    /// The pre-formatted location, e.g. `` `app.txt:1` ``.
+    pub location: String,
+    pub claim: String,
+}
+
+pub fn format_structured_section(
+    reply: &StructuredReply,
+    ids: &[String],
+    prior_blockers: &[PriorBlockerLine],
+    warning: Option<&str>,
+) -> String {
     let mut out: Vec<String> = Vec::new();
 
     out.push("### Findings".into());
@@ -208,6 +226,13 @@ pub fn format_structured_section(reply: &StructuredReply, ids: &[String]) -> Str
     });
     out.push(String::new());
 
+    // (F04-4) the operator WARNING for an ACCEPT kept over unchecked prior blockers, right after the
+    // verdict reason (`Format-VerdictWarning`).
+    if let Some(w) = warning {
+        out.push(format!("**{w}**"));
+        out.push(String::new());
+    }
+
     out.push("### Blockers".into());
     out.push(String::new());
     let mut nb = 0;
@@ -230,6 +255,18 @@ pub fn format_structured_section(reply: &StructuredReply, ids: &[String]) -> Str
             line.push_str(&format!(" Remedy: {}", close_sentence(&f.remedy)));
         }
         out.push(line);
+    }
+    // (F04-4) retained prior blockers: an OPEN blocker finding, marked with this reply's disposition
+    // and drawn from the STORED finding (its location and claim), after the new blockers.
+    for pb in prior_blockers {
+        nb += 1;
+        out.push(format!(
+            "- **{}** (prior, {}) {} - {}",
+            pb.id,
+            pb.disposition,
+            pb.location,
+            close_sentence(&pb.claim)
+        ));
     }
     if nb == 0 {
         out.push("_(none)_".into());
@@ -343,7 +380,7 @@ mod tests {
 
     #[test]
     fn structured_section_shape() {
-        let s = format_structured_section(&reply(), &["F03-1".to_string()]);
+        let s = format_structured_section(&reply(), &["F03-1".to_string()], &[], None);
         assert!(s.contains("### Findings"));
         assert!(s.contains("- **F03-1** [blocker] `a.rs:10` - the lock is not released."));
         assert!(s.contains("Trigger: on error."));

@@ -56,6 +56,12 @@ pub struct Options {
     /// (`0..=200000`; `0` = no periphery). `-1` = not given (the roster entry's `pack_tokens`,
     /// else the default 12000). Wins over the roster. Ignored by the other engines.
     pub pack_budget: i64,
+    /// (M11, --engine http) `--peer <name>` federation peers to bring into the reviewer pack
+    /// (repeatable). Refused for codex/agy/muse (they read the repository through their own tools).
+    pub peer: Vec<String>,
+    /// (M11, --engine http) `--peers all`: every peer this project may use in packs. Any other
+    /// value is refused.
+    pub peers: Option<String>,
     pub native_effort: String,
     pub off_peak_only: bool,
     pub skip_preflight: bool,

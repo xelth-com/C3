@@ -359,14 +359,28 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
         }
         let mut alive: Vec<String> = Vec::new();
         let mut gone: Vec<String> = Vec::new();
+        let launcher = pv_str(record, "launcher", "");
+        let mut seen: Vec<u32> = Vec::new();
+        let table = proc::enumerate_processes();
         for p in &pids {
-            // Reduced Test-RecordedProcess: pid + start time (the recorded shape). A bare pid
-            // (no start time) is treated as gone here rather than run through the name rule.
-            if proc::pid_alive(p.pid, &p.start) && !p.start.is_empty() {
-                alive.push(p.pid.to_string());
-            } else if proc::pid_alive(p.pid, "") && p.start.is_empty() {
-                // A recorded pid without a start time: existence only (the plugin defers to
-                // the name rule; C3 keeps it conservative and counts mere existence).
+            // Dedup: the same pid can appear as both `child_pid` and a bare survivor.
+            if seen.contains(&p.pid) {
+                continue;
+            }
+            seen.push(p.pid);
+            // `Test-RecordedProcess`: with a recorded start time, alive only when the pid runs with
+            // it (a different start time is a reused pid). A bare pid (no start time) is judged by
+            // the "looks like codex" rule (name / recorded launcher / command line), never by mere
+            // existence — a reused pid running an unrelated process is not the recorded one.
+            let live = if !p.start.is_empty() {
+                proc::pid_alive(p.pid, &p.start)
+            } else if let Some(pr) = table.iter().find(|x| x.pid == p.pid) {
+                let cmd = proc::process_command_line(p.pid);
+                !proc::codex_rule(&pr.name, &cmd, &launcher).is_empty()
+            } else {
+                false
+            };
+            if live {
                 alive.push(p.pid.to_string());
             } else {
                 gone.push(p.pid.to_string());

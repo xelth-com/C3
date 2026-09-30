@@ -83,6 +83,14 @@ pub struct ConsultArgs {
     /// validator instead of clap rejecting it.
     #[arg(long, allow_hyphen_values = true, default_value_t = -1)]
     pub pack_budget: i64,
+    /// (--engine http) A federation peer to bring into the reviewer pack (repeatable). Refused
+    /// for codex/agy/muse, which read the repository through their own tools.
+    #[arg(long)]
+    pub peer: Vec<String>,
+    /// (--engine http) `--peers all`: bring every peer this project may use in packs into the
+    /// pack. Any other value is refused.
+    #[arg(long)]
+    pub peers: Option<String>,
     /// An effort value sent verbatim (excludes --effort).
     #[arg(long, default_value = "")]
     pub native_effort: String,
@@ -227,6 +235,8 @@ pub fn run(args: ConsultArgs) -> i32 {
         key_env: args.key_env,
         base_url: args.base_url,
         pack_budget: args.pack_budget,
+        peer: args.peer,
+        peers: args.peers,
         native_effort: args.native_effort,
         off_peak_only: args.off_peak_only,
         skip_preflight: args.skip_preflight,

@@ -597,7 +597,15 @@ pub fn write_text_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         f.flush()?;
         f.sync_all()?;
     }
-    fs::rename(&tmp, path)
+    // On a rename failure (e.g. the destination is a directory a test created to block the copy,
+    // F04-11), remove the temp so no `.<name>.<uuid>.tmp` is left behind.
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 /// A cheap unique-ish suffix for temp file names (not a real UUID; only needs to avoid a
@@ -833,6 +841,13 @@ impl EvidenceStore for FilesStore {
         let mut max_nn: u32 = 0;
         if let Ok(entries) = fs::read_dir(dir.join("handoffs")) {
             for ent in entries.flatten() {
+                // Only FILES count as handoffs (`Get-NextNumbers`: `Get-ChildItem -File`): a
+                // directory that happens to carry a leading number — e.g. a blocked `.reply.json`
+                // path a test created to fail the copy (F04-11) — is not a handoff and must not
+                // bump the numbering.
+                if !ent.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    continue;
+                }
                 let name = ent.file_name().to_string_lossy().to_string();
                 if let Some(nn) = leading_number(&name) {
                     max_nn = max_nn.max(nn);

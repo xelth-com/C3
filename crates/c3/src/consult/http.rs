@@ -181,7 +181,10 @@ fn billing_precheck(seat: &Seat) -> Result<(), String> {
 /// Build the reviewer pack from the brief and the bound artifacts (the focus files). The http
 /// reviewer receives only this pack (DESIGN §3 invariant 2); it needs a brief and at least one
 /// artifact to review.
-fn build_pack(ctx: &Context, budget: usize) -> Result<ReviewerPack, String> {
+fn build_pack(
+    ctx: &Context,
+    budget: usize,
+) -> Result<(ReviewerPack, Vec<reviewer::PeerPackStat>), String> {
     let brief = match &ctx.brief_path {
         Some(p) => p.clone(),
         None => {
@@ -229,7 +232,20 @@ fn build_pack(ctx: &Context, budget: usize) -> Result<ReviewerPack, String> {
         max_file_size: 2 * 1024 * 1024,
         conn,
     };
-    reviewer::build(&opts)
+    // (M11) federation peers requested by `--peer`/`--peers all`. `resolve_pack_peers` gates them
+    // (`use_in_packs: true` AND named), refusing an unusable peer by name; with no peers requested
+    // it returns an empty list and the pack is byte-for-byte the local one.
+    let selection = crate::index::PeerSelection {
+        all: ctx
+            .o
+            .peers
+            .as_deref()
+            .map(|v| v.eq_ignore_ascii_case("all"))
+            .unwrap_or(false),
+        names: ctx.o.peer.clone(),
+    };
+    let peers = reviewer::resolve_pack_peers(&ctx.repo_root, &selection)?;
+    reviewer::build_with_peers(&opts, &peers)
 }
 
 /// The handoff stem (`handoffs/NN-http-<reply>`); `.pack.md` / `.pack.json` are appended by the
@@ -439,7 +455,7 @@ pub(crate) fn run_seat(ctx: &Context) -> Result<SeatRun, String> {
     let seat = resolve_seat(ctx)?;
     billing_precheck(&seat)?;
     let budget = resolve_pack_budget(ctx, &seat);
-    let pack = build_pack(ctx, budget)?;
+    let (pack, peer_stats) = build_pack(ctx, budget)?;
     let eng = engine(ctx, seat, pack);
 
     let sc = SeatContext {
@@ -452,8 +468,18 @@ pub(crate) fn run_seat(ctx: &Context) -> Result<SeatRun, String> {
         events_rel: handoff_rel(ctx, "events.jsonl"),
         transport: ctx.transport.transport.clone(),
     };
-    let (outcome, provider_config, warnings, secondary) =
+    let (outcome, mut provider_config, warnings, secondary) =
         drive_seat_turns(&eng, primary_turn(ctx), &sc)?;
+    // (M11) the ledger's `reviewer.provider_config` gains `peers: <count>` (an integer, never a
+    // name) when federation peers were brought into the pack; the telemetry `peers_used` reads it.
+    if !peer_stats.is_empty() {
+        if let Value::Object(map) = &mut provider_config {
+            map.insert(
+                "peers".to_string(),
+                Value::Number(serde_json::Number::from(peer_stats.len())),
+            );
+        }
+    }
 
     let (bridge_outcome, reply_text) = match &outcome {
         AttemptOutcome::Completed(_) => ("usable reply".to_string(), String::new()),
@@ -522,7 +548,11 @@ pub(crate) fn render_dry_run(ctx: &Context) {
     // Build the engine (config + a placeholder pack is fine for the key status and the plan; the
     // real pack below fills the size line). The key value is never printed.
     let budget = resolve_pack_budget(ctx, &seat);
-    let plan_pack = build_pack(ctx, budget);
+    let (plan_pack, plan_stats): (Result<ReviewerPack, String>, Vec<reviewer::PeerPackStat>) =
+        match build_pack(ctx, budget) {
+            Ok((p, s)) => (Ok(p), s),
+            Err(e) => (Err(e), Vec::new()),
+        };
     let eng = HttpEngine {
         config: seat.config.clone(),
         pack: match &plan_pack {
@@ -542,6 +572,10 @@ pub(crate) fn render_dry_run(ctx: &Context) {
             budget
         ),
         Err(e) => println!("pack        : a real run is refused - {e}"),
+    }
+    // (M11) one line per federation peer brought into the pack, right after the pack line.
+    for stat in &plan_stats {
+        println!("{}", reviewer::peer_dry_run_line(stat));
     }
     // (S6) The billing guard verdict, else the per-token cost estimate (a dry run never refuses):
     // the pack (the user message) plus the reply-schema system message.
@@ -981,6 +1015,48 @@ mod tests {
         assert!(matches!(outcome, AttemptOutcome::ProviderFailure { .. }));
         assert!(secondary.is_none(), "no retry when --no-continue");
         std::env::remove_var("C3_SEAT_NOCONT");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn without_peers_the_pack_is_byte_identical_to_the_local_build() {
+        // (M11) `--peer`/`--peers` change nothing when absent: `build_with_peers(opts, &[])` is the
+        // local `build(opts)` byte for byte (content + sidecar). Guards the http path's default.
+        let d = std::env::temp_dir().join(format!("c3-http-peers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("brief.md"), "# Brief\n1. Check it.\n").unwrap();
+        std::fs::write(d.join("store.rs"), "pub fn open() {}\npub fn close() {}\n").unwrap();
+        let opts = PackOpts {
+            repo_root: d.clone(),
+            collab_root: d.join(".collab"),
+            brief: std::path::PathBuf::from("brief.md"),
+            focus: vec!["store.rs".into()],
+            budget: 0,
+            task: None,
+            out: d.join("pack.md"),
+            max_file_size: 2 * 1024 * 1024,
+            conn: None,
+        };
+        let plain = reviewer::build(&opts).unwrap();
+        let (with_none, stats) = reviewer::build_with_peers(&opts, &[]).unwrap();
+        assert!(stats.is_empty(), "no peers -> no peer stats");
+        // The pack CONTENT (what the reviewer sees) is byte-for-byte the local build; the sidecar is
+        // identical too apart from its `generated` timestamp, so compare it with that line dropped.
+        assert_eq!(plain.content, with_none.content, "pack content unchanged");
+        assert_eq!(plain.tokens, with_none.tokens);
+        assert_eq!(plain.periphery_shown, with_none.periphery_shown);
+        let drop_ts = |s: &str| {
+            s.lines()
+                .filter(|l| !l.trim_start().starts_with("\"generated\":"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert_eq!(
+            drop_ts(&plain.sidecar),
+            drop_ts(&with_none.sidecar),
+            "pack sidecar unchanged (apart from the timestamp)"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 }

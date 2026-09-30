@@ -129,9 +129,15 @@ impl Event {
                 .map(|f| f.attempted)
                 .unwrap_or(false),
             panel_size,
-            // The consult path sets this (via `details.peers_used`) when it has brought peers
-            // into the pack; a ledger entry alone carries no peer count, so it defaults to 0.
-            peers_used: 0,
+            // (M11) the COUNT of federation peers brought into this consultation's pack — read
+            // from the http seat's `reviewer.provider_config.peers` (an integer, never a name); 0
+            // when no peers were used (the field is absent).
+            peers_used: entry
+                .reviewer
+                .provider_config
+                .get("peers")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32,
             os: os_label(),
             runtime: runtime_label(),
             topic_tag: None,

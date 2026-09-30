@@ -204,6 +204,10 @@ struct DetachArgs {
     #[serde(default = "minus_one")]
     pack_budget: i64,
     #[serde(default)]
+    peer: Vec<String>,
+    #[serde(default)]
+    peers: Option<String>,
+    #[serde(default)]
     native_effort: String,
     #[serde(default)]
     off_peak_only: bool,
@@ -303,6 +307,8 @@ impl DetachArgs {
             key_env: o.key_env.clone(),
             base_url: o.base_url.clone(),
             pack_budget: o.pack_budget,
+            peer: o.peer.clone(),
+            peers: o.peers.clone(),
             native_effort: o.native_effort.clone(),
             off_peak_only: o.off_peak_only,
             skip_preflight: o.skip_preflight,
@@ -361,6 +367,8 @@ impl DetachArgs {
             key_env: self.key_env,
             base_url: self.base_url,
             pack_budget: self.pack_budget,
+            peer: self.peer,
+            peers: self.peers,
             native_effort: self.native_effort,
             off_peak_only: self.off_peak_only,
             skip_preflight: self.skip_preflight,

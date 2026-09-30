@@ -1005,6 +1005,17 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
     let continue_sec = i("continue_sec", -1);
     Options {
         task: task.to_string(),
+        // (M11) a panel passes `--peer`/`--peers` through to its http members only; the member
+        // spec carries them and they are set below when present (parked default here).
+        peer: list("peer"),
+        peers: {
+            let v = s("peers");
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
+        },
         collab_dir: if collab.is_empty() {
             ".collab".into()
         } else {
@@ -1407,6 +1418,28 @@ fn build_context(
     let is_codex = engine_name == "codex";
     let spec = c3_core::lineage::engine_spec(&engine_name)
         .ok_or_else(|| (format!("unknown engine '{engine_name}'"), 1))?;
+    // (M11) `--peer`/`--peers` bring federation peers into the reviewer PACK. Only the http engine
+    // builds a pack; codex/agy/muse read the repository through their own tools, so the flags are
+    // refused before launch — the peers of the index reach a reviewer only through a pack.
+    if let Some(v) = &o.peers {
+        let t = v.trim();
+        if !t.is_empty() && !t.eq_ignore_ascii_case("all") {
+            return Err(("-Peers accepts only 'all'".to_string(), 1));
+        }
+    }
+    let peers_requested = !o.peer.is_empty()
+        || o.peers
+            .as_deref()
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+    if peers_requested && engine_name != "http" {
+        return Err((
+            format!(
+                "-Peer/-Peers apply only to the http engine, which builds the reviewer pack; the {engine_name} engine reads the repository through its own tools, so the peers of the index reach a reviewer only through a pack."
+            ),
+            1,
+        ));
+    }
     let engine_launcher = if is_codex {
         launcher.clone()
     } else if !engine_exe_engine.is_empty() && engine_exe_engine == engine_name {
@@ -3622,7 +3655,12 @@ fn confirm_tree_kill(base: &PendingRecord, survivors: &mut Vec<u32>) -> Option<(
         .map(|v| v.trim() == "1")
         .unwrap_or(false);
     let unconfirmed = if denied {
-        Some("process inspection denied (test hook CODEX_CONSULT_TEST_KILL_DENIED)".to_string())
+        // The descendants could not be enumerated (a restricted host): the outcome wraps the denial
+        // reason exactly as the plugin's `Get-DescendantTree` denial does.
+        Some(
+            "the children could not be enumerated (process inspection denied (test hook CODEX_CONSULT_TEST_KILL_DENIED))"
+                .to_string(),
+        )
     } else if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_UNCONFIRMED") {
         let t = v.trim();
         (!t.is_empty() && t != "0").then(|| "a test hook forced the kill unconfirmed".to_string())
@@ -4251,6 +4289,9 @@ fn finish(
     let mut prior_ledger: Vec<c3_core::ledger::PriorFindingRef> = Vec::new();
     let mut unknown_prior_ids: Vec<String> = Vec::new();
     let mut unknown_supersedes: Vec<String> = Vec::new();
+    // (F04-4) OPEN prior blockers carried into the handoff's ### Blockers, with the stored finding's
+    // location and claim and this reply's disposition.
+    let mut prior_blocker_lines: Vec<render::PriorBlockerLine> = Vec::new();
     if let Some(s) = &structured {
         // The findings store as it stands (read fresh; the commit re-reads under the lock).
         let existing = store.read_findings(&ctx.task).ok().flatten();
@@ -4313,7 +4354,28 @@ fn finish(
             }
         }
         semantics = super::semantics::test_reply_semantics(s, &ctx.o.purpose, &open_priors);
+        if let Some(ff) = &existing {
+            for pb in super::semantics::prior_blocker_dispositions(s, &open_priors) {
+                if let Some(fd) = ff.findings.iter().find(|f| f.id == pb.id) {
+                    let location = fd
+                        .locations
+                        .first()
+                        .map(|l| match l.line {
+                            Some(n) => format!("`{}:{}`", l.path, n),
+                            None => format!("`{}`", l.path),
+                        })
+                        .unwrap_or_default();
+                    prior_blocker_lines.push(render::PriorBlockerLine {
+                        id: pb.id,
+                        disposition: pb.disposition,
+                        location,
+                        claim: fd.claim.clone(),
+                    });
+                }
+            }
+        }
     }
+    let verdict_warning_line = semantics.warning.as_ref().map(|w| format!("WARNING: {w}"));
     // ACCEPT that leaves prior blockers unchecked keeps its verdict but earns an operator
     // WARNING - shown on the console and in the handoff (a run warning, before it is rendered).
     if let Some(w) = &semantics.warning {
@@ -4338,6 +4400,8 @@ fn finish(
         &sec,
         &main_event_error,
         &main_stderr,
+        &prior_blocker_lines,
+        verdict_warning_line.as_deref(),
     );
     let handoff_rel = ctx.hf("md");
     let events_rel = ctx.hf("events.jsonl");
@@ -4596,7 +4660,14 @@ fn finish(
         };
     let section = structured
         .as_ref()
-        .map(|s| render::format_structured_section(s, &finding_ids))
+        .map(|s| {
+            render::format_structured_section(
+                s,
+                &finding_ids,
+                &prior_blocker_lines,
+                verdict_warning_line.as_deref(),
+            )
+        })
         .unwrap_or_default();
 
     let verdict_line = structured.as_ref().map(|s| {
@@ -6391,6 +6462,8 @@ fn render_handoff(
     sec: &Secondary,
     main_event_error: &str,
     main_stderr: &str,
+    prior_blockers: &[render::PriorBlockerLine],
+    verdict_warning: Option<&str>,
 ) -> (String, Option<String>) {
     let events_rel = ctx.hf("events.jsonl");
     let spec = c3_core::lineage::engine_spec(&ctx.engine);
@@ -6803,7 +6876,12 @@ fn render_handoff(
     out.push('\n');
     if let Some(s) = structured {
         out.push_str("\n---\n\n");
-        out.push_str(&render::format_structured_section(s, finding_ids));
+        out.push_str(&render::format_structured_section(
+            s,
+            finding_ids,
+            prior_blockers,
+            verdict_warning,
+        ));
         out.push('\n');
     }
     // (`codex-consult.ps1:4399`) a repaired reply keeps the original prose below the section.

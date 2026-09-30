@@ -129,6 +129,15 @@ const STREAM_CARRY_CAP: usize = 1024 * 1024;
 /// (wave 27c, D6) An open tool call cannot suspend the stall timer for ever: it may hold the timer
 /// for at most `max(3 x stall seconds, 1800 s)` with no growth of the stream at all.
 fn tool_suspension_cap_secs(stall_sec: i64) -> i64 {
+    // (wave 27c, D6) the cap the stall timer stays suspended while a tool call is in flight:
+    // max(3 x stall, 1800 s), overridable by the test hook `CODEX_CONSULT_TEST_TOOL_CAP_SEC`.
+    if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_TOOL_CAP_SEC") {
+        if let Ok(n) = v.trim().parse::<i64>() {
+            if n > 0 {
+                return n;
+            }
+        }
+    }
     (stall_sec.saturating_mul(3)).max(1800)
 }
 
@@ -332,6 +341,22 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     let mut discarding = false;
     let mut tool_open_since: Option<Instant> = None;
     let kill_now = |child: &mut Child| -> Vec<u32> {
+        // (wave 27c, D16 / H4) CODEX_CONSULT_TEST_KILL_DENIED simulates a restricted host where
+        // process inspection and taskkill are denied: nothing is enumerated or terminated, the tree
+        // is left running (the root becomes an orphan the harness stops), and the run proceeds with
+        // the kill unconfirmed. Do NOT wait on the child — it is still alive.
+        if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_DENIED")
+            .map(|v| v.trim() == "1")
+            .unwrap_or(false)
+        {
+            let mut s: Vec<u32> = vec![child.id()];
+            for hook in test_survivor_pids() {
+                if crate::liveness::proc::pid_alive(hook, "") && !s.contains(&hook) {
+                    s.push(hook);
+                }
+            }
+            return s;
+        }
         let mut s = kill_tree(child);
         // TEST HOOK: CODEX_CONSULT_TEST_SURVIVORS=<pid>[,<pid>] — these pids, when alive, are
         // reported as survivors of this kill (no test can make a real process outlive a kill).

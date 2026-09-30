@@ -2394,14 +2394,16 @@ pub(crate) fn run_with_timeout(
 }
 
 pub(crate) fn get_codex_login_status(launcher: &str, timeout_sec: u64) -> CredentialResult {
-    // (wave 27c, D4) the launcher probe never fails open: if its start-info cannot be scrubbed of
-    // the host markers (only `CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL` forces this in C3, since the
-    // child command is scrubbed directly), the probe is SKIPPED — not started with the markers —
-    // and the credential is `unknown` (a real run is then refused, fail-closed).
-    if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL")
+    // (wave 27c, D4) the launcher probe never fails open. C3 scrubs the host markers from the probe
+    // CHILD's environment directly, so a simulated start-info scrub failure alone
+    // (`CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL`) does NOT stop the probe — it still runs from a clean
+    // environment (D4 F30-4). Only when the markers ALSO cannot be hidden at all
+    // (`CODEX_CONSULT_TEST_HIDE_FAIL`, the transactional-hide failure) is there no safe way to start
+    // the probe: it is SKIPPED and the credential is `unknown` (a real run is then refused).
+    let scrub_fail = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL")
         .map(|v| v.trim() == "1")
-        .unwrap_or(false)
-    {
+        .unwrap_or(false);
+    if scrub_fail && crate::engines::host_marker_hide_failure().is_some() {
         return CredentialResult::unknown(
             "not checked - `codex login status` was skipped: the start-info block could not be scrubbed (test hook CODEX_CONSULT_TEST_PROBE_SCRUB_FAIL)",
         );
