@@ -2235,7 +2235,8 @@
                         "purpose":  "framing",
                         "useful":  "yes",
                         "note":  "Astra: separated EvidenceStore from ContextIndex, defined reward/replay requirements for routing, caught the embedding egress and mock-vector risks, and corroborated or corrected every prior finding with a reason",
-                        "when":  "2026-09-26T18:08:06+02:00"
+                        "when":  "2026-09-26T18:08:06+02:00",
+                        "telemetry_sent":  1791297272
                     },
                     {
                         "n":  1,
@@ -2246,7 +2247,8 @@
                         "purpose":  "framing",
                         "useful":  "yes",
                         "note":  "GLM: tight, on-target; schema byte-compat, .eck collision, reward-gap caveat, two runnable RCs",
-                        "when":  "2026-09-26T18:09:49+02:00"
+                        "when":  "2026-09-26T18:09:49+02:00",
+                        "telemetry_sent":  1791297273
                     },
                     {
                         "n":  2,
@@ -2257,7 +2259,8 @@
                         "purpose":  "framing",
                         "useful":  "partly",
                         "note":  "MiMo: two accurate reframes (cross-project rebuild, key-invariant wording) but invalid JSON, no machine findings, generic prose",
-                        "when":  "2026-09-26T18:09:56+02:00"
+                        "when":  "2026-09-26T18:09:56+02:00",
+                        "telemetry_sent":  1791297273
                     },
                     {
                         "n":  8,
@@ -2268,7 +2271,8 @@
                         "purpose":  "framing",
                         "useful":  "yes",
                         "note":  "Kimi k3: cheapest signal per token; surfaced defer-SurrealDB option and no-R15-oracle -\u003e golden tests",
-                        "when":  "2026-09-26T18:10:05+02:00"
+                        "when":  "2026-09-26T18:10:05+02:00",
+                        "telemetry_sent":  1791297273
                     },
                     {
                         "n":  9,
@@ -2279,7 +2283,8 @@
                         "purpose":  "framing",
                         "useful":  "yes",
                         "note":  "Qwen: highest value; RecordStore/Index split, roster lab-field break, closed-schema evidence.kind gap, two grounded blockers, five RCs",
-                        "when":  "2026-09-26T18:10:13+02:00"
+                        "when":  "2026-09-26T18:10:13+02:00",
+                        "telemetry_sent":  1791297273
                     },
                     {
                         "n":  10,
@@ -2290,7 +2295,8 @@
                         "purpose":  "framing",
                         "useful":  "partly",
                         "note":  "Muse: strong framing (three trust models, sidecar/event-sourced) but findings duplicate others, R17 over-rated as blocker, inaccurate claim that priors live only in the DB",
-                        "when":  "2026-09-26T18:10:19+02:00"
+                        "when":  "2026-09-26T18:10:19+02:00",
+                        "telemetry_sent":  1791297273
                     }
                 ]
 }

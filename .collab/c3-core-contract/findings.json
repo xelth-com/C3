@@ -4738,7 +4738,8 @@
                         "purpose":  "core-contract",
                         "useful":  "yes",
                         "note":  "Astra: 17 findings all file:line grounded; the three blockers (no guard boundary at the mutation seam, findings overwritten instead of delta-applied, recovery record deleted unconditionally) and the engine result/turn-context gaps are exactly what must change before M2c/M3",
-                        "when":  "2026-09-26T22:08:04+02:00"
+                        "when":  "2026-09-26T22:08:04+02:00",
+                        "telemetry_sent":  1791297272
                     },
                     {
                         "n":  2,
@@ -4749,7 +4750,8 @@
                         "purpose":  "core-contract",
                         "useful":  "yes",
                         "note":  "GLM: verified the fork argv bug, cleanest commit(\u0026WriteLock) and Q6 answers; under-rated schema tolerance",
-                        "when":  "2026-09-26T22:13:29+02:00"
+                        "when":  "2026-09-26T22:13:29+02:00",
+                        "telemetry_sent":  1791297272
                     },
                     {
                         "n":  3,
@@ -4760,7 +4762,8 @@
                         "purpose":  "core-contract",
                         "useful":  "partly",
                         "note":  "MiMo: good state-machine tables but almost entirely overlaps consensus, no unique blocker",
-                        "when":  "2026-09-26T22:13:32+02:00"
+                        "when":  "2026-09-26T22:13:32+02:00",
+                        "telemetry_sent":  1791297272
                     },
                     {
                         "n":  6,
@@ -4771,7 +4774,8 @@
                         "purpose":  "core-contract",
                         "useful":  "yes",
                         "note":  "Kimi k3: sharpest on the schema-tolerance blocker (wave-26 ext, closed enums) with concrete fixtures",
-                        "when":  "2026-09-26T22:13:33+02:00"
+                        "when":  "2026-09-26T22:13:33+02:00",
+                        "telemetry_sent":  1791297272
                     },
                     {
                         "n":  7,
@@ -4782,7 +4786,8 @@
                         "purpose":  "core-contract",
                         "useful":  "yes",
                         "note":  "Qwen: only reviewer who ran commands against the real stores; unique N-allocation, task-slug and http-lineage findings; four grounded blockers",
-                        "when":  "2026-09-26T22:13:35+02:00"
+                        "when":  "2026-09-26T22:13:35+02:00",
+                        "telemetry_sent":  1791297272
                     },
                     {
                         "n":  8,
@@ -4793,7 +4798,8 @@
                         "purpose":  "core-contract",
                         "useful":  "partly",
                         "note":  "Muse: correct and fastest but all six findings duplicate the consensus",
-                        "when":  "2026-09-26T22:13:36+02:00"
+                        "when":  "2026-09-26T22:13:36+02:00",
+                        "telemetry_sent":  1791297272
                     }
                 ]
 }

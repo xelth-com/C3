@@ -544,7 +544,8 @@
                         "purpose":  "checkpoint",
                         "useful":  "yes",
                         "note":  "first live c3 run: four real findings on the MCP server (symlink containment bypass, doc drift, telemetry status side effect)",
-                        "when":  "2026-09-27T20:04:44+02:00"
+                        "when":  "2026-09-27T20:04:44+02:00",
+                        "telemetry_sent":  1791297273
                     },
                     {
                         "n":  3,
@@ -555,7 +556,8 @@
                         "purpose":  "checkpoint",
                         "useful":  "yes",
                         "note":  "Astra live through c3: corroborated GLM\u0027s four, three precise minors on path guarantees, side-effect wording and the byte-identity claim",
-                        "when":  "2026-09-27T20:09:06+02:00"
+                        "when":  "2026-09-27T20:09:06+02:00",
+                        "telemetry_sent":  1791297273
                     }
                 ]
 }
