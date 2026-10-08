@@ -3,7 +3,7 @@
     "findings":  [
                      {
                          "id":  "F02-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -53,6 +53,15 @@
                                              "evidence":  "",
                                              "base_commit":  "4cd8d18aa6dfa8d568ee8cdfe8c0969fcac406d8",
                                              "tree_sha256":  "06b787788d597253a2b64f9c622c9d557288796ec5c393bda1a31ee6cdde0b5a"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T01:53:24+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2 (3d33a54, 136cbf8, b1ba064): the outbox with spool.lock/flush.lock and exact-line removal (F02-1), closed reviewer/judge classes incl. OpenRouter (F02-2), a pending-deletion record on a failed DELETE (F02-3), the telemetry shim + the coverage map rc2-oracle (F02-4)",
+                                             "evidence":  "",
+                                             "base_commit":  "3605395aede39f9ed6f1c61c8347cfc68c9192fc",
+                                             "tree_sha256":  "6c04c23fcc4f5372073c5c89c23338955650ffd3126c02e2b16a2a53f138249a"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -76,7 +85,7 @@
                      },
                      {
                          "id":  "F02-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -135,6 +144,15 @@
                                              "evidence":  "",
                                              "base_commit":  "4cd8d18aa6dfa8d568ee8cdfe8c0969fcac406d8",
                                              "tree_sha256":  "06b787788d597253a2b64f9c622c9d557288796ec5c393bda1a31ee6cdde0b5a"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T01:53:26+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2 (3d33a54, 136cbf8, b1ba064): the outbox with spool.lock/flush.lock and exact-line removal (F02-1), closed reviewer/judge classes incl. OpenRouter (F02-2), a pending-deletion record on a failed DELETE (F02-3), the telemetry shim + the coverage map rc2-oracle (F02-4)",
+                                             "evidence":  "",
+                                             "base_commit":  "3605395aede39f9ed6f1c61c8347cfc68c9192fc",
+                                             "tree_sha256":  "6c04c23fcc4f5372073c5c89c23338955650ffd3126c02e2b16a2a53f138249a"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -158,7 +176,7 @@
                      },
                      {
                          "id":  "F02-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -208,6 +226,15 @@
                                              "evidence":  "",
                                              "base_commit":  "4cd8d18aa6dfa8d568ee8cdfe8c0969fcac406d8",
                                              "tree_sha256":  "06b787788d597253a2b64f9c622c9d557288796ec5c393bda1a31ee6cdde0b5a"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T01:53:27+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2 (3d33a54, 136cbf8, b1ba064): the outbox with spool.lock/flush.lock and exact-line removal (F02-1), closed reviewer/judge classes incl. OpenRouter (F02-2), a pending-deletion record on a failed DELETE (F02-3), the telemetry shim + the coverage map rc2-oracle (F02-4)",
+                                             "evidence":  "",
+                                             "base_commit":  "3605395aede39f9ed6f1c61c8347cfc68c9192fc",
+                                             "tree_sha256":  "6c04c23fcc4f5372073c5c89c23338955650ffd3126c02e2b16a2a53f138249a"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -231,7 +258,7 @@
                      },
                      {
                          "id":  "F02-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -290,6 +317,15 @@
                                              "evidence":  "",
                                              "base_commit":  "4cd8d18aa6dfa8d568ee8cdfe8c0969fcac406d8",
                                              "tree_sha256":  "06b787788d597253a2b64f9c622c9d557288796ec5c393bda1a31ee6cdde0b5a"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T01:53:29+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2 (3d33a54, 136cbf8, b1ba064): the outbox with spool.lock/flush.lock and exact-line removal (F02-1), closed reviewer/judge classes incl. OpenRouter (F02-2), a pending-deletion record on a failed DELETE (F02-3), the telemetry shim + the coverage map rc2-oracle (F02-4)",
+                                             "evidence":  "",
+                                             "base_commit":  "3605395aede39f9ed6f1c61c8347cfc68c9192fc",
+                                             "tree_sha256":  "6c04c23fcc4f5372073c5c89c23338955650ffd3126c02e2b16a2a53f138249a"
                                          }
                                      ],
                          "reviewer_checks":  [

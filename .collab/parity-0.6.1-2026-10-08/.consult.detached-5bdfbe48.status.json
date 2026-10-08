@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "5bdfbe48-3565-4b9c-b761-1eb424c0c980",
+    "id8":  "5bdfbe48",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "running",
+    "exit":  null,
+    "started":  "2026-10-09T01:54:11+02:00",
+    "updated":  "2026-10-09T01:54:16+02:00",
+    "finished":  null,
+    "wall_seconds":  null,
+    "pid":  13784,
+    "start_time":  "2026-10-08T23:54:11.8184418Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave2-diff-review",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\07-claude-wave2-diff-review.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "running",
+                        "outcome":  "",
+                        "wall_seconds":  null,
+                        "n":  4,
+                        "handoff":  "08",
+                        "reply":  "handoffs/08-codex-wave2-diff-review.md"
+                    }
+                ],
+    "summary":  "",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-5bdfbe48.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}
