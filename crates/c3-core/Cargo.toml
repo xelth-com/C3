@@ -24,3 +24,9 @@ url.workspace = true
 # (stable since Rust 1.89: fail-fast, on a plain `&File`, no guard type, released with the
 # handle). The earlier `fs4` dependency was never compiled on Unix and its 1.x API had moved;
 # std covers the need without a crate.
+
+[dev-dependencies]
+# chrono-tz: the reset-time unit tests read Berlin's daylight-saving rules by the zone's IANA id
+# (`Europe/Berlin`), as the plugin's harness reads `W. Europe Standard Time` / `Europe/Berlin` -
+# a test-only zone database; production reads the machine's own zone through `chrono::Local`.
+chrono-tz = "0.10"

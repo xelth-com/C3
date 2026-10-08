@@ -34,6 +34,9 @@ pub struct RosterEntry {
     pub model: String,
     pub codex_config: Vec<String>,
     pub auth: String,
+    /// `always` (the default), `weighty` or (0.6.0) `light`: with -Panel a weighty entry joins
+    /// only on the weighty purposes (or -PanelAll); a light one joins on the light purposes and
+    /// stands in on a weighty purpose only when no other entry of its provider label runs.
     pub panel: String,
     pub engine: String,
     pub engine_declared: bool,
@@ -560,10 +563,12 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             let mut panel = "always".to_string();
             if let Some(pv) = iobj.get("panel") {
                 match pv.as_str() {
-                    Some(s) if s == "always" || s == "weighty" => panel = s.to_string(),
+                    Some(s) if s == "always" || s == "weighty" || s == "light" => {
+                        panel = s.to_string()
+                    }
                     _ => {
                         why = format!(
-                            "{at}: panel must be \"always\" or \"weighty\" (got {})",
+                            "{at}: panel must be \"always\", \"weighty\" or \"light\" (got {})",
                             compact(pv)
                         );
                         break;
@@ -1032,6 +1037,26 @@ mod tests {
             resolve_reviewer_matcher(&entries, "gemini :: gemini-3.8-flash-high [muse]")
                 .1
                 .contains("matches no roster entry")
+        );
+    }
+
+    #[test]
+    fn panel_light_is_the_third_weight() {
+        let r = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","model":"glm-5.3","panel":"weighty"},{"provider":"ZAI","model":"glm-5.3-flash","panel":"light"},{"provider":"openai","model":"gpt-5.1"}]}"##,
+        );
+        let panels: Vec<&str> = r.entries.iter().map(|e| e.panel.as_str()).collect();
+        assert_eq!(panels, vec!["weighty", "light", "always"]);
+        let bad = validate_roster(
+            "R.json",
+            r##"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m","panel":"heavy"}]}"##,
+            None,
+        );
+        assert!(
+            bad.error
+                .contains(r#"entry 1: panel must be "always", "weighty" or "light" (got "heavy")"#),
+            "{}",
+            bad.error
         );
     }
 }

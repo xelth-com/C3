@@ -147,3 +147,26 @@ stdout/stderr/exit code verbatim satisfies every assertion above, provided:
 No blocker was found that rules out a shim; the one open item is the missing
 `-ScriptsDir`/env override on the harness side (see `docs/port/m1-acceptance.md`
 "Open questions").
+
+## 4. The scripts directory for a 0.6.x plugin (wave 1 of the 0.6.1 parity, 2026-10-08)
+
+The harnesses no longer need the shim inside a plugin checkout: `tests/run-all.ps1 -ScriptsDir
+<dir>` (wave 25; else `CODEX_CONSULT_SCRIPTS_DIR`) points every harness at a scratch scripts
+directory, and the one-harness form is `run-all.ps1 -ScriptsDir <dir> -Only <harness>`. For the
+plugin at **v0.6.1** that directory holds:
+
+- the five C3 shims from `tests/shim/` under the plugin's script names (`codex-providers.ps1`,
+  `codex-consult.ps1`, `codex-findings.ps1`, `codex-scoreboard.ps1`, `codex-consult-hook.ps1`);
+- an unmodified copy of the plugin's `codex-consult-common.ps1` (several harnesses dot-source it
+  for their in-process UNIT checks - e.g. harness-roster's `Get-RetryAfter` samples run against the
+  plugin's own function, not through `c3`);
+- an unmodified copy of the plugin's **`codex-consult-detached.ps1`: the 0.6.x common library
+  dot-sources it at load time** (`. (Join-Path $PSScriptRoot 'codex-consult-detached.ps1')`), so a
+  scripts directory without it fails every harness that loads the common library;
+- a sibling `schemas/consult-reply.schema.json` (`<scripts dir>/../schemas/`), unmodified.
+
+`C3_EXE` names the binary the shims run (a copy of `target\debug\c3.exe` keeps a concurrent
+`cargo test` from replacing it mid-run). Run the harnesses ONE AT A TIME. The plugin's
+`codex-telemetry.ps1` (0.6.x) has no C3 shim; no harness in the wave-1 set calls it. Copy the
+library files from the tag (`git show v0.6.1:plugins/codex-consult/scripts/<file>`) rather than
+checking anything out in the plugin repository.

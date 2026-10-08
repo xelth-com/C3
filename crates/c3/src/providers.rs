@@ -568,8 +568,8 @@ impl Ctx {
     }
 }
 
-/// The purposes on which a weighty roster entry still joins a panel without `-PanelAll`
-/// (`$script:WeightyPurposes`).
+/// The purposes on which a weighty roster entry still joins a panel without `-PanelAll` (and a
+/// light one only stands in) (`$script:WeightyPurposes`).
 const WEIGHTY_PURPOSES: &[&str] = &[
     "framing",
     "decision",
@@ -585,7 +585,7 @@ pub(crate) struct PanelMemberRow {
     /// `run` | `skipped`.
     pub state: String,
     pub reason: String,
-    /// `""` | `refused` | `unavailable` | `weighty`.
+    /// `""` | `refused` | `unavailable` | `weighty` | `context` | `light`.
     pub skip_kind: String,
 }
 
@@ -596,10 +596,15 @@ pub(crate) struct PanelSelection {
 }
 
 impl Ctx {
-    /// `Select-PanelMembers` (common.ps1:5909): every roster entry with its availability state,
-    /// the weighty gate, and the "no eligible member" / "-Model/-Engine no entry" refusals. The
-    /// D16 context skip is not modelled (no token estimate); the caller passes `all`/`skip_preflight`
-    /// for `-PanelAll`/`-SkipPreflight`.
+    /// `Select-PanelMembers`: every roster entry with its availability state, the weighty gate,
+    /// (wave 26b, D16) the context skip (`estimate_tokens`: the new prompt's estimate, 0 = none),
+    /// (0.6.0) the light gate and its stand-in, and the "no eligible member" / "-Model/-Engine no
+    /// entry" refusals. The caller passes `all`/`skip_preflight` for `-PanelAll`/`-SkipPreflight`.
+    /// A "light" entry on a weighty purpose without `all` is held back (skip kind `light`) once it
+    /// passed every other check; after the whole roster is judged it stands in - state run, reason
+    /// "stands in for #<p> (<that sibling's skip reason>)" or "stands in (no other entry of label
+    /// <label>)" - when no other member of its provider label (compared ordinally) runs; in roster
+    /// order, so a second light entry of the label sees the first one run.
     pub(crate) fn panel_members(
         &self,
         model: &str,
@@ -607,10 +612,11 @@ impl Ctx {
         purpose: &str,
         all: bool,
         skip_preflight: bool,
+        estimate_tokens: i64,
     ) -> PanelSelection {
         let purpose_label = if purpose.is_empty() { "none" } else { purpose };
+        let weighty_purpose = WEIGHTY_PURPOSES.contains(&purpose);
         let mut members: Vec<PanelMemberRow> = Vec::new();
-        let mut listing: Vec<String> = Vec::new();
         for e in &self.roster.entries {
             let entry_engine = if e.engine.is_empty() {
                 "codex"
@@ -663,22 +669,33 @@ impl Ctx {
                     skip_kind = "unavailable".into();
                 }
             }
-            if state == "run"
-                && e.panel == "weighty"
-                && !all
-                && !WEIGHTY_PURPOSES.contains(&purpose)
-            {
+            if state == "run" && e.panel == "weighty" && !all && !weighty_purpose {
                 state = "skipped".into();
                 reason =
                     format!("weighty reviewer; purpose {purpose_label} is light (use -PanelAll)");
                 skip_kind = "weighty".into();
             }
-            listing.push(format!(
-                "#{} {} ({})",
-                e.position,
-                format_reviewer_lineage(&id.provider, &id.model, entry_engine),
-                if state == "run" { "runs" } else { &reason }
-            ));
+            // (wave 26b, D16) skipped before its start: the brief is too large for its context
+            // window (the new prompt's estimate beyond 80% of context_tokens)
+            if state == "run"
+                && estimate_tokens > 0
+                && e.context_tokens > 0
+                && (estimate_tokens as f64) > 0.8 * e.context_tokens as f64
+            {
+                state = "skipped".into();
+                reason = format!(
+                    "brief too large for this reviewer's context (est. {estimate_tokens} of {} tokens)",
+                    e.context_tokens
+                );
+                skip_kind = "context".into();
+            }
+            // (0.6.0) a light entry on a weighty purpose: held back after every other check (a
+            // stand-in below needs none again)
+            if state == "run" && e.panel == "light" && !all && weighty_purpose {
+                state = "skipped".into();
+                reason = format!("light reviewer; purpose {purpose_label} is weighty - it stands in only when no entry of its label runs");
+                skip_kind = "light".into();
+            }
             members.push(PanelMemberRow {
                 entry: e.clone(),
                 identity: id,
@@ -687,6 +704,23 @@ impl Ctx {
                 skip_kind,
             });
         }
+        stand_in_light_members(&mut members);
+        let listing: Vec<String> = members
+            .iter()
+            .map(|m| {
+                let entry_engine = if m.entry.engine.is_empty() {
+                    "codex"
+                } else {
+                    &m.entry.engine
+                };
+                format!(
+                    "#{} {} ({})",
+                    m.entry.position,
+                    format_reviewer_lineage(&m.identity.provider, &m.identity.model, entry_engine),
+                    if m.state == "run" { "runs" } else { &m.reason }
+                )
+            })
+            .collect();
         let mut error = String::new();
         if members.is_empty() {
             let all_list = self
@@ -725,6 +759,37 @@ impl Ctx {
             );
         }
         PanelSelection { members, error }
+    }
+}
+
+/// (0.6.0) The light stand-in (`Select-PanelMembers`, after the whole roster is judged): a
+/// held-back light entry (skip kind `light`) runs when no other member of its provider label runs;
+/// the first skipped sibling that is not itself a held-back light entry is named. In roster order.
+pub(crate) fn stand_in_light_members(members: &mut [PanelMemberRow]) {
+    for i in 0..members.len() {
+        if members[i].state != "skipped" || members[i].skip_kind != "light" {
+            continue;
+        }
+        let label = members[i].entry.provider.clone();
+        let siblings: Vec<usize> = (0..members.len())
+            .filter(|&j| j != i && members[j].entry.provider == label)
+            .collect();
+        if siblings.iter().any(|&j| members[j].state == "run") {
+            continue;
+        }
+        let named = siblings
+            .iter()
+            .find(|&&j| members[j].state == "skipped" && members[j].skip_kind != "light")
+            .map(|&j| (members[j].entry.position, members[j].reason.clone()));
+        let reason = match named {
+            Some((pos, why)) => format!("stands in for #{pos} ({why})"),
+            None if siblings.is_empty() => format!("stands in (no other entry of label {label})"),
+            None => format!("stands in (no other entry of label {label} runs)"),
+        };
+        let m = &mut members[i];
+        m.state = "run".into();
+        m.skip_kind = String::new();
+        m.reason = reason;
     }
 }
 
@@ -2845,5 +2910,114 @@ mod roster_walk_tests {
         let e = w.entry.expect("first entry taken");
         assert_eq!(e.position, 1);
         assert!(w.skipped.is_empty());
+    }
+
+    fn weighted(pos: usize, provider: &str, model: &str, panel: &str, ctx: i64) -> RosterEntry {
+        RosterEntry {
+            panel: panel.into(),
+            context_tokens: ctx,
+            ..entry(pos, provider, model)
+        }
+    }
+
+    /// The `harness-panel` LIGHT roster: #1 the weighty reviewer of the label (a small window), #2
+    /// its light sibling, #3 another label. Preflight skipped (no config, no network).
+    fn light_ctx(entries: Vec<RosterEntry>) -> Ctx {
+        Ctx::for_consult(
+            scan_config_text("", ""),
+            vec![],
+            roster(entries),
+            String::new(),
+            String::new(),
+            Utc::now(),
+        )
+    }
+
+    fn plan(sel: &PanelSelection) -> Vec<String> {
+        sel.members
+            .iter()
+            .map(|m| format!("#{} {} {}", m.entry.position, m.state, m.reason))
+            .collect()
+    }
+
+    const STAND_REASON: &str =
+        "light reviewer; purpose acceptance is weighty - it stands in only when no entry of its label runs";
+
+    #[test]
+    fn panel_light_joins_light_purposes_and_stands_in_on_weighty_ones() {
+        let ctx = light_ctx(vec![
+            weighted(1, "ZAI", "glm-5.3", "weighty", 32000),
+            weighted(2, "ZAI", "glm-5.3-flash", "light", 0),
+            entry(3, "openai", "gpt-5.1"),
+        ]);
+        // a checkpoint: the light entry runs, its weighty sibling is held back
+        let sel = ctx.panel_members("", "", "checkpoint", false, true, 0);
+        assert_eq!(
+            plan(&sel),
+            vec![
+                "#1 skipped weighty reviewer; purpose checkpoint is light (use -PanelAll)",
+                "#2 run ",
+                "#3 run ",
+            ]
+        );
+        // an acceptance: the weighty sibling runs, the light one is held back
+        let sel = ctx.panel_members("", "", "acceptance", false, true, 0);
+        assert_eq!(
+            plan(&sel),
+            vec![
+                "#1 run ".to_string(),
+                format!("#2 skipped {STAND_REASON}"),
+                "#3 run ".to_string(),
+            ]
+        );
+        assert_eq!(sel.members[1].skip_kind, "light");
+        // the weighty sibling skipped for its context window: the light entry stands in for it
+        let ctx_reason = "brief too large for this reviewer's context (est. 30001 of 32000 tokens)";
+        let sel = ctx.panel_members("", "", "acceptance", false, true, 30001);
+        assert_eq!(
+            plan(&sel),
+            vec![
+                format!("#1 skipped {ctx_reason}"),
+                format!("#2 run stands in for #1 ({ctx_reason})"),
+                "#3 run ".to_string(),
+            ]
+        );
+        assert_eq!(sel.members[0].skip_kind, "context");
+        assert_eq!(sel.members[1].skip_kind, "");
+        // -PanelAll: every entry, the light one too
+        let sel = ctx.panel_members("", "", "acceptance", true, true, 0);
+        assert!(
+            sel.members.iter().all(|m| m.state == "run"),
+            "{:?}",
+            plan(&sel)
+        );
+    }
+
+    #[test]
+    fn panel_light_stand_in_without_a_sibling_and_the_second_light_entry() {
+        let ctx = light_ctx(vec![
+            entry(1, "openai", "gpt-5.1"),
+            weighted(2, "mimo", "mimo-v2.6-pro", "light", 0),
+        ]);
+        let sel = ctx.panel_members("", "", "decision", false, true, 0);
+        assert_eq!(
+            plan(&sel),
+            vec!["#1 run ", "#2 run stands in (no other entry of label mimo)",]
+        );
+        // two light entries of one label on a weighty purpose: the first stands in, the second
+        // sees it run and stays held back
+        let ctx = light_ctx(vec![
+            weighted(1, "mimo", "mimo-a", "light", 0),
+            weighted(2, "mimo", "mimo-b", "light", 0),
+        ]);
+        let sel = ctx.panel_members("", "", "stuck", false, true, 0);
+        assert_eq!(sel.members[0].state, "run");
+        assert_eq!(
+            sel.members[0].reason,
+            "stands in (no other entry of label mimo runs)"
+        );
+        assert_eq!(sel.members[1].state, "skipped");
+        assert_eq!(sel.members[1].skip_kind, "light");
+        assert!(sel.error.is_empty());
     }
 }

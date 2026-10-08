@@ -262,16 +262,9 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         openai_base_url.clone(),
         utc_now,
     );
-    let mut selection = ctx.panel_members(
-        &o.model,
-        &o.engine,
-        &o.purpose,
-        o.panel_all,
-        o.skip_preflight,
-    );
-
     // (wave 26b, D16 b) the new prompt's estimated token size ((ask + brief) / 4 chars a token);
-    // a member whose context window the brief alone would overflow is skipped before its start.
+    // a member whose context window the brief alone would overflow is skipped before its start
+    // (inside `panel_members`, before the light gate, as `Select-PanelMembers` does).
     let panel_estimate = {
         let mut chars = o.prompt.chars().count() as i64;
         if !o.brief.is_empty() {
@@ -286,21 +279,14 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         }
         ((chars as f64) / 4.0).ceil() as i64
     };
-    if panel_estimate > 0 {
-        for m in selection.members.iter_mut() {
-            if m.state != "skipped"
-                && m.entry.context_tokens > 0
-                && (panel_estimate as f64) > 0.8 * m.entry.context_tokens as f64
-            {
-                m.state = "skipped".into();
-                m.reason = format!(
-                    "brief too large for this reviewer's context (est. {panel_estimate} of {} tokens)",
-                    m.entry.context_tokens
-                );
-                m.skip_kind = "context".into();
-            }
-        }
-    }
+    let selection = ctx.panel_members(
+        &o.model,
+        &o.engine,
+        &o.purpose,
+        o.panel_all,
+        o.skip_preflight,
+        panel_estimate,
+    );
 
     // Required reviewers (exit 5 on an outage).
     let require_given = !o.require.is_empty();
@@ -339,7 +325,11 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                     filters.join(" ")
                 ));
             }
-            Some(m) if m.state == "skipped" && m.skip_kind != "weighty" => {
+            // a required entry only the weighty or light gate held back is no outage (it takes
+            // a seat first)
+            Some(m)
+                if m.state == "skipped" && m.skip_kind != "weighty" && m.skip_kind != "light" =>
+            {
                 required_problems.push(format!(
                     "#{pos} {} ({})",
                     format_reviewer_lineage(
@@ -963,7 +953,16 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                 format!(", role {}", row.role)
             };
             let required = if row.required { ", required" } else { "" };
-            format!("member, n={}, handoff {:02}{role}{required}", s.n, s.nn)
+            // (0.6.0) a light stand-in says so: ", stands in for #1 (...)"
+            let reason = if row.reason.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", row.reason)
+            };
+            format!(
+                "member, n={}, handoff {:02}{role}{required}{reason}",
+                s.n, s.nn
+            )
         } else if row.state == "not-picked" {
             format!("not picked: {}", row.reason)
         } else {

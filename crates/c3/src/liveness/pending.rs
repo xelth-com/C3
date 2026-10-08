@@ -360,6 +360,7 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
         let launcher = pv_str(record, "launcher", "");
         let mut seen: Vec<u32> = Vec::new();
         let table = proc::enumerate_processes();
+        let unreadable = unreadable_cmdline_pids();
         for p in &pids {
             // Dedup: the same pid can appear as both `child_pid` and a bare survivor.
             if seen.contains(&p.pid) {
@@ -373,7 +374,11 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
             let live = if !p.start.is_empty() {
                 proc::pid_alive(p.pid, &p.start)
             } else if let Some(pr) = table.iter().find(|x| x.pid == p.pid) {
-                let cmd = proc::process_command_line(p.pid);
+                let cmd = if unreadable.contains(&p.pid) {
+                    String::new()
+                } else {
+                    proc::process_command_line(p.pid)
+                };
                 !proc::codex_rule(&pr.name, &cmd, &launcher).is_empty()
             } else {
                 false
@@ -495,13 +500,21 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
     // own child alive is found only by the name rule (labelled "task not verifiable"). No age
     // cut-off.
     if scan.as_ref().map(|s| s.found.is_empty()).unwrap_or(true) {
-        // Fetch command lines for the few recent candidates the name rules need (`Get-CodexRule`
-        // over the command line), then run the name-branch scan.
+        // Fetch the command lines of the recent candidates (`Get-CodexRule` over the command line;
+        // (wave 29, E27) a codex-named process too: its command line tells the Codex app's servers
+        // and helpers from a reviewer run), then run the name-branch scan. TEST HOOK (test mode
+        // only): CODEX_CONSULT_TEST_CMDLINE_UNREADABLE=<pid>[,<pid>] - these pids are scanned with
+        // the command line '' (as access denied makes it).
+        let unreadable = unreadable_cmdline_pids();
         let mut procs = all_procs;
         for p in procs.iter_mut() {
             let recent = p.created.map(|c| c >= since).unwrap_or(false);
-            if recent && proc::codex_rule(&p.name, "", &launcher).is_empty() {
-                p.command_line = proc::process_command_line(p.pid);
+            if recent {
+                p.command_line = if unreadable.contains(&p.pid) {
+                    String::new()
+                } else {
+                    proc::process_command_line(p.pid)
+                };
             }
         }
         scan = Some(proc::find_codex_processes(
@@ -535,6 +548,18 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
         );
     }
     inactive(format!("{}: none found", scan.check))
+}
+
+/// (wave 28e, E19) TEST HOOK (test mode only): `CODEX_CONSULT_TEST_CMDLINE_UNREADABLE=<pid>[,<pid>]`
+/// - these pids read with the command line `''`, as access denied makes it.
+fn unreadable_cmdline_pids() -> Vec<u32> {
+    c3_core::test_hooks::hook("CODEX_CONSULT_TEST_CMDLINE_UNREADABLE")
+        .map(|v| {
+            v.split(',')
+                .filter_map(|t| t.trim().parse::<u32>().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn pv_num(v: &Value) -> Option<i64> {

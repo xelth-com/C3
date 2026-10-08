@@ -1,13 +1,19 @@
 //! Recorded endpoint health from the task ledgers (`Get-EndpointHealth`) and the
 //! reset-time reader (`Get-RetryAfter`), ported from `codex-consult-common.ps1`.
 //!
-//! Only the *read* path is ported: `codex-providers` reads the ledgers, it never
-//! writes a failure, so a wall-clock reset time is read with the offset of the
-//! failure's own `when` (`-ReferenceOffset`) and there is no local-timezone / DST
-//! logic here. Health is computed per endpoint fingerprint, newest by completion
-//! wins, and a later usable reply clears an earlier auth or quota failure.
+//! The reader has both of the plugin's modes: at READ time ([`retry_after_ref`], what
+//! `codex-providers` and the health view use) a wall-clock reset time is read with the
+//! offset of the failure's own `when` (`-ReferenceOffset`); at WRITE time
+//! ([`retry_after_in`], a consultation recording its provider failure) it is read with the
+//! rules of a zone ([`ResetZone`]: `chrono::Local` there, daylight saving included), and a
+//! time without a date (0.6.1) is placed on the day before, of or after the reference.
+//! Health is computed per endpoint fingerprint, newest by completion wins, and a later
+//! usable reply clears an earlier auth or quota failure.
 
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, TimeZone, Utc};
+use chrono::{
+    DateTime, Datelike, Duration, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    Offset, TimeZone, Timelike, Utc,
+};
 use regex::Regex;
 use serde_json::Value;
 
@@ -210,98 +216,507 @@ fn compact_duration_seconds(text: &str) -> Option<f64> {
     }
 }
 
-/// `Get-RetryAfter` on the read path (`-ReferenceOffset`): the reset time a message
-/// names, with the offset of `reference`, or `None`.
+/// The zone a wall-clock reset time is read in (`Get-RetryAfter -TimeZone`, F15-1): the offsets
+/// a wall-clock time can have there (one; both in the repeated hour of a fall-back night, the
+/// earlier instant first; none inside a spring-forward gap) and its offset at an instant. Every
+/// chrono [`TimeZone`] is one: `chrono::Local` at write time (the machine that saw the failure),
+/// a zone database's zone in the tests.
+pub trait ResetZone {
+    /// The offsets `wall` can have in this zone.
+    fn wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset>;
+    /// This zone's offset at the UTC instant `utc`.
+    fn utc_offset(&self, utc: NaiveDateTime) -> FixedOffset;
+}
+
+impl<T: TimeZone> ResetZone for T {
+    fn wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset> {
+        self.offset_from_local_datetime(&wall).map(|o| o.fix())
+    }
+    fn utc_offset(&self, utc: NaiveDateTime) -> FixedOffset {
+        self.offset_from_utc_datetime(&utc).fix()
+    }
+}
+
+/// A wall-clock time at a fixed offset (`None` only out of chrono's range).
+fn at_offset(wall: NaiveDateTime, off: FixedOffset) -> Option<DateTime<FixedOffset>> {
+    off.from_local_datetime(&wall).single()
+}
+
+/// The first offset a wall-clock time has in `zone` (the earlier instant's when ambiguous).
+fn first_wall_offset(zone: &dyn ResetZone, wall: NaiveDateTime) -> Option<FixedOffset> {
+    match zone.wall_offsets(wall) {
+        LocalResult::Single(o) => Some(o),
+        LocalResult::Ambiguous(a, _) => Some(a),
+        LocalResult::None => None,
+    }
+}
+
+/// `ConvertFrom-WallClock`: a wall-clock time -> an instant, at the offset `zone` has at that time
+/// (a nonexistent time: the offset after the transition; an ambiguous one: the offset before
+/// it), or without a zone (`-ReferenceOffset`) at the reference's offset.
+fn from_wall_clock(
+    wall: NaiveDateTime,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
+) -> Option<DateTime<FixedOffset>> {
+    let Some(z) = zone else {
+        return at_offset(wall, *reference.offset());
+    };
+    let off = match z.wall_offsets(wall) {
+        LocalResult::Single(o) => o,
+        LocalResult::None => first_wall_offset(z, wall + Duration::days(1))?,
+        LocalResult::Ambiguous(_, _) => first_wall_offset(z, wall - Duration::days(1))?,
+    };
+    at_offset(wall, off)
+}
+
+/// `ConvertTo-ZoneTime`: an instant shown in `zone` (without one, in the reference's offset).
+fn to_zone_time(
+    at: DateTime<FixedOffset>,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
+) -> DateTime<FixedOffset> {
+    match zone {
+        Some(z) => at.with_timezone(&z.utc_offset(at.naive_utc())),
+        None => at.with_timezone(reference.offset()),
+    }
+}
+
+/// (0.6.1, F06-3) How late a time-only reset may be parsed and still be TODAY's (passed): the
+/// message shows whole minutes, and its delivery and parsing take time.
+pub const TIME_ONLY_LATE_MINUTES: i64 = 5;
+
+/// (0.6.1, F06-4) `Get-WallClockCandidates`: every instant a wall-clock time can mean in `zone`
+/// (without one: the reference's offset - one instant): an ambiguous time (the repeated hour of a
+/// fall-back night) BOTH instants, earliest first; a time inside a spring-forward gap the FIRST
+/// valid instant after the gap (its first valid minute, at the offset after the transition);
+/// else the one.
+fn wall_clock_candidates(
+    wall: NaiveDateTime,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
+) -> Vec<DateTime<FixedOffset>> {
+    let Some(z) = zone else {
+        return at_offset(wall, *reference.offset()).into_iter().collect();
+    };
+    match z.wall_offsets(wall) {
+        LocalResult::Single(o) => at_offset(wall, o).into_iter().collect(),
+        LocalResult::Ambiguous(a, b) => {
+            let mut v: Vec<DateTime<FixedOffset>> =
+                [a, b].iter().filter_map(|o| at_offset(wall, *o)).collect();
+            v.sort();
+            v
+        }
+        LocalResult::None => {
+            let mut c = wall
+                .with_second(0)
+                .and_then(|w| w.with_nanosecond(0))
+                .unwrap_or(wall);
+            let mut i = 0;
+            while i < 1440 && matches!(z.wall_offsets(c), LocalResult::None) {
+                c += Duration::minutes(1);
+                i += 1;
+            }
+            first_wall_offset(z, c)
+                .and_then(|o| at_offset(c, o))
+                .into_iter()
+                .collect()
+        }
+    }
+}
+
+/// (0.6.1, F06-3, F06-4) `Select-TimeOnlyReset`: the instant of a time-only reset (`tod`): of
+/// the candidates on the day before, the day of and the day after the reference's date - at
+/// `fixed` when the message named an offset ([`time_only_zone`]), else in the zone
+/// ([`wall_clock_candidates`]; without a zone the reference's offset) - the EARLIEST that is not
+/// more than [`TIME_ONLY_LATE_MINUTES`] before the reference. So: today, unless today's is more
+/// than 5 minutes past (then tomorrow); a reset that has just passed stays passed (the hold ends
+/// at once); in the repeated hour the second instant when the first is past; just after midnight
+/// yesterday's when it passed within the 5 minutes.
+fn select_time_only_reset(
+    tod: NaiveTime,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
+    fixed: Option<FixedOffset>,
+) -> Option<DateTime<FixedOffset>> {
+    let floor = reference - Duration::minutes(TIME_ONLY_LATE_MINUTES);
+    let day = match fixed {
+        Some(f) => reference.with_timezone(&f).date_naive(),
+        None => to_zone_time(reference, reference, zone).date_naive(),
+    };
+    let mut best: Option<DateTime<FixedOffset>> = None;
+    for d in [-1i64, 0, 1] {
+        let wall = (day + Duration::days(d)).and_time(tod);
+        let cands: Vec<DateTime<FixedOffset>> = match fixed {
+            Some(f) => at_offset(wall, f).into_iter().collect(),
+            None => wall_clock_candidates(wall, reference, zone),
+        };
+        for c in cands {
+            if c < floor {
+                continue;
+            }
+            if best.map(|b| c < b).unwrap_or(true) {
+                best = Some(c);
+            }
+        }
+    }
+    best
+}
+
+/// What [`time_only_zone`] read after a time-only clock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct TimeOnlyZone {
+    /// The named offset (UTC/GMT/Z: zero), `None` when no qualifier follows.
+    offset: Option<FixedOffset>,
+    /// A zone word the bridge does not read, or a malformed qualifier: the wording is not parsed.
+    declined: bool,
+}
+
+/// (0.6.1, F08-2) A character of a time-only zone qualifier token: anything but a space, a comma,
+/// a semicolon, a bracket, a quote, `!`, `?`, `|` or a backslash.
+const TIME_ONLY_TOKEN_CHAR: &str = r#"[^\s,;()\[\]{}<>!?"'\x{201C}\x{201D}|\\]"#;
+
+fn time_only_re() -> &'static fancy_regex::Regex {
+    static RE: std::sync::OnceLock<fancy_regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        fancy_regex::Regex::new(
+            r"(?i)(?:try\s+again\s+(?:at|after)|resets?\s+at|available\s+(?:again\s+)?(?:at|after)|until)\s+(?P<hour>[0-9]{1,2}):(?P<min>[0-9]{2})(?::(?P<sec>[0-9]{2}))?(?![0-9:])(?:\s*(?P<ampm>[ap])\.?\s?m\b\.?)?",
+        )
+        .unwrap()
+    })
+}
+
+fn time_only_zone_token_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(&format!(
+            r"^[ \t]*\(?[ \t]*(?P<tok>{TIME_ONLY_TOKEN_CHAR}*)"
+        ))
+        .unwrap()
+    })
+}
+
+fn time_only_zone_next_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(&format!(r"^[ \t]+(?P<tok>[+-]{TIME_ONLY_TOKEN_CHAR}*)")).unwrap())
+}
+
+fn time_only_other_zone_re() -> &'static fancy_regex::Regex {
+    static RE: std::sync::OnceLock<fancy_regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        fancy_regex::Regex::new(r"^[ \t]*\(?[ \t]*(?P<w>[A-Z]{2,5})(?![A-Za-z0-9])").unwrap()
+    })
+}
+
+/// The zone word a qualifier token starts with (`TimeOnlyZoneWord`): UTC / GMT in any case, or
+/// `Z` when it does not start a lower-case word; `""` when none.
+fn time_only_zone_word(tok: &str) -> &str {
+    if let Some(head) = tok.get(..3) {
+        if head.eq_ignore_ascii_case("utc") || head.eq_ignore_ascii_case("gmt") {
+            return head;
+        }
+    }
+    if let Some(rest) = tok.strip_prefix('Z') {
+        if !rest.starts_with(|c: char| c.is_ascii_lowercase()) {
+            return &tok[..1];
+        }
+    }
+    ""
+}
+
+/// `TimeOnlyOffset`: a COMPLETE numeric offset - `+H`, `+HH`, `+H:MM`, `+HH:MM` or `+HHMM`
+/// (`-` likewise) - as (negative, hours, minutes), `None` for anything else.
+fn time_only_offset(text: &str) -> Option<(bool, u32, u32)> {
+    let negative = match text.chars().next()? {
+        '+' => false,
+        '-' => true,
+        _ => return None,
+    };
+    let body = &text[1..];
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let (h, m) = match body.split_once(':') {
+        Some((h, m)) if (1..=2).contains(&h.len()) && digits(h) && m.len() == 2 && digits(m) => {
+            (h, m)
+        }
+        Some(_) => return None,
+        None if (1..=2).contains(&body.len()) && digits(body) => (body, "0"),
+        None if body.len() == 4 && digits(body) => (&body[..2], &body[2..]),
+        None => return None,
+    };
+    Some((negative, h.parse().ok()?, m.parse().ok()?))
+}
+
+/// Whether a text starts with spaces and then a digit (a number after a lone sign).
+fn number_follows(s: &str) -> bool {
+    let t = s.trim_start_matches([' ', '\t']);
+    t.len() < s.len() && t.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// (0.6.1, F06-5; F08-2) `Get-TimeOnlyZone`: the zone qualifier right after a time-only clock
+/// (`clock`: the matched wording, `rest`: the text after it; spaces or an opening parenthesis
+/// between - after a period that ends the sentence, "9:43 PM.", nothing more is read; the period
+/// of "p.m." is the abbreviation's). The qualifier is read as a WHOLE token (up to a space, a
+/// comma, a semicolon, a bracket, a quote, `!` or `?`; a sentence-ending period stripped) and must
+/// be complete: UTC, GMT (any case) or Z alone -> offset 00:00; UTC / GMT followed by a numeric
+/// offset (UTC+2, UTC+05:30, also UTC +02:00) or a bare one (+02:00, +0200, +02, +2, -05:30) ->
+/// that offset. A token that STARTS a qualifier (UTC, GMT, Z, a sign) but is not one of these - a
+/// dangling sign (UTC+), an incomplete minute (UTC+05:3), excess digits (+02:000), letters after
+/// the sign (UTC+oops), Z with an offset, beyond 14 hours or minutes of 60 and more (+15:00,
+/// +02:60) - DECLINES the wording: never a shorter prefix of it. A lone sign between words
+/// (`21:43 - or upgrade`) is a dash, unless a number follows it (`21:43 + 2`: declined). Another
+/// zone-like word - two to five capital letters (PST, CET, CEST, BST) other than AND / OR - ->
+/// declined: the bridge does not guess what an abbreviation means. A comma, "and", a period or
+/// the end stays fine (no qualifier: the zone's local time).
+fn time_only_zone(clock: &str, rest: &str) -> TimeOnlyZone {
+    let mut r = TimeOnlyZone::default();
+    let ampm_period = Regex::new(r"(?i)[ap]\.\s?m\.$").unwrap();
+    if clock.ends_with('.') && !ampm_period.is_match(clock) {
+        return r;
+    }
+    let Some(lead) = time_only_zone_token_re().captures(rest) else {
+        return r;
+    };
+    let lead_len = lead.get(0).map(|m| m.end()).unwrap_or(0);
+    let mut tok = lead.name("tok").map(|m| m.as_str()).unwrap_or("");
+    let after = &rest[lead_len..];
+    // a period that ends the sentence ends the qualifier too: nothing after it is read
+    let ended = tok.ends_with('.');
+    if ended {
+        tok = tok.trim_end_matches('.');
+    }
+    let zone_word = time_only_zone_word(tok);
+    if !zone_word.is_empty() || tok.starts_with('+') || tok.starts_with('-') {
+        let mut off_text = tok[zone_word.len()..].to_string();
+        if zone_word.is_empty() && (off_text == "+" || off_text == "-") {
+            // a lone sign: a dash between words - unless a number follows it (a spaced offset)
+            if !ended && number_follows(after) {
+                r.declined = true;
+            }
+            return r;
+        }
+        if !zone_word.is_empty() && off_text.is_empty() && !ended {
+            // the offset after spaces (UTC +02:00); a lone sign there is a dash unless a number
+            // follows
+            if let Some(next) = time_only_zone_next_re().captures(after) {
+                let t2 = next.name("tok").map(|m| m.as_str()).unwrap_or("");
+                if t2 == "+" || t2 == "-" {
+                    let next_len = next.get(0).map(|m| m.end()).unwrap_or(0);
+                    if number_follows(&after[next_len..]) {
+                        r.declined = true;
+                        return r;
+                    }
+                } else {
+                    off_text = t2.trim_end_matches('.').to_string();
+                }
+            }
+        }
+        // Z takes no offset
+        if zone_word == "Z" && !off_text.is_empty() {
+            r.declined = true;
+            return r;
+        }
+        if off_text.is_empty() {
+            r.offset = FixedOffset::east_opt(0);
+            return r;
+        }
+        let Some((negative, h, mm)) = time_only_offset(&off_text) else {
+            r.declined = true;
+            return r;
+        };
+        if h > 14 || mm > 59 || h * 60 + mm > 840 {
+            r.declined = true;
+            return r;
+        }
+        let secs = (h * 3600 + mm * 60) as i32;
+        r.offset = FixedOffset::east_opt(if negative { -secs } else { secs });
+        return r;
+    }
+    if let Ok(Some(w)) = time_only_other_zone_re().captures(rest) {
+        let word = w.name("w").map(|m| m.as_str()).unwrap_or("");
+        if word != "AND" && word != "OR" {
+            r.declined = true;
+        }
+    }
+    r
+}
+
+/// Form 1b (0.6.1), a time without a date: "try again at 9:43 PM.", "try again at 21:43" (also after
+/// `resets at`, `available at`, `until`): today at that time unless that moment is more than 5
+/// minutes before the reference (the moment of parsing) - then tomorrow; a reset just passed stays
+/// passed (F06-3); both instants of a repeated wall time, the first after a spring gap (F06-4); a
+/// UTC / GMT / Z or numeric-offset qualifier is honoured, another zone word declines the wording
+/// (F06-5, F08-2).
+fn time_only_reset(
+    text: &str,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
+) -> Option<DateTime<FixedOffset>> {
+    let c = time_only_re().captures(text).ok().flatten()?;
+    let whole = c.get(0)?;
+    let mut hour: u32 = c.name("hour")?.as_str().parse().ok()?;
+    let minute: u32 = c.name("min")?.as_str().parse().ok()?;
+    let second: u32 = match c.name("sec") {
+        Some(s) => s.as_str().parse().ok()?,
+        None => 0,
+    };
+    let mut ok = minute <= 59 && second <= 59;
+    if let Some(ap) = c.name("ampm") {
+        if !(1..=12).contains(&hour) {
+            ok = false;
+        }
+        let pm = ap.as_str().eq_ignore_ascii_case("p");
+        if hour == 12 {
+            hour = 0;
+        }
+        if pm {
+            hour += 12;
+        }
+    } else if hour > 23 {
+        ok = false;
+    }
+    if !ok {
+        return None;
+    }
+    let qualifier = time_only_zone(whole.as_str(), &text[whole.end()..]);
+    if qualifier.declined {
+        return None;
+    }
+    let tod = NaiveTime::from_hms_opt(hour, minute, second)?;
+    let at = select_time_only_reset(tod, reference, zone, qualifier.offset)?;
+    // a qualified time is an instant: shown in the zone, as an ISO instant is
+    if qualifier.offset.is_some() {
+        return Some(to_zone_time(at, reference, zone));
+    }
+    Some(at)
+}
+
+/// Form 1, the Codex wording: a month-name date with a wall-clock time ("try again at Sep 28th,
+/// 2026 8:35 PM"); without a year the reference's year, the next one when that date is more than
+/// a day past. A wording that names no valid time falls through to the next form.
+fn dated_reset(
+    text: &str,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
+) -> Option<DateTime<FixedOffset>> {
+    let codex = Regex::new(
+        r"(?i)(?:try\s+again\s+(?:at|on|after)|resets?\s+(?:at|on)|available\s+(?:again\s+)?(?:at|on|after)|until)\s+(?P<mon>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(?P<day>[0-9]{1,2})(?:st|nd|rd|th)?\b,?\s*(?:(?P<year>[0-9]{4})\b,?\s*)?(?:at\s+)?(?P<hour>[0-9]{1,2}):(?P<min>[0-9]{2})(?::(?P<sec>[0-9]{2}))?(?:\s*(?P<ampm>[ap])\.?\s?m\b\.?)?"
+    ).unwrap();
+    let c = codex.captures(text)?;
+    let months = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let mon3 = c["mon"][..3].to_lowercase();
+    let month = months.iter().position(|m| *m == mon3)? as u32 + 1;
+    let day: u32 = c["day"].parse().ok()?;
+    let mut hour: u32 = c["hour"].parse().ok()?;
+    let minute: u32 = c["min"].parse().ok()?;
+    let second: u32 = match c.name("sec") {
+        Some(s) => s.as_str().parse().ok()?,
+        None => 0,
+    };
+    if let Some(ap) = c.name("ampm") {
+        if !(1..=12).contains(&hour) {
+            return None;
+        }
+        let pm = ap.as_str().eq_ignore_ascii_case("p");
+        if hour == 12 {
+            hour = 0;
+        }
+        if pm {
+            hour += 12;
+        }
+    }
+    let build = |year: i32| -> Option<DateTime<FixedOffset>> {
+        let wall = NaiveDate::from_ymd_opt(year, month, day)?.and_hms_opt(hour, minute, second)?;
+        from_wall_clock(wall, reference, zone)
+    };
+    if let Some(y) = c.name("year") {
+        return build(y.as_str().parse().ok()?);
+    }
+    let at = build(reference.year())?;
+    if at < reference - Duration::days(1) {
+        return build(reference.year() + 1);
+    }
+    Some(at)
+}
+
+/// Form 2, an ISO timestamp after try again / retry / reset / until / available: with an offset
+/// that instant (shown in the zone), without one a wall-clock time of the zone.
+fn iso_reset(
+    text: &str,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
+) -> Option<DateTime<FixedOffset>> {
+    let iso = Regex::new(r"(?i)(?:try\s+again|retry|resets?|until|available)[^0-9\r\n]{0,24}?(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})[T ](?P<time>[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?)(?P<tz>Z|[+-][0-9]{2}:?[0-9]{2})?").unwrap();
+    let c = iso.captures(text)?;
+    let time = if c["time"].len() == 5 {
+        format!("{}:00", &c["time"])
+    } else {
+        c["time"].to_string()
+    };
+    let stamp = format!("{}T{}", &c["date"], time);
+    if let Some(tz) = c.name("tz") {
+        let mut tzs = tz.as_str().to_string();
+        if tzs.len() == 5 && tzs != "Z" && tzs != "z" {
+            tzs = format!("{}:{}", &tzs[..3], &tzs[3..]);
+        }
+        let dto = DateTime::parse_from_rfc3339(&format!("{stamp}{}", tzs.to_uppercase())).ok()?;
+        return Some(to_zone_time(dto, reference, zone));
+    }
+    let format = if time.contains('.') {
+        "%Y-%m-%dT%H:%M:%S%.f"
+    } else {
+        "%Y-%m-%dT%H:%M:%S"
+    };
+    let wall = NaiveDateTime::parse_from_str(&stamp, format).ok()?;
+    from_wall_clock(wall, reference, zone)
+}
+
+/// `Get-RetryAfter` on the read path (`-ReferenceOffset`): the reset time a message names, with
+/// the offset of `reference` (the failure's own `when` - the reader's zone may not be the
+/// recorder's), or `None`.
 pub fn retry_after_ref(
     message: &str,
     reference: DateTime<FixedOffset>,
+) -> Option<DateTime<FixedOffset>> {
+    retry_after_with(message, reference, None)
+}
+
+/// `Get-RetryAfter` at write time (`New-ProviderFailure`, on the machine that saw the failure):
+/// a wall-clock reset time is read with the rules of `zone` (`chrono::Local` there; daylight
+/// saving included - F15-1, and for a time without a date the 0.6.1 rules), every instant is
+/// shown in it. `reference` is the moment of parsing (the consult clock).
+pub fn retry_after_in(
+    message: &str,
+    reference: DateTime<FixedOffset>,
+    zone: &dyn ResetZone,
+) -> Option<DateTime<FixedOffset>> {
+    retry_after_with(message, reference, Some(zone))
+}
+
+/// `Get-RetryAfter`: the reset time a message names, in this order - 1. the Codex month-name
+/// wording, 2. an ISO timestamp, 1b. a time without a date (0.6.1), 3. `Retry-After: N`, 4. "try
+/// again in <parts>", 5. a compact duration, 6. Google's "retry in", 7. gRPC `retryDelay`, 8. a
+/// rolling window (an upper bound). `zone` `None` is `-ReferenceOffset`.
+fn retry_after_with(
+    message: &str,
+    reference: DateTime<FixedOffset>,
+    zone: Option<&dyn ResetZone>,
 ) -> Option<DateTime<FixedOffset>> {
     if message.is_empty() {
         return None;
     }
     let text = message.replace(['\u{2018}', '\u{2019}'], "'");
-    let off = *reference.offset();
+    let shown = |at: DateTime<FixedOffset>| to_zone_time(at, reference, zone);
 
-    // 1. Codex month-name wall clock.
-    let codex = Regex::new(
-        r"(?i)(?:try\s+again\s+(?:at|on|after)|resets?\s+(?:at|on)|available\s+(?:again\s+)?(?:at|on|after)|until)\s+(?P<mon>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(?P<day>[0-9]{1,2})(?:st|nd|rd|th)?,?\s*(?:(?P<year>[0-9]{4}),?\s*)?(?:at\s+)?(?P<hour>[0-9]{1,2}):(?P<min>[0-9]{2})(?::(?P<sec>[0-9]{2}))?(?:\s*(?P<ampm>[ap])\.?\s?m\b\.?)?"
-    ).unwrap();
-    if let Some(c) = codex.captures(&text) {
-        let months = [
-            "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
-        ];
-        let mon3 = &c["mon"][..3].to_lowercase();
-        if let Some(month) = months.iter().position(|m| m == mon3).map(|i| i as u32 + 1) {
-            let day: u32 = c["day"].parse().unwrap();
-            let mut hour: i64 = c["hour"].parse().unwrap();
-            let minute: u32 = c["min"].parse().unwrap();
-            let second: u32 = c
-                .name("sec")
-                .map(|m| m.as_str().parse().unwrap())
-                .unwrap_or(0);
-            let mut ok = true;
-            if let Some(ap) = c.name("ampm") {
-                if !(1..=12).contains(&hour) {
-                    ok = false;
-                }
-                let pm = ap.as_str().eq_ignore_ascii_case("p");
-                if hour == 12 {
-                    hour = 0;
-                }
-                if pm {
-                    hour += 12;
-                }
-            }
-            if ok {
-                let build = |year: i32| -> Option<DateTime<FixedOffset>> {
-                    let nd = NaiveDate::from_ymd_opt(year, month, day)?.and_hms_opt(
-                        hour as u32,
-                        minute,
-                        second,
-                    )?;
-                    off.from_local_datetime(&nd).single()
-                };
-                if let Some(y) = c.name("year") {
-                    let year: i32 = y.as_str().parse().unwrap();
-                    return build(year);
-                }
-                if let Some(at) = build(reference.year()) {
-                    if at < reference - Duration::days(1) {
-                        return build(reference.year() + 1);
-                    }
-                    return Some(at);
-                }
-            }
-        }
+    if let Some(at) = dated_reset(&text, reference, zone) {
+        return Some(at);
     }
-
-    // 2. ISO after try again / retry / reset / until / available.
-    let iso = Regex::new(r"(?i)(?:try\s+again|retry|resets?|until|available)[^0-9\r\n]{0,24}?(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2})[T ](?P<time>[0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\.[0-9]+)?)?)(?P<tz>Z|[+-][0-9]{2}:?[0-9]{2})?").unwrap();
-    if let Some(c) = iso.captures(&text) {
-        let stamp = format!("{}T{}", &c["date"], &c["time"]);
-        if let Some(tz) = c.name("tz") {
-            let mut tzs = tz.as_str().to_string();
-            if tzs.len() == 5 && tzs != "Z" && tzs != "z" {
-                tzs = format!("{}:{}", &tzs[..3], &tzs[3..]);
-            }
-            let full = format!("{stamp}{}", tzs.to_uppercase());
-            if let Ok(dto) = DateTime::parse_from_rfc3339(&full) {
-                return Some(dto.with_timezone(&off));
-            }
-        } else {
-            // wall clock in reference offset
-            let secs = if c["time"].len() <= 5 {
-                format!("{}:00", &c["time"])
-            } else {
-                c["time"].to_string()
-            };
-            let nd = format!("{}T{}", &c["date"], secs);
-            if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&nd, "%Y-%m-%dT%H:%M:%S") {
-                if let Some(dt) = off.from_local_datetime(&naive).single() {
-                    return Some(dt);
-                }
-            }
-        }
+    if let Some(at) = iso_reset(&text, reference, zone) {
+        return Some(at);
+    }
+    if let Some(at) = time_only_reset(&text, reference, zone) {
+        return Some(at);
     }
 
     // 3. retry-after: N unit (negative lookahead -> fancy-regex)
@@ -312,7 +727,9 @@ pub fn retry_after_ref(
     if let Ok(Some(c)) = after.captures(&text) {
         let n: i64 = c.name("n").unwrap().as_str().parse().unwrap();
         let unit = c.name("u").map(|m| m.as_str()).unwrap_or("s");
-        return Some(reference + Duration::seconds(duration_seconds(n, unit)));
+        return Some(shown(
+            reference + Duration::seconds(duration_seconds(n, unit)),
+        ));
     }
 
     // 4. try again / resets in <parts>
@@ -323,14 +740,14 @@ pub fn retry_after_ref(
         for p in part.captures_iter(&c["parts"]) {
             total += duration_seconds(p["n"].parse().unwrap(), &p["u"]);
         }
-        return Some(reference + Duration::seconds(total));
+        return Some(shown(reference + Duration::seconds(total)));
     }
 
     // 5. compact duration (negative lookahead -> fancy-regex)
     let compact = fancy_regex::Regex::new(r"(?i)\b(?:try\s+again|resets?|retry|available(?:\s+again)?)\s+in\s+(?P<dur>(?:[0-9]+(?:\.[0-9]+)?(?:w|d|h|ms|m|s))+)(?![A-Za-z0-9])").unwrap();
     if let Ok(Some(c)) = compact.captures(&text) {
         if let Some(secs) = compact_duration_seconds(c.name("dur").unwrap().as_str()) {
-            return Some(reference + Duration::seconds(secs.ceil() as i64));
+            return Some(shown(reference + Duration::seconds(secs.ceil() as i64)));
         }
     }
 
@@ -338,7 +755,7 @@ pub fn retry_after_ref(
     let retry_in = fancy_regex::Regex::new(r"(?i)\bretry\s+in\s+(?P<dur>(?:[0-9]+(?:\.[0-9]+)?(?:ms|h|m|s))+(?![A-Za-z0-9])|[0-9]+(?:\.[0-9]+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?)\b(?:(?:\s*,\s*|\s+and\s+|\s+)[0-9]+(?:\.[0-9]+)?\s*(?:hours?|hrs?|minutes?|mins?|seconds?|secs?)\b)*)").unwrap();
     if let Ok(Some(c)) = retry_in.captures(&text) {
         if let Some(secs) = go_duration_seconds(c.name("dur").unwrap().as_str()) {
-            return Some(reference + Duration::seconds(secs.ceil() as i64));
+            return Some(shown(reference + Duration::seconds(secs.ceil() as i64)));
         }
     }
 
@@ -351,16 +768,16 @@ pub fn retry_after_ref(
             c.name("dur").and_then(|d| go_duration_seconds(d.as_str()))
         };
         if let Some(s) = secs {
-            return Some(reference + Duration::seconds(s.ceil() as i64));
+            return Some(shown(reference + Duration::seconds(s.ceil() as i64)));
         }
     }
 
     // 8. rolling window
     let window = Regex::new(r"(?i)\bresets?\s+when\s+the\s+current\s+(?P<n>[0-9]+)[- ](?P<u>minute|hour|day|week)s?\s+window\s+ends").unwrap();
     if let Some(c) = window.captures(&text) {
-        return Some(
+        return Some(shown(
             reference + Duration::seconds(duration_seconds(c["n"].parse().unwrap(), &c["u"])),
-        );
+        ));
     }
 
     None
@@ -1454,5 +1871,169 @@ mod machine_health_tests {
         assert!(endpoints.contains(&"fp-still-out"));
         assert!(health.running.is_empty());
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod retry_after_tests {
+    use super::*;
+
+    /// Berlin by its IANA id (the plugin's harness: `W. Europe Standard Time` / `Europe/Berlin`).
+    fn berlin() -> chrono_tz::Tz {
+        "Europe/Berlin".parse().expect("the Europe/Berlin zone")
+    }
+
+    fn dto(s: &str) -> DateTime<FixedOffset> {
+        DateTime::parse_from_rfc3339(s).unwrap()
+    }
+
+    /// EVERY sample of the plugin's `harness-roster.ps1` UNIT `Get-RetryAfter` check (v0.6.1, 69
+    /// samples): (name, message, reference, expected ISO or "" for none, read time). A write-time
+    /// sample reads in Berlin, a read-time one (`-ReferenceOffset`) in the reference's offset.
+    const SAMPLES: &[(&str, &str, &str, &str, bool)] = &[
+        ("Codex wording, curly apostrophe", "You\u{2019}ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 28th, 2026 8:35 PM.", "2026-09-24T12:54:23.000+02:00", "2026-09-28T20:35:00+02:00", false),
+        ("read time (-ReferenceOffset): Codex wording read in the reference offset (-05:00)", "You\u{2019}ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Sep 28th, 2026 8:35 PM.", "2026-09-24T12:54:23.000-05:00", "2026-09-28T20:35:00-05:00", true),
+        ("DST: Berlin failure 2026-10-25T01:00+02:00, reset \"Oct 26th, 2026 8:35 PM\" -> +01:00 (19:35Z)", "You\u{2019}ve hit your usage limit ... try again at Oct 26th, 2026 8:35 PM.", "2026-10-25T01:00:00.000+02:00", "2026-10-26T20:35:00+01:00", false),
+        ("DST, read time (-ReferenceOffset): the reference offset +02:00 (the documented fallback)", "try again at Oct 26th, 2026 8:35 PM.", "2026-10-25T01:00:00.000+02:00", "2026-10-26T20:35:00+02:00", true),
+        ("DST gap: 2026-03-29 02:30 does not exist in Berlin -> the offset after (+02:00)", "try again at Mar 29th, 2026 2:30 AM", "2026-03-28T12:00:00.000+01:00", "2026-03-29T02:30:00+02:00", false),
+        ("DST overlap: 2026-10-25 02:30 is ambiguous in Berlin -> the offset before (+02:00)", "try again at Oct 25th, 2026 2:30 AM", "2026-10-24T12:00:00.000+02:00", "2026-10-25T02:30:00+02:00", false),
+        ("a duration across the DST change is shown in the zone offset then (same instant)", "try again in 2 days", "2026-10-24T12:00:00.000+02:00", "2026-10-26T11:00:00+01:00", false),
+        ("straight apostrophe, full month, no ordinal", "You've hit your usage limit ... try again at September 28, 2026 8:35 PM", "2026-09-24T12:54:23.000+02:00", "2026-09-28T20:35:00+02:00", false),
+        ("resets at, 12 AM = midnight", "Limit reached; resets at Oct 1st, 2026 12:05 AM.", "2026-09-24T12:54:23.000+02:00", "2026-10-01T00:05:00+02:00", false),
+        ("until + 24-hour clock", "blocked until Sep 30, 2026 17:45", "2026-09-24T12:54:23.000+02:00", "2026-09-30T17:45:00+02:00", false),
+        ("missing year -> the reference year", "try again at Sep 28th 8:35 PM.", "2026-09-24T12:54:23.000+02:00", "2026-09-28T20:35:00+02:00", false),
+        ("missing year, date already past -> next year", "try again at Jan 3rd, 9:00 AM", "2026-12-30T10:00:00.000+01:00", "2027-01-03T09:00:00+01:00", false),
+        ("ISO after \"until\" keeps its own offset", "rate limited until 2026-09-25T08:00:00Z", "2026-09-24T12:54:23.000+02:00", "2026-09-25T10:00:00+02:00", false),
+        ("ISO without offset -> a wall-clock time of the zone", "Retry at 2026-09-25 08:00:00 please", "2026-09-24T12:54:23.000+02:00", "2026-09-25T08:00:00+02:00", false),
+        ("Retry after 30 seconds", "Rate limit exceeded. Retry after 30 seconds.", "2026-09-24T12:54:23.000+02:00", "2026-09-24T12:54:53+02:00", false),
+        ("Retry-After: 120 (no unit = seconds)", "429 Too Many Requests; Retry-After: 120", "2026-09-24T12:54:23.000+02:00", "2026-09-24T12:56:23+02:00", false),
+        ("try again in 5 minutes", "Please try again in 5 minutes.", "2026-09-24T12:54:23.000+02:00", "2026-09-24T12:59:23+02:00", false),
+        ("resets in 1 hour 30 minutes", "quota resets in 1 hour 30 minutes", "2026-09-24T12:54:23.000+02:00", "2026-09-24T14:24:23+02:00", false),
+        ("nothing -> null", "the model produced nothing", "2026-09-24T12:54:23.000+02:00", "", false),
+        ("mixed days + hours + minutes are summed", "You've hit your usage limit. Upgrade to Pro or try again in 3 days 1 hour 7 minutes.", "2026-09-24T12:54:23.000+02:00", "2026-09-27T14:01:23+02:00", false),
+        ("resets in 2 days", "Your quota resets in 2 days.", "2026-09-24T12:54:23.000+02:00", "2026-09-26T12:54:23+02:00", false),
+        ("retry after 1 week", "Plan exhausted - retry after 1 week", "2026-09-24T12:54:23.000+02:00", "2026-10-01T12:54:23+02:00", false),
+        ("try again in 2 weeks, 1 day", "try again in 2 weeks, 1 day", "2026-09-24T12:54:23.000+02:00", "2026-10-09T12:54:23+02:00", false),
+        ("no reset time named -> null", "You've hit your usage limit. Upgrade to Pro or try again later.", "2026-09-24T12:54:23.000+02:00", "", false),
+        ("time only, still ahead today -> today", "You\u{2019}ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 9:43 PM.", "2026-10-07T21:00:00.000+02:00", "2026-10-07T21:43:00+02:00", false),
+        ("time only, already past -> tomorrow (the day rollover)", "You\u{2019}ve hit your usage limit. ... or try again at 9:43 PM.", "2026-10-07T22:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F06-3 time only, 24-hour clock, parsed 0.5 s after the minute -> today (passed)", "try again at 21:43", "2026-10-07T21:43:00.500+02:00", "2026-10-07T21:43:00+02:00", false),
+        ("F06-3 time only, 24-hour clock, 30 s past -> today (passed)", "try again at 21:43", "2026-10-07T21:43:30.000+02:00", "2026-10-07T21:43:00+02:00", false),
+        ("F06-3 time only, 9:43 PM, 4 min past -> today (passed)", "try again at 9:43 PM.", "2026-10-07T21:47:00.000+02:00", "2026-10-07T21:43:00+02:00", false),
+        ("F06-3 time only, 6 min past -> tomorrow", "try again at 21:43", "2026-10-07T21:49:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F06-3 time only, 23:59 parsed at 00:02 -> yesterday's (passed 3 min ago), not tonight's", "try again at 23:59", "2026-10-08T00:02:00.000+02:00", "2026-10-07T23:59:00+02:00", false),
+        ("F06-4 Berlin fall-back 2026-10-25, reference the SECOND 02:15 (+01:00), \"2:30 AM\" -> the second 02:30 that day (+01:00), 15 min away", "try again at 2:30 AM", "2026-10-25T02:15:00.000+01:00", "2026-10-25T02:30:00+01:00", false),
+        ("F06-4 Berlin fall-back, reference the FIRST 02:15 (+02:00), \"2:30 AM\" -> the first 02:30 (+02:00)", "try again at 2:30 AM", "2026-10-25T02:15:00.000+02:00", "2026-10-25T02:30:00+02:00", false),
+        ("F06-4 Berlin spring-forward 2026-03-29, reference 01:50 (+01:00), \"2:30 AM\" (inside the gap) -> 03:00 (+02:00)", "try again at 2:30 AM", "2026-03-29T01:50:00.000+01:00", "2026-03-29T03:00:00+02:00", false),
+        ("F06-5 \"resets at 21:43 UTC\" -> 21:43Z (23:43+02:00), not 21:43 local", "Limit reached; resets at 21:43 UTC.", "2026-10-08T21:00:00.000+02:00", "2026-10-08T23:43:00+02:00", false),
+        ("F06-5 \"9:43 PM GMT.\" -> 21:43Z", "try again at 9:43 PM GMT.", "2026-10-08T21:00:00.000+02:00", "2026-10-08T23:43:00+02:00", false),
+        ("F06-5 \"21:43Z\" -> 21:43Z", "try again at 21:43Z", "2026-10-08T21:00:00.000+02:00", "2026-10-08T23:43:00+02:00", false),
+        ("F06-5 \"23:30 UTC\" parsed at 01:00+02:00 (23:00Z) -> the UTC day's 23:30Z, 30 min away", "resets at 23:30 UTC", "2026-10-08T01:00:00.000+02:00", "2026-10-08T01:30:00+02:00", false),
+        ("F06-5 \"21:43 +02:00\" -> that offset", "try again at 21:43 +02:00", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F06-5 \"21:43 -0500\" -> 02:43Z next day (04:43+02:00)", "until 21:43 -0500", "2026-10-08T21:00:00.000+02:00", "2026-10-09T04:43:00+02:00", false),
+        ("F06-5 \"23:43 +2\" -> that offset", "available at 23:43 +2", "2026-10-08T21:00:00.000+02:00", "2026-10-08T23:43:00+02:00", false),
+        ("F06-5 \"9:43 PM PST\" -> null (another zone word: not parsed)", "try again at 9:43 PM PST", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F06-5 \"21:43 CET.\" -> null", "until 21:43 CET.", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F06-5 \"9:43 PM PDT\" -> null", "try again at 9:43 PM PDT", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F06-5 \"21:43 (BST)\" -> null", "resets at 21:43 (BST)", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F06-5 a trailing comma, \"and\", a period and the end stay fine (local)", "try again at 21:43, or upgrade", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F06-5 \"... 21:43 and ...\" -> local", "try again at 21:43 and retry", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F06-5 \"9:43 PM. API keys ...\" - the period ends the sentence -> local", "try again at 9:43 PM. API keys are not affected.", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F08-2 \"21:43 UTC+05:3\" (an incomplete minute) -> null, not UTC+05", "resets at 21:43 UTC+05:3", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 +02:000\" (excess digits) -> null, not +02", "resets at 21:43 +02:000", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 UTC+oops\" (letters after the sign) -> null, not UTC", "resets at 21:43 UTC+oops", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 UTC+\" (a dangling sign) -> null", "try again at 21:43 UTC+", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 +15:00\" (beyond 14 hours) -> null", "until 21:43 +15:00", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 +02:60\" (minutes of 60) -> null", "until 21:43 +02:60", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 +020\" (three digits) -> null", "until 21:43 +020", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 Z+02\" (Z takes no offset) -> null", "try again at 21:43 Z+02", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 + 2\" (a spaced sign before a number) -> null", "try again at 21:43 + 2", "2026-10-08T21:00:00.000+02:00", "", false),
+        ("F08-2 \"21:43 UTC+05:30.\" (a complete offset, the sentence's period) -> 16:13Z next day", "try again at 21:43 UTC+05:30.", "2026-10-08T21:00:00.000+02:00", "2026-10-09T18:13:00+02:00", false),
+        ("F08-2 \"21:43 +0200\" -> that offset", "until 21:43 +0200", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F08-2 \"21:43 +02\" -> that offset", "until 21:43 +02", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F08-2 \"21:43 -05:30\" -> 03:13Z next day (05:13+02:00)", "until 21:43 -05:30", "2026-10-08T21:00:00.000+02:00", "2026-10-09T05:13:00+02:00", false),
+        ("F08-2 \"21:43 UTC +02:00\" (the offset after a space) -> that offset", "resets at 21:43 UTC +02:00", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F08-2 \"21:43 (GMT+2)\" -> that offset", "resets at 21:43 (GMT+2)", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("F08-2 \"21:43 UTC!\" -> 21:43Z", "resets at 21:43 UTC!", "2026-10-08T21:00:00.000+02:00", "2026-10-08T23:43:00+02:00", false),
+        ("F08-2 \"21:43 - or upgrade\" (a dash, no qualifier) -> local", "try again at 21:43 - or upgrade", "2026-10-08T21:00:00.000+02:00", "2026-10-08T21:43:00+02:00", false),
+        ("time only, 12:05 AM after 23:00 -> tomorrow 00:05", "Limit reached; resets at 12:05 AM.", "2026-10-07T23:00:00.000+02:00", "2026-10-08T00:05:00+02:00", false),
+        ("time only, tomorrow across the DST change -> the offset then (+01:00)", "try again at 3:30 AM", "2026-10-24T23:00:00.000+02:00", "2026-10-25T03:30:00+01:00", false),
+        ("time only, read time (-ReferenceOffset): the reference's day and offset, rolled over", "try again at 9:43 PM.", "2026-10-07T22:00:00.000-05:00", "2026-10-08T21:43:00-05:00", true),
+        ("time only, not a clock time (13:43 PM) -> null", "try again at 13:43 PM", "2026-09-24T12:54:23.000+02:00", "", false),
+    ];
+
+    #[test]
+    fn get_retry_after_plugin_unit_samples() {
+        assert_eq!(SAMPLES.len(), 69);
+        let zone = berlin();
+        let mut bad: Vec<String> = Vec::new();
+        for (name, msg, reference, want, ref_offset) in SAMPLES {
+            let r = dto(reference);
+            let got = if *ref_offset {
+                retry_after_ref(msg, r)
+            } else {
+                retry_after_in(msg, r, &zone)
+            };
+            let got = got.map(format_offset_iso).unwrap_or_default();
+            if got != *want {
+                bad.push(format!("{name}: got '{got}', want '{want}'"));
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    /// The harness-roster TIMEONLY section's three recorded resets (parsed at the consult clock,
+    /// in the machine's zone there - Berlin here): 21:00 -> today 21:43; 22:00 -> tomorrow 21:43
+    /// (the day rollover); 21:43:30 -> today 21:43 (F06-3: passed, the hold ends at once).
+    #[test]
+    fn timeonly_section_resets() {
+        let zone = berlin();
+        let msg = "You\u{2019}ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 9:43 PM.";
+        let cases = [
+            ("2026-10-07T21:00:00+02:00", "2026-10-07T21:43:00+02:00"),
+            ("2026-10-07T22:00:00+02:00", "2026-10-08T21:43:00+02:00"),
+            ("2026-10-07T21:43:30+02:00", "2026-10-07T21:43:00+02:00"),
+        ];
+        for (reference, want) in cases {
+            let got = retry_after_in(msg, dto(reference), &zone).map(format_offset_iso);
+            assert_eq!(got.as_deref(), Some(want), "parsed at {reference}");
+        }
+        // the hold: at 21:40 the next day the reset (tomorrow 21:43) is still ahead, at 21:44 past
+        let until = dto("2026-10-08T21:43:00+02:00");
+        assert!(dto("2026-10-08T21:40:00+02:00") < until);
+        assert!(dto("2026-10-08T21:44:00+02:00") > until);
+    }
+
+    #[test]
+    fn time_only_qualifier_tokens() {
+        let off = |h: i32, m: i32| FixedOffset::east_opt(h * 3600 + h.signum() * m * 60);
+        let cases: [(&str, &str, Option<FixedOffset>, bool); 12] = [
+            ("21:43", " UTC.", off(0, 0), false),
+            ("21:43", " (GMT+2)", off(2, 0), false),
+            ("21:43", " UTC +02:00", off(2, 0), false),
+            ("21:43", " -05:30", off(-5, 30), false),
+            ("21:43", " +0200", off(2, 0), false),
+            ("21:43", " Z+02", None, true),
+            ("21:43", " + 2", None, true),
+            ("21:43", " - or upgrade", None, false),
+            ("21:43", " UTC + 2", None, true),
+            ("9:43 PM.", " PST", None, false),
+            ("9:43 p.m.", " PST", None, true),
+            ("21:43", " AND more", None, false),
+        ];
+        for (clock, rest, offset, declined) in cases {
+            let z = time_only_zone(clock, rest);
+            assert_eq!((z.offset, z.declined), (offset, declined), "{clock}{rest}");
+        }
+    }
+
+    #[test]
+    fn dated_wording_needs_a_word_boundary_after_the_day() {
+        // "until jun 21:43" is no month-name date (the plugin's \b after the day): never Jun 2 1:43
+        let r = dto("2026-10-08T21:00:00+02:00");
+        assert_eq!(
+            retry_after_ref("blocked until jun 21:43", r).map(format_offset_iso),
+            None
+        );
     }
 }
