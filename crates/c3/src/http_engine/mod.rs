@@ -147,11 +147,18 @@ impl HttpAuth {
     }
 }
 
-/// The hosts `C3_HTTP_AUTH_PROXY` names: split on commas, trimmed, lower-cased, empties dropped.
+/// The hosts `C3_HTTP_AUTH_PROXY` names: split on commas, trimmed, canonicalised like a URL host
+/// (lower-cased; a Unicode name becomes its punycode form, as `HttpConfig::host()` reports it —
+/// F07-4), empties dropped. An entry that is not a valid host is kept lower-cased, so it matches
+/// nothing rather than something unintended.
 pub fn proxy_auth_hosts_from(list: &str) -> Vec<String> {
     list.split(',')
-        .map(|h| h.trim().trim_end_matches('.').to_ascii_lowercase())
+        .map(|h| h.trim().trim_end_matches('.'))
         .filter(|h| !h.is_empty())
+        .map(|h| match url::Host::parse(h) {
+            Ok(host) => host.to_string().to_ascii_lowercase(),
+            Err(_) => h.to_ascii_lowercase(),
+        })
         .collect()
 }
 
@@ -184,6 +191,7 @@ pub fn env_proxy_applies(url: &str) -> bool {
         Err(_) => return false,
     };
     let host = parsed.host_str().unwrap_or("");
+    let port = parsed.port_or_known_default().unwrap_or(0);
     let env = |name: &str| {
         std::env::var(name)
             .ok()
@@ -194,6 +202,7 @@ pub fn env_proxy_applies(url: &str) -> bool {
     proxy_decision(
         parsed.scheme(),
         host,
+        port,
         env("ALL_PROXY").as_deref(),
         env("HTTPS_PROXY").as_deref(),
         env("HTTP_PROXY").as_deref(),
@@ -201,12 +210,61 @@ pub fn env_proxy_applies(url: &str) -> bool {
     )
 }
 
+/// Whether a URL host (an IP literal, bracketed or not) is a loopback address: `127.0.0.0/8`,
+/// `::1`, and an IPv4-mapped IPv6 loopback such as `::ffff:127.0.0.1` (F07-3).
+fn is_loopback_literal(host: &str) -> bool {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    match bare.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => v4.is_loopback(),
+        Ok(std::net::IpAddr::V6(v6)) => {
+            v6.is_loopback() || v6.to_ipv4_mapped().map(|v4| v4.is_loopback()) == Some(true)
+        }
+        Err(_) => false,
+    }
+}
+
+/// One `NO_PROXY` entry split into its host part (lower-cased, without brackets, without a
+/// leading or trailing dot) and its optional port: `host`, `host:port`, `[v6]`, `[v6]:port`.
+/// `None` for an entry that is empty after trimming.
+fn no_proxy_entry(entry: &str) -> Option<(String, Option<u16>)> {
+    let e = entry.trim().to_ascii_lowercase();
+    if e.is_empty() {
+        return None;
+    }
+    let (host, port) = if let Some(rest) = e.strip_prefix('[') {
+        // A bracketed IPv6 literal: the address up to `]`, then an optional `:port` (F07-1).
+        let (addr, after) = rest.split_once(']')?;
+        let port = after.strip_prefix(':').and_then(|p| p.parse::<u16>().ok());
+        (addr.to_string(), port)
+    } else if e.matches(':').count() > 1 {
+        // A bare IPv6 literal (no brackets, so no port can be told apart).
+        (e, None)
+    } else {
+        match e.rsplit_once(':') {
+            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
+                (h.to_string(), p.parse::<u16>().ok())
+            }
+            _ => (e, None),
+        }
+    };
+    let host = host
+        .trim_start_matches('.')
+        .trim_end_matches('.')
+        .to_string();
+    if host.is_empty() {
+        return None;
+    }
+    Some((host, port))
+}
+
 /// The pure proxy rule behind [`env_proxy_applies`]: a non-empty `ALL_PROXY`, else the variable
-/// of the scheme, selects a proxy; `NO_PROXY` (`*`, a host, or a domain suffix with or without a
-/// leading dot, each optionally with a port) excludes the host. CIDR ranges are not understood.
+/// of the scheme, selects a proxy; `NO_PROXY` (`*`, a host or IP literal, or a domain suffix with
+/// or without a leading dot, each optionally with a port that then must equal the request's port
+/// — F07-2) excludes the host. A loopback host is never proxied. CIDR ranges are not understood.
 pub(crate) fn proxy_decision(
     scheme: &str,
     host: &str,
+    port: u16,
     all_proxy: Option<&str>,
     https_proxy: Option<&str>,
     http_proxy: Option<&str>,
@@ -223,39 +281,26 @@ pub(crate) fn proxy_decision(
     }
     let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
     // Loopback is never proxied (a test mock, a local server): a proxy cannot reach it anyway.
-    if host == "localhost" || host.starts_with("127.") || host == "[::1]" || host == "::1" {
+    if host == "localhost" || is_loopback_literal(&host) {
         return false;
     }
+    let bare_host = host.trim_start_matches('[').trim_end_matches(']');
     let Some(list) = no_proxy else {
         return true;
     };
     for entry in list.split(',') {
-        let e = entry.trim().to_ascii_lowercase();
-        if e.is_empty() {
-            continue;
-        }
-        if e == "*" {
+        if entry.trim() == "*" {
             return false;
         }
-        // `host:port` → `host`; a bracketed IPv6 literal keeps its brackets.
-        let e = if e.starts_with('[') {
-            e.split("]:")
-                .next()
-                .map(|s| s.trim_end_matches(']'))
-                .unwrap_or(&e)
-                .to_string()
-        } else {
-            e.rsplit_once(':')
-                .filter(|(_, p)| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-                .map(|(h, _)| h.to_string())
-                .unwrap_or(e)
-        };
-        let e = e.trim_start_matches('.').trim_end_matches('.');
-        if e.is_empty() {
+        let Some((e, e_port)) = no_proxy_entry(entry) else {
             continue;
+        };
+        if let Some(p) = e_port {
+            if p != port {
+                continue;
+            }
         }
-        let bracketed = host.trim_start_matches('[').trim_end_matches(']');
-        if host == e || bracketed == e || host.ends_with(&format!(".{e}")) {
+        if bare_host == e || host.ends_with(&format!(".{e}")) {
             return false;
         }
     }
@@ -679,7 +724,7 @@ impl HttpEngine {
             ),
         );
 
-        let (outcome, warnings) = self.post(
+        let (outcome, mut warnings) = self.post(
             key.as_deref(),
             proxy,
             tls,
@@ -688,6 +733,19 @@ impl HttpEngine {
             &events_path,
             label,
         );
+        // (F07-5) The header-less mode rests on a proxy that attaches the credential; when no
+        // proxy applies to this request the credential-less request is said out loud, in the
+        // ledger's warnings, rather than refused (a transparent egress proxy that the environment
+        // does not name is a real deployment).
+        if auth == HttpAuth::Proxy && !proxy {
+            warnings.insert(
+                0,
+                format!(
+                    "proxy auth without a proxy: {AUTH_PROXY_ENV} lists {}, but no proxy applies to this request (no HTTPS_PROXY/ALL_PROXY, NO_PROXY excludes the host, or a loopback host), so it went out with no credential",
+                    self.config.host()
+                ),
+            );
+        }
         Ok(HttpAttempt {
             outcome,
             pack_md,
@@ -1353,6 +1411,21 @@ mod tests {
     fn proxy_auth_host_list_is_parsed_and_matched_exactly_or_by_subdomain() {
         let hosts = proxy_auth_hosts_from(" openrouter.ai, ,API.Example.COM., ");
         assert_eq!(hosts, vec!["openrouter.ai", "api.example.com"]);
+        // (F07-4) A Unicode spelling canonicalises to the punycode host a parsed URL reports.
+        let idn = HttpConfig {
+            base_url: "https://bücher.example/v1".to_string(),
+            model: "m".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(idn.host(), "xn--bcher-kva.example");
+        assert!(host_uses_proxy_auth(
+            &idn.host(),
+            &proxy_auth_hosts_from("bücher.example")
+        ));
+        assert!(host_uses_proxy_auth(
+            &idn.host(),
+            &proxy_auth_hosts_from("XN--BCHER-KVA.example")
+        ));
         assert!(host_uses_proxy_auth("openrouter.ai", &hosts));
         assert!(host_uses_proxy_auth("OpenRouter.AI.", &hosts));
         assert!(host_uses_proxy_auth("eu.openrouter.ai", &hosts));
@@ -1457,49 +1530,34 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
     #[test]
     fn proxy_decision_follows_scheme_and_no_proxy() {
         let p = Some("http://127.0.0.1:3128");
+        let d = |scheme: &str, host: &str, all, https, http, no| {
+            let port = if scheme == "https" { 443 } else { 80 };
+            proxy_decision(scheme, host, port, all, https, http, no)
+        };
         // The scheme picks the variable; ALL_PROXY covers both.
-        assert!(proxy_decision(
-            "https",
-            "openrouter.ai",
-            None,
-            p,
-            None,
-            None
-        ));
-        assert!(!proxy_decision(
-            "https",
-            "openrouter.ai",
-            None,
-            None,
-            p,
-            None
-        ));
-        assert!(proxy_decision("http", "mock.test", None, None, p, None));
-        assert!(!proxy_decision("http", "mock.test", None, p, None, None));
-        assert!(proxy_decision("http", "mock.test", p, None, None, None));
-        assert!(!proxy_decision(
-            "https",
-            "openrouter.ai",
-            Some("  "),
-            None,
-            None,
-            None
-        ));
-        assert!(!proxy_decision("ftp", "x", p, p, p, None));
-        // NO_PROXY: a wildcard, an exact host, a domain suffix (with or without the dot), a port.
+        assert!(d("https", "openrouter.ai", None, p, None, None));
+        assert!(!d("https", "openrouter.ai", None, None, p, None));
+        assert!(d("http", "mock.test", None, None, p, None));
+        assert!(!d("http", "mock.test", None, p, None, None));
+        assert!(d("http", "mock.test", p, None, None, None));
+        assert!(!d("https", "openrouter.ai", Some("  "), None, None, None));
+        assert!(!d("ftp", "x", p, p, p, None));
+        // NO_PROXY: a wildcard, an exact host, a domain suffix (with or without the dot), a port
+        // that equals the request's.
         for no in [
             "*",
             "openrouter.ai",
             ".openrouter.ai",
             "OPENROUTER.AI:443",
             "localhost,openrouter.ai",
+            " , openrouter.ai. ,",
         ] {
             assert!(
-                !proxy_decision("https", "openrouter.ai", None, p, None, Some(no)),
+                !d("https", "openrouter.ai", None, p, None, Some(no)),
                 "NO_PROXY={no}"
             );
         }
-        assert!(!proxy_decision(
+        assert!(!d(
             "https",
             "eu.openrouter.ai",
             None,
@@ -1507,7 +1565,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             None,
             Some("openrouter.ai")
         ));
-        assert!(proxy_decision(
+        assert!(d(
             "https",
             "openrouter.ai",
             None,
@@ -1515,7 +1573,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             None,
             Some("localhost,127.0.0.1")
         ));
-        assert!(proxy_decision(
+        assert!(d(
             "https",
             "evilopenrouter.ai",
             None,
@@ -1523,23 +1581,16 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             None,
             Some("openrouter.ai")
         ));
-        assert!(!proxy_decision(
+        assert!(!d(
             "http",
-            "127.0.0.1",
+            "example.test",
             p,
             None,
             None,
-            Some("127.0.0.1:8080")
+            Some("example.test:80")
         ));
-        assert!(!proxy_decision(
-            "http",
-            "[::1]",
-            p,
-            None,
-            None,
-            Some("[::1]:80")
-        ));
-        assert!(!proxy_decision(
+        // (F07-2) A port-qualified entry excludes only that port.
+        assert!(d(
             "http",
             "example.test",
             p,
@@ -1547,11 +1598,79 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             None,
             Some("example.test:8080")
         ));
-        // Loopback is never proxied, whatever the variables say.
-        for h in ["localhost", "127.0.0.1", "127.0.0.2", "[::1]"] {
-            assert!(!proxy_decision("http", h, p, p, p, None), "{h}");
-            assert!(!proxy_decision("https", h, p, p, p, None), "{h}");
+        assert!(!proxy_decision(
+            "https",
+            "api.example",
+            8443,
+            p,
+            None,
+            None,
+            Some("api.example:8443")
+        ));
+        assert!(proxy_decision(
+            "https",
+            "api.example",
+            8443,
+            p,
+            None,
+            None,
+            Some("api.example:443")
+        ));
+        // (F07-1) A bracketed IPv6 entry, with or without a port, excludes that literal.
+        for no in ["[2001:db8::1]", "[2001:db8::1]:443", "2001:db8::1"] {
+            assert!(
+                !d("https", "[2001:db8::1]", None, p, None, Some(no)),
+                "NO_PROXY={no}"
+            );
         }
+        assert!(d(
+            "https",
+            "[2001:db8::1]",
+            None,
+            p,
+            None,
+            Some("[2001:db8::1]:8443")
+        ));
+        assert!(d(
+            "https",
+            "[2001:db8::2]",
+            None,
+            p,
+            None,
+            Some("[2001:db8::1]")
+        ));
+        // Loopback is never proxied, whatever the variables say — including an IPv4-mapped IPv6
+        // loopback literal (F07-3).
+        for h in [
+            "localhost",
+            "127.0.0.1",
+            "127.0.0.2",
+            "[::1]",
+            "::1",
+            "[::ffff:127.0.0.1]",
+            "[::ffff:7f00:1]",
+        ] {
+            assert!(!d("http", h, p, p, p, None), "{h}");
+            assert!(!d("https", h, p, p, p, None), "{h}");
+        }
+        assert!(d("https", "[::ffff:8.8.8.8]", p, p, p, None));
+        // The entry parser.
+        assert_eq!(
+            no_proxy_entry(" .Example.TEST. "),
+            Some(("example.test".into(), None))
+        );
+        assert_eq!(
+            no_proxy_entry("example.test:8080"),
+            Some(("example.test".into(), Some(8080)))
+        );
+        assert_eq!(no_proxy_entry("[::1]:80"), Some(("::1".into(), Some(80))));
+        assert_eq!(no_proxy_entry("[::1]"), Some(("::1".into(), None)));
+        assert_eq!(
+            no_proxy_entry("example.test:abc"),
+            Some(("example.test:abc".into(), None))
+        );
+        assert_eq!(no_proxy_entry("  "), None);
+        assert_eq!(no_proxy_entry("[::1"), None);
     }
 
     #[test]

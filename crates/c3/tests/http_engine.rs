@@ -954,6 +954,15 @@ fn proxy_auth_host_sends_no_authorization_header_and_needs_no_key() {
         att.outcome
     );
     assert_eq!(att.provider_config["auth"], "proxy");
+    // (F07-5) The header-less mode without a proxy on the way (a loopback mock here) is said out
+    // loud: the request went out with no credential at all.
+    assert!(
+        att.warnings
+            .iter()
+            .any(|w| w.contains("no proxy applies") && w.contains(PROXY_HOST)),
+        "{:?}",
+        att.warnings
+    );
 
     // The wire: no authorization header at all; the config headers still travel.
     let (head, body) = mock.last_request();
