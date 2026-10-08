@@ -164,6 +164,334 @@
                                        "wall_seconds":  0,
                                        "finished_at":  "2026-10-08T07:14:12+00:00",
                                        "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  2,
+                                       "when":  "2026-10-08T07:18:29+00:00",
+                                       "purpose":  "decision",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "1557f710-b245-492a-8b27-738f02a84daf",
+                                       "reviewer":  {
+                                                        "provider":  "openrouter",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "nvidia/nemotron-3.5-lightning:free",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "http",
+                                                        "harness":  "http-cli (version unknown)",
+                                                        "provider_fingerprint":  "7400f3fdc38aef26ba0017cac961af001b00b7e8f37e4c0ef638c081884a94e6",
+                                                        "provider_config":  {
+                                                                                "engine":  "http",
+                                                                                "base_url":  "https://openrouter.ai/api/v1",
+                                                                                "model":  "nvidia/nemotron-3.5-lightning:free",
+                                                                                "pack":  ".collab/cloud-linux/handoffs/02-http-reply.pack.md",
+                                                                                "pack_sha256":  "1df61ae95c2095027014164c05222ebc2b7eae7caebd246fdf7de032a17c4dee",
+                                                                                "auth":  "proxy"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openrouter :: nvidia/nemotron-3.5-lightning:free",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "source":  "inferred"
+                                                       },
+                                       "preflight":  "ok: checked at launch (http engine)",
+                                       "preflight_warning":  "",
+                                       "roster":  null,
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "",
+                                       "thread_source":  "unknown",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/cloud-linux/brief.md",
+                                       "range":  null,
+                                       "prompt_chars":  5895,
+                                       "reply":  "handoffs/02-http-reply.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/02-http-reply.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "nvidia/nemotron-3.5-lightning:free",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  600,
+                                       "timeout_source":  "explicit",
+                                       "continue_sec":  600,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-08T07:18:29+00:00",
+                                       "structured":  false,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "b1142416f06e1d58dd3b96785e6cb679fdd6c439",
+                                       "reviewed_revision":  "b114241 + uncommitted",
+                                       "tree_sha256":  "e129a5aa29bf6b05a81f5737cf18f0f414b177a150a3cb8ff0bd3f9774e4ce88",
+                                       "tree_sha256_after":  "fca639ff459e46d6e9e194522f4329a1a546a388c7da11d3e005c04fba489e2b",
+                                       "tree_changed_during_review":  true,
+                                       "revision_moved":  null,
+                                       "changed_files":  11,
+                                       "brief_sha256":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_sha256_after":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (6 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+                                                         {
+                                                             "path":  "crates/c3/src/http_engine/mod.rs",
+                                                             "sha256":  "b6de9907a6e9bbcca17b2a38ea6fb7f0dadf5fffde664138cff1785d99b9bc39",
+                                                             "sha256_after":  "76a6a7f0954fb2fd5fb41113c92cbe8b2afdab05b011f6ab5e60c279edbb9959"
+                                                         }
+                                                     ],
+                                       "artifacts_changed_during_review":  true,
+                                       "tree_check":  {
+                                                          "outcome":  "warned",
+                                                          "files":  [
+                                                                        "crates/c3/src/http_engine/mod.rs",
+                                                                        "crates/c3/tests/http_engine.rs",
+                                                                        ".collab/cloud-linux/handoffs/04-claude-diff-review.md",
+                                                                        ".collab/cloud-linux/state.md",
+                                                                        "crates/c3/src/http_engine/mod.rs"
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "failed: http unknown - non-JSON response:",
+                                       "provider_failure":  {
+                                                                "class":  "unknown",
+                                                                "kind":  "",
+                                                                "code":  "",
+                                                                "message":  "non-JSON response:",
+                                                                "when":  "2026-10-08T07:28:31+00:00",
+                                                                "retry_after":  null,
+                                                                "hint":  ""
+                                                            },
+                                       "warnings":  [
+                                                        "the working tree changed during the run (2 files: crates/c3/src/http_engine/mod.rs, crates/c3/tests/http_engine.rs) - http ran write-disabled, the change is not the reviewer\u0027s",
+                                                        "the collab directory changed during the run (2 files: .collab/cloud-linux/handoffs/04-claude-diff-review.md, .collab/cloud-linux/state.md) - http ran write-disabled, the change is not the reviewer\u0027s",
+                                                        "artifact(s) changed during the run (crates/c3/src/http_engine/mod.rs) - http ran write-disabled, the change is not the reviewer\u0027s"
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  0,
+                                       "finished_at":  "2026-10-08T07:28:31+00:00",
+                                       "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  3,
+                                       "when":  "2026-10-08T07:31:15+00:00",
+                                       "purpose":  "decision",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "ccb3593f-9f29-49f7-9bfe-fcf5f082e7dc",
+                                       "reviewer":  {
+                                                        "provider":  "openrouter",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "google/gemma-4-31b-it:free",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "http",
+                                                        "harness":  "http-cli (version unknown)",
+                                                        "provider_fingerprint":  "7400f3fdc38aef26ba0017cac961af001b00b7e8f37e4c0ef638c081884a94e6",
+                                                        "provider_config":  {
+                                                                                "engine":  "http",
+                                                                                "base_url":  "https://openrouter.ai/api/v1",
+                                                                                "model":  "google/gemma-4-31b-it:free",
+                                                                                "pack":  ".collab/cloud-linux/handoffs/05-http-reply.pack.md",
+                                                                                "pack_sha256":  "6800ebba1b0d1f20965097e14b02541351ef2a19779cb095f61f3724fc5a5505",
+                                                                                "auth":  "proxy"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openrouter :: google/gemma-4-31b-it:free",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "source":  "inferred"
+                                                       },
+                                       "preflight":  "ok: checked at launch (http engine)",
+                                       "preflight_warning":  "",
+                                       "roster":  null,
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "",
+                                       "thread_source":  "unknown",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/cloud-linux/brief.md",
+                                       "range":  null,
+                                       "prompt_chars":  5895,
+                                       "reply":  "handoffs/05-http-reply.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/05-http-reply.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "google/gemma-4-31b-it:free",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  1500,
+                                       "timeout_source":  "explicit",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-08T07:31:15+00:00",
+                                       "structured":  false,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "65d546147822cdda24755aac3fb01efeefc31d28",
+                                       "reviewed_revision":  "65d5461 + uncommitted",
+                                       "tree_sha256":  "c5ac2826cff6128e5d561fd38324d6fd26b93987e134da754bf633ba5f4837c5",
+                                       "tree_sha256_after":  "c5ac2826cff6128e5d561fd38324d6fd26b93987e134da754bf633ba5f4837c5",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  10,
+                                       "brief_sha256":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_sha256_after":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (3 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+                                                         {
+                                                             "path":  "crates/c3/src/http_engine/mod.rs",
+                                                             "sha256":  "8a8c883fed61aff3656e2be12b0324a2e44993e3a5809a1a7b240cfa194bf872",
+                                                             "sha256_after":  "8a8c883fed61aff3656e2be12b0324a2e44993e3a5809a1a7b240cfa194bf872"
+                                                         }
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "failed: http burst - provider error: Provider returned error",
+                                       "provider_failure":  {
+                                                                "class":  "burst",
+                                                                "kind":  "",
+                                                                "code":  "429",
+                                                                "message":  "provider error: Provider returned error",
+                                                                "when":  "2026-10-08T07:31:17+00:00",
+                                                                "retry_after":  null,
+                                                                "hint":  ""
+                                                            },
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  0,
+                                       "finished_at":  "2026-10-08T07:31:17+00:00",
+                                       "commit_wait_ms":  0
                                    }
                                ]
               }

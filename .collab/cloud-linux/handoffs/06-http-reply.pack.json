@@ -1,0 +1,53 @@
+{
+  "pack_version": 1,
+  "kind": "reviewer",
+  "generated": "2026-10-08T07:31:50.050036740+00:00",
+  "index": {
+    "used": false,
+    "source": "feature-off",
+    "hits": 0,
+    "files_added": 0
+  },
+  "peers": [],
+  "recipe": {
+    "brief": ".collab/cloud-linux/brief.md",
+    "focus": [
+      "crates/c3/src/http_engine/mod.rs"
+    ],
+    "budget": 6000,
+    "task": "cloud-linux",
+    "anchor": null
+  },
+  "revision": {
+    "reviewed_revision": "65d5461 + uncommitted",
+    "content_sha256": "a0d5ba446941da7b230e2f6c53363bfbeac0c8a57dfde71c2704962d6d584d7b"
+  },
+  "redactions": 0,
+  "coverage": {
+    "focus_files": 1,
+    "periphery_shown": 0,
+    "periphery_candidates": 197
+  },
+  "files": [
+    {
+      "path": ".collab/cloud-linux/brief.md",
+      "sha256": "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+      "role": "brief"
+    },
+    {
+      "path": "crates/c3/src/http_engine/mod.rs",
+      "sha256": "8a8c883fed61aff3656e2be12b0324a2e44993e3a5809a1a7b240cfa194bf872",
+      "role": "focus"
+    }
+  ],
+  "path_map": {
+    ".collab/cloud-linux/brief.md": "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+    "crates/c3/src/http_engine/mod.rs": "8a8c883fed61aff3656e2be12b0324a2e44993e3a5809a1a7b240cfa194bf872"
+  },
+  "request": {
+    "url": "https://openrouter.ai/api/v1/chat/completions",
+    "model": "nvidia/nemotron-3-super-120b-a12b:free",
+    "response_format": "json_object",
+    "prompt_sha256": "64826074d5c56e8b2823d642cbbb7724d7de5221ed0ca68f2f79f2bfab1baab3"
+  }
+}
