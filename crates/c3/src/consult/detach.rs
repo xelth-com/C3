@@ -47,9 +47,7 @@ fn refuse(msg: &str) -> i32 {
 
 /// This host's name, matching the record's `host` and the elsewhere check (`[Environment]::MachineName`).
 pub fn machine_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    c3_core::host::machine_name()
 }
 
 fn iso_now() -> String {

@@ -802,10 +802,62 @@ impl HttpEngine {
                     .header("x-request-id")
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty());
-                // (item 1) The body is read HERE; the clock stops after it.
-                let text = resp.into_string().unwrap_or_default();
-                let wall = round1(started.elapsed().as_secs_f64());
-                self.parse_response(key, &text, wall, status, req_id, events_path, label)
+                // (item 1) The body is read HERE; the clock stops after it. A body that cannot be
+                // read to the end (the read timeout while the model still works, a reset tunnel)
+                // is a transport failure of its own, never an empty reply: the status is recorded
+                // and a timeout keeps the `TimedOut` outcome the retry logic acts on.
+                match resp.into_string() {
+                    Ok(text) => {
+                        let wall = round1(started.elapsed().as_secs_f64());
+                        self.parse_response(key, &text, wall, status, req_id, events_path, label)
+                    }
+                    Err(e) => {
+                        let wall = round1(started.elapsed().as_secs_f64());
+                        let message = self.scrub(
+                            key,
+                            &c3_core::one_line(&format!(
+                                "the response body could not be read (status {status}): {e}"
+                            )),
+                        );
+                        let class = if is_timeout(&message) {
+                            "unavailable"
+                        } else {
+                            "transport"
+                        };
+                        self.append_event(
+                            events_path,
+                            &tag(
+                                label,
+                                json!({ "event": "error", "class": class, "code": status,
+                                "id": req_id, "message": message, "elapsed_seconds": wall }),
+                            ),
+                        );
+                        if class == "unavailable" {
+                            (
+                                AttemptOutcome::TimedOut {
+                                    partial: None,
+                                    survivors: Vec::new(),
+                                    conversation: ConversationTrust::Candidate(new_conversation()),
+                                    wall_seconds: wall,
+                                },
+                                Vec::new(),
+                            )
+                        } else {
+                            (
+                                AttemptOutcome::ProviderFailure {
+                                    failure: ProviderFailure {
+                                        class: class.to_string(),
+                                        code: status.to_string(),
+                                        message,
+                                        ..Default::default()
+                                    },
+                                    exit_code: None,
+                                },
+                                Vec::new(),
+                            )
+                        }
+                    }
+                }
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let retry_after = resp

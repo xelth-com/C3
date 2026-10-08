@@ -423,6 +423,45 @@ fn timeout_maps_to_timed_out() {
 }
 
 #[test]
+fn body_read_timeout_is_timed_out_not_an_empty_reply() {
+    // (Linux port, live run 2) The headers arrive at once but the body does not complete within
+    // the read timeout: the attempt is `TimedOut` (so the retry logic applies), the error event
+    // carries the status and the elapsed time, and the reply is never an empty "non-JSON
+    // response" of class `unknown`.
+    std::env::set_var("C3_HTTP_KEY_BODYTO", FAKE_KEY);
+    let mock = start_mock(vec![Resp::SlowBody(
+        completion_response(&structured_reply_json()),
+        Duration::from_millis(1500),
+    )]);
+    let d = scratch("body-timeout");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_BODYTO", &d); // 600 ms timeout
+
+    match eng.attempt(&primary_turn()).unwrap().outcome {
+        AttemptOutcome::TimedOut { wall_seconds, .. } => {
+            assert!(wall_seconds >= 0.5, "wall {wall_seconds}");
+        }
+        other => panic!("expected TimedOut, got {other:?}"),
+    }
+    let ev = std::fs::read_to_string(eng.events_path()).unwrap();
+    let err: Value = serde_json::from_str(ev.lines().nth(1).expect("an error event")).unwrap();
+    assert_eq!(err["event"], "error");
+    assert_eq!(err["class"], "unavailable");
+    assert_eq!(err["code"], 200);
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap()
+            .contains("the response body could not be read (status 200)"),
+        "{ev}"
+    );
+    assert!(!ev.contains("non-JSON response"), "{ev}");
+    assert!(!ev.contains(FAKE_KEY));
+    let _ = mock.last_body();
+    std::env::remove_var("C3_HTTP_KEY_BODYTO");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
 fn pack_files_are_written_before_the_request() {
     std::env::set_var("C3_HTTP_KEY_PACK", FAKE_KEY);
     // Point at a port with no listener: the request fails, but the pack must already be on disk.

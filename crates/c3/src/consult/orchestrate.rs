@@ -3473,9 +3473,7 @@ fn new_pending_record(state: PendingState, ctx: &Context, reply_rel: &str) -> Pe
 }
 
 fn pending_host() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    c3_core::host::machine_name()
 }
 
 /// `Enter-TaskLock`'s refusal (`codex-consult-common.ps1:7160`): the task lock is held. Re-read

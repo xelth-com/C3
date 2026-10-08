@@ -2095,9 +2095,7 @@ fn iso_now() -> String {
 }
 
 fn pending_host() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    c3_core::host::machine_name()
 }
 
 fn round1(x: f64) -> f64 {

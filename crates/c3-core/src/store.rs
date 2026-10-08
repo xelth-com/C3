@@ -189,9 +189,7 @@ impl LockRecord {
 }
 
 fn hostname() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    crate::host::machine_name()
 }
 
 /// The recovery record (`New-PendingRecord`). Field order matches the literal. The recovery
