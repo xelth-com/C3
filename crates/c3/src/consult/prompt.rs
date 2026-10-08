@@ -130,6 +130,9 @@ pub struct PromptInputs<'a> {
     /// (wave 26b, D16) the "your previous reply is <path>" line, added when a fork/resume was
     /// downgraded to a new thread because the previous one is too large; empty otherwise.
     pub prev_reply_line: &'a str,
+    /// (wave 28c D11, 28d D7, 28e E4) the re-read anchor ([`reread_line`]), the last line before
+    /// the consultation id; empty otherwise.
+    pub reread_line: &'a str,
 }
 
 const NL: &str = "\r\n";
@@ -199,8 +202,54 @@ pub fn assemble(inp: &PromptInputs) -> String {
             inp.max_words
         ));
     }
+    // (wave 28c, D11) the re-read anchor: the last line before the consultation id.
+    if !inp.reread_line.is_empty() {
+        parts.push(inp.reread_line.to_string());
+    }
     parts.push(format!("Consultation id: {}", inp.consult_id));
     parts.join(&format!("{NL}{NL}"))
+}
+
+/// The longest first line of an ask the re-read anchor repeats whole (characters).
+const REREAD_ASK_MAX: usize = 300;
+
+/// (wave 28c, D11 / F43-3, F44-6) A reviewer with a context window (`context_tokens` > 0) may
+/// compact it mid-review, and a summary may lose the brief: its prompt ends by naming the brief
+/// again - "Before you answer, re-read the brief: `<brief>`." - the last line before the
+/// consultation id. (wave 28d, D7 / F50-2) Without a brief file the ask itself is repeated there.
+/// (wave 28e, E4 / F54-4) A multi-line ask is not folded into one line: its FIRST line is repeated
+/// whole (whitespace inside it folded; longer than 300 characters it is cut and points to the top
+/// of the prompt), followed by the count of the remaining (non-blank) lines - " (+<n> more
+/// lines)"; a one-line ask as before, cut at 300. `""` without a context window or an ask.
+pub fn reread_line(context_tokens: i64, brief_ref: &str, prompt: &str) -> String {
+    if context_tokens <= 0 {
+        return String::new();
+    }
+    if !brief_ref.is_empty() {
+        return format!("Before you answer, re-read the brief: `{brief_ref}`.");
+    }
+    let ask_lines: Vec<&str> = prompt
+        .trim()
+        .split('\n')
+        .map(|l| l.strip_suffix('\r').unwrap_or(l))
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    let Some(first) = ask_lines.first() else {
+        return String::new();
+    };
+    let mut ask = c3_core::one_line(first);
+    if ask.chars().count() > REREAD_ASK_MAX {
+        ask = ask.chars().take(REREAD_ASK_MAX).collect::<String>()
+            + "... (cut here: the whole ask is at the top of this prompt)";
+    }
+    let more = ask_lines.len() - 1;
+    if more > 0 {
+        ask.push_str(&format!(
+            " (+{more} more {})",
+            if more == 1 { "line" } else { "lines" }
+        ));
+    }
+    format!("Before you answer, re-read the ask: {ask}")
 }
 
 fn render_open_findings(open: &[OpenFinding]) -> String {
@@ -261,6 +310,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         role_line: "",
         context_line: "",
         prev_reply_line: "",
+        reread_line: "",
     };
     schema_block(&inp)
 }
@@ -321,6 +371,7 @@ mod tests {
             role_line: "",
             context_line: "",
             prev_reply_line: "",
+            reread_line: "",
         }
     }
 
@@ -404,5 +455,53 @@ mod tests {
     fn crlf_paragraph_joins() {
         let p = assemble(&base());
         assert!(p.contains("\r\n\r\n"));
+    }
+
+    /// The plugin's `harness-fixes28e.ps1` ANCHOR (E4) asks: the first line whole, the rest
+    /// counted; a first line over 300 characters cut with the pointer; the re-read line right
+    /// before the consultation id.
+    #[test]
+    fn reread_anchor_keeps_the_first_line_and_counts_the_rest() {
+        let ask1 = "Review app.txt for   typos.\nThen check the README.\n\n   And the CHANGELOG.  ";
+        assert_eq!(
+            reread_line(256000, "", ask1),
+            "Before you answer, re-read the ask: Review app.txt for typos. (+2 more lines)"
+        );
+        assert_eq!(
+            reread_line(256000, "", "Fix the typo.\r\nNothing else."),
+            "Before you answer, re-read the ask: Fix the typo. (+1 more line)"
+        );
+        let long_first = format!("{} {}", "c".repeat(200), "d".repeat(200));
+        let cut = format!(
+            "Before you answer, re-read the ask: {}... (cut here: the whole ask is at the top of this prompt)",
+            &long_first[..300]
+        );
+        assert_eq!(
+            reread_line(
+                256000,
+                "",
+                &format!("{long_first}\nsecond line\nthird line")
+            ),
+            format!("{cut} (+2 more lines)")
+        );
+        assert_eq!(reread_line(256000, "", &long_first), cut);
+        // a brief file is named instead; no context window, no anchor
+        assert_eq!(
+            reread_line(256000, ".collab/t/brief.md", ask1),
+            "Before you answer, re-read the brief: `.collab/t/brief.md`."
+        );
+        assert_eq!(reread_line(0, "", ask1), "");
+        assert_eq!(reread_line(256000, "", "  \n "), "");
+        // the last line before the consultation id; the whole ask stays at the top
+        let mut i = base();
+        i.prompt = ask1;
+        let line = reread_line(256000, "", ask1);
+        i.reread_line = &line;
+        let p = assemble(&i);
+        assert!(
+            p.ends_with(&format!("{line}\r\n\r\nConsultation id: abc-123")),
+            "{p}"
+        );
+        assert!(p.contains("Then check the README.") && p.contains("And the CHANGELOG."));
     }
 }

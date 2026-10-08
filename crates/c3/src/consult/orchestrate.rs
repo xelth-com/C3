@@ -2049,6 +2049,7 @@ fn build_context(
         role_line: &role_line,
         context_line: &context_line,
         prev_reply_line: &prev_reply_line,
+        reread_line: &prompt::reread_line(context_tokens, &brief_ref, &o.prompt),
     });
 
     // The argv (byte-identical to the core plan): build the Request and plan it for the
@@ -4939,10 +4940,11 @@ fn codex_failure_pf(
     let (code, message) = c3_core::health::convert_from_provider_error_text(source);
     let class = c3_core::health::provider_failure_class(&format!("{code} {message}"));
     let kind = c3_core::health::failure_kind(&class, &format!("{code} {message}"));
-    // Parse a reset hint out of the failure message (`try again at <date>`, `retry in 32s`), so a
-    // later run on the endpoint honours it — the plugin records `retry_after` on a codex failure too.
-    let reference = chrono::Local::now().fixed_offset();
-    let retry_after = c3_core::health::retry_after_ref(&message, reference)
+    // Parse a reset hint out of the failure message (`try again at <date>`, `try again at 9:43
+    // PM.`, `retry in 32s`), so a later run on the endpoint honours it — the plugin records
+    // `retry_after` on a codex failure too (`New-ProviderFailure`: this machine's zone, at the
+    // moment of parsing).
+    let retry_after = c3_core::health::retry_after_in(&message, parse_reference(), &chrono::Local)
         .map(c3_core::health::format_offset_iso);
     finalize_pf(c3_core::ledger::ProviderFailure {
         class,
@@ -6061,6 +6063,15 @@ fn run_engine_denial_retry(
     );
 }
 
+/// (0.6.1) The moment a provider failure's reset time is parsed at - the reference of a duration
+/// and of a reset time without a date ("try again at 9:43 PM.": today, or tomorrow once past):
+/// the system clock; TEST HOOK: `CODEX_CONSULT_NOW`, the consult clock (`Get-ConsultClock -Peek`
+/// in `New-ProviderFailure`). The failure's `when` stays the system's.
+fn parse_reference() -> chrono::DateTime<chrono::FixedOffset> {
+    crate::providers::get_consult_clock_peek()
+        .unwrap_or_else(|_| chrono::Local::now().fixed_offset())
+}
+
 /// An engine run's `provider_failure`: the forced class (D12 tree check / a turn's own class)
 /// outranks the classified evidence.
 fn finalize_engine_pf(
@@ -6077,9 +6088,9 @@ fn finalize_engine_pf(
     ));
     // Parse a reset hint out of the message (`Please retry in 32s`, `Try again in 2 hours`).
     if pf.retry_after.is_none() {
-        let reference = chrono::Local::now().fixed_offset();
-        pf.retry_after = c3_core::health::retry_after_ref(&pf.message, reference)
-            .map(c3_core::health::format_offset_iso);
+        pf.retry_after =
+            c3_core::health::retry_after_in(&pf.message, parse_reference(), &chrono::Local)
+                .map(c3_core::health::format_offset_iso);
     }
     finalize_pf(pf)
 }

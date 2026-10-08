@@ -160,18 +160,75 @@ pub struct FoundProc {
     pub rule: String,
 }
 
+/// A codex-named process the machine-wide rule left out (wave 29, E27): one of the Codex desktop
+/// app's (or an IDE extension's) servers or helpers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExcludedProc {
+    pub pid: u32,
+    pub name: String,
+    /// What it was recognised as: `codex app-server`, `codex-computer-use-swift helper`, ...
+    pub why: String,
+}
+
 /// The outcome of one scan pass (`Find-CodexProcesses`'s return object).
 #[derive(Debug, Clone)]
 pub struct ScanOutcome {
     pub found: Vec<FoundProc>,
     pub check: String,
     pub failed: bool,
+    /// (wave 29, E27) the Codex app's servers and helpers the name rule left out (also named in
+    /// `check`: "excluded: pid N codex.exe [codex app-server]").
+    pub excluded: Vec<ExcludedProc>,
 }
 
-/// `Get-CodexRule`: why a process looks like codex (the rule label), or `""` when it does not.
+/// `Get-CodexMatch`'s result: the rule (`""` or the reason, as [`codex_rule`] returns it) and what
+/// the rule left out (`""` or what a codex-named process was recognised as - `codex app-server`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CodexMatch {
+    pub rule: String,
+    pub excluded: String,
+}
+
+/// `Get-CodexRule`: why a process looks like codex (the rule label), or `""` when it does not -
+/// name codex / codex.exe (the native binary), the file name of the recorded launcher when that is
+/// a binary, or a command line containing the recorded launcher path or `@openai/codex`. It cannot
+/// tell WHICH task's consultation a process belongs to. (wave 29, E27) A codex-named process whose
+/// command line shows it is one of the Codex desktop app's servers or helpers never matches
+/// ([`codex_server_exclusion`]; [`codex_match`] says what was left out); one whose command line
+/// cannot be read still does (fail-closed), and so (E28 / F37-1) does one whose command line holds
+/// the word exec anywhere or whose quoting is ambiguous.
 /// `name` is the image name (with or without `.exe`), `cmd` its command line, `launcher` the
 /// recorded launcher path (empty when none).
 pub fn codex_rule(name: &str, cmd: &str, launcher: &str) -> String {
+    codex_match(name, cmd, launcher).rule
+}
+
+/// (wave 29, E27) `Get-CodexMatch`: the "looks like codex" rule with what it left out. The
+/// exclusion is decided first: a codex-named server is left out even when its command line
+/// carries the recorded launcher (the app's own codex.exe given as -CodexExe). (E28 / F37-1) A
+/// codex-named process whose command line cannot be split with certainty (unbalanced quoting) is
+/// NOT excluded and counts as codex: rule "command line ambiguous - counted as codex". Pure.
+pub fn codex_match(name: &str, cmd: &str, launcher: &str) -> CodexMatch {
+    let verdict = codex_server_exclusion(name, cmd);
+    if !verdict.excluded.is_empty() {
+        return CodexMatch {
+            rule: String::new(),
+            excluded: verdict.excluded,
+        };
+    }
+    let rule = if !verdict.ambiguous.is_empty() {
+        "command line ambiguous - counted as codex".to_string()
+    } else {
+        codex_name_rule(name, cmd, launcher)
+    };
+    CodexMatch {
+        rule,
+        excluded: String::new(),
+    }
+}
+
+/// The rule itself, before the E27 exclusion (the pre-wave-29 `Get-CodexRule`).
+fn codex_name_rule(name: &str, cmd: &str, launcher: &str) -> String {
     let name_l = name.to_ascii_lowercase();
     if name_l == "codex" || name_l == "codex.exe" {
         return "name codex".to_string();
@@ -186,11 +243,7 @@ pub fn codex_rule(name: &str, cmd: &str, launcher: &str) -> String {
             .file_stem()
             .map(|b| b.to_string_lossy().to_string())
             .unwrap_or_default();
-        let name_base = if name_l.ends_with(".exe") {
-            &name[..name.len() - 4]
-        } else {
-            name
-        };
+        let name_base = strip_exe(name);
         if !base.is_empty()
             && (ext.is_empty() || ext == "exe")
             && name_base.eq_ignore_ascii_case(&base)
@@ -213,12 +266,337 @@ pub fn codex_rule(name: &str, cmd: &str, launcher: &str) -> String {
     String::new()
 }
 
+/// An image name without a trailing `.exe` (any case).
+fn strip_exe(name: &str) -> &str {
+    if name.len() >= 4 && name[name.len() - 4..].eq_ignore_ascii_case(".exe") {
+        &name[..name.len() - 4]
+    } else {
+        name
+    }
+}
+
+/// (wave 29, E27) The Codex CLI subcommands that are never a reviewer run (a reviewer run of the
+/// bridge is always `codex exec ...`, or the launcher shim that starts it): the long-running
+/// servers of the Codex desktop app and of the IDE extensions (app-server, exec-server,
+/// mcp-server), the sign-in (login) and the app launcher (app).
+const CODEX_SERVER_SUBCOMMANDS: &[&str] =
+    &["app-server", "exec-server", "mcp-server", "login", "app"];
+
+/// The Codex CLI's global options that take their value as the next token (`-c key=value`):
+/// skipped with that value while the first non-option token (the subcommand) is looked for.
+/// Case-sensitive.
+const CODEX_VALUE_OPTIONS: &[&str] = &[
+    "-c",
+    "--config",
+    "-m",
+    "--model",
+    "-p",
+    "--profile",
+    "-C",
+    "--cd",
+    "-s",
+    "--sandbox",
+    "-a",
+    "--ask-for-approval",
+    "-i",
+    "--image",
+    "--enable",
+    "--disable",
+    "--add-dir",
+    "--local-provider",
+];
+
+/// (wave 28e, E19 / F27-2) The generic runtimes a reviewer may run under (the codex npm shim is
+/// cmd -> node -> codex): such a process tells what it runs only through its arguments.
+const GENERIC_RUNTIME_NAMES: &[&str] = &[
+    "node",
+    "nodejs",
+    "bun",
+    "deno",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "sh",
+    "bash",
+    "dash",
+    "zsh",
+    "python",
+    "python3",
+];
+
+/// (wave 28e, E19 / F27-2) `Get-CommandLineGap`: whether a command line read for a process says
+/// what it runs: `""` when it does; `unreadable` when it could not be read (`""` - access denied -
+/// or ps's `[name]`); `no arguments` when the process is a generic runtime and its command line
+/// holds nothing beyond the executable. Pure.
+pub fn command_line_gap(name: &str, cmd: &str) -> &'static str {
+    let c = cmd.trim();
+    let bracketed =
+        c.len() >= 2 && c.starts_with('[') && c.ends_with(']') && !c[1..c.len() - 1].contains(']');
+    if c.is_empty() || bracketed {
+        return "unreadable";
+    }
+    let base = strip_exe(name).to_lowercase();
+    if GENERIC_RUNTIME_NAMES.contains(&base.as_str()) {
+        let rest = if let Some(after) = c.strip_prefix('"') {
+            match after.find('"') {
+                Some(close) => &after[close + 1..],
+                None => "",
+            }
+        } else {
+            match c.find([' ', '\t']) {
+                Some(sp) => &c[sp..],
+                None => "",
+            }
+        };
+        if rest.trim().is_empty() {
+            return "no arguments";
+        }
+    }
+    ""
+}
+
+/// (wave 29, E27; E28 / F37-1) `Split-CommandLineTokens`: the arguments of a Windows command line
+/// as the program itself sees them - the rules of the Rust standard library (the Codex CLI is a
+/// Rust program) and of the Microsoft C runtime: (tokens, the program name first; `""` or why the
+/// split is not certain).
+///   the program name: a quote toggles quoting (no escapes in it), a blank outside quotes ends it;
+///   an argument: blanks outside quotes separate arguments; n backslashes followed by a quote
+///     become n/2 backslashes, and an odd n makes that quote a literal one (\" is a quote inside a
+///     value, it does NOT toggle quoting); backslashes not followed by a quote are literal; inside
+///     quotes "" is one literal quote; any other quote toggles quoting; "" outside quotes is an
+///     empty argument.
+/// Ambiguous: the command line ends inside quotes (unbalanced quoting) - the program could see
+/// other arguments than the ones split here. Pure.
+pub fn split_command_line_tokens(cmd: &str) -> (Vec<String>, String) {
+    let s: Vec<char> = cmd.chars().collect();
+    let n = s.len();
+    let mut tokens: Vec<String> = Vec::new();
+    let mut sb = String::new();
+    let mut i = 0;
+    while i < n && (s[i] == ' ' || s[i] == '\t') {
+        i += 1;
+    }
+    // the program name
+    let mut quoted = false;
+    let mut has = false;
+    while i < n {
+        let ch = s[i];
+        if ch == '"' {
+            quoted = !quoted;
+            has = true;
+            i += 1;
+            continue;
+        }
+        if !quoted && (ch == ' ' || ch == '\t') {
+            break;
+        }
+        sb.push(ch);
+        has = true;
+        i += 1;
+    }
+    if quoted {
+        if has {
+            tokens.push(sb);
+        }
+        return (
+            tokens,
+            "the quote of the program name is not closed".to_string(),
+        );
+    }
+    if has {
+        tokens.push(std::mem::take(&mut sb));
+    }
+    sb.clear();
+    has = false;
+    // the arguments
+    while i < n {
+        let ch = s[i];
+        if !quoted && (ch == ' ' || ch == '\t') {
+            if has {
+                tokens.push(std::mem::take(&mut sb));
+                has = false;
+            }
+            i += 1;
+            continue;
+        }
+        if ch == '\\' {
+            let mut k = i;
+            while k < n && s[k] == '\\' {
+                k += 1;
+            }
+            let count = k - i;
+            if k < n && s[k] == '"' {
+                sb.push_str(&"\\".repeat(count / 2));
+                if count % 2 == 1 {
+                    sb.push('"');
+                    k += 1;
+                }
+            } else {
+                sb.push_str(&"\\".repeat(count));
+            }
+            has = true;
+            i = k;
+            continue;
+        }
+        if ch == '"' {
+            if quoted {
+                if i + 1 < n && s[i + 1] == '"' {
+                    sb.push('"');
+                    i += 2;
+                    continue;
+                }
+                quoted = false;
+            } else {
+                quoted = true;
+                has = true;
+            }
+            i += 1;
+            continue;
+        }
+        sb.push(ch);
+        has = true;
+        i += 1;
+    }
+    if has {
+        tokens.push(sb);
+    }
+    let why = if quoted {
+        "unbalanced quoting (the command line ends inside quotes)".to_string()
+    } else {
+        String::new()
+    };
+    (tokens, why)
+}
+
+/// (wave 29, E28 / F37-1) `Test-ExecWord`: whether a text holds the word exec - a whole word in
+/// the sense of the command line, where a hyphen belongs to the word (exec-server and --exec are
+/// not it; exec, "exec", =exec and \exec\ are), case-insensitive. Pure.
+pub fn is_exec_word(text: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_' || c == '-';
+    let lower: Vec<char> = text.chars().flat_map(|c| c.to_lowercase()).collect();
+    let target = ['e', 'x', 'e', 'c'];
+    if lower.len() < 4 {
+        return false;
+    }
+    (0..=lower.len() - 4).any(|i| {
+        lower[i..i + 4] == target
+            && (i == 0 || !word(lower[i - 1]))
+            && (i + 4 == lower.len() || !word(lower[i + 4]))
+    })
+}
+
+/// (wave 29, E27; E28 / F37-1) `Get-CodexServerExclusion`'s result.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerExclusion {
+    /// `""` or what the process is (`codex app-server`).
+    pub excluded: String,
+    /// `""` or why its command line cannot be split with certainty.
+    pub ambiguous: String,
+}
+
+/// (wave 29, E27; E28 / F37-1) `Get-CodexServerExclusion`: whether a codex-named process (its
+/// name, without .exe, starts with codex) is one of the Codex desktop app's servers or helpers -
+/// never a reviewer run. In this order:
+///   (E28) a command line READ that holds the word exec anywhere ([`is_exec_word`] on the raw
+///     text, quotes ignored, and on every argument as the program sees it) is NEVER excluded - a
+///     reviewer run always carries exec, the app's servers never do;
+///   an executable named codex-computer-use* (the app's computer-use helper): "<name> helper"
+///     (also when its command line cannot be read);
+///   a command line that cannot be read ([`command_line_gap`]): not excluded - unknown stays
+///     suspicious (fail-closed);
+///   (E28) a command line whose split is ambiguous ([`split_command_line_tokens`]: unbalanced
+///     quoting): not excluded, `ambiguous` set - the caller counts it as codex;
+///   the first non-option token after the executable (Windows quoting; the value of a global
+///     option such as -c key=value skipped with it) is app-server, exec-server, mcp-server, login
+///     or app: "codex <subcommand>";
+///   --parent-pid (and no exec, above): "codex helper (--parent-pid, no exec)".
+/// Anything else is neither, and the rule decides as before. Pure.
+pub fn codex_server_exclusion(name: &str, cmd: &str) -> ServerExclusion {
+    let none = ServerExclusion::default();
+    let base = strip_exe(name);
+    if !base.to_ascii_lowercase().starts_with("codex") {
+        return none;
+    }
+    let gap = command_line_gap(name, cmd);
+    let mut split: Option<(Vec<String>, String)> = None;
+    if gap.is_empty() {
+        if is_exec_word(cmd) {
+            return none;
+        }
+        let s = split_command_line_tokens(cmd);
+        if s.0.iter().any(|t| is_exec_word(t)) {
+            return none;
+        }
+        split = Some(s);
+    }
+    if base.to_ascii_lowercase().starts_with("codex-computer-use") {
+        return ServerExclusion {
+            excluded: format!("{} helper", base.to_lowercase()),
+            ambiguous: String::new(),
+        };
+    }
+    let Some((tokens, ambiguous)) = split else {
+        return none;
+    };
+    if !ambiguous.is_empty() {
+        return ServerExclusion {
+            excluded: String::new(),
+            ambiguous,
+        };
+    }
+    let mut sub = "";
+    let mut i = 1;
+    while i < tokens.len() {
+        let t = tokens[i].as_str();
+        if t == "--" {
+            if i + 1 < tokens.len() {
+                sub = &tokens[i + 1];
+            }
+            break;
+        }
+        if t.len() > 1 && t.starts_with('-') {
+            if !t.contains('=') && CODEX_VALUE_OPTIONS.contains(&t) {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        sub = t;
+        break;
+    }
+    if !sub.is_empty()
+        && CODEX_SERVER_SUBCOMMANDS
+            .iter()
+            .any(|c| c.eq_ignore_ascii_case(sub))
+    {
+        return ServerExclusion {
+            excluded: format!("codex {}", sub.to_lowercase()),
+            ambiguous: String::new(),
+        };
+    }
+    // exec is nowhere on this command line (above)
+    let parent_pid = tokens.iter().skip(1).any(|t| {
+        t.eq_ignore_ascii_case("--parent-pid")
+            || t.get(..13)
+                .is_some_and(|head| head.eq_ignore_ascii_case("--parent-pid="))
+    });
+    if parent_pid {
+        return ServerExclusion {
+            excluded: "codex helper (--parent-pid, no exec)".to_string(),
+            ambiguous: String::new(),
+        };
+    }
+    none
+}
+
 /// `Find-CodexProcesses` over a given process list (pure). `since_text` is the pre-formatted
 /// "started at or after" stamp for the message; `since` is the same instant for the comparison.
 /// With a bridge pid on Windows, a process counts when its parent is that pid and it started at or
 /// after `since` (and, if the pid was reused by a live process, before that reuse). Otherwise the
-/// machine-wide "looks like codex" rule applies (labelled "task not verifiable"). This process and
-/// its ancestors are never counted.
+/// machine-wide "looks like codex" rule applies (labelled "task not verifiable"); (wave 29, E27) the
+/// Codex desktop app's servers and helpers ([`codex_server_exclusion`]) are left out and named in
+/// `check` ("excluded: pid N codex.exe [codex app-server]", at most 6, then "(+k more)") and in
+/// `excluded`. This process and its ancestors are never counted.
 #[allow(clippy::too_many_arguments)]
 pub fn find_codex_processes(
     procs: &[ScanProc],
@@ -233,7 +611,7 @@ pub fn find_codex_processes(
     let rules = if by_parent {
         format!("children of the interrupted bridge pid {bridge_pid}")
     } else {
-        "name codex*, or a command line containing the recorded launcher or @openai/codex"
+        "name codex*, or a command line containing the recorded launcher or @openai/codex; not the Codex app's servers and helpers"
             .to_string()
     };
     let scanner = if on_windows {
@@ -241,7 +619,7 @@ pub fn find_codex_processes(
     } else {
         "ps scan"
     };
-    let check = format!("{scanner} ({rules}; started at or after {since_text})");
+    let mut check = format!("{scanner} ({rules}; started at or after {since_text})");
 
     use std::collections::{HashMap, HashSet};
     let by_id: HashMap<u32, &ScanProc> = procs.iter().map(|p| (p.pid, p)).collect();
@@ -260,6 +638,7 @@ pub fn find_codex_processes(
     }
 
     let mut found = Vec::new();
+    let mut app_servers: Vec<ExcludedProc> = Vec::new();
     if by_parent {
         // A live process holding the bridge's pid now is a reuse; only children created before it
         // started are ours.
@@ -295,20 +674,43 @@ pub fn find_codex_processes(
                 Some(c) if c < since => continue,
                 _ => {}
             }
-            let rule = codex_rule(&p.name, &p.command_line, launcher);
-            if !rule.is_empty() {
+            let m = codex_match(&p.name, &p.command_line, launcher);
+            if !m.rule.is_empty() {
                 found.push(FoundProc {
                     pid: p.pid,
                     name: p.name.clone(),
-                    rule: format!("{rule}, task not verifiable"),
+                    rule: format!("{}, task not verifiable", m.rule),
+                });
+            } else if !m.excluded.is_empty() {
+                app_servers.push(ExcludedProc {
+                    pid: p.pid,
+                    name: p.name.clone(),
+                    why: m.excluded,
                 });
             }
+        }
+        // (wave 29, E27) what was left out, said where the scan is reported (at most 6 named)
+        if !app_servers.is_empty() {
+            let shown = app_servers
+                .iter()
+                .take(6)
+                .map(|e| format!("pid {} {} [{}]", e.pid, e.name, e.why))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = if app_servers.len() > 6 {
+                format!(" (+{} more)", app_servers.len() - 6)
+            } else {
+                String::new()
+            };
+            check.pop();
+            check.push_str(&format!("; excluded: {shown}{more})"));
         }
     }
     ScanOutcome {
         found,
         check,
         failed: false,
+        excluded: app_servers,
     }
 }
 
@@ -926,5 +1328,276 @@ mod tests {
         let out = find_codex_processes(&procs, since, "t", r"C:\tools\zcode.cmd", 0, 1, true);
         assert_eq!(out.found.len(), 1);
         assert!(out.found[0].rule.starts_with("launcher in command line"));
+    }
+
+    // ---- (wave 29, E27 / E28) the Codex app's servers and helpers are no reviewer run ----
+
+    /// The plugin's `harness-fixes.ps1` E27 UNIT samples (v0.6.1): (name, command line, recorded
+    /// launcher, expected rule, expected exclusion) - the app's real lines.
+    const E27_SAMPLES: &[(&str, &str, &str, &str, &str)] = &[
+        (
+            "codex.exe",
+            r"C:\Users\u\AppData\Local\OpenAI\Codex\bin\5ea2\codex.exe -c features.code_mode_host=true app-server --analytics-default-enabled -c plugins.x=1",
+            "",
+            "",
+            "codex app-server",
+        ),
+        (
+            "codex.exe",
+            r"C:\Users\u\AppData\Local\OpenAI\Codex\bin\5ea2\codex.exe exec-server --remote https://codex-cloud-environments.chatgpt.com/api --environment-id e1",
+            "",
+            "",
+            "codex exec-server",
+        ),
+        (
+            "codex-computer-use-swift.exe",
+            r"C:\Users\u\AppData\Local\OpenAI\Codex\runtimes\cua_node\x\codex-computer-use-swift.exe --parent-pid 22140",
+            "",
+            "",
+            "codex-computer-use-swift helper",
+        ),
+        ("codex", "codex mcp-server", "", "", "codex mcp-server"),
+        ("codex", "codex login status", "", "", "codex login"),
+        (
+            "codex.exe",
+            r#""C:\x y\codex.exe" app"#,
+            "",
+            "",
+            "codex app",
+        ),
+        (
+            "codex.exe",
+            r#""C:\x\codex.exe" --parent-pid 7"#,
+            "",
+            "",
+            "codex helper (--parent-pid, no exec)",
+        ),
+        (
+            "codex.exe",
+            r#""C:\t\codex.exe" app-server"#,
+            r"C:\t\codex.exe",
+            "",
+            "codex app-server",
+        ),
+        ("codex.exe", "codex.exe exec --json -", "", "name codex", ""),
+        (
+            "codex",
+            r#"codex exec --sandbox read-only --color never --json -m m1 -c model_reasoning_effort="high" -o C:\t\last.txt -"#,
+            "",
+            "name codex",
+            "",
+        ),
+        (
+            "codex.exe",
+            r#""C:\x\codex.exe" exec --parent-pid 7"#,
+            "",
+            "name codex",
+            "",
+        ),
+        (
+            "codex.exe",
+            "codex.exe -c app-server=1 exec -",
+            "",
+            "name codex",
+            "",
+        ),
+        ("codex.exe", "codex.exe", "", "name codex", ""),
+        ("codex.exe", "", "", "name codex", ""),
+        ("codex", "[codex]", "", "name codex", ""),
+        (
+            "node.exe",
+            r"node C:\npm\node_modules\@openai\codex\bin\codex.js exec -",
+            "",
+            "@openai/codex in command line",
+            "",
+        ),
+        (
+            "cmd.exe",
+            r#"cmd /c "C:\t\fake-codex.cmd" exec -"#,
+            r"C:\t\fake-codex.cmd",
+            "launcher in command line",
+            "",
+        ),
+    ];
+
+    /// The plugin's `harness-fixes.ps1` E28 / F37-1 UNIT samples (v0.6.1): escaped quotes around
+    /// app-server in a reviewer's -c value, exec hidden by quoting, the word exec inside a server's
+    /// value, Windows quoting inside a real server's value, unbalanced quoting.
+    const E28_SAMPLES: &[(&str, &str, &str, &str, &str)] = &[
+        (
+            "codex.exe",
+            r#"codex.exe -c "developer_instructions=\"please app-server check\"" exec --json -"#,
+            "",
+            "name codex",
+            "",
+        ),
+        (
+            "codex.exe",
+            r#"codex.exe -c developer_instructions="please \"app-server\" check" exec --json -"#,
+            "",
+            "name codex",
+            "",
+        ),
+        (
+            "codex.exe",
+            r#"codex.exe -c "a=\"app-server\"" e"x"ec -"#,
+            "",
+            "name codex",
+            "",
+        ),
+        (
+            "codex.exe",
+            r#"codex.exe -c "developer_instructions=never exec here" app-server"#,
+            "",
+            "name codex",
+            "",
+        ),
+        (
+            "codex.exe",
+            r#"codex.exe -c "x=\"y\"" app-server --analytics-default-enabled"#,
+            "",
+            "",
+            "codex app-server",
+        ),
+        (
+            "codex.exe",
+            r#"codex.exe -c "x=""y"" z" app-server"#,
+            "",
+            "",
+            "codex app-server",
+        ),
+        (
+            "codex.exe",
+            r#"codex.exe -c "x=\"y app-server"#,
+            "",
+            "command line ambiguous - counted as codex",
+            "",
+        ),
+        (
+            "codex.exe",
+            r#""C:\x\codex.exe app-server"#,
+            "",
+            "command line ambiguous - counted as codex",
+            "",
+        ),
+        (
+            "codex-command-runner.exe",
+            r#"codex-command-runner.exe "x"#,
+            "",
+            "command line ambiguous - counted as codex",
+            "",
+        ),
+    ];
+
+    #[test]
+    fn e27_codex_match_leaves_the_app_servers_out() {
+        let mut bad: Vec<String> = Vec::new();
+        for (name, cmd, launcher, rule, excluded) in E27_SAMPLES {
+            let m = codex_match(name, cmd, launcher);
+            let rr = codex_rule(name, cmd, launcher);
+            if m.rule != *rule || m.excluded != *excluded || rr != *rule {
+                bad.push(format!(
+                    "{name} '{cmd}' -> rule '{}' / '{rr}' excluded '{}'",
+                    m.rule, m.excluded
+                ));
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn e28_exec_is_never_excluded_and_ambiguous_quoting_counts() {
+        let mut bad: Vec<String> = Vec::new();
+        for (name, cmd, launcher, rule, excluded) in E28_SAMPLES {
+            let m = codex_match(name, cmd, launcher);
+            if m.rule != *rule || m.excluded != *excluded {
+                bad.push(format!(
+                    "{name} '{cmd}' -> rule '{}' excluded '{}'",
+                    m.rule, m.excluded
+                ));
+            }
+        }
+        assert!(bad.is_empty(), "{}", bad.join("\n"));
+        let (tokens, ambiguous) = split_command_line_tokens(
+            r#"codex.exe -c "developer_instructions=\"please app-server check\"" exec --json -"#,
+        );
+        assert_eq!(
+            tokens.join("|"),
+            r#"codex.exe|-c|developer_instructions="please app-server check"|exec|--json|-"#
+        );
+        assert_eq!(ambiguous, "");
+        let (_, ambiguous) = split_command_line_tokens(r#"codex.exe -c "x=\"y app-server"#);
+        assert_eq!(
+            ambiguous,
+            "unbalanced quoting (the command line ends inside quotes)"
+        );
+    }
+
+    #[test]
+    fn exec_word_is_a_whole_word_with_the_hyphen_inside() {
+        for yes in [
+            "exec",
+            "codex exec -",
+            r#""exec""#,
+            "x=exec",
+            r"\exec\",
+            "EXEC",
+        ] {
+            assert!(is_exec_word(yes), "{yes}");
+        }
+        for no in ["exec-server", "--exec", "execute", "codexec", "my_exec", ""] {
+            assert!(!is_exec_word(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn command_line_gap_matches_the_plugin() {
+        assert_eq!(command_line_gap("codex.exe", ""), "unreadable");
+        assert_eq!(command_line_gap("codex", "[codex]"), "unreadable");
+        assert_eq!(
+            command_line_gap("node.exe", r#""C:\n\node.exe""#),
+            "no arguments"
+        );
+        assert_eq!(command_line_gap("node.exe", "node"), "no arguments");
+        assert_eq!(command_line_gap("node.exe", "node x.js"), "");
+        assert_eq!(command_line_gap("codex.exe", "codex.exe"), "");
+    }
+
+    #[test]
+    fn scan_by_name_leaves_the_app_servers_out_and_names_them() {
+        let since = at(100).unwrap();
+        let procs = vec![
+            p(5000, 1, "codex.exe", 150, "codex.exe -c x=1 app-server"),
+            p(
+                5001,
+                1,
+                "codex.exe",
+                150,
+                r"C:\x\codex.exe exec-server --remote u",
+            ),
+            p(5002, 1, "codex.exe", 150, "codex.exe exec --json -"),
+            p(5003, 1, "codex.exe", 150, ""),
+        ];
+        let out = find_codex_processes(&procs, since, "t", "", 0, 42, true);
+        let found: Vec<u32> = out.found.iter().map(|f| f.pid).collect();
+        assert_eq!(found, vec![5002, 5003], "{:?}", out.found);
+        assert_eq!(
+            out.check,
+            "Win32_Process scan (name codex*, or a command line containing the recorded launcher or @openai/codex; not the Codex app's servers and helpers; started at or after t; excluded: pid 5000 codex.exe [codex app-server], pid 5001 codex.exe [codex exec-server])"
+        );
+        assert_eq!(out.excluded.len(), 2);
+        assert_eq!(out.excluded[0].why, "codex app-server");
+        // more than six left out: six named, then the count
+        let many: Vec<ScanProc> = (0..8)
+            .map(|i| p(6000 + i, 1, "codex.exe", 150, "codex.exe app-server"))
+            .collect();
+        let out = find_codex_processes(&many, since, "t", "", 0, 42, true);
+        assert!(out.found.is_empty());
+        assert!(
+            out.check
+                .ends_with("pid 6005 codex.exe [codex app-server] (+2 more))"),
+            "{}",
+            out.check
+        );
     }
 }

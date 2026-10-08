@@ -353,7 +353,8 @@ pub struct MemberInput {
     /// `run` | `skipped` (with a reason) at input; `select_panel_routing` may add `not-picked`.
     pub state: String,
     pub reason: String,
-    /// The `Select-PanelMembers` skip kind (`weighty` matters: a required weighty rejoins).
+    /// The `Select-PanelMembers` skip kind (`weighty` / `light` matter: a required entry only
+    /// that gate held back rejoins).
     pub skip_kind: String,
 }
 
@@ -491,14 +492,15 @@ pub fn select_panel_routing_with(
 ) -> PanelRoutingResult {
     let neutral = ROUTING_NEUTRAL;
 
-    // Enrich each member: a required weighty-skipped member rejoins as `run`.
+    // Enrich each member: a required member that only the weighty gate (0.6.0: or the light gate)
+    // held back rejoins as `run`.
     let mut seated: Vec<SeatedMember> = Vec::new();
     let mut prior_uses: Vec<PriorUse> = Vec::new();
     for m in members {
         let mut state = m.state.clone();
         let mut reason = m.reason.clone();
         let is_req = required.contains(&(m.entry.position as i64));
-        if is_req && state == "skipped" && m.skip_kind == "weighty" {
+        if is_req && state == "skipped" && (m.skip_kind == "weighty" || m.skip_kind == "light") {
             state = "run".into();
             reason = String::new();
         }
