@@ -21,6 +21,8 @@ egress through an HTTP CONNECT proxy that re-terminates TLS with its own CA), no
 | `c3/src/index/embed.rs` | `loopback_urls_accepted` fails on `http://[::1]:11434/...`: the bracketed host literal the `url` crate hands back went to the resolver, and a sandbox without IPv6 cannot resolve `::1` at all | an IP literal is taken as parsed; only a domain name goes to the resolver (both in the validator and in the pinned resolver of the request). |
 | `c3/tests/pending_liveness.rs` | the `.cmd` launcher helpers and their imports are dead code outside Windows (clippy `-D warnings` fails) | the two spawn/kill tests, their helpers and imports are `#[cfg(windows)]` with a reason; the start-time test runs everywhere. |
 | `c3/src/liveness/proc.rs` (`codex_rule_matches_the_plugin`) | the recorded launcher paths in the test are Windows paths (`C:\tools\zcode.cmd`); `std::path` splits `\` only on Windows, so the "name of the recorded launcher" rule reads `C:\tools\zcode` as the stem on Linux | gated `#[cfg(windows)]` with the reason; the function is unchanged (the plugin's `GetFileNameWithoutExtension` behaves the same way on Linux PowerShell). |
+| `c3/src/http_engine/mod.rs` (found by live run 2; shared code) | the free model did not finish within the 600 s read timeout and `resp.into_string().unwrap_or_default()` turned the read error into an EMPTY body, reported as `non-JSON response:` of class `unknown`, not retried, wall 0 in the summary | a body that cannot be read to the end is its own error: the status and the elapsed time go to the error event, a timeout is `TimedOut` (so the one retry applies), anything else a `transport` failure. Test `body_read_timeout_is_timed_out_not_an_empty_reply`. The one change on a path Windows also runs; it only changes what was a mis-report. |
+| the `host` of lock, pending, detached and telemetry records | a Linux shell rarely exports `HOSTNAME`, so every record carried an empty host and the "elsewhere" checks could not tell machines apart | one `c3_core::host::machine_name()` for the seven sites: `COMPUTERNAME`, else `HOSTNAME`, else (not on Windows) `/etc/hostname`. On Windows `COMPUTERNAME` is always set, so nothing changes there. |
 
 Everything else compiled and passed as written: the PowerShell 5.1 JSON formatter (`ps_json`)
 and its byte-for-byte fixtures, the store lock tests (flock gives the same exclusion as
@@ -43,8 +45,8 @@ Every Windows test body is unchanged; the gates add an attribute and a one-line 
   C3 and plugin path takes the lock first, so the discipline holds between cooperating tools.
 - **Detached runs**: a direct child of the foreground with stdio redirected to the `.log`, in
   its own process group, instead of a `cmd.exe /c` launch with no inherited handles.
-- **Host name**: `COMPUTERNAME` then `HOSTNAME`; a Linux shell that does not export `HOSTNAME`
-  records an empty host (open question, see §6).
+- **Host name**: `COMPUTERNAME`, else `HOSTNAME`, else `/etc/hostname` (a Linux shell rarely
+  exports `HOSTNAME`).
 - **Paths and bytes**: the files under `.collab/` are the same bytes (CRLF where the plugin
   writes CRLF, repo-relative POSIX paths everywhere), so a Linux C3 and a Windows C3 or the
   PowerShell plugin read one history.
@@ -56,8 +58,8 @@ Three environment variables, all read at run time and none of them a roster fiel
 
 | variable | meaning | recorded as |
 |---|---|---|
-| `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` (either case), `NO_PROXY` | the `ureq` agent is built with `try_proxy_from_env` when a proxy applies to the request URL: `ALL_PROXY` or the scheme's variable, unless `NO_PROXY` lists the host (`*`, a host, a domain suffix with or without a leading dot, an optional port; no CIDR). Loopback is never proxied. | `proxy: true\|false` on the `request` event |
-| `C3_HTTP_AUTH_PROXY=<host,...>` | for a listed host (exact, or a subdomain of a listed name) C3 sends **no `Authorization` header and reads no key**: the egress proxy attaches the credential. The dry run's `key` line says so. For every other host the key-to-host binding of `roster_ext::check_key_host` is unchanged; for a listed host there is no key to bind, so the binding check is skipped. | `auth: proxy` in the ledger's `reviewer.provider_config` and on the `request` event (`auth: key` on the event otherwise; the ledger field is absent in the key mode, as before) |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` (either case), `NO_PROXY` | the `ureq` agent is built with `try_proxy_from_env` when a proxy applies to the request URL: `ALL_PROXY` or the scheme's variable, unless `NO_PROXY` lists the host (`*`, a host or IP literal — bracketed IPv6 included —, a domain suffix with or without a leading dot; an entry with a port excludes only that port; no CIDR). Loopback (`localhost`, `127/8`, `::1`, an IPv4-mapped loopback) is never proxied. | `proxy: true\|false` on the `request` event |
+| `C3_HTTP_AUTH_PROXY=<host,...>` | for a listed host (exact, or a subdomain of a listed name; an entry is canonicalised like a URL host, so a Unicode spelling matches its punycode form) C3 sends **no `Authorization` header and reads no key**: the egress proxy attaches the credential. The dry run's `key` line says so. For every other host the key-to-host binding of `roster_ext::check_key_host` is unchanged; for a listed host there is no key to bind, so the binding check is skipped. When no proxy applies to the request (no proxy variable, `NO_PROXY`, a loopback host) the credential-less request is not refused but recorded with a `proxy auth without a proxy` warning (a transparent egress proxy the environment does not name is a real deployment). | `auth: proxy` in the ledger's `reviewer.provider_config` and on the `request` event (`auth: key` on the event otherwise; the ledger field is absent in the key mode, as before) |
 | `C3_HTTP_CA_BUNDLE=<pem file>` | extra trust anchors ADDED to the bundled Mozilla roots (ureq's rustls stack with the same `ring` provider), for a proxy that re-terminates TLS. A file that cannot be read, holds no certificate or an unusable one refuses the launch; the refusal names the variable and the path, never the contents. | `ca_bundle: true\|false` on the `request` event |
 
 What stays: `redirects(0)` (a 3xx is never followed, through a proxy or not), the refusal of a
@@ -73,7 +75,17 @@ network.
 Recorded under `.collab/cloud-linux/` (ledger, findings, handoffs with the exact packs and the
 events files), summarised in `.collab/cloud-linux/state.md`.
 
-LIVE-RESULTS
+| run (handoff) | model | what happened |
+|---|---|---|
+| 1 (01) | `nvidia/nemotron-3.5-lightning:free` | TLS refused: `invalid peer certificate: UnknownIssuer` — the proxy's CA is not a bundled root; `proxy: true`, `auth: proxy`. This run is why `C3_HTTP_CA_BUNDLE` exists. |
+| 2 (02) | `nvidia/nemotron-3.5-lightning:free` | through the proxy with the CA trusted (`ca_bundle: true`); the model did not finish within 600 s, and the engine of that build mis-reported the read timeout as an empty reply (fixed, §1). |
+| 3 (05) | `google/gemma-4-31b-it:free` | a real 429 `Provider returned error` envelope from OpenRouter in 0.7 s: `burst`, not retried. |
+| 4 (06) | `nvidia/nemotron-3-super-120b-a12b:free` | 200 in 131 s; 13 814 of 13 821 output tokens were reasoning and the content was `{"": ""}`: recorded INVALID, raw kept. Free, 0 USD. |
+| 5 (07) | `openai/gpt-6-luna` (allowed by the owner; about one cent) | 200 in 183 s; a structured reply with five findings on the proxy code (four accepted and fixed, one answered with a warning), the normaliser repaired five `evidence` wrappers. Rated useful. |
+
+The exact packs, events files and replies are under `.collab/cloud-linux/handoffs/`; the
+findings and decisions in `.collab/cloud-linux/state.md`. No key is in the environment of these
+runs and none of the files carries a credential.
 
 ## 5. Roadmap lines
 
@@ -83,7 +95,7 @@ LIVE-RESULTS
   attached by the proxy), `C3_HTTP_CA_BUNDLE` (extra trust anchors). Done 2026-10-08.
 - Live check through the sandbox proxy on free OpenRouter models: see §4.
 - Open: macOS (no `/proc`; blank start times), `SSL_CERT_FILE` as a second source of trust
-  anchors, `NO_PROXY` CIDR ranges, the host name on Linux shells without `HOSTNAME`.
+  anchors, `NO_PROXY` CIDR ranges.
 
 The `.eck/ROADMAP.md` the workspace rules name is not tracked in this repository (`.eck/` is
 ignored), so these lines live here until the owner moves them.
@@ -94,8 +106,9 @@ ignored), so these lines live here until the owner moves them.
 2. The fs4 dependency is gone (std's `File::try_lock` covers it). Keep it that way?
 3. Should the `http` engine also read `SSL_CERT_FILE` (the convention most tools follow), or
    stay with the explicit `C3_HTTP_CA_BUNDLE` only?
-4. On Linux a shell often does not export `HOSTNAME`; should C3 read `/etc/hostname` as a third
-   source for the `host` of detached and recovery records?
+4. `/etc/hostname` is now the third source for the records' `host` off Windows (the shell of
+   this session exported no `HOSTNAME`); keep it, or should Linux stay with a blank host as the
+   plugin on Linux PowerShell would record?
 5. The cloud session's proxy puts `index.crates.io` on its `no_proxy` list while there is no
    direct DNS, so `cargo` hangs on the index until the registry hosts are routed through the
    proxy (`NO_PROXY=localhost,127.0.0.1 cargo fetch`). A setup script for the environment could

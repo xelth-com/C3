@@ -1,0 +1,385 @@
+{
+    "task_id":  "cloud-linux",
+    "findings":  [
+                     {
+                         "id":  "F07-1",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  240
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  257
+                                           }
+                                       ],
+                         "claim":  "Bracketed IPv6 entries in NO_PROXY fail to exclude non-loopback IPv6 hosts, so the request can be sent through the proxy despite an explicit exclusion.",
+                         "trigger":  "For example, with proxy settings selected, request `https://[2001:db8::1]` and `NO_PROXY=[2001:db8::1]` (or `[2001:db8::1]:443`). The parser removes the closing bracket even when no `]:` port delimiter was present; the resulting entry does not match the host.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/http_engine/mod.rs:240-259",
+                                              "observation":  "The bracketed-entry branch splits on `]:` and unconditionally trims a trailing `]`; comparison then uses the still-bracketed host and its bracket-stripped form."
+                                          }
+                                      ],
+                         "verification":  "Add a unit test calling `proxy_decision(\"https\", \"[2001:db8::1]\", None, Some(proxy), None, Some(\"[2001:db8::1]\"))` and assert it returns false.",
+                         "remedy":  "Parse bracketed IPv6 entries without discarding the literal\u0027s closing bracket, and handle an optional port separately before comparing the normalized address.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-http-reply.md",
+                                        "thread":  "",
+                                        "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                        "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T07:37:44+00:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                             "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "proxy_decision_follows_scheme_and_no_proxy: NO_PROXY=[2001:db8::1] and [2001:db8::1]:443 exclude https://[2001:db8::1]; no_proxy_entry parses the bracketed literal and its port (commit after f811a0b)",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F07-2",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  240
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  249
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  257
+                                           }
+                                       ],
+                         "claim":  "NO_PROXY port qualifiers are discarded rather than matched against the request port, so exclusions apply to the host on the wrong ports.",
+                         "trigger":  "For `https://api.example:8443` with `NO_PROXY=api.example:443`, the helper strips `:443` and returns false (do not proxy), even though the port-qualified entry does not match the target port. The inverse mismatch also incorrectly bypasses the proxy.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/http_engine/mod.rs:240-259; crates/c3/src/http_engine/mod.rs:1545-1549",
+                                              "observation":  "The helper removes a numeric port and has no target-port input. The existing test also expects `example.test:8080` to exclude a target without that port."
+                                          }
+                                      ],
+                         "verification":  "Add tests for matching and mismatching explicit target/NO_PROXY ports, including a target on 8443 with an entry on 443.",
+                         "remedy":  "Pass the parsed URL port into `proxy_decision` and require a port-qualified NO_PROXY entry to match that port; retain host-only matching for entries without a port.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-http-reply.md",
+                                        "thread":  "",
+                                        "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                        "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T07:37:44+00:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                             "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "proxy_decision takes the request port; NO_PROXY=api.example:443 no longer excludes port 8443 and example.test:8080 no longer excludes port 80 (unit test proxy_decision_follows_scheme_and_no_proxy)",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F07-3",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  224
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  226
+                                           }
+                                       ],
+                         "claim":  "The loopback guard misses IPv4-mapped IPv6 loopback literals, allowing them to be proxied.",
+                         "trigger":  "With a proxy selected, `proxy_decision(\"https\", \"[::ffff:127.0.0.1]\", Some(proxy), None, None, None)` returns true; the same applies to the equivalent hexadecimal mapped address.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/http_engine/mod.rs:224-228",
+                                              "observation":  "The guard recognizes `127.*`, `localhost`, and exactly `[::1]`/`::1`, but does not parse IP literals or recognize IPv4-mapped IPv6 loopback."
+                                          }
+                                      ],
+                         "verification":  "Add a test asserting that `proxy_decision` returns false for `[::ffff:127.0.0.1]` and its canonical hexadecimal equivalent.",
+                         "remedy":  "Parse the host as an IP address and classify IPv4-mapped IPv6 addresses by their embedded IPv4 address before selecting a proxy.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-http-reply.md",
+                                        "thread":  "",
+                                        "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                        "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T07:37:44+00:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                             "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "is_loopback_literal parses the host as an IpAddr; [::ffff:127.0.0.1] and [::ffff:7f00:1] are never proxied, [::ffff:8.8.8.8] still is (unit test)",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F07-4",
+                         "status":  "verified",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  150
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  319
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  330
+                                           }
+                                       ],
+                         "claim":  "A Unicode IDN spelling in C3_HTTP_AUTH_PROXY can fail to select proxy auth for the same endpoint, causing key mode instead.",
+                         "trigger":  "Set `C3_HTTP_AUTH_PROXY=bücher.example` and configure `base_url=https://bücher.example/v1`. URL parsing canonicalizes the endpoint hostname, but the list parser only lowercases its entry, so the host comparison can miss.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "crates/c3/src/http_engine/mod.rs:150-155; crates/c3/src/http_engine/mod.rs:319-335",
+                                              "observation":  "The URL host and environment list are normalized by different code paths; the list path contains no IDNA canonicalization."
+                                          }
+                                      ],
+                         "verification":  "Add an auth-mode test using a Unicode IDN in both the base URL and C3_HTTP_AUTH_PROXY, and check that it selects the same mode as the equivalent punycode spelling.",
+                         "remedy":  "Canonicalize each auth-list hostname using the same IDNA/URL hostname rules as `HttpConfig::host()`, or reject noncanonical entries explicitly instead of silently falling back to key mode.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-http-reply.md",
+                                        "thread":  "",
+                                        "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                        "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T07:37:44+00:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                             "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "proxy_auth_hosts_from canonicalises each entry with url::Host::parse: bücher.example and XN--BCHER-KVA.example both match the parsed host xn--bcher-kva.example (unit test proxy_auth_host_list_is_parsed_and_matched_exactly_or_by_subdomain)",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F07-5",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  326
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  600
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  661
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/http_engine/mod.rs",
+                                               "line":  749
+                                           }
+                                       ],
+                         "claim":  "Proxy auth can suppress the key even when this adapter is not using an environment-selected proxy, so the advertised credential-attaching proxy may never see the request.",
+                         "trigger":  "Set `C3_HTTP_AUTH_PROXY=api.example.com` but leave `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase forms unset, or put the endpoint in NO_PROXY. The attempt selects proxy auth and sends no Authorization header while `proxy` is false.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/http_engine/mod.rs:326-335; crates/c3/src/http_engine/mod.rs:600-605; crates/c3/src/http_engine/mod.rs:661-679; crates/c3/src/http_engine/mod.rs:741-749",
+                                              "observation":  "Auth selection and proxy selection are independent; no check requires an applicable proxy when proxy auth is selected."
+                                          }
+                                      ],
+                         "verification":  "Add an attempt-level test with the host listed for proxy auth and no applicable proxy, and verify whether the request is rejected or intentionally supported through documented transparent egress.",
+                         "remedy":  "If credential injection requires the ureq proxy, reject precheck when proxy auth is selected but `env_proxy_applies` is false; otherwise document and test the transparent-egress guarantee.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-http-reply.md",
+                                        "thread":  "",
+                                        "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                        "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T07:37:44+00:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                             "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T07:42:21+00:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "answered with a warning, not a refusal: an attempt in the proxy auth mode with no applicable proxy records \u0027proxy auth without a proxy ...\u0027 in its warnings (tests/http_engine.rs proxy_auth_host_sends_no_authorization_header_and_needs_no_key); a transparent egress proxy the environment does not name is a real deployment, so the request is not refused",
+                                             "evidence":  "",
+                                             "base_commit":  "2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                             "tree_sha256":  "4a673b874a5e49975e6a038b82dd2fb2eae08342221f18b23473899fc58883e2"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     }
+                 ],
+    "ratings":  [
+                    {
+                        "n":  5,
+                        "consult_id":  "c83e5ba9-8d2c-485f-be39-a5c620c05e18",
+                        "lineage":  "openrouter :: openai/gpt-6-luna [http]",
+                        "provider":  "openrouter",
+                        "model":  "openai/gpt-6-luna",
+                        "engine":  "http",
+                        "purpose":  "decision",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-08T07:34:40+00:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-10-08T07:40:13+00:00"
+                    }
+                ]
+}

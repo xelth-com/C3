@@ -651,6 +651,169 @@
                                        "wall_seconds":  131.4,
                                        "finished_at":  "2026-10-08T07:34:01+00:00",
                                        "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  5,
+                                       "when":  "2026-10-08T07:34:40+00:00",
+                                       "purpose":  "decision",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "c83e5ba9-8d2c-485f-be39-a5c620c05e18",
+                                       "reviewer":  {
+                                                        "provider":  "openrouter",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "openai/gpt-6-luna",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "http",
+                                                        "harness":  "http-cli (version unknown)",
+                                                        "provider_fingerprint":  "7400f3fdc38aef26ba0017cac961af001b00b7e8f37e4c0ef638c081884a94e6",
+                                                        "provider_config":  {
+                                                                                "engine":  "http",
+                                                                                "base_url":  "https://openrouter.ai/api/v1",
+                                                                                "model":  "openai/gpt-6-luna",
+                                                                                "pack":  ".collab/cloud-linux/handoffs/07-http-reply.pack.md",
+                                                                                "pack_sha256":  "6800ebba1b0d1f20965097e14b02541351ef2a19779cb095f61f3724fc5a5505",
+                                                                                "auth":  "proxy"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openrouter :: openai/gpt-6-luna",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "source":  "inferred"
+                                                       },
+                                       "preflight":  "ok: checked at launch (http engine)",
+                                       "preflight_warning":  "",
+                                       "roster":  null,
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "",
+                                       "thread_source":  "unknown",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/cloud-linux/brief.md",
+                                       "range":  null,
+                                       "prompt_chars":  5895,
+                                       "reply":  "handoffs/07-http-reply.md",
+                                       "reply_json":  "handoffs/07-http-reply.reply.json",
+                                       "events":  "handoffs/07-http-reply.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "openai/gpt-6-luna",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  1500,
+                                       "timeout_source":  "explicit",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-08T07:34:40+00:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "verdict HOLD is not allowed for purpose decision (expected ADVISE)",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c",
+                                       "reviewed_revision":  "e108fe6",
+                                       "tree_sha256":  "862244b8a7ec19c3df9d9b94c939cd106dd6332c9f81964e865892694b3b9051",
+                                       "tree_sha256_after":  "b16d57c475679e8a4af6a626d914cfbbb6d4bba4647e16e9cca7751486d9cd49",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  "e108fe6c510ecae5a43bdee4d9467abd60ea399c -\u003e 2cff380263b9c368f0d96b045c1d003ea6efbf3c",
+                                       "changed_files":  0,
+                                       "brief_sha256":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_sha256_after":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (4 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+                                                         {
+                                                             "path":  "crates/c3/src/http_engine/mod.rs",
+                                                             "sha256":  "8a8c883fed61aff3656e2be12b0324a2e44993e3a5809a1a7b240cfa194bf872",
+                                                             "sha256_after":  "8a8c883fed61aff3656e2be12b0324a2e44993e3a5809a1a7b240cfa194bf872"
+                                                         }
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+                                                        "reply normalised: evidence: object wrapped in an array; evidence: object wrapped in an array; evidence: object wrapped in an array; evidence: object wrapped in an array; evidence: object wrapped in an array; the reviewer\u0027s own text: handoffs/07-http-reply.original.json"
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "The proxy decision has concrete NO_PROXY and loopback gaps, and proxy-auth mode can be selected without an applicable proxy route.",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  4,
+                                                        "minor":  1,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+                                                           "F07-1",
+                                                           "F07-2",
+                                                           "F07-3",
+                                                           "F07-4",
+                                                           "F07-5"
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  {
+                                                     "input_tokens":  21860,
+                                                     "cached_input_tokens":  0,
+                                                     "output_tokens":  16961,
+                                                     "reasoning_output_tokens":  13866,
+                                                     "total_tokens":  38821
+                                                 },
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  183.3,
+                                       "finished_at":  "2026-10-08T07:37:44+00:00",
+                                       "commit_wait_ms":  0
                                    }
                                ]
               }
