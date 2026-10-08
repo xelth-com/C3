@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "981d3625-500d-4b42-b0b9-bfa9f886f961",
+    "id8":  "981d3625",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-08T19:48:55+02:00",
+    "updated":  "2026-10-08T19:54:25+02:00",
+    "finished":  "2026-10-08T19:54:25+02:00",
+    "wall_seconds":  330.6,
+    "pid":  23148,
+    "start_time":  "2026-10-08T17:48:56.5321391Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3300,
+    "purpose":  "framing",
+    "reply_name":  "parity-framing",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\01-claude-parity-framing.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  311.7,
+                        "n":  1,
+                        "handoff":  "02",
+                        "reply":  "handoffs/02-codex-parity-framing.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a11ca2-2824-7572-bf8d-efdbe085af05 (source: events), wall 311.7 s\nverdict    : ADVISE - Separate behavioral parity from architectural improvements, and prioritize durable telemetry, recovery, and an oracle that actually exercises C3.\nfindings   : 0 blocker, 5 major, 2 minor, 1 note -\u003e F02-1..F02-8 in findings.json\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\02-codex-parity-framing.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\02-codex-parity-framing.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\02-codex-parity-framing.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-981d3625.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

@@ -1,0 +1,290 @@
+{
+  "schema_version": "1",
+  "verdict": "ADVISE",
+  "verdict_reason": "Separate behavioral parity from architectural improvements, and prioritize durable telemetry, recovery, and an oracle that actually exercises C3.",
+  "reply_markdown": "**Q1.** Neither proposed order unchanged. Start with a pinned v0.6.1 contract/test inventory, then A/C/D, B+F together, G+E together, shared plan scheduling/health, and finally H’s authenticated execution paths. Keep one worker per wave; split the larger waves into separately reviewed commits. Recovery classification and release rules belong together; new rating events need a durable spool. H-first is reasonable only as an experimental vertical slice if Claude availability is the immediate operator priority. I need that priority, release deadline, and permitted compatibility exceptions to choose.\n\nChallenge the framing: define a **compatibility release** and a separately measured **improvement track**. A passing legacy harness, a native API response, and a better review are three different outcomes.\n\n**Q2.** Ship spawned Claude Code for all three plugin auth modes first; add native Messages as an explicit HTTP transport afterward. A third option is retaining the existing Codex endpoint route while comparing both alternatives. Do not silently reinterpret `engine: claude` as HTTP or resume CLI sessions through native replay.\n\nNative loses adaptive repository discovery, tool evidence, Claude session/fork semantics, and CLI-specific proof and quota events. Packs can compensate for bounded reviews, but omitted dependencies require an explicit insufficient-evidence result or another pack round. `[1m]` is a CLI model convention, not proof of native context capacity; negotiate and budget against the endpoint’s actual limit. Treat unavailable quota signals as unknown, never unlimited. The plugin’s 3–6× result compares Codex with Claude Code, not native Messages (finding #8). Choose using plan access, blind review quality, omission rate, credits, latency, and retry rates.\n\n**Q3.** Keep shared recovery and health authoritative in compatible files. Keep SurrealDB derived: its documented exclusive process lifetime conflicts with concurrent operational use. A separate transactional outbox, SQLite store, or single-writer service is an option for C3-only telemetry, provided its durability and forgetting behavior are specified. File exports alone cannot provide shared locking authority. First establish whether compatibility includes machine-wide state and salt/instance identity across bridges; `.collab` compatibility alone leaves that undecided.\n\n**Q4.** Run pinned harnesses sequentially: especially fixes28e, fixes28d, telemetry, claude, roster, panel, pending, fixes, lock2, detach, and ledger-order checks in 0.3/engines/muse/companions. Classify each assertion as C3 execution, PowerShell-helper-only, or documentation; port helper-only cases to Rust. Add the missing telemetry shim.\n\nLive: Codex, Antigravity, Muse, Claude subscription, API-key, and each claimed endpoint plan; retain HTTP coverage. Missing credentials mean explicitly unverified modes. Observe model/auth identity, usable schema, read-only enforcement, continuation/fork, timeout recovery, and redaction. A mixed panel must show required seats, light fallback, independent consultation references, shared-plan serialization across repositories, quota propagation, reconciled ledger entries, and no surviving children. Repeat core recovery tests on Linux and test both feature configurations.\n\n**Q5.** Correct E: commit-before-spool already exists; revision/judge/backfill durability does not. D’s anchor is absent. Expand A’s fixtures to yesterday near midnight and whole-token malformed offsets. Extract global `plan` semantics from H. Add spool lost-update, telemetry classifier, and failed-forget cases (findings #1–3). The shim document’s missing-`ScriptsDir` claim is obsolete; pinned v0.6.1 supports it.\n\n## Requested checks\n\n- **RC1:** CWD repository root; workspace-write; run deterministic local-intake fixtures for findings #1–3: pause flush, append, release; serialize private labels; fail DELETE then retry. Settle loss, disclosure, and retained deletion identity; budget 30 minutes.\n- **RC2:** CWD repository root; workspace-write; build the pinned harness staging directory, run all 22 harnesses sequentially, and map each assertion to its executing implementation. Settle oracle coverage; budget two hours.\n- **RC3:** CWD isolated scratch repositories; workspace-write plus provider access; execute Q4’s engine and mixed-panel matrix, alternating plugin/C3 writes on one task. Settle live and interchange compatibility; budget two hours.\n- **RC4:** CWD isolated benchmark repository; workspace-write plus metered provider access; compare Codex, Claude endpoint, and native Messages on 12 randomized paired briefs per plan with blind grading. Settle finding #8; budget 36 calls per plan plus fixed retry allowance.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/telemetry/spool.rs",
+          "line": 77
+        },
+        {
+          "path": "crates/c3/src/telemetry/spool.rs",
+          "line": 93
+        }
+      ],
+      "claim": "The telemetry spool can lose newly appended events because flush rewrites an earlier snapshot without synchronizing with producers.",
+      "trigger": "A consultation or rating appends after flush reads spool.ndjson but before a successful POST causes flush to overwrite it; the stale-only clearing branch has the same race.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/telemetry/spool.rs: enqueue_line and flush",
+          "observation": "Enqueue appends directly. Flush reads the whole file, posts a batch, then uses fs::write with the remainder derived from that snapshot. No shared lock or generation check surrounds these operations."
+        },
+        {
+          "kind": "inferred",
+          "reference": "crates/c3/src/telemetry/spool.rs",
+          "observation": "An event appended between the read and rewrite is absent from the retained snapshot and is overwritten without being sent."
+        }
+      ],
+      "verification": "Hold a local intake response after flush reads event A, append event B, return success, and assert B remains queued.",
+      "remedy": "Use a synchronized durable outbox with atomic batch ownership and crash recovery; coordinate append, flush, and forgetting before adding the new rating delivery paths.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/telemetry/event.rs",
+          "line": 117
+        },
+        {
+          "path": "crates/c3/src/telemetry/event.rs",
+          "line": 274
+        },
+        {
+          "path": "crates/c3/src/telemetry/event.rs",
+          "line": 344
+        }
+      ],
+      "claim": "Consultation and rating telemetry transmit syntactically acceptable provider/model labels instead of restricting them to vendor and model classes.",
+      "trigger": "A roster provider or model contains a private but syntactically valid identifier, such as customer-acme.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/telemetry/event.rs: Event::from_ledger, RatingEvent::from_ledger, safe_label",
+          "observation": "Both event builders pass reviewer.provider and reviewer.model through label_or. safe_label accepts arbitrary short identifiers matching its character rules rather than a closed vocabulary."
+        },
+        {
+          "kind": "read-code",
+          "reference": "docs/DESIGN.md: invariant 8",
+          "observation": "The design promises telemetry classes rather than content."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git -c safe.directory=C:/Users/Dmytro/claude-codex-consult -C C:/Users/Dmytro/claude-codex-consult show v0.6.1:CHANGELOG.md",
+          "observation": "The reference specifies endpoint-host vendor classification and closed model lists, including classification for saved rating judges."
+        }
+      ],
+      "verification": "Serialize consultation and rating events from a ledger using private provider/model labels and assert neither raw label appears.",
+      "remedy": "Implement shared closed classifiers for reviewers and judges, including HTTP endpoints, unknown fallbacks, and model normalization; include this in telemetry parity rather than limiting classification work to Claude.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/telemetry/complaint.rs",
+          "line": 104
+        },
+        {
+          "path": "crates/c3/src/cli/telemetry.rs",
+          "line": 105
+        }
+      ],
+      "claim": "A failed server deletion discards the local identity and proof needed to retry, while the CLI implies a later successful DELETE will remove the old data.",
+      "trigger": "forget-me has a stored complaint reference, but the intake DELETE fails or times out.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/telemetry/complaint.rs: forget_me_at",
+          "observation": "After logging a DELETE error, the function still removes salt, spool.ndjson, and refs.ndjson. It does not persist a deletion retry record."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/cli/telemetry.rs: run_forget_me",
+          "observation": "The failed-deletion message says the server drops the data on the next successful DELETE."
+        }
+      ],
+      "verification": "Use a scratch telemetry directory and a local server returning a DELETE failure, invoke forgetting twice, and check whether the second request can identify and authenticate deletion of the original instance.",
+      "remedy": "Persist a durable pending-deletion identity/proof until acknowledgment, coordinate it with producers and senders, and report partial completion accurately.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "docs/port/harness-shim.md",
+          "line": null
+        },
+        {
+          "path": "docs/port/harness-results.md",
+          "line": 1385
+        },
+        {
+          "path": "tests/shim",
+          "line": null
+        }
+      ],
+      "claim": "The proposed harness oracle needs an implementation coverage map: some passing checks execute copied PowerShell helpers, and the current shim set lacks codex-telemetry.ps1.",
+      "trigger": "Aggregate plugin harness passes are used to certify C3 recovery, telemetry, or helper behavior.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "docs/port/harness-results.md",
+          "observation": "The report explicitly identifies helper-only passes and pending-registration cases that patch PowerShell code the C3 shim never executes."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "rg --files tests/shim",
+          "observation": "Only consult, providers, findings, scoreboard, and hook shims are present."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git show v0.6.1:tests/run-all.ps1 in the local plugin checkout",
+          "observation": "The pinned runner supports ScriptsDir and registers 22 harnesses, including telemetry, fixes28e, and claude."
+        }
+      ],
+      "verification": "For every pinned harness assertion, record whether it invokes C3, a copied PowerShell helper, or documentation, and confirm telemetry commands resolve to C3.",
+      "remedy": "Add the telemetry shim, update the stale harness guide, and translate helper-only behavioral fixtures into Rust or black-box C3 tests without changing their expected outcomes.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": ".collab/parity-0.6.1-2026-10-08/state.md",
+          "line": null
+        },
+        {
+          "path": "crates/c3/src/findings_tool/mod.rs",
+          "line": 960
+        }
+      ],
+      "claim": "Gap E incorrectly labels commit-before-spool ordering as absent; C3 already writes the rating mark before calling record_rating.",
+      "trigger": "The gap table is used to scope the rating transaction rewrite.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/parity-0.6.1-2026-10-08/state.md: row E",
+          "observation": "The row groups commit-before-spool with absent 0.6.1 telemetry behavior."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/findings_tool/mod.rs: mode_rate",
+          "observation": "write_text_atomic writes findings before the write lock is dropped and before record_rating is called. The mark lacks the new saved judge, revision, and delivery bookkeeping."
+        }
+      ],
+      "verification": "Inject a findings write failure and assert no rating event is enqueued.",
+      "remedy": "Mark ordering as partially implemented and preserve it while adding revision allocation, saved judge/time, telemetry_sent, retry identity checks, and backfill.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 1908
+        },
+        {
+          "path": "crates/c3/src/consult/prompt.rs",
+          "line": 138
+        }
+      ],
+      "claim": "Gap D is an actual missing behavior: context-budgeted prompts do not contain the plugin's inline re-read anchor.",
+      "trigger": "A consultation has context_tokens and a multiline or long ask.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs: context_line construction",
+          "observation": "The line only states the context window and recommends targeted reads."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/prompt.rs: assemble",
+          "observation": "Prompt assembly adds the ask once and ends with constraints and the consultation id; it does not construct a trailing re-read anchor."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "rg searches for 'Before you answer' and 're-read the ask' across crates/c3/src and crates/c3-core/src",
+          "observation": "No implementation of either anchor phrase was found."
+        }
+      ],
+      "verification": "Capture a generated prompt for a context-budgeted multiline ask and compare its anchor with the pinned fixes28e ANCHOR fixtures.",
+      "remedy": "Implement whitespace folding within the first line, the 300-character cutoff wording, and the remaining nonblank-line count.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/parity-0.6.1-2026-10-08/state.md",
+          "line": null
+        },
+        {
+          "path": "crates/c3-core/src/roster.rs",
+          "line": 29
+        },
+        {
+          "path": "crates/c3-core/src/roster.rs",
+          "line": 417
+        }
+      ],
+      "claim": "Plan identity is a cross-engine compatibility dependency, not merely a Claude adapter option; the current roster rejects the plan field.",
+      "trigger": "A plugin-compatible roster assigns a shared coding plan to Codex and Claude endpoint entries, or a future native HTTP route shares that quota.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/roster.rs: RosterEntry and reviewer key validation",
+          "observation": "RosterEntry has no plan field, and the accepted reviewer keys exclude plan."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git show v0.6.1:CHANGELOG.md in the local plugin checkout",
+          "observation": "E5–E7 require plan-wide quota propagation and scheduling across engines; E16 extends waiting to running entries from other repositories."
+        },
+        {
+          "kind": "read-code",
+          "reference": ".collab/parity-0.6.1-2026-10-08/state.md: row H",
+          "observation": "Plan support is bundled into the Claude-engine wave."
+        }
+      ],
+      "verification": "Validate a roster containing a Codex plan field, then exercise two different engine entries sharing that plan across two repositories.",
+      "remedy": "Extract plan parsing, machine-wide running records, quota propagation, and scheduling into shared infrastructure before enabling multiple routes for one plan.",
+      "supersedes": []
+    },
+    {
+      "severity": "note",
+      "locations": [
+        {
+          "path": ".collab/parity-0.6.1-2026-10-08/handoffs/01-claude-parity-framing.md",
+          "line": null
+        }
+      ],
+      "claim": "The native Messages proposal inherits an unproven credit-saving and review-equivalence assumption from an experiment that measured a different route.",
+      "trigger": "Native Messages with a fixed pack is selected on the expectation of the plugin's measured 3–6× credit saving.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/parity-0.6.1-2026-10-08/handoffs/01-claude-parity-framing.md: endpoint option",
+          "observation": "The native option is described as retaining the same credit saving measured by the plugin."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git show v0.6.1:CHANGELOG.md in the local plugin checkout",
+          "observation": "The documented experiment compares 12 pairs per plan through Codex and Claude Code endpoint routes. It contains no native Messages arm."
+        },
+        {
+          "kind": "inferred",
+          "reference": "docs/DESIGN.md: HTTP and pack contracts",
+          "observation": "Replacing tool-assisted repository discovery with a fixed pack changes the reviewed evidence and request workload, so the measured result does not establish native-route equivalence."
+        }
+      ],
+      "verification": "Run a randomized three-route benchmark on matched briefs and plans, measuring credits, retries, latency, evidence omissions, and blind usefulness.",
+      "remedy": "Describe native Messages as an optional candidate improvement and gate its default selection on direct measurements.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [],
+  "unproven": [
+    "No builds, tests, harnesses, live consultations, network requests, or fault-injection runs were executed during this read-only consultation.",
+    "The local plugin's v0.6.1 changelog and runner were inspected; this was not a complete source-level audit of every plugin contract.",
+    "The intake's deployed replacement behavior was supplied by the brief and corroborated by the tagged changelog, but the deployed service was not inspected.",
+    "Current CLI authentication, endpoint entitlements, and native Messages capabilities were not verified.",
+    "Concurrent mixed-bridge operation and Linux recovery equivalence remain untested here."
+  ],
+  "first_run_checklist": []
+}
