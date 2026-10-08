@@ -63,6 +63,30 @@ RUN-ROWS
   `ALL_PROXY`) is set, so the one divergence (an `http` URL with only `HTTPS_PROXY` set) ends
   in a direct request, never a surprise proxy.
 
-## Dogfooding: the diff review (runs 6-7)
+## Dogfooding: the diff review (runs 6-8)
 
-DOGFOOD
+The repository's own Claude Code plugin was installed from the checkout (`claude plugin
+marketplace add /home/user/C3`, `claude plugin install c3@c3`: both succeeded, user scope; the
+Linux hook wrapper `plugin/hooks/c3-hook.sh` runs `c3 hook`), and the branch diff was reviewed
+through the `c3` binary with the brief `handoffs/04-claude-diff-review.md` (eight focus files,
+a 103k-token pack, `--range main..HEAD`).
+
+| n (handoff) | reviewer | result | wall | tokens in / out | mark |
+|---|---|---|---|---|---|
+| 6 (08) | `openrouter :: thinkingmachines/inkling:free [http]` | failed: 403 `only available on agentic harnesses` (an OpenRouter policy for that free model); classed `auth`, which the preflight then read as an unauthenticated endpoint — the next run needed `--skip-preflight` (L3) | 0.6 s | - | - |
+| 7 (09) | `openrouter :: openai/gpt-6-luna [http]` | usable, HOLD, F09-1..F09-5 (1 major, 3 minor, 1 note); F07-5 confirmed fixed; five `evidence` wrappers normalised | 174.3 s | 104 177 / 18 492 (15 362 reasoning) | yes |
+| 8 (10) | `openrouter :: nvidia/nemotron-3-super-120b-a12b:free [http]`, `--effort low` | usable, HOLD, F10-1..F10-4 — a restatement of F09-1..F09-4 from the open-findings snapshot in its pack, with the same fixes; nothing new | 146.6 s | 127 167 / 16 582 (14 717 reasoning) | partly |
+
+| id | from | severity | claim | decision |
+|---|---|---|---|---|
+| F09-1 | luna | major | a `NO_PROXY` entry with a malformed port (`api.example:65536`) is read as host-only and excludes every port | accepted — such an entry is ignored (`no_proxy_entry` returns `None`); test |
+| F09-2 | luna | minor | `C3_HTTP_AUTH_PROXY=com` grants the header-less mode to every `.com` host | accepted in part — a single-label entry is dropped; a listing is documented as a grant for the whole subtree (a public-suffix list is not worth its weight here) |
+| F09-3 | luna | minor | the one-second `same_start_time` tolerance lets a pid reused within a second pass as the same process | accepted — one clock tick (10 ms) on non-Windows, exact on Windows as before |
+| F09-4 | luna | minor | `descendants_of` stopped at 4096 pids and `kill_tree` reported no survivors | accepted — a full walk over the table with a visited set, no cap; test over a 5 002-row table |
+| F09-5 | luna | note | the IP-literal change in `embed.rs` is shared code and could change Windows | rejected — a literal gives the same address either way; the existing loopback tests run on both CI runners |
+| F10-1..4 | nemotron | - | the same four findings restated | superseded by F09-1..4 |
+| L3 | coordinator (run 6) | minor | a 403 that is a model-availability policy (`only available on agentic harnesses`) is classed `auth` and marks the endpoint unauthenticated for later runs | open question for the owner: class a 403 whose message names a model policy as `capability` instead of `auth`? |
+
+What changed because of the reviewers: `dd79fb7` (F07-1..F07-5) and the commit after it
+(F09-1..F09-4); the docs name each rule. The verdicts are HOLD because the reviewers judged the
+open findings, which are now closed.

@@ -35,11 +35,12 @@ Every Windows test body is unchanged; the gates add an attribute and a one-line 
 
 - **Process liveness**: `/proc/<pid>/stat` instead of `OpenProcess` + `GetProcessTimes`; the
   recorded start time has the same shape (`yyyy-MM-ddTHH:mm:ss.fffffffZ`) and `same_start_time`
-  keeps the plugin's one-second tolerance on non-Windows. Without `/proc` (macOS) the start
-  time is blank and only existence is checked (`kill -0`) — macOS is untested.
-- **Tree kill**: descendants from the process table plus `kill -9`, instead of `taskkill /F /T`.
-  A grandchild that re-parents between the table read and the kill can escape; `taskkill /T`
-  has the same window.
+  tolerates one clock tick (10 ms) on non-Windows instead of the plugin's one second, since both
+  sides now come from the same `/proc` reading (dogfooding finding F09-3). Without `/proc`
+  (macOS) the start time is blank and only existence is checked (`kill -0`) — macOS is untested.
+- **Tree kill**: descendants from the process table (a full walk, no cap — F09-4) plus `kill -9`,
+  instead of `taskkill /F /T`. A grandchild that re-parents between the table read and the kill
+  can escape; `taskkill /T` has the same window.
 - **Locks**: advisory `flock` instead of share modes. A process that does not take the lock can
   still read and write the file (the plugin's `FileShare.Read` would refuse a writer); every
   C3 and plugin path takes the lock first, so the discipline holds between cooperating tools.
@@ -58,8 +59,8 @@ Three environment variables, all read at run time and none of them a roster fiel
 
 | variable | meaning | recorded as |
 |---|---|---|
-| `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` (either case), `NO_PROXY` | the `ureq` agent is built with `try_proxy_from_env` when a proxy applies to the request URL: `ALL_PROXY` or the scheme's variable, unless `NO_PROXY` lists the host (`*`, a host or IP literal — bracketed IPv6 included —, a domain suffix with or without a leading dot; an entry with a port excludes only that port; no CIDR). Loopback (`localhost`, `127/8`, `::1`, an IPv4-mapped loopback) is never proxied. | `proxy: true\|false` on the `request` event |
-| `C3_HTTP_AUTH_PROXY=<host,...>` | for a listed host (exact, or a subdomain of a listed name; an entry is canonicalised like a URL host, so a Unicode spelling matches its punycode form) C3 sends **no `Authorization` header and reads no key**: the egress proxy attaches the credential. The dry run's `key` line says so. For every other host the key-to-host binding of `roster_ext::check_key_host` is unchanged; for a listed host there is no key to bind, so the binding check is skipped. When no proxy applies to the request (no proxy variable, `NO_PROXY`, a loopback host) the credential-less request is not refused but recorded with a `proxy auth without a proxy` warning (a transparent egress proxy the environment does not name is a real deployment). | `auth: proxy` in the ledger's `reviewer.provider_config` and on the `request` event (`auth: key` on the event otherwise; the ledger field is absent in the key mode, as before) |
+| `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` (either case), `NO_PROXY` | the `ureq` agent is built with `try_proxy_from_env` when a proxy applies to the request URL: `ALL_PROXY` or the scheme's variable, unless `NO_PROXY` lists the host (`*`, a host or IP literal — bracketed IPv6 included —, a domain suffix with or without a leading dot; an entry with a port excludes only that port, an entry with a malformed port is ignored; no CIDR). Loopback (`localhost`, `127/8`, `::1`, an IPv4-mapped loopback) is never proxied. | `proxy: true\|false` on the `request` event |
+| `C3_HTTP_AUTH_PROXY=<host,...>` | for a listed host (exact, or a subdomain of a listed name — a listing grants the mode to the whole subtree, so a single-label entry such as `com` is dropped; an entry is canonicalised like a URL host, so a Unicode spelling matches its punycode form) C3 sends **no `Authorization` header and reads no key**: the egress proxy attaches the credential. The dry run's `key` line says so. For every other host the key-to-host binding of `roster_ext::check_key_host` is unchanged; for a listed host there is no key to bind, so the binding check is skipped. When no proxy applies to the request (no proxy variable, `NO_PROXY`, a loopback host) the credential-less request is not refused but recorded with a `proxy auth without a proxy` warning (a transparent egress proxy the environment does not name is a real deployment). | `auth: proxy` in the ledger's `reviewer.provider_config` and on the `request` event (`auth: key` on the event otherwise; the ledger field is absent in the key mode, as before) |
 | `C3_HTTP_CA_BUNDLE=<pem file>` | extra trust anchors ADDED to the bundled Mozilla roots (ureq's rustls stack with the same `ring` provider), for a proxy that re-terminates TLS. A file that cannot be read, holds no certificate or an unusable one refuses the launch; the refusal names the variable and the path, never the contents. | `ca_bundle: true\|false` on the `request` event |
 
 What stays: `redirects(0)` (a 3xx is never followed, through a proxy or not), the refusal of a
@@ -82,6 +83,9 @@ events files), summarised in `.collab/cloud-linux/state.md`.
 | 3 (05) | `google/gemma-4-31b-it:free` | a real 429 `Provider returned error` envelope from OpenRouter in 0.7 s: `burst`, not retried. |
 | 4 (06) | `nvidia/nemotron-3-super-120b-a12b:free` | 200 in 131 s; 13 814 of 13 821 output tokens were reasoning and the content was `{"": ""}`: recorded INVALID, raw kept. Free, 0 USD. |
 | 5 (07) | `openai/gpt-6-luna` (allowed by the owner; about one cent) | 200 in 183 s; a structured reply with five findings on the proxy code (four accepted and fixed, one answered with a warning), the normaliser repaired five `evidence` wrappers. Rated useful. |
+| 6 (08), dogfooding | `thinkingmachines/inkling:free` | 403 `only available on agentic harnesses` (an OpenRouter policy for that model), classed `auth`; the preflight then held the endpoint as unauthenticated and the next run needed `--skip-preflight`. |
+| 7 (09), dogfooding | `openai/gpt-6-luna` (about 1.5 cents: 104 177 in / 18 492 out) | the branch diff reviewed through the repository's own plugin and binary: five findings, four fixed (a malformed `NO_PROXY` port, single-label host-list entries, the start-time tolerance, the descendant cap), one rejected with evidence. Rated useful. |
+| 8 (10), dogfooding | `nvidia/nemotron-3-super-120b-a12b:free`, `--effort low` | a structured reply in 147 s that restated the four open findings of run 7; rated partly useful. At low effort the free reasoning model answers properly (compare run 4). |
 
 The exact packs, events files and replies are under `.collab/cloud-linux/handoffs/`; the
 findings and decisions in `.collab/cloud-linux/state.md`. No key is in the environment of these
@@ -93,7 +97,8 @@ runs and none of the files carries a credential.
   ubuntu-latest and windows-latest (`.github/workflows/ci.yml`). Done 2026-10-08.
 - `http` engine behind a proxy: `HTTPS_PROXY` honoured, `C3_HTTP_AUTH_PROXY` (credential
   attached by the proxy), `C3_HTTP_CA_BUNDLE` (extra trust anchors). Done 2026-10-08.
-- Live check through the sandbox proxy on free OpenRouter models: see §4.
+- Live check through the sandbox proxy on free OpenRouter models and the owner's `luna` model,
+  then C3 as its own review panel for the branch diff (eight runs, §4). Done 2026-10-08.
 - Open: macOS (no `/proc`; blank start times), `SSL_CERT_FILE` as a second source of trust
   anchors, `NO_PROXY` CIDR ranges.
 
@@ -113,3 +118,9 @@ ignored), so these lines live here until the owner moves them.
    direct DNS, so `cargo` hangs on the index until the registry hosts are routed through the
    proxy (`NO_PROXY=localhost,127.0.0.1 cargo fetch`). A setup script for the environment could
    do that once.
+6. A 403 whose message is a model-availability policy (`only available on agentic harnesses`,
+   run 6) is classed `auth` and marks the endpoint as unauthenticated for the following runs;
+   class such a 403 as `capability` instead?
+7. `C3_HTTP_AUTH_PROXY` grants the header-less mode to a whole subtree (subdomains of a listed
+   name); single-label entries are dropped, but there is no public-suffix check. Exact-host only
+   would be the stricter alternative (F09-2).
