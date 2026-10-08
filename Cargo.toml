@@ -39,6 +39,12 @@ ed25519-dalek = { version = "2", default-features = false }
 # and DELETE. Blocking on purpose — the send runs in a detached thread with a 3 s timeout,
 # so C3 pulls in no async runtime for one background call per consultation.
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+# rustls + webpki-roots: the http engine's optional extra trust anchors (`C3_HTTP_CA_BUNDLE`, the
+# Linux port) for an egress proxy that re-terminates TLS. Both are already in the lock file as
+# ureq's own TLS stack (the same versions and the same `ring` provider ureq builds its default
+# config with), so no new crate is pulled in; PEM parsing comes from rustls' `pki_types`.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"
 # ignore + globset: the pack pipeline's file discovery (milestone 7). `ignore` gives the same
 # .gitignore-aware repository walk eckSnapshot relies on (respecting nested .gitignore,
 # .git/info/exclude and the global excludes) with directory pruning; `globset` compiles C3's

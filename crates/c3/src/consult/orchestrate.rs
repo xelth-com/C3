@@ -1602,8 +1602,13 @@ fn build_context(
         };
         let host = c3_core::roster_ext::parse_base_url(&base_url)
             .map_err(|why| (format!("--base-url: {why}."), 1))?;
-        c3_core::roster_ext::check_key_host(&key_env, &host)
-            .map_err(|why| (format!("{why}."), 1))?;
+        // The proxy auth mode (`C3_HTTP_AUTH_PROXY` lists this host) sends no key at all, so there
+        // is nothing to bind; every other host keeps the S1 binding unchanged.
+        if !crate::http_engine::host_uses_proxy_auth(&host, &crate::http_engine::proxy_auth_hosts())
+        {
+            c3_core::roster_ext::check_key_host(&key_env, &host)
+                .map_err(|why| (format!("{why}."), 1))?;
+        }
         if o.pack_budget != -1
             && (o.pack_budget < 0 || o.pack_budget > c3_core::roster_ext::MAX_PACK_TOKENS)
         {

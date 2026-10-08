@@ -474,6 +474,7 @@ dependencies = [
  "globset",
  "ignore",
  "regex",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
@@ -482,6 +483,7 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

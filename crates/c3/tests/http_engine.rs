@@ -38,17 +38,28 @@ enum Resp {
 
 struct Mock {
     base_url: String,
-    rx: mpsc::Receiver<String>,
+    /// One `(head, body)` per request: the request line plus headers (CRLF-joined), and the body.
+    rx: mpsc::Receiver<(String, String)>,
 }
 
 impl Mock {
     fn last_body(&self) -> String {
+        self.last_request().1
+    }
+
+    fn last_request(&self) -> (String, String) {
         self.rx.recv_timeout(Duration::from_secs(5)).unwrap()
     }
 }
 
 fn start_mock(responses: Vec<Resp>) -> Mock {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    start_mock_on("127.0.0.1", responses).expect("the loopback mock binds")
+}
+
+/// A mock bound to `ip` (another loopback address isolates a test that changes a process-wide
+/// environment variable keyed by host). `None` when the address cannot be bound here.
+fn start_mock_on(ip: &str, responses: Vec<Resp>) -> Option<Mock> {
+    let listener = TcpListener::bind(format!("{ip}:0")).ok()?;
     let addr = listener.local_addr().unwrap();
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -57,8 +68,7 @@ fn start_mock(responses: Vec<Resp>) -> Mock {
                 Ok(s) => s,
                 Err(_) => break,
             };
-            let body = read_request_body(&mut stream);
-            let _ = tx.send(body);
+            let _ = tx.send(read_request(&mut stream));
             match resp {
                 Resp::Raw(r) => {
                     let _ = stream.write_all(r.as_bytes());
@@ -81,15 +91,17 @@ fn start_mock(responses: Vec<Resp>) -> Mock {
             }
         }
     });
-    Mock {
+    Some(Mock {
         base_url: format!("http://{addr}"),
         rx,
-    }
+    })
 }
 
-fn read_request_body(stream: &mut TcpStream) -> String {
+/// The request's head (request line and headers, CRLF-joined) and its body.
+fn read_request(stream: &mut TcpStream) -> (String, String) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut content_length = 0usize;
+    let mut head = Vec::new();
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -102,12 +114,16 @@ fn read_request_body(stream: &mut TcpStream) -> String {
         if let Some(v) = l.to_ascii_lowercase().strip_prefix("content-length:") {
             content_length = v.trim().parse().unwrap_or(0);
         }
+        head.push(l.to_string());
     }
     let mut body = vec![0u8; content_length];
     if content_length > 0 {
         let _ = reader.read_exact(&mut body);
     }
-    String::from_utf8_lossy(&body).into_owned()
+    (
+        head.join("\r\n"),
+        String::from_utf8_lossy(&body).into_owned(),
+    )
 }
 
 fn http_response(status: &str, headers: &[(&str, &str)], body: &str) -> String {
@@ -860,6 +876,88 @@ fn events_file_is_written_with_request_and_response() {
 
     std::env::remove_var("C3_HTTP_KEY_EV");
     let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn proxy_auth_host_sends_no_authorization_header_and_needs_no_key() {
+    // (Linux port) `C3_HTTP_AUTH_PROXY` lists the endpoint's host: the request carries NO
+    // Authorization header, no key is needed in the environment, the ledger config and the request
+    // event say `auth: proxy`, and the event records whether the environment's proxy was used
+    // (never for a loopback mock). The mock sits on a second loopback address so the listing
+    // (a process-wide variable) cannot touch the other tests' 127.0.0.1 mocks.
+    const PROXY_HOST: &str = "127.0.0.2";
+    let Some(mock) = start_mock_on(
+        PROXY_HOST,
+        vec![Resp::Raw(completion_response(&structured_reply_json()))],
+    ) else {
+        eprintln!("skipping proxy_auth_host_sends_no_authorization_header_and_needs_no_key: this host cannot bind {PROXY_HOST}");
+        return;
+    };
+    std::env::remove_var("C3_HTTP_KEY_PXNONE");
+    let prev = std::env::var(c3::http_engine::AUTH_PROXY_ENV).ok();
+    std::env::set_var(c3::http_engine::AUTH_PROXY_ENV, PROXY_HOST);
+    let d = scratch("proxy-auth");
+    let eng = engine(&mock.base_url, "C3_HTTP_KEY_PXNONE", &d);
+
+    // The guard passes without a key, and the run completes.
+    assert!(eng.precheck(&primary_turn()).is_ok());
+    assert_eq!(
+        eng.key_status(),
+        format!(
+            "proxy ({} lists {PROXY_HOST}; no Authorization header is sent and no key is read)",
+            c3::http_engine::AUTH_PROXY_ENV
+        )
+    );
+    let att = eng.attempt(&primary_turn()).unwrap();
+    assert!(
+        matches!(att.outcome, AttemptOutcome::Completed(_)),
+        "{:?}",
+        att.outcome
+    );
+    assert_eq!(att.provider_config["auth"], "proxy");
+
+    // The wire: no authorization header at all; the config headers still travel.
+    let (head, body) = mock.last_request();
+    let head_l = head.to_ascii_lowercase();
+    assert!(
+        !head_l.contains("authorization:"),
+        "an Authorization header was sent: {head}"
+    );
+    assert!(head_l.contains("x-title: c3"), "{head}");
+    assert!(body.contains("\"messages\""));
+
+    // The events: header names without `authorization`, `auth: proxy`, `proxy: false`.
+    let ev = std::fs::read_to_string(eng.events_path()).unwrap();
+    let first: Value = serde_json::from_str(ev.lines().next().unwrap()).unwrap();
+    assert_eq!(first["event"], "request");
+    assert_eq!(first["auth"], "proxy");
+    assert_eq!(first["proxy"], false);
+    let names: Vec<&str> = first["headers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&"authorization"), "{names:?}");
+    assert!(names.contains(&"content-type") && names.contains(&"X-Title"));
+    assert!(!ev.contains("Bearer"));
+
+    // Every other host keeps the key mode: the same engine against the 127.0.0.1 loopback (not
+    // listed) still refuses to run without its key and records no `auth` field.
+    let d2 = scratch("proxy-auth-keyed");
+    let keyed = engine("http://127.0.0.1:9", "C3_HTTP_KEY_PXNONE", &d2);
+    assert!(keyed.precheck(&primary_turn()).is_err());
+    let att2 = keyed.attempt(&primary_turn()).unwrap();
+    assert!(matches!(att2.outcome, AttemptOutcome::LaunchFailed { .. }));
+    assert!(att2.provider_config.get("auth").is_none());
+    assert_eq!(keyed.key_status(), "env C3_HTTP_KEY_PXNONE not set");
+
+    match prev {
+        Some(v) => std::env::set_var(c3::http_engine::AUTH_PROXY_ENV, v),
+        None => std::env::remove_var(c3::http_engine::AUTH_PROXY_ENV),
+    }
+    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(&d2);
 }
 
 #[test]

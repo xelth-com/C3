@@ -22,6 +22,15 @@
 //! literal-key scrub), and the [`RequestPlan`]'s `Display` shows the `Authorization` header
 //! redacted. A [`precheck`](HttpEngine::precheck) refuses an API key where a subscription engine
 //! would otherwise be billed per token (the muse rule, generalized).
+//!
+//! Proxy (the Linux port): the agent honours the `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`
+//! environment (`ureq`'s `try_proxy_from_env`), minus the hosts `NO_PROXY` names, and the request
+//! event records whether a proxy was used (`proxy: true|false`). A second auth mode exists for a
+//! sandbox whose egress proxy attaches the credential itself: when [`AUTH_PROXY_ENV`]
+//! (`C3_HTTP_AUTH_PROXY`) lists the endpoint's host, C3 sends NO `Authorization` header and needs
+//! NO key in the environment ([`HttpAuth::Proxy`]); the ledger's `provider_config` and the request
+//! event carry `auth: proxy`. For every other host the key-to-host binding is unchanged. A
+//! user-supplied `Proxy-Authorization` header stays refused (`roster_ext::header_name_problem`).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -43,6 +52,215 @@ use crate::pack::reviewer::{self, ReviewerPack};
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 /// The default key environment variable (OpenRouter's own).
 pub const DEFAULT_KEY_ENV: &str = "OPENROUTER_API_KEY";
+/// The environment variable that lists the hosts (comma-separated, e.g. `openrouter.ai`) whose
+/// credential an egress proxy attaches itself: for a host on the list C3 sends no `Authorization`
+/// header and needs no key in the environment ([`HttpAuth::Proxy`]). A host matches exactly or as
+/// a subdomain of a listed name (the same rule the known-key binding uses).
+pub const AUTH_PROXY_ENV: &str = "C3_HTTP_AUTH_PROXY";
+
+/// The environment variable naming a PEM file of EXTRA trust anchors for the TLS connection (the
+/// Linux port): an egress proxy that re-terminates TLS presents a certificate from its own CA,
+/// which the bundled Mozilla roots do not know. The anchors are ADDED to the bundled roots, never
+/// replace them; unset means the bundled roots alone (the behaviour before the port). A file that
+/// cannot be read or holds no certificate refuses the launch — never a silent fall-back.
+pub const CA_BUNDLE_ENV: &str = "C3_HTTP_CA_BUNDLE";
+
+/// The TLS client config for this process: the bundled roots plus, when [`CA_BUNDLE_ENV`] names a
+/// file, every certificate in it. `Ok(None)` when the variable is unset (ureq's own default config
+/// is used). The path is named in a refusal (it is not a secret); the file's contents never are.
+pub fn tls_config_from_env() -> Result<Option<std::sync::Arc<rustls::ClientConfig>>, String> {
+    let Some(path) = std::env::var_os(CA_BUNDLE_ENV).filter(|p| !p.is_empty()) else {
+        return Ok(None);
+    };
+    tls_config_with_bundle(Path::new(&path)).map(Some)
+}
+
+/// Build a rustls client config from the bundled Mozilla roots plus the certificates of the PEM
+/// file at `path` (the same `ring` provider and protocol versions ureq's default config uses).
+pub fn tls_config_with_bundle(path: &Path) -> Result<std::sync::Arc<rustls::ClientConfig>, String> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::CertificateDer;
+    let mut roots = rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    let certs = CertificateDer::pem_file_iter(path).map_err(|e| {
+        format!(
+            "{CA_BUNDLE_ENV} names {}, which cannot be read ({})",
+            path.display(),
+            c3_core::one_line(&e.to_string())
+        )
+    })?;
+    let mut added = 0usize;
+    for cert in certs {
+        let cert = cert.map_err(|_| {
+            format!(
+                "{CA_BUNDLE_ENV} names {}, which is not a PEM certificate bundle",
+                path.display()
+            )
+        })?;
+        roots.add(cert).map_err(|_| {
+            format!(
+                "{CA_BUNDLE_ENV} names {}, which holds a certificate that is not a usable trust anchor",
+                path.display()
+            )
+        })?;
+        added += 1;
+    }
+    if added == 0 {
+        return Err(format!(
+            "{CA_BUNDLE_ENV} names {}, which holds no certificate",
+            path.display()
+        ));
+    }
+    let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .map_err(|e| {
+        format!(
+            "TLS configuration failed: {}",
+            c3_core::one_line(&e.to_string())
+        )
+    })?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    Ok(std::sync::Arc::new(config))
+}
+
+/// How the request is authenticated: with the key from `key_env` as a bearer header, or by the
+/// egress proxy on the way out (no header, no key read).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpAuth {
+    /// `Authorization: Bearer <key from key_env>`.
+    Key,
+    /// No `Authorization` header: the proxy attaches the credential (`C3_HTTP_AUTH_PROXY`).
+    Proxy,
+}
+
+impl HttpAuth {
+    /// The ledger / events spelling: `key` or `proxy`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HttpAuth::Key => "key",
+            HttpAuth::Proxy => "proxy",
+        }
+    }
+}
+
+/// The hosts `C3_HTTP_AUTH_PROXY` names: split on commas, trimmed, lower-cased, empties dropped.
+pub fn proxy_auth_hosts_from(list: &str) -> Vec<String> {
+    list.split(',')
+        .map(|h| h.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|h| !h.is_empty())
+        .collect()
+}
+
+/// The hosts `C3_HTTP_AUTH_PROXY` names in this process's environment.
+pub fn proxy_auth_hosts() -> Vec<String> {
+    std::env::var(AUTH_PROXY_ENV)
+        .map(|v| proxy_auth_hosts_from(&v))
+        .unwrap_or_default()
+}
+
+/// Whether `host` is one of `hosts` (exact) or a subdomain of one. Case-insensitive; a trailing
+/// dot on the host is ignored.
+pub fn host_uses_proxy_auth(host: &str, hosts: &[String]) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return false;
+    }
+    hosts
+        .iter()
+        .any(|h| host == *h || host.ends_with(&format!(".{h}")))
+}
+
+/// Whether a request to `url` goes through the proxy the environment names: `ALL_PROXY` or, by
+/// the URL's scheme, `HTTPS_PROXY` / `HTTP_PROXY` (upper or lower case), unless `NO_PROXY` lists
+/// the host. The agent is then built with `try_proxy_from_env`; the request event records the
+/// answer as `proxy`.
+pub fn env_proxy_applies(url: &str) -> bool {
+    let parsed = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+    let host = parsed.host_str().unwrap_or("");
+    let env = |name: &str| {
+        std::env::var(name)
+            .ok()
+            .or_else(|| std::env::var(name.to_ascii_lowercase()).ok())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    proxy_decision(
+        parsed.scheme(),
+        host,
+        env("ALL_PROXY").as_deref(),
+        env("HTTPS_PROXY").as_deref(),
+        env("HTTP_PROXY").as_deref(),
+        env("NO_PROXY").as_deref(),
+    )
+}
+
+/// The pure proxy rule behind [`env_proxy_applies`]: a non-empty `ALL_PROXY`, else the variable
+/// of the scheme, selects a proxy; `NO_PROXY` (`*`, a host, or a domain suffix with or without a
+/// leading dot, each optionally with a port) excludes the host. CIDR ranges are not understood.
+pub(crate) fn proxy_decision(
+    scheme: &str,
+    host: &str,
+    all_proxy: Option<&str>,
+    https_proxy: Option<&str>,
+    http_proxy: Option<&str>,
+    no_proxy: Option<&str>,
+) -> bool {
+    let nonempty = |v: Option<&str>| v.map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let selected = match scheme {
+        "https" => nonempty(all_proxy) || nonempty(https_proxy),
+        "http" => nonempty(all_proxy) || nonempty(http_proxy),
+        _ => false,
+    };
+    if !selected {
+        return false;
+    }
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    // Loopback is never proxied (a test mock, a local server): a proxy cannot reach it anyway.
+    if host == "localhost" || host.starts_with("127.") || host == "[::1]" || host == "::1" {
+        return false;
+    }
+    let Some(list) = no_proxy else {
+        return true;
+    };
+    for entry in list.split(',') {
+        let e = entry.trim().to_ascii_lowercase();
+        if e.is_empty() {
+            continue;
+        }
+        if e == "*" {
+            return false;
+        }
+        // `host:port` → `host`; a bracketed IPv6 literal keeps its brackets.
+        let e = if e.starts_with('[') {
+            e.split("]:")
+                .next()
+                .map(|s| s.trim_end_matches(']'))
+                .unwrap_or(&e)
+                .to_string()
+        } else {
+            e.rsplit_once(':')
+                .filter(|(_, p)| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+                .map(|(h, _)| h.to_string())
+                .unwrap_or(e)
+        };
+        let e = e.trim_start_matches('.').trim_end_matches('.');
+        if e.is_empty() {
+            continue;
+        }
+        let bracketed = host.trim_start_matches('[').trim_end_matches(']');
+        if host == e || bracketed == e || host.ends_with(&format!(".{e}")) {
+            return false;
+        }
+    }
+    true
+}
 
 /// Provider labels that name a *subscription* engine: sending an API key to one would bill
 /// per token where a subscription (a signed-in CLI) is the intended, already-paid path. The
@@ -95,6 +313,26 @@ impl HttpConfig {
     /// The full `chat/completions` URL for this base.
     pub fn completions_url(&self) -> String {
         format!("{}/chat/completions", self.base_url.trim_end_matches('/'))
+    }
+
+    /// The endpoint's host, lower-cased (empty when the base URL does not parse).
+    pub fn host(&self) -> String {
+        url::Url::parse(&self.base_url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+            .unwrap_or_default()
+    }
+
+    /// The auth mode of this endpoint: [`HttpAuth::Proxy`] when `C3_HTTP_AUTH_PROXY` lists its
+    /// host (exactly or as a parent domain), else [`HttpAuth::Key`]. Read from the environment at
+    /// call time; never a roster field or a flag, so an agent-writable file cannot switch a host
+    /// to the header-less mode.
+    pub fn auth_mode(&self) -> HttpAuth {
+        if host_uses_proxy_auth(&self.host(), &proxy_auth_hosts()) {
+            HttpAuth::Proxy
+        } else {
+            HttpAuth::Key
+        }
     }
 }
 
@@ -167,12 +405,32 @@ impl HttpEngine {
         SubprocessEngine::new(EngineKind::Http)
     }
 
-    /// `env <X> set` / `env <X> not set` — a key-free diagnostic (never the value).
+    /// `env <X> set` / `env <X> not set` — a key-free diagnostic (never the value). In the proxy
+    /// auth mode: `proxy (...)`, naming the listing variable and the host, never a value.
     pub fn key_status(&self) -> String {
+        if self.config.auth_mode() == HttpAuth::Proxy {
+            return format!(
+                "proxy ({AUTH_PROXY_ENV} lists {}; no Authorization header is sent and no key is read)",
+                self.config.host()
+            );
+        }
         match self.resolve_key() {
             Some(_) => format!("env {} set", self.config.key_env),
             None => format!("env {} not set", self.config.key_env),
         }
+    }
+
+    /// The header NAMES in send order: `content-type`, `authorization` (key mode only), then the
+    /// config headers. Never a value.
+    fn header_names(&self) -> Vec<String> {
+        let mut names = vec!["content-type".to_string()];
+        if self.config.auth_mode() == HttpAuth::Key {
+            names.push("authorization".to_string());
+        }
+        for (k, _) in &self.config.headers {
+            names.push(k.clone());
+        }
+        names
     }
 
     /// The key from the environment, or `None` when unset/empty. Never logged.
@@ -189,14 +447,10 @@ impl HttpEngine {
     /// carries the wire shape with the `Authorization` header redacted in any `Display`.
     pub fn request_plan(&self, turn: &TurnRequest) -> RequestPlan {
         let messages = self.messages(turn);
-        let mut headers = vec!["content-type".to_string(), "authorization".to_string()];
-        for (k, _) in &self.config.headers {
-            headers.push(k.clone());
-        }
         RequestPlan {
             url: self.config.completions_url(),
             model: self.config.model.clone(),
-            headers,
+            headers: self.header_names(),
             body_summary: format!(
                 "model={}, messages={}, json_object={}",
                 self.config.model,
@@ -269,13 +523,18 @@ impl HttpEngine {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default()
             });
-        json!({
+        let mut config = json!({
             "engine": "http",
             "base_url": self.config.base_url,
             "model": self.config.model,
             "pack": pack_rel,
             "pack_sha256": c3_core::sha256_hex(self.pack.content.as_bytes()),
-        })
+        });
+        // The ledger names the header-less mode (`auth: proxy`); the key mode stays as it was.
+        if self.config.auth_mode() == HttpAuth::Proxy {
+            config["auth"] = Value::String(HttpAuth::Proxy.as_str().to_string());
+        }
+        config
     }
 
     /// Write the pack and its request-augmented sidecar (BEFORE the request is made).
@@ -338,37 +597,68 @@ impl HttpEngine {
             let _ = std::fs::write(&events_path, b"");
         }
 
-        // The key: read now, from the environment only, never logged.
-        let Some(key) = self.resolve_key() else {
-            self.append_event(
-                &events_path,
-                &tag(
-                    label,
-                    json!({
-                        "event": "error",
-                        "class": "auth",
-                        "message": format!("env {} not set", self.config.key_env),
-                    }),
-                ),
-            );
-            return Ok(HttpAttempt {
-                outcome: AttemptOutcome::LaunchFailed {
-                    child_exists: false,
-                    message: format!("env {} not set", self.config.key_env),
-                },
-                pack_md,
-                pack_json,
-                provider_config,
-                warnings: Vec::new(),
-            });
+        // The key: read now, from the environment only, never logged. In the proxy auth mode no
+        // key is read at all (the egress proxy attaches the credential).
+        let auth = self.config.auth_mode();
+        let key = match auth {
+            HttpAuth::Proxy => None,
+            HttpAuth::Key => match self.resolve_key() {
+                Some(k) => Some(k),
+                None => {
+                    self.append_event(
+                        &events_path,
+                        &tag(
+                            label,
+                            json!({
+                                "event": "error",
+                                "class": "auth",
+                                "message": format!("env {} not set", self.config.key_env),
+                            }),
+                        ),
+                    );
+                    return Ok(HttpAttempt {
+                        outcome: AttemptOutcome::LaunchFailed {
+                            child_exists: false,
+                            message: format!("env {} not set", self.config.key_env),
+                        },
+                        pack_md,
+                        pack_json,
+                        provider_config,
+                        warnings: Vec::new(),
+                    });
+                }
+            },
         };
 
-        // (item 3) The request event: header NAMES only, the body size in bytes, the pack hash —
-        // never the key, never a header value, never the body.
-        let mut header_names = vec!["content-type".to_string(), "authorization".to_string()];
-        for (k, _) in &self.config.headers {
-            header_names.push(k.clone());
-        }
+        // The TLS roots: the bundled ones, plus the `C3_HTTP_CA_BUNDLE` file when set. A bundle
+        // that cannot be used refuses the launch (recorded, never a silent fall-back).
+        let tls = match tls_config_from_env() {
+            Ok(t) => t,
+            Err(message) => {
+                self.append_event(
+                    &events_path,
+                    &tag(
+                        label,
+                        json!({ "event": "error", "class": "transport", "message": message }),
+                    ),
+                );
+                return Ok(HttpAttempt {
+                    outcome: AttemptOutcome::LaunchFailed {
+                        child_exists: false,
+                        message,
+                    },
+                    pack_md,
+                    pack_json,
+                    provider_config,
+                    warnings: Vec::new(),
+                });
+            }
+        };
+
+        // (item 3) The request event: header NAMES only, the body size in bytes, the pack hash,
+        // the auth mode, whether the environment's proxy is used and whether extra trust anchors
+        // are loaded — never the key, never a header value, never the body.
+        let proxy = env_proxy_applies(&url);
         self.append_event(
             &events_path,
             &tag(
@@ -381,12 +671,23 @@ impl HttpEngine {
                     "messages": messages.len(),
                     "body_bytes": body_str.len(),
                     "pack_sha256": c3_core::sha256_hex(self.pack.content.as_bytes()),
-                    "headers": header_names,
+                    "headers": self.header_names(),
+                    "auth": auth.as_str(),
+                    "proxy": proxy,
+                    "ca_bundle": tls.is_some(),
                 }),
             ),
         );
 
-        let (outcome, warnings) = self.post(&key, &url, &body_str, &events_path, label);
+        let (outcome, warnings) = self.post(
+            key.as_deref(),
+            proxy,
+            tls,
+            &url,
+            &body_str,
+            &events_path,
+            label,
+        );
         Ok(HttpAttempt {
             outcome,
             pack_md,
@@ -426,25 +727,36 @@ impl HttpEngine {
     /// (item 1) The wall clock stops only after the response BODY has been read (OpenRouter answers
     /// the headers at once and streams keep-alive whitespace while the model works). Every string
     /// that could carry the key is scrubbed, and each outcome writes its event line.
+    #[allow(clippy::too_many_arguments)]
     fn post(
         &self,
-        key: &str,
+        key: Option<&str>,
+        proxy: bool,
+        tls: Option<std::sync::Arc<rustls::ClientConfig>>,
         url: &str,
         body: &str,
         events_path: &Path,
         label: Option<&str>,
     ) -> (AttemptOutcome, Vec<String>) {
-        let agent = ureq::AgentBuilder::new()
+        let mut builder = ureq::AgentBuilder::new()
             .timeout_connect(self.config.timeout)
             .timeout(self.config.timeout)
             // (S4) Never follow a redirect: a 3xx would re-send the pack (project content) to
             // another host. A redirect is reported as a failure below, not chased.
             .redirects(0)
-            .build();
-        let mut req = agent
-            .post(url)
-            .set("content-type", "application/json")
-            .set("authorization", &format!("Bearer {key}"));
+            // The environment's proxy (`HTTPS_PROXY` & co.) when it applies to this URL
+            // (`env_proxy_applies`): a sandbox routes all egress through one.
+            .try_proxy_from_env(proxy);
+        // The bundled roots plus the `C3_HTTP_CA_BUNDLE` anchors, when set.
+        if let Some(cfg) = tls {
+            builder = builder.tls_config(cfg);
+        }
+        let agent = builder.build();
+        let mut req = agent.post(url).set("content-type", "application/json");
+        // The bearer header only in the key mode; the proxy mode sends no credential at all.
+        if let Some(key) = key {
+            req = req.set("authorization", &format!("Bearer {key}"));
+        }
         for (k, v) in &self.config.headers {
             // (S5, defence in depth) Never let a reserved or malformed header name through, even
             // if one somehow reached the config past the roster validator.
@@ -493,7 +805,7 @@ impl HttpEngine {
                 // (item 1) The body is read HERE; the clock stops after it.
                 let text = resp.into_string().unwrap_or_default();
                 let wall = round1(started.elapsed().as_secs_f64());
-                self.parse_response(Some(key), &text, wall, status, req_id, events_path, label)
+                self.parse_response(key, &text, wall, status, req_id, events_path, label)
             }
             Err(ureq::Error::Status(code, resp)) => {
                 let retry_after = resp
@@ -502,8 +814,7 @@ impl HttpEngine {
                     .filter(|s| !s.is_empty());
                 let body_text = resp.into_string().unwrap_or_default();
                 let wall = round1(started.elapsed().as_secs_f64());
-                let failure =
-                    self.classified_failure(Some(key), Some(code), &body_text, retry_after);
+                let failure = self.classified_failure(key, Some(code), &body_text, retry_after);
                 self.append_event(
                     events_path,
                     &tag(
@@ -523,7 +834,7 @@ impl HttpEngine {
             }
             Err(ureq::Error::Transport(t)) => {
                 let wall = round1(started.elapsed().as_secs_f64());
-                let message = self.scrub(Some(key), &c3_core::one_line(&t.to_string()));
+                let message = self.scrub(key, &c3_core::one_line(&t.to_string()));
                 if is_timeout(&message) {
                     self.append_event(
                         events_path,
@@ -808,13 +1119,17 @@ impl Engine for HttpEngine {
                 self.config.provider_label
             )));
         }
-        if self.resolve_key().is_none() {
+        // The proxy auth mode needs no key (the egress proxy attaches it); every other host does.
+        if self.config.auth_mode() == HttpAuth::Key && self.resolve_key().is_none() {
             return Err(EngineError::Precheck(format!(
                 "env {} not set: the http engine reads its key from the environment only",
                 self.config.key_env
             )));
         }
-        Ok(())
+        // An unusable `C3_HTTP_CA_BUNDLE` is refused before any request.
+        tls_config_from_env()
+            .map(|_| ())
+            .map_err(EngineError::Precheck)
     }
 
     fn run(&self, turn: &TurnRequest) -> Result<AttemptOutcome, EngineError> {
@@ -980,6 +1295,211 @@ mod tests {
         assert!(!SUBSCRIPTION_PROVIDERS
             .iter()
             .any(|p| p.eq_ignore_ascii_case("openrouter")));
+    }
+
+    #[test]
+    fn proxy_auth_host_list_is_parsed_and_matched_exactly_or_by_subdomain() {
+        let hosts = proxy_auth_hosts_from(" openrouter.ai, ,API.Example.COM., ");
+        assert_eq!(hosts, vec!["openrouter.ai", "api.example.com"]);
+        assert!(host_uses_proxy_auth("openrouter.ai", &hosts));
+        assert!(host_uses_proxy_auth("OpenRouter.AI.", &hosts));
+        assert!(host_uses_proxy_auth("eu.openrouter.ai", &hosts));
+        assert!(host_uses_proxy_auth("api.example.com", &hosts));
+        // A suffix without the dot boundary, a look-alike and an empty host never match.
+        assert!(!host_uses_proxy_auth("evilopenrouter.ai", &hosts));
+        assert!(!host_uses_proxy_auth("openrouter.ai.evil.example", &hosts));
+        assert!(!host_uses_proxy_auth("example.com", &hosts));
+        assert!(!host_uses_proxy_auth("", &hosts));
+        assert!(!host_uses_proxy_auth("openrouter.ai", &[]));
+        assert!(proxy_auth_hosts_from("").is_empty());
+    }
+
+    #[test]
+    fn auth_mode_follows_the_listing_variable_for_the_endpoint_host() {
+        // The listing is read from the environment at call time; a host that is not listed stays
+        // in the key mode, so the key-to-host binding is unchanged for every other endpoint.
+        let listed = HttpConfig {
+            base_url: "https://proxy-auth-unit.test/v1".to_string(),
+            model: "m".to_string(),
+            ..Default::default()
+        };
+        let other = HttpConfig {
+            base_url: "https://keyed-unit.test/v1".to_string(),
+            model: "m".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(listed.host(), "proxy-auth-unit.test");
+        let prev = std::env::var(AUTH_PROXY_ENV).ok();
+        std::env::set_var(AUTH_PROXY_ENV, "proxy-auth-unit.test");
+        assert_eq!(listed.auth_mode(), HttpAuth::Proxy);
+        assert_eq!(other.auth_mode(), HttpAuth::Key);
+        match prev {
+            Some(v) => std::env::set_var(AUTH_PROXY_ENV, v),
+            None => std::env::remove_var(AUTH_PROXY_ENV),
+        }
+        assert_eq!(HttpAuth::Proxy.as_str(), "proxy");
+        assert_eq!(HttpAuth::Key.as_str(), "key");
+    }
+
+    /// A public root (ISRG Root X1), used only to prove a PEM bundle loads; not a secret.
+    const PUBLIC_ROOT_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----
+";
+
+    #[test]
+    fn ca_bundle_adds_anchors_and_refuses_an_unusable_file() {
+        let dir = std::env::temp_dir().join(format!("c3-ca-bundle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A PEM bundle with one public root loads on top of the bundled roots.
+        let good = dir.join("roots.pem");
+        std::fs::write(&good, PUBLIC_ROOT_PEM).unwrap();
+        assert!(tls_config_with_bundle(&good).is_ok());
+        // A missing file, an empty file and a file without a certificate are refused, naming the
+        // variable and the path (never the contents).
+        let missing = dir.join("missing.pem");
+        let err = tls_config_with_bundle(&missing).unwrap_err();
+        assert!(
+            err.contains(CA_BUNDLE_ENV) && err.contains("cannot be read"),
+            "{err}"
+        );
+        let empty = dir.join("empty.pem");
+        std::fs::write(&empty, "").unwrap();
+        let err = tls_config_with_bundle(&empty).unwrap_err();
+        assert!(err.contains("holds no certificate"), "{err}");
+        let text = dir.join("text.pem");
+        std::fs::write(&text, "not a certificate\n").unwrap();
+        assert!(tls_config_with_bundle(&text).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn proxy_decision_follows_scheme_and_no_proxy() {
+        let p = Some("http://127.0.0.1:3128");
+        // The scheme picks the variable; ALL_PROXY covers both.
+        assert!(proxy_decision(
+            "https",
+            "openrouter.ai",
+            None,
+            p,
+            None,
+            None
+        ));
+        assert!(!proxy_decision(
+            "https",
+            "openrouter.ai",
+            None,
+            None,
+            p,
+            None
+        ));
+        assert!(proxy_decision("http", "mock.test", None, None, p, None));
+        assert!(!proxy_decision("http", "mock.test", None, p, None, None));
+        assert!(proxy_decision("http", "mock.test", p, None, None, None));
+        assert!(!proxy_decision(
+            "https",
+            "openrouter.ai",
+            Some("  "),
+            None,
+            None,
+            None
+        ));
+        assert!(!proxy_decision("ftp", "x", p, p, p, None));
+        // NO_PROXY: a wildcard, an exact host, a domain suffix (with or without the dot), a port.
+        for no in [
+            "*",
+            "openrouter.ai",
+            ".openrouter.ai",
+            "OPENROUTER.AI:443",
+            "localhost,openrouter.ai",
+        ] {
+            assert!(
+                !proxy_decision("https", "openrouter.ai", None, p, None, Some(no)),
+                "NO_PROXY={no}"
+            );
+        }
+        assert!(!proxy_decision(
+            "https",
+            "eu.openrouter.ai",
+            None,
+            p,
+            None,
+            Some("openrouter.ai")
+        ));
+        assert!(proxy_decision(
+            "https",
+            "openrouter.ai",
+            None,
+            p,
+            None,
+            Some("localhost,127.0.0.1")
+        ));
+        assert!(proxy_decision(
+            "https",
+            "evilopenrouter.ai",
+            None,
+            p,
+            None,
+            Some("openrouter.ai")
+        ));
+        assert!(!proxy_decision(
+            "http",
+            "127.0.0.1",
+            p,
+            None,
+            None,
+            Some("127.0.0.1:8080")
+        ));
+        assert!(!proxy_decision(
+            "http",
+            "[::1]",
+            p,
+            None,
+            None,
+            Some("[::1]:80")
+        ));
+        assert!(!proxy_decision(
+            "http",
+            "example.test",
+            p,
+            None,
+            None,
+            Some("example.test:8080")
+        ));
+        // Loopback is never proxied, whatever the variables say.
+        for h in ["localhost", "127.0.0.1", "127.0.0.2", "[::1]"] {
+            assert!(!proxy_decision("http", h, p, p, p, None), "{h}");
+            assert!(!proxy_decision("https", h, p, p, p, None), "{h}");
+        }
     }
 
     #[test]

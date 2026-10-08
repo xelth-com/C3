@@ -24,7 +24,7 @@ use c3_core::engine::{
 };
 use serde_json::Value;
 
-use crate::http_engine::{HttpConfig, HttpEngine, DEFAULT_BASE_URL, DEFAULT_KEY_ENV};
+use crate::http_engine::{HttpAuth, HttpConfig, HttpEngine, DEFAULT_BASE_URL, DEFAULT_KEY_ENV};
 use crate::pack::reviewer::{self, PackOpts, ReviewerPack};
 
 use super::orchestrate::Context;
@@ -163,6 +163,11 @@ fn billing_precheck(seat: &Seat) -> Result<(), String> {
             "refusing the http engine for the lab `{}`: an API key here bills per token where a signed-in subscription may already cover it; set \"api_billing\": \"accepted\" in the roster's ext.c3.reviewers entry to allow it.",
             seat.config.provider_label
         ));
+    }
+    // The proxy auth mode (`C3_HTTP_AUTH_PROXY` lists this host) reads no key: the egress proxy
+    // attaches the credential and no Authorization header is sent.
+    if seat.config.auth_mode() == HttpAuth::Proxy {
+        return Ok(());
     }
     // The key is read from the environment only; report only whether the variable is set.
     if std::env::var(&seat.config.key_env)
@@ -683,6 +688,35 @@ mod tests {
         std::env::set_var("C3_HTTP_BILL_OR", "sk-or-v1-xxxxxxxxxxxxxxxx");
         assert!(billing_precheck(&seat("openrouter", "C3_HTTP_BILL_OR", false)).is_ok());
         std::env::remove_var("C3_HTTP_BILL_OR");
+    }
+
+    #[test]
+    fn proxy_auth_host_needs_no_key_and_others_still_do() {
+        // A host that `C3_HTTP_AUTH_PROXY` lists passes without any key in the environment (the
+        // proxy attaches it); the subscription guard still applies; an unlisted host still needs
+        // its key.
+        std::env::remove_var("C3_HTTP_BILL_PX");
+        let mut listed = seat("openrouter", "C3_HTTP_BILL_PX", false);
+        listed.config.base_url = "https://proxy-auth-seat.test/v1".to_string();
+        let prev = std::env::var(crate::http_engine::AUTH_PROXY_ENV).ok();
+        std::env::set_var(
+            crate::http_engine::AUTH_PROXY_ENV,
+            "other.test, proxy-auth-seat.test",
+        );
+        assert!(billing_precheck(&listed).is_ok());
+        let mut sub = seat("muse", "C3_HTTP_BILL_PX", false);
+        sub.config.base_url = "https://proxy-auth-seat.test/v1".to_string();
+        assert!(billing_precheck(&sub)
+            .unwrap_err()
+            .contains("subscription engine"));
+        let mut unlisted = seat("openrouter", "C3_HTTP_BILL_PX", false);
+        unlisted.config.base_url = "https://keyed-seat.test/v1".to_string();
+        let err = billing_precheck(&unlisted).unwrap_err();
+        assert!(err.contains("C3_HTTP_BILL_PX not set"), "{err}");
+        match prev {
+            Some(v) => std::env::set_var(crate::http_engine::AUTH_PROXY_ENV, v),
+            None => std::env::remove_var(crate::http_engine::AUTH_PROXY_ENV),
+        }
     }
 
     // ------------------------------------------------------ STEP 2: format repair + timeout retry
