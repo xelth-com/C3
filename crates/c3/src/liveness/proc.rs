@@ -323,6 +323,24 @@ pub fn process_command_line(pid: u32) -> String {
     imp::process_command_line(pid)
 }
 
+/// The live descendants of `pid` (children first, then their children, ...), from one read of the
+/// process table. Used by the non-Windows tree kill, where no `taskkill /T` exists: a reviewer
+/// launcher's own children would otherwise outlive the kill as orphans.
+pub fn descendants_of(pid: u32) -> Vec<u32> {
+    let procs = enumerate_processes();
+    let mut out = Vec::new();
+    let mut frontier = vec![pid];
+    while let Some(parent) = frontier.pop() {
+        for p in procs.iter().filter(|p| p.ppid == parent && p.pid != parent) {
+            if !out.contains(&p.pid) && out.len() < 4096 {
+                out.push(p.pid);
+                frontier.push(p.pid);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(windows)]
 #[allow(clippy::upper_case_acronyms)]
 mod imp {
@@ -668,9 +686,15 @@ mod imp {
         it.next()?.parse::<u32>().ok()
     }
 
+    /// The start time of `pid` as .NET's `o` string in UTC, from `/proc/<pid>/stat` field 22
+    /// (clock ticks since boot, `USER_HZ` = 100 on Linux) plus `btime` of `/proc/stat`; a zombie
+    /// (state `Z`) counts as gone, like a Windows process with an exit time. `Some("")` when the
+    /// process exists but the start time cannot be read (no `/proc`: a `kill -0` probe), so the
+    /// comparison falls back to the plugin's sub-second tolerance.
     pub fn process_start_iso(pid: u32) -> Option<String> {
-        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
-            return Some(String::new());
+        if std::path::Path::new("/proc/self").exists() {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+            return Some(start_iso_from_stat(&stat, boot_time_secs()).unwrap_or_default());
         }
         // Fallback: kill -0 exits 0 when the process exists.
         let ok = std::process::Command::new("kill")
@@ -683,6 +707,52 @@ mod imp {
             Some(String::new())
         } else {
             None
+        }
+    }
+
+    /// `btime` (seconds since the epoch at boot) from `/proc/stat`, when readable.
+    fn boot_time_secs() -> Option<i64> {
+        let stat = std::fs::read_to_string("/proc/stat").ok()?;
+        stat.lines()
+            .find_map(|l| l.strip_prefix("btime "))
+            .and_then(|v| v.trim().parse::<i64>().ok())
+    }
+
+    /// The `o`-string start time from one `/proc/<pid>/stat` line and the boot time: `None` for
+    /// a zombie or an unreadable field (the caller then reports a blank start time).
+    pub(super) fn start_iso_from_stat(stat: &str, btime: Option<i64>) -> Option<String> {
+        // `pid (comm) state ppid ...` — comm may contain spaces/parens, so split after the last ')'.
+        let rest = stat.rsplit_once(')').map(|(_, r)| r).unwrap_or(stat);
+        let fields: Vec<&str> = rest.split_whitespace().collect();
+        // After the split, index 0 is the state (field 3); starttime is field 22, index 19.
+        if fields.first().copied() == Some("Z") {
+            return None;
+        }
+        let ticks: u64 = fields.get(19)?.parse().ok()?;
+        let btime = btime?;
+        const USER_HZ: u64 = 100;
+        let secs = btime.checked_add((ticks / USER_HZ) as i64)?;
+        let sub_100ns = ((ticks % USER_HZ) * (10_000_000 / USER_HZ)) as u32;
+        let dt = chrono::DateTime::from_timestamp(secs, sub_100ns * 100)?;
+        Some(format!(
+            "{}.{sub_100ns:07}Z",
+            dt.format("%Y-%m-%dT%H:%M:%S")
+        ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn start_time_from_a_stat_line_with_a_boot_time() {
+            // comm with spaces and parens; starttime (field 22) = 12 345 ticks = 123.45 s.
+            let stat = "4242 (my (odd) comm) S 1 4242 4242 0 -1 4194560 100 0 0 0 5 3 0 0 20 0 1 0 12345 1000 200 18446744073709551615 1 1 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0";
+            let iso = super::start_iso_from_stat(stat, Some(1_700_000_000)).unwrap();
+            assert_eq!(iso, "2023-11-14T22:15:23.4500000Z");
+            // A zombie reads as gone; a missing boot time or field yields no start time.
+            let zombie = stat.replacen(" S ", " Z ", 1);
+            assert!(super::start_iso_from_stat(&zombie, Some(1_700_000_000)).is_none());
+            assert!(super::start_iso_from_stat(stat, None).is_none());
+            assert!(super::start_iso_from_stat("1 (x) S 0", Some(1)).is_none());
         }
     }
 }
@@ -724,6 +794,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)] // the recorded launcher paths are Windows paths; std::path splits `\` only there
     fn codex_rule_matches_the_plugin() {
         assert_eq!(codex_rule("codex.exe", "", ""), "name codex");
         assert_eq!(codex_rule("CODEX", "", ""), "name codex");

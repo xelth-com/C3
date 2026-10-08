@@ -979,13 +979,26 @@ fn acquire_machine_lock(lock_path: &Path, budget: LockBudget) -> Option<std::fs:
     None
 }
 
+/// Non-Windows: there is no share mode, so the lock is an exclusive advisory `flock` on the file
+/// (the same mechanism `store.rs` uses for the task lock). The file is created once and kept; a
+/// crash releases the lock with the handle, so a stale `.lock` can never block the next writer
+/// (a `create_new` file would).
 #[cfg(not(windows))]
 fn acquire_machine_lock(lock_path: &Path, budget: LockBudget) -> Option<std::fs::File> {
-    let open = || {
-        OpenOptions::new()
+    let open = || -> std::io::Result<std::fs::File> {
+        let f = OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
-            .open(lock_path)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)?;
+        match f.try_lock() {
+            Ok(()) => Ok(f),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                Err(std::io::Error::from(std::io::ErrorKind::WouldBlock))
+            }
+            Err(std::fs::TryLockError::Error(e)) => Err(e),
+        }
     };
     let attempt = std::time::Duration::from_secs_f64(budget.attempt_secs);
     for _ in 0..budget.attempts {
@@ -1086,8 +1099,11 @@ fn update_machine_health(
     })();
 
     // Release and remove the lock file we acquired (both platforms), so a waiter never inherits a
-    // held name and the machine-wide `.lock` never lingers.
+    // held name and the machine-wide `.lock` never lingers. Non-Windows: the handle's flock is the
+    // lock and the file's NAME is what the next writer locks, so the file stays (removing it would
+    // let a waiter that opened the old inode and a newcomer hold the lock at once).
     drop(lock);
+    #[cfg(windows)]
     let _ = std::fs::remove_file(&lock_path);
 
     if result {

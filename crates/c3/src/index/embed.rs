@@ -21,13 +21,9 @@ use std::time::Duration;
 /// validation and the request (a rebound `localhost`) cannot reach another host. Never echoes the URL.
 fn resolve_loopback_addrs(raw_url: &str) -> Result<Vec<SocketAddr>, String> {
     let u = url::Url::parse(raw_url).map_err(|_| CLOUD_EMBEDDER_MSG.to_string())?;
-    let host = u.host_str().ok_or_else(|| CLOUD_EMBEDDER_MSG.to_string())?;
     let port = u.port_or_known_default().unwrap_or(80);
     let mut out = Vec::new();
-    for a in (host, port)
-        .to_socket_addrs()
-        .map_err(|_| CLOUD_EMBEDDER_MSG.to_string())?
-    {
+    for a in host_addrs(&u, port)? {
         if !a.ip().is_loopback() {
             return Err(CLOUD_EMBEDDER_MSG.to_string());
         }
@@ -37,6 +33,21 @@ fn resolve_loopback_addrs(raw_url: &str) -> Result<Vec<SocketAddr>, String> {
         return Err(CLOUD_EMBEDDER_MSG.to_string());
     }
     Ok(out)
+}
+
+/// The socket addresses of a URL's host: an IP literal is taken as parsed (the `url` crate hands
+/// an IPv6 literal back bracketed, which a resolver may refuse — and a sandbox without IPv6 cannot
+/// resolve `::1` at all); only a domain name goes to the resolver.
+fn host_addrs(u: &url::Url, port: u16) -> Result<Vec<SocketAddr>, String> {
+    match u.host() {
+        Some(url::Host::Ipv4(ip)) => Ok(vec![SocketAddr::new(ip.into(), port)]),
+        Some(url::Host::Ipv6(ip)) => Ok(vec![SocketAddr::new(ip.into(), port)]),
+        Some(url::Host::Domain(d)) => Ok((d, port)
+            .to_socket_addrs()
+            .map_err(|_| CLOUD_EMBEDDER_MSG.to_string())?
+            .collect()),
+        None => Err(CLOUD_EMBEDDER_MSG.to_string()),
+    }
 }
 
 /// The single refusal for a non-loopback / cloud embedder (never echoes the URL).
@@ -78,12 +89,10 @@ pub fn validate_embedder_url(raw: &str) -> Result<(), String> {
         _ => return Err(CLOUD_EMBEDDER_MSG.to_string()),
     }
     // The resolved address must be loopback too: a `localhost` a hosts file points elsewhere is
-    // refused. An IP literal resolves to itself, so this is a no-op for `127.0.0.1` / `[::1]`.
-    let host = u.host_str().unwrap_or("");
+    // refused. An IP literal is taken as parsed (no resolver), so this is a no-op for
+    // `127.0.0.1` / `[::1]`.
     let port = u.port_or_known_default().unwrap_or(80);
-    let addrs = (host, port)
-        .to_socket_addrs()
-        .map_err(|_| CLOUD_EMBEDDER_MSG.to_string())?;
+    let addrs = host_addrs(&u, port)?;
     let mut any = false;
     for a in addrs {
         any = true;

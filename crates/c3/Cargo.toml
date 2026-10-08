@@ -36,6 +36,4 @@ index-surreal = ["dep:surrealdb", "dep:tokio"]
 
 # The embedded index lock (`<collab>/.c3/index.lock`) uses the same exclusive share-mode
 # open as c3-core's TaskLock on Windows; Unix has no share mode, so it takes an advisory
-# flock via fs4 (the same crate c3-core uses), target-scoped so Windows pulls nothing extra.
-[target.'cfg(unix)'.dependencies]
-fs4 = { version = "1", default-features = false, features = ["sync"] }
+# flock through std's `File::try_lock` (the same mechanism c3-core uses) - no extra crate.
