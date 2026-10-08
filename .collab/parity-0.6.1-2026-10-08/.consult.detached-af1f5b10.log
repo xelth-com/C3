@@ -1,0 +1,62 @@
+codex-consult: detached run af1f5b10 (detach id af1f5b10-3575-4fdf-87b1-b67fc114376f) - pid 13544 on LAPTOP-9SGIHQ03, started 2026-10-08T20:49:54+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-af1f5b10.status.json
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied)
+codex-consult: usable reply - openai :: gpt-6-astra, mode fork, thread 01a11cd9-cf5b-7ba1-84e8-5e5cef6ccc9d (source: events), wall 333 s
+verdict    : HOLD - Three defects prevent wave acceptance: a Unicode process-name panic, incorrect production Windows DST boundaries, and stale ledger state for required light reviewers.
+findings   : 0 blocker, 3 major, 0 minor, 0 note -> F04-1..F04-3 in findings.json
+prior      : F02-1 still-open, F02-2 still-open, F02-3 still-open, F02-4 still-open, F02-5 fixed, F02-6 fixed, F02-7 still-open, F02-8 fixed
+reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\04-codex-wave1-diff-review.md
+reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\04-codex-wave1-diff-review.reply.json
+events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\04-codex-wave1-diff-review.events.jsonl
+
+**Q1.** A closely follows the reference parser, but the documented Windows DST difference changes the reset instant, not merely its presentation. With Berlin local time and reference `2026-10-25T02:00:00+01:00`, “try again at 3:00 AM” can select an instant already reached instead of one hour ahead (finding #2). The IANA-zone fixtures do not exercise production `chrono::Local` behavior. Keep the month-name word boundary and dated-zone extras, but correct the production zone interpretation before accepting them.
+
+**Q2.** The E27/E28 classification order closely follows the pinned plugin, including the exec override and conservative treatment of unreadable/ambiguous command lines. However, the new suffix helper can panic on an unrelated Unicode process name before classification begins (finding #1). This is a regression in the machine-wide recovery path. Deferred E19 and unknown-tree recovery work is not a new objection to this wave.
+
+**Q3.** C’s eligibility rules, stand-in selection, and displayed reasons match the reference. Its required-member integration is incomplete: routing revives a required light reviewer, but persisted member records still come from the earlier skipped selection (finding #3). The LIGHT required-member fixture checks a dry run, so its pass does not establish correct ledger state.
+
+D implements the missing anchor, brief precedence, multiline count, cutoff wording, and placement before the consultation id. **F02-6 is closable.** The documented Unicode-scalar cutoff remains an intentional difference from the plugin’s UTF-16 cutoff; it is not byte-identical for supplementary characters. F02-5’s scope correction and F02-8’s separation of the native benchmark are also resolved in the plan.
+
+**Q4. HOLD** for findings **#1–#3**. These concern this wave; the unchanged telemetry, shared-plan, and oracle work remains assigned to later waves. Reported harness improvements are useful evidence, but do not cover these three cases. I did not rebuild or rerun the suites in this read-only review.
+
+## Requested checks
+
+- **RC1:** CWD repository root; **workspace-write**; add and run process-classification fixtures containing `codex_match("日本", "unrelated", "")` and a recent unrelated `日本` process in `find_codex_processes`. Both must complete without panic and without a match/exclusion (finding #1). Budget: two fixtures, 10 minutes.
+- **RC2:** CWD repository root on Windows already using `W. Europe Standard Time`; **workspace-write**; add `windows_local_reset_boundaries` using production `chrono::Local`, then run `cargo test -p c3-core windows_local_reset_boundaries -- --nocapture`. Assert the autumn time-only and dated 03:00 cases use `+01:00`, and the spring dated 02:00 case follows the plugin’s `+02:00` rule (finding #2). Budget: three cases, 15 minutes.
+- **RC3:** CWD isolated harness workspace; **workspace-write**; repeat the pinned LIGHT `-Require #2` fixture as a real fake-CLI run and inspect every resulting `panel.members` record. The required light reviewer must be `run` with an empty skip reason, matching the plugin and displayed plan (finding #3). Budget: one paired run, 15 minutes.
+
+### Findings
+
+- **F04-1** [major] `crates/c3/src/liveness/proc.rs:271`, `crates/c3/src/liveness/proc.rs:516`, `crates/c3/src/liveness/proc.rs:677` - The new strip_exe helper can panic on an unrelated Unicode process name and abort a machine-wide recovery scan. Trigger: A recent process has a UTF-8 name whose byte length minus four lies inside a character, such as Linux process name 日本. Evidence: read-code: strip_exe slices name[name.len() - 4..] before checking the suffix. codex_server_exclusion calls it before checking the Codex prefix, and the machine-wide scan passes recent process names into that classifier.; read-code: Linux enumeration reads /proc/<pid>/comm directly. The recovery call path does not catch a classifier panic.; ran-command: The earlier Rust implementation checked the .exe suffix before slicing; the plugin removes it with a regex. Neither has this new unconditional UTF-8 boundary failure.; ran-command: The name has six UTF-8 bytes, and the proposed slice index two is inside its first character. Verify: Add direct classifier and scan fixtures containing 日本 and confirm both return normally with no match or exclusion. Remedy: Use a boundary-safe suffix check before slicing, such as str::get on the candidate suffix followed by an ASCII-insensitive comparison; add Unicode process-name coverage.
+- **F04-2** [major] `crates/c3-core/src/health.rs:233`, `crates/c3-core/src/health.rs:265`, `crates/c3-core/src/health.rs:304`, `docs/port/wave1-parity.md:163` - Production Windows local-zone boundary handling can choose a reset instant one hour early; the chrono-tz fixtures do not validate this production behavior. Trigger: With Windows local zone W. Europe Standard Time, parse 'try again at 3:00 AM' at reference 2026-10-25T02:00:00+01:00. Evidence: read-code: The adapter trusts chrono's local wall-time classification. The candidate builder retains both ambiguous offsets and selects the earliest eligible instant.; read-code: Windows boundary classification includes the exact autumn upper boundary in Ambiguous and classifies the exact spring gap start as Single with the earlier offset.; ran-command: Autumn 2026-10-25 03:00 is nonambiguous with offset +01:00; spring 2026-03-29 02:00 is invalid.; inferred: The autumn trigger selects 03:00+02:00, equal to the reference instant, instead of the plugin's 03:00+01:00 one hour later. The same boundary issue affects the dated extras: spring 02:00 uses +01 instead of the plugin's +02. Verify: Run targeted Windows tests using chrono::Local for exact autumn and spring transition boundaries and compare the resulting instants with the pinned plugin. Remedy: Normalize production wall-time candidates against UTC-to-local round trips or use a corrected zone implementation; filter false ambiguous candidates and recognize boundary gaps while preserving genuine repeated-hour candidates. Exercise production Local alongside IANA fixtures.
+- **F04-3** [major] `crates/c3/src/panel/plan.rs:501`, `crates/c3/src/panel/run.rs:616`, `crates/c3/src/panel/run.rs:626`, `crates/c3/src/panel/run.rs:1868` - A required light reviewer can execute successfully while every member's ledger metadata still records it as skipped by the light gate. Trigger: On a weighty purpose, an available ordinary sibling runs and a held-back light reviewer is explicitly required, as in the LIGHT -Require #2 fixture. Evidence: read-code: Required light entries are revived in newly constructed routed members; the input selection is not mutated.; read-code: Persisted member and skipped records are built from selection.members rather than route.members and passed unchanged to child members.; read-code: The ledger panel member list copies the states and reasons supplied in the member specification.; read-code: The plugin revives required entries by mutating the shared member objects before constructing its recorded member list.; read-code: The required-light check uses -DryRun and verifies displayed seating; its real-run ledger check covers a context stand-in instead. Verify: Run the required-light fixture without -DryRun and assert every ledger panel.members entry for the required reviewer is run with an empty reason. Remedy: Build member and skipped records from final routed states, joining roster identity by position, or synchronize those states back into the selection before serialization; add a real-run required-light ledger assertion.
+
+### Prior findings
+
+- F02-1 - still-open - Telemetry spool code is unchanged in this range; the plan assigns the fix to wave 2.
+- F02-2 - still-open - Telemetry classification code is unchanged; closed classifiers remain assigned to wave 2.
+- F02-3 - still-open - Forgetting and retry identity code is unchanged; the plan assigns the fix to wave 2.
+- F02-4 - still-open - The wave documents helper-only parser checks and ports their fixtures, but the complete assertion coverage map and telemetry shim remain outstanding.
+- F02-5 - fixed - State row E now explicitly acknowledges that the mark is already written before record_rating.
+- F02-6 - fixed - The anchor is implemented and wired into prompt assembly, with brief precedence, cutoff/count wording, and placement before the consultation id; the documented scalar-character cutoff differs from UTF-16 counting.
+- F02-7 - still-open - Shared plan identity is now explicitly scoped to wave 1b, but this range does not implement it.
+- F02-8 - fixed - Decision P4 removes the unsupported transfer of the measured savings: spawned Claude remains the parity route, and native Messages is gated on its own benchmark.
+
+## Verdict: HOLD
+
+Three defects prevent wave acceptance: a Unicode process-name panic, incorrect production Windows DST boundaries, and stale ledger state for required light reviewers.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- No C3 build, test suite, harness, or live consultation was executed during this review; the reported passing counts come from the supplied brief and wave documentation.
+- The Windows C3 reset results are inferred from the production adapter and locked chrono source, corroborated by executed .NET boundary checks; a production Local regression test is still needed.
+- The required-light ledger mismatch is established by the serialization path but was not reproduced through a real fake-CLI panel run.
+- The Unicode panic trigger was not exercised in a compiled C3 test; ordinary Windows names ending in .exe avoid it, while Linux process names reach it directly.
+- Deferred E19 and unknown-tree recovery behavior, other authentication engines, and full release parity were not accepted by this wave review.
+
+### First-run checklist (observable)
+
+_(none)_

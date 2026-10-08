@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "af1f5b10-3575-4fdf-87b1-b67fc114376f",
+    "id8":  "af1f5b10",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-08T20:49:52+02:00",
+    "updated":  "2026-10-08T20:55:36+02:00",
+    "finished":  "2026-10-08T20:55:35+02:00",
+    "wall_seconds":  343.9,
+    "pid":  13544,
+    "start_time":  "2026-10-08T18:49:52.5755451Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave1-diff-review",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\03-claude-wave1-diff-review.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  333,
+                        "n":  2,
+                        "handoff":  "04",
+                        "reply":  "handoffs/04-codex-wave1-diff-review.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode fork, thread 01a11cd9-cf5b-7ba1-84e8-5e5cef6ccc9d (source: events), wall 333 s\nverdict    : HOLD - Three defects prevent wave acceptance: a Unicode process-name panic, incorrect production Windows DST boundaries, and stale ledger state for required light reviewers.\nfindings   : 0 blocker, 3 major, 0 minor, 0 note -\u003e F04-1..F04-3 in findings.json\nprior      : F02-1 still-open, F02-2 still-open, F02-3 still-open, F02-4 still-open, F02-5 fixed, F02-6 fixed, F02-7 still-open, F02-8 fixed\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\04-codex-wave1-diff-review.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\04-codex-wave1-diff-review.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\04-codex-wave1-diff-review.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-af1f5b10.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "3b306ad9-7171-4d16-9373-52d17439ab27",
+    "id8":  "3b306ad9",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-08T22:13:03+02:00",
+    "updated":  "2026-10-08T22:18:37+02:00",
+    "finished":  "2026-10-08T22:18:37+02:00",
+    "wall_seconds":  334.5,
+    "pid":  10456,
+    "start_time":  "2026-10-08T20:13:04.4196225Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave1-round2",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\05-claude-wave1-round2.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  316.8,
+                        "n":  3,
+                        "handoff":  "06",
+                        "reply":  "handoffs/06-codex-wave1-round2.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode fork, thread 01a11d26-1feb-79f1-b2b2-b755bd6bb393 (source: events), wall 316.8 s\nverdict    : ACCEPT - F04-1 through F04-3 are fixed; the remaining historical Windows time-zone edge case is a nonblocking limitation of the normalization.\nfindings   : 0 blocker, 0 major, 1 minor, 0 note -\u003e F06-1 in findings.json\nprior      : F02-1 still-open, F02-2 still-open, F02-3 still-open, F02-4 still-open, F02-5 fixed, F02-6 fixed, F02-7 still-open, F02-8 fixed, F04-1 fixed, F04-2 fixed, F04-3 fixed\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\06-codex-wave1-round2.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\06-codex-wave1-round2.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\06-codex-wave1-round2.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-3b306ad9.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

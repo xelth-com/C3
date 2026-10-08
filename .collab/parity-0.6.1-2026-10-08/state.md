@@ -50,3 +50,4 @@ Decisions (coordinator, 2026-10-08 20:20):
 - 2026-10-08 19:50: task opened; build/test/shim recon of main 4cd8d18 on Windows running (worker); framing brief 01.
 - 2026-10-08 20:20: Astra's framing (02) rated; plan P1-P6 above; wave 1 running (worker, worktree c3-wave1);
   C3 builds on Windows (522 tests, clippy clean, `-j 2`), shim verified on harness-lock2.
+- 2026-10-08 22:50: wave 1 ACCEPTED by Astra (handoff 06; F04-1..3 closed, F06-1 minor Samoa-2012 fixture = follow-up in wave 3); wave 1b (plan key, c6ac728) merged 832aaf0 - verification of the merged main running; RC2 partial (its scripts dir broke mid-run), report pending.

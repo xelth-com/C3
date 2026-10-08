@@ -56,7 +56,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Telemetry spool code is unchanged in this range; the plan assigns the fix to wave 2.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Spool synchronization is unchanged in this range and remains assigned to wave 2.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
                                              ]
                      },
                      {
@@ -123,7 +138,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Telemetry classification code is unchanged; closed classifiers remain assigned to wave 2.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Closed telemetry classifiers are unchanged and remain assigned to wave 2.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
                                              ]
                      },
                      {
@@ -181,7 +211,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Forgetting and retry identity code is unchanged; the plan assigns the fix to wave 2.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Failed-deletion retry identity is unchanged and remains assigned to wave 2.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
                                              ]
                      },
                      {
@@ -248,7 +293,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The wave documents helper-only parser checks and ports their fixtures, but the complete assertion coverage map and telemetry shim remain outstanding.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The complete harness assertion coverage map and telemetry shim are not delivered by this range.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
                                              ]
                      },
                      {
@@ -315,12 +375,27 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "State row E now explicitly acknowledges that the mark is already written before record_rating.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The state still correctly acknowledges the existing commit-before-spool ordering.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-6",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -375,15 +450,39 @@
                                              "evidence":  "",
                                              "base_commit":  "4cd8d18aa6dfa8d568ee8cdfe8c0969fcac406d8",
                                              "tree_sha256":  "06b787788d597253a2b64f9c622c9d557288796ec5c393bda1a31ee6cdde0b5a"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T21:15:38+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 1 D (42af7a9): the re-read anchor with D11/D7; Astra: closable (handoff 04 Q3)",
+                                             "evidence":  "",
+                                             "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                             "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The anchor is implemented and wired into prompt assembly, with brief precedence, cutoff/count wording, and placement before the consultation id; the documented scalar-character cutoff differs from UTF-16 counting.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The previously reviewed anchor implementation is unchanged.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-7",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -442,10 +541,34 @@
                                              "evidence":  "",
                                              "base_commit":  "4cd8d18aa6dfa8d568ee8cdfe8c0969fcac406d8",
                                              "tree_sha256":  "06b787788d597253a2b64f9c622c9d557288796ec5c393bda1a31ee6cdde0b5a"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T22:33:20+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 1b c6ac728 (merged 832aaf0): the roster plan key with the plugin\u0027s slug rule, plan-wide quota propagation through the ledgers and the machine-wide health file, the plan wait across repositories as shared infrastructure (c3-core/src/plan.rs); the claude auth modes and endpoint block stay for wave 4",
+                                             "evidence":  "",
+                                             "base_commit":  "832aaf0199b61dddd4518774d3463134f700187f",
+                                             "tree_sha256":  "371d1b65a31d424304391ab17849fc74b0d55ef13725ad74708c4fafadc9b122"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Shared plan identity is now explicitly scoped to wave 1b, but this range does not implement it.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Shared plan infrastructure is assigned to wave 1b and is outside the reviewed range.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
                                              ]
                      },
                      {
@@ -504,6 +627,371 @@
                                          }
                                      ],
                          "reviewer_checks":  [
+                                                 {
+                                                     "consult":  2,
+                                                     "when":  "2026-10-08T20:55:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Decision P4 removes the unsupported transfer of the measured savings: spawned Claude remains the parity route, and native Messages is gated on its own benchmark.",
+                                                     "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                                     "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                                 },
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Decision P4 retains spawned Claude for parity and gates native Messages on its own benchmark.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F04-1",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/liveness/proc.rs",
+                                               "line":  271
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/liveness/proc.rs",
+                                               "line":  516
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/liveness/proc.rs",
+                                               "line":  677
+                                           }
+                                       ],
+                         "claim":  "The new strip_exe helper can panic on an unrelated Unicode process name and abort a machine-wide recovery scan.",
+                         "trigger":  "A recent process has a UTF-8 name whose byte length minus four lies inside a character, such as Linux process name 日本.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/liveness/proc.rs: strip_exe, codex_server_exclusion, find_codex_processes",
+                                              "observation":  "strip_exe slices name[name.len() - 4..] before checking the suffix. codex_server_exclusion calls it before checking the Codex prefix, and the machine-wide scan passes recent process names into that classifier."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/liveness/proc.rs:1036 and crates/c3/src/consult/recovery.rs:83",
+                                              "observation":  "Linux enumeration reads /proc/\u003cpid\u003e/comm directly. The recovery call path does not catch a classifier panic."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Read-only comparison with 4cd8d18 and pinned plugin v0.6.1 process classification",
+                                              "observation":  "The earlier Rust implementation checked the .exe suffix before slicing; the plugin removes it with a regex. Neither has this new unconditional UTF-8 boundary failure."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "In-memory PowerShell UTF-8 inspection of 日本",
+                                              "observation":  "The name has six UTF-8 bytes, and the proposed slice index two is inside its first character."
+                                          }
+                                      ],
+                         "verification":  "Add direct classifier and scan fixtures containing 日本 and confirm both return normally with no match or exclusion.",
+                         "remedy":  "Use a boundary-safe suffix check before slicing, such as str::get on the candidate suffix followed by an ASCII-insensitive comparison; add Unicode process-name coverage.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/04-codex-wave1-diff-review.md",
+                                        "thread":  "01a11cd9-cf5b-7ba1-84e8-5e5cef6ccc9d",
+                                        "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                        "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T20:55:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                             "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T22:12:21+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 1c add198b: boundary-safe strip_exe with Unicode fixtures (F04-1); wall offsets normalised by a UTC round trip, RC2 ran on W. Europe Standard Time with the plugin\u0027s six instants (F04-2); ledger records from the routed states, RC3 real fake-CLI run (F04-3)",
+                                             "evidence":  "",
+                                             "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                             "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "str::get guards the suffix boundary before slicing; new fixtures cover Unicode names in the helper, classifier, and both scan variants.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F04-2",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  233
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  265
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  304
+                                           },
+                                           {
+                                               "path":  "docs/port/wave1-parity.md",
+                                               "line":  163
+                                           }
+                                       ],
+                         "claim":  "Production Windows local-zone boundary handling can choose a reset instant one hour early; the chrono-tz fixtures do not validate this production behavior.",
+                         "trigger":  "With Windows local zone W. Europe Standard Time, parse \u0027try again at 3:00 AM\u0027 at reference 2026-10-25T02:00:00+01:00.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/health.rs: ResetZone implementation, from_wall_clock, wall_clock_candidates",
+                                              "observation":  "The adapter trusts chrono\u0027s local wall-time classification. The candidate builder retains both ambiguous offsets and selects the earliest eligible instant."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "Locked chrono 0.4.45 cached source, src/offset/local/mod.rs:259–270",
+                                              "observation":  "Windows boundary classification includes the exact autumn upper boundary in Ambiguous and classifies the exact spring gap start as Single with the earlier offset."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  ".NET TimeZoneInfo checks for W. Europe Standard Time",
+                                              "observation":  "Autumn 2026-10-25 03:00 is nonambiguous with offset +01:00; spring 2026-03-29 02:00 is invalid."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "Production retry_after_in path compared with pinned v0.6.1 Get-WallClockCandidates and ConvertFrom-WallClock",
+                                              "observation":  "The autumn trigger selects 03:00+02:00, equal to the reference instant, instead of the plugin\u0027s 03:00+01:00 one hour later. The same boundary issue affects the dated extras: spring 02:00 uses +01 instead of the plugin\u0027s +02."
+                                          }
+                                      ],
+                         "verification":  "Run targeted Windows tests using chrono::Local for exact autumn and spring transition boundaries and compare the resulting instants with the pinned plugin.",
+                         "remedy":  "Normalize production wall-time candidates against UTC-to-local round trips or use a corrected zone implementation; filter false ambiguous candidates and recognize boundary gaps while preserving genuine repeated-hour candidates. Exercise production Local alongside IANA fixtures.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/04-codex-wave1-diff-review.md",
+                                        "thread":  "01a11cd9-cf5b-7ba1-84e8-5e5cef6ccc9d",
+                                        "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                        "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T20:55:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                             "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T22:12:25+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 1c add198b: boundary-safe strip_exe with Unicode fixtures (F04-1); wall offsets normalised by a UTC round trip, RC2 ran on W. Europe Standard Time with the plugin\u0027s six instants (F04-2); ledger records from the routed states, RC3 real fake-CLI run (F04-3)",
+                                             "evidence":  "",
+                                             "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                             "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The reported Berlin boundary errors are corrected and covered by synthetic, IANA, and conditional production-Local tests; the supplied report confirms the production test ran. Finding #1 records a distinct historical limitation.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F04-3",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/plan.rs",
+                                               "line":  501
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  616
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  626
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  1868
+                                           }
+                                       ],
+                         "claim":  "A required light reviewer can execute successfully while every member\u0027s ledger metadata still records it as skipped by the light gate.",
+                         "trigger":  "On a weighty purpose, an available ordinary sibling runs and a held-back light reviewer is explicitly required, as in the LIGHT -Require #2 fixture.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/plan.rs: select_panel_routing_with",
+                                              "observation":  "Required light entries are revived in newly constructed routed members; the input selection is not mutated."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs: members_record, skipped_record, MemberSpec construction",
+                                              "observation":  "Persisted member and skipped records are built from selection.members rather than route.members and passed unchanged to child members."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate.rs:6106",
+                                              "observation":  "The ledger panel member list copies the states and reasons supplied in the member specification."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "Pinned v0.6.1 codex-consult-common.ps1: Select-PanelRouting; codex-consult.ps1:2840",
+                                              "observation":  "The plugin revives required entries by mutating the shared member objects before constructing its recorded member list."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "Pinned v0.6.1 tests/harness-panel.ps1:694–695",
+                                              "observation":  "The required-light check uses -DryRun and verifies displayed seating; its real-run ledger check covers a context stand-in instead."
+                                          }
+                                      ],
+                         "verification":  "Run the required-light fixture without -DryRun and assert every ledger panel.members entry for the required reviewer is run with an empty reason.",
+                         "remedy":  "Build member and skipped records from final routed states, joining roster identity by position, or synchronize those states back into the selection before serialization; add a real-run required-light ledger assertion.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/04-codex-wave1-diff-review.md",
+                                        "thread":  "01a11cd9-cf5b-7ba1-84e8-5e5cef6ccc9d",
+                                        "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                        "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T20:55:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "bd96c44bfa02bc7cfe755c3784047228d918bbe6",
+                                             "tree_sha256":  "aa7d883f3379f9c4c88a82e6f4df7948fae2f10868cd3e82e49537737948b4ac"
+                                         },
+                                         {
+                                             "when":  "2026-10-08T22:12:28+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 1c add198b: boundary-safe strip_exe with Unicode fixtures (F04-1); wall offsets normalised by a UTC round trip, RC2 ran on W. Europe Standard Time with the plugin\u0027s six instants (F04-2); ledger records from the routed states, RC3 real fake-CLI run (F04-3)",
+                                             "evidence":  "",
+                                             "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                             "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  3,
+                                                     "when":  "2026-10-08T22:18:35+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Member and skipped records now use final routed states. The real fake-CLI integration test asserts correct state and empty skip records in every member\u0027s ledger entry.",
+                                                     "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                                     "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F06-1",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  253
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  350
+                                           }
+                                       ],
+                         "claim":  "The new normalization can discard a genuine historical Windows local offset when chrono\u0027s UTC lookup selects a different year\u0027s rules, causing a valid reset time to be treated as a gap.",
+                         "trigger":  "Using Windows Samoa Standard Time with reference 2012-01-01T14:01:00+14:00, parse \u0027try again at 12:00 AM\u0027. This requires a historical or simulated reference; no specific current or future trigger was established.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/health.rs: ResetZone::wall_offsets and wall_clock_candidates",
+                                              "observation":  "Normalization rejects an offset unless the UTC lookup returns it. If every candidate is rejected, the caller advances minute by minute until it finds a supposedly valid wall time."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "Locked chrono 0.4.45 cached source: src/offset/local/windows.rs",
+                                              "observation":  "The Windows UTC lookup selects time-zone rules using the UTC year, which can differ from the local year used to classify the original wall time."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Read-only Windows registry inspection of Samoa Standard Time/Dynamic DST and .NET TimeZoneInfo checks",
+                                              "observation":  "The 2011 record has Bias 660 and daylight bias -60; the 2012 record has Bias -780 and daylight bias -60. .NET classifies 2012-01-01 midnight as valid and unambiguous at +14:00."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "In-memory invocation of AST-extracted ConvertTo-ZoneTime, Get-WallClockCandidates, and Select-TimeOnlyReset from pinned plugin v0.6.1",
+                                              "observation":  "The reference implementation returned 2012-01-02T00:00:00.0000000+14:00 for the trigger."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "New normalization combined with chrono\u0027s Windows year selection",
+                                              "observation":  "The genuine +14 midnight candidate maps to UTC in 2011 and is rejected against the -10 rules. The alternative -10 candidate maps into 2012 and is also rejected. The artificial gap ends at 14:00; the five-minute allowance accepts that already-passed instant at reference 14:01, yielding 2012-01-01T14:00:00+14:00 instead of tomorrow\u0027s midnight."
+                                          }
+                                      ],
+                         "verification":  "Add a source-faithful synthetic Samoa year-boundary fixture and assert both the valid +14 midnight classification and the pinned plugin\u0027s next-midnight result.",
+                         "remedy":  "Correct the Windows UTC lookup used as the normalization authority for cross-year rule changes, or explicitly bound the supported historical scope and retain the counterexample as a regression fixture; blindly retaining raw candidates would reintroduce F04-2.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/06-codex-wave1-round2.md",
+                                        "thread":  "01a11d26-1feb-79f1-b2b2-b755bd6bb393",
+                                        "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                        "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-08T22:18:35+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
+                                             "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
 
                                              ]
                      }
@@ -531,6 +1019,52 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1791483366
+                    },
+                    {
+                        "n":  2,
+                        "consult_id":  "2d8f2437-6fe6-426b-8274-c64ef2ee4259",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-08T20:49:57+02:00",
+                        "useful":  "yes",
+                        "note":  "HOLD with three precise majors: a Unicode slice panic in the new strip_exe, production chrono::Local DST boundaries differing from the IANA fixtures (one-hour-early reset), the required light reviewer recorded as skipped in the ledger; fixtures RC1-RC3 given",
+                        "when":  "2026-10-08T21:15:34+02:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "claude-fable-5-1",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1791486935
+                    },
+                    {
+                        "n":  3,
+                        "consult_id":  "915a9525-065a-434d-9088-096229935bfd",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-08T22:13:17+02:00",
+                        "useful":  "yes",
+                        "note":  "ACCEPT of wave 1; one historical Samoa 2012 counterexample of the round-trip rule as a minor follow-up with a fixture",
+                        "when":  "2026-10-08T22:45:30+02:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "claude-fable-5-1",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1791492330
                     }
                 ]
 }
