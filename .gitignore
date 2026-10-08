@@ -19,3 +19,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# C3 local index (derived, rebuilt by `c3 index build`)
+.c3/
