@@ -1,0 +1,1 @@
+{"event":"request","method":"POST","url":"https://openrouter.ai/api/v1/chat/completions","model":"nvidia/nemotron-3.5-lightning:free","messages":2,"body_bytes":85166,"pack_sha256":"1df61ae95c2095027014164c05222ebc2b7eae7caebd246fdf7de032a17c4dee","headers":["content-type"],"auth":"proxy","proxy":true,"ca_bundle":true}

@@ -1,0 +1,53 @@
+{
+  "pack_version": 1,
+  "kind": "reviewer",
+  "generated": "2026-10-08T07:14:11.841088801+00:00",
+  "index": {
+    "used": false,
+    "source": "feature-off",
+    "hits": 0,
+    "files_added": 0
+  },
+  "peers": [],
+  "recipe": {
+    "brief": ".collab/cloud-linux/brief.md",
+    "focus": [
+      "crates/c3/src/http_engine/mod.rs"
+    ],
+    "budget": 6000,
+    "task": "cloud-linux",
+    "anchor": null
+  },
+  "revision": {
+    "reviewed_revision": "44defbf + uncommitted",
+    "content_sha256": "921f973d5d4d6713e28bbdd219a675308fd7c9f278fc2340d7c07995a720c160"
+  },
+  "redactions": 0,
+  "coverage": {
+    "focus_files": 1,
+    "periphery_shown": 0,
+    "periphery_candidates": 196
+  },
+  "files": [
+    {
+      "path": ".collab/cloud-linux/brief.md",
+      "sha256": "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+      "role": "brief"
+    },
+    {
+      "path": "crates/c3/src/http_engine/mod.rs",
+      "sha256": "4694f5a2ab0508fe54f514a6ff9e7a90f08d88af2d6c0a663957684cd8640f78",
+      "role": "focus"
+    }
+  ],
+  "path_map": {
+    ".collab/cloud-linux/brief.md": "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+    "crates/c3/src/http_engine/mod.rs": "4694f5a2ab0508fe54f514a6ff9e7a90f08d88af2d6c0a663957684cd8640f78"
+  },
+  "request": {
+    "url": "https://openrouter.ai/api/v1/chat/completions",
+    "model": "nvidia/nemotron-3.5-lightning:free",
+    "response_format": "json_object",
+    "prompt_sha256": "d0e9bddf916722024793d4e7b6688e71ee76756be91e26a037a542c5cc384cfa"
+  }
+}

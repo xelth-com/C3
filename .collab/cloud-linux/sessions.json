@@ -1,0 +1,170 @@
+{
+    "task_id":  "cloud-linux",
+    "cwd":  "/home/user/C3",
+    "codex":  {
+                  "tool":  "codex (version unknown)",
+                  "consults":  [
+                                   {
+                                       "n":  1,
+                                       "when":  "2026-10-08T07:14:11+00:00",
+                                       "purpose":  "decision",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "91dc1fe3-cc00-459e-bd2c-9a31f0c29230",
+                                       "reviewer":  {
+                                                        "provider":  "openrouter",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "nvidia/nemotron-3.5-lightning:free",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "http",
+                                                        "harness":  "http-cli (version unknown)",
+                                                        "provider_fingerprint":  "7400f3fdc38aef26ba0017cac961af001b00b7e8f37e4c0ef638c081884a94e6",
+                                                        "provider_config":  {
+                                                                                "engine":  "http",
+                                                                                "base_url":  "https://openrouter.ai/api/v1",
+                                                                                "model":  "nvidia/nemotron-3.5-lightning:free",
+                                                                                "pack":  ".collab/cloud-linux/handoffs/01-http-reply.pack.md",
+                                                                                "pack_sha256":  "87fae12f0f949bcff628098e95a22d065d4fc0e3fb3f6021d3ec6fe03d07b707",
+                                                                                "auth":  "proxy"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openrouter :: nvidia/nemotron-3.5-lightning:free",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "source":  "inferred"
+                                                       },
+                                       "preflight":  "ok: checked at launch (http engine)",
+                                       "preflight_warning":  "",
+                                       "roster":  null,
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "",
+                                       "thread_source":  "unknown",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/cloud-linux/brief.md",
+                                       "range":  null,
+                                       "prompt_chars":  5895,
+                                       "reply":  "handoffs/01-http-reply.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/01-http-reply.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "nvidia/nemotron-3.5-lightning:free",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  600,
+                                       "timeout_source":  "explicit",
+                                       "continue_sec":  600,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-08T07:14:11+00:00",
+                                       "structured":  false,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "44defbf111390f32244ee8ed3a16419b154b8782",
+                                       "reviewed_revision":  "44defbf + uncommitted",
+                                       "tree_sha256":  "48c0d9fca391df4e6992cc00a9d799cb57a8dfeb2d487ec2abbb58f1ef33ae5f",
+                                       "tree_sha256_after":  "48c0d9fca391df4e6992cc00a9d799cb57a8dfeb2d487ec2abbb58f1ef33ae5f",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  17,
+                                       "brief_sha256":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_sha256_after":  "d3795bc970a8e680ea4a5b75e9be2296d565e569548b468197fdf76d6d9a74ca",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (1 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+                                                         {
+                                                             "path":  "crates/c3/src/http_engine/mod.rs",
+                                                             "sha256":  "4694f5a2ab0508fe54f514a6ff9e7a90f08d88af2d6c0a663957684cd8640f78",
+                                                             "sha256_after":  "4694f5a2ab0508fe54f514a6ff9e7a90f08d88af2d6c0a663957684cd8640f78"
+                                                         }
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "failed: http transport - https://openrouter.ai/api/v1/chat/completions: Connection Failed: tls connection init failed: invalid peer certificate: UnknownIssuer",
+                                       "provider_failure":  {
+                                                                "class":  "transport",
+                                                                "kind":  "",
+                                                                "code":  "",
+                                                                "message":  "https://openrouter.ai/api/v1/chat/completions: Connection Failed: tls connection init failed: invalid peer certificate: UnknownIssuer",
+                                                                "when":  "2026-10-08T07:14:12+00:00",
+                                                                "retry_after":  null,
+                                                                "hint":  ""
+                                                            },
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  0,
+                                       "finished_at":  "2026-10-08T07:14:12+00:00",
+                                       "commit_wait_ms":  0
+                                   }
+                               ]
+              }
+}
