@@ -112,8 +112,9 @@ pub struct ConsultArgs {
     /// Print the plan and exit; a dry run writes nothing.
     #[arg(long)]
     pub dry_run: bool,
-    /// Telemetry: on | off (default on; env CODEX_CONSULT_TELEMETRY=off also disables).
-    #[arg(long, default_value = "on")]
+    /// Telemetry for this run: on | off; it wins over CODEX_CONSULT_TELEMETRY (unset: on). Empty =
+    /// the environment decides. A panel passes it to its members.
+    #[arg(long, default_value = "")]
     pub telemetry: String,
 
     // --- parsed-but-refused (engine scope M2d / panel M4 / detach R12) ---
@@ -201,6 +202,12 @@ pub struct ConsultArgs {
 
 /// Run one consultation and return the process exit code.
 pub fn run(args: ConsultArgs) -> i32 {
+    // (R17) the run's telemetry switch: on | off or nothing - refused before anything starts.
+    let tele = args.telemetry.trim().to_ascii_lowercase();
+    if !tele.is_empty() && tele != "on" && tele != "off" {
+        println!("codex-consult: -Telemetry must be on or off (got '{tele}'); leave it out for CODEX_CONSULT_TELEMETRY (unset: on).");
+        return 1;
+    }
     // Whether the user actually passed --continue-sec (clap can't tell a default -1 from an
     // explicit -1; treat any value != -1 as given, and -1 as the default sentinel).
     let continue_sec_given = args.continue_sec != -1;
@@ -242,7 +249,11 @@ pub fn run(args: ConsultArgs) -> i32 {
         skip_preflight: args.skip_preflight,
         codex_config: args.codex_config,
         schema_transport: args.schema_transport,
-        telemetry: Some(!args.telemetry.trim().eq_ignore_ascii_case("off")),
+        telemetry: match args.telemetry.trim().to_ascii_lowercase().as_str() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        },
         format_retry: args.format_retry,
         dry_run: args.dry_run,
         engine: args.engine,

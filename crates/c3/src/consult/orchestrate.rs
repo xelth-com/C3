@@ -80,6 +80,120 @@ pub(crate) fn resolve_coordinator(
     }
 }
 
+/// (wave 28b, D15) The `-c` items a codex reviewer with a roster `context_tokens` n gets on every
+/// turn - `model_context_window=<n>` and `model_auto_compact_token_limit=<floor(0.8 n)>`, each only
+/// when no operator item (`-CodexConfig` / the entry's `codex_config`) already sets that key
+/// (`^<key>\s*=`, any case, as the plugin's `-match`) - and the ledger `context_window` record
+/// `{tokens, auto_compact_limit, items}`; `(vec![], None)` without a window or for another engine.
+pub(crate) fn context_window_config(
+    context_tokens: i64,
+    is_codex: bool,
+    extra_config: &[String],
+) -> (Vec<String>, Option<serde_json::Value>) {
+    if context_tokens <= 0 || !is_codex {
+        return (Vec::new(), None);
+    }
+    let compact_at = (0.8 * context_tokens as f64).floor() as i64;
+    let mut items: Vec<String> = Vec::new();
+    for (key, value) in [
+        ("model_context_window", context_tokens),
+        ("model_auto_compact_token_limit", compact_at),
+    ] {
+        let set_by_operator = extra_config.iter().any(|ec| {
+            let t = ec.trim();
+            t.len() >= key.len()
+                && t[..key.len()].eq_ignore_ascii_case(key)
+                && t[key.len()..].trim_start().starts_with('=')
+        });
+        if !set_by_operator {
+            items.push(format!("{key}={value}"));
+        }
+    }
+    let record = serde_json::json!({
+        "tokens": context_tokens,
+        "auto_compact_limit": compact_at,
+        "items": items.clone(),
+    });
+    (items, Some(record))
+}
+
+/// The codex `-c` items of a turn: the operator's (`-CodexConfig` / the roster's `codex_config`)
+/// followed by the context-window items (`$extraConfig` then `$contextConfig`, as the plugin's argv).
+fn with_context_config(extra_config: &[String], context_config: &[String]) -> Vec<String> {
+    let mut v = extra_config.to_vec();
+    v.extend(context_config.iter().cloned());
+    v
+}
+
+/// (wave 28c, D11) The compactions an engine REPORTED in the event streams of a run's turns
+/// (`Get-CompactionCount`): a line whose `type` is `context_compacted`, `compacted` or
+/// `thread.compacted`, a `system` line with subtype `compact_boundary`, a `msg` of one of those
+/// types, or an `item.completed` whose item (`type`, else `item_type`) is `context_compaction`,
+/// `contextCompaction` or `compaction`. Missing files and lines that are no JSON object count
+/// nothing.
+pub(crate) fn compaction_count(paths: &[&Path]) -> u64 {
+    const EVENT_TYPES: [&str; 3] = ["context_compacted", "compacted", "thread.compacted"];
+    const ITEM_TYPES: [&str; 3] = ["context_compaction", "contextCompaction", "compaction"];
+    let mut n = 0u64;
+    for p in paths {
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        for line in text.lines() {
+            if !line.to_ascii_lowercase().contains("ompact") {
+                continue;
+            }
+            let t = line.trim();
+            if !t.starts_with('{') {
+                continue;
+            }
+            let Ok(o) = serde_json::from_str::<serde_json::Value>(t) else {
+                continue;
+            };
+            if !o.is_object() {
+                continue;
+            }
+            let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if EVENT_TYPES.contains(&ty) {
+                n += 1;
+                continue;
+            }
+            if ty == "system"
+                && o.get("subtype").and_then(|v| v.as_str()) == Some("compact_boundary")
+            {
+                n += 1;
+                continue;
+            }
+            if let Some(msg_ty) = o
+                .get("msg")
+                .and_then(|m| m.get("type"))
+                .and_then(|v| v.as_str())
+            {
+                if EVENT_TYPES.contains(&msg_ty) {
+                    n += 1;
+                    continue;
+                }
+            }
+            if ty == "item.completed" {
+                let item = o.get("item");
+                let it = item
+                    .and_then(|i| i.get("type"))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| {
+                        item.and_then(|i| i.get("item_type"))
+                            .and_then(|v| v.as_str())
+                    })
+                    .unwrap_or("");
+                if ITEM_TYPES.contains(&it) {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
+}
+
 /// The two secondary-turn mechanisms' results (timeout continuation + format repair), gathered
 /// so [`render_handoff`], [`build_entry`] and the summary render at their exact points.
 #[derive(Default)]
@@ -147,6 +261,11 @@ struct Secondary {
     engine_warnings: Vec<String>,
     /// The repair turn's kept event-stream (engine repair keeps a real file, unlike codex).
     repair_events_rel: Option<String>,
+    /// (wave 28c, D11) the compactions a codex repair turn's TEMP event stream reported, counted
+    /// before that file is removed.
+    repair_compactions: u64,
+    /// (wave 28c, D11) the ledger `compactions` (a number, `"unknown"`, or `None` = null).
+    compactions: Option<serde_json::Value>,
 }
 
 /// The after-run drift (`Compare-TreeContent`, the brief/artifact re-hash).
@@ -495,6 +614,13 @@ pub(crate) struct Context {
     pub(crate) nn: u32,
     pub(crate) consult_n: i64,
     pub(crate) consult_id: String,
+    /// (0.6.1, U5) the ledger `consult_ref` (a fresh random lower-case guid, never derived).
+    pub(crate) consult_ref: String,
+    /// (wave 28b, D15) the reviewer's roster `context_tokens` (0 = none), the `-c` items it adds to
+    /// every codex turn and the ledger `context_window` record (`None` = null).
+    pub(crate) context_tokens: i64,
+    pub(crate) context_config: Vec<String>,
+    pub(crate) context_window: Option<serde_json::Value>,
     pub(crate) identity: ReviewerIdentity,
     /// (wave 27) The coordinator that started this run (`Resolve-CoordinatorIdentity`): the ledger
     /// `coordinator` record and the dry-run `coordinator :` line.
@@ -1084,7 +1210,12 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         skip_preflight: b("skip_preflight"),
         codex_config: list("codex_config"),
         schema_transport: s("schema_transport"),
-        telemetry: None,
+        // (0.6.1 parity) the panel run's own `--telemetry on|off`, else the environment decides.
+        telemetry: match s("telemetry").as_str() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        },
         format_retry: i("format_retry", 1),
         dry_run: b("dry_run"),
         engine: s("engine"),
@@ -1822,6 +1953,13 @@ fn build_context(
     let parent_note = parent.note.clone();
     // (wave 26b, D16) the reviewer's context window (its roster entry's context_tokens; 0 = none).
     let context_tokens = roster_entry.as_ref().map(|e| e.context_tokens).unwrap_or(0);
+    // (wave 28b, D15) the window reaches the ENGINE: a codex reviewer with a roster context_tokens n
+    // gets `-c model_context_window=<n>` and `-c model_auto_compact_token_limit=<floor 0.8 n>` on
+    // every turn - unless `-CodexConfig` or the entry's `codex_config` already sets that key (the
+    // operator's value wins). The ledger records `context_window` {tokens, auto_compact_limit, items}
+    // (null without one); agy and muse take no such option.
+    let (context_config, context_window) =
+        context_window_config(context_tokens, is_codex, &r.extra_config);
 
     let nn_n = store.next_numbers(&task).map_err(|e| (e.to_string(), 1))?;
     let (mut nn, mut consult_n) = (nn_n.nn, nn_n.n);
@@ -1987,6 +2125,10 @@ fn build_context(
     }
 
     let mut consult_id = uuid::Uuid::new_v4().to_string();
+    // (0.6.1, U5) consult_ref: a SECOND random 128-bit id of this consultation, derived from nothing
+    // (not from the consult_id, which the reviewer sees in the prompt, nor from anything local) - the
+    // telemetry events carry it. Minted by the process that commits the entry (a panel member its own).
+    let consult_ref = uuid::Uuid::new_v4().to_string().to_ascii_lowercase();
     // A member reuses the consult id its spec reserved (the prompt's last line, so the parent's
     // rollout scan and the reserved pending record all agree), when it is a well-formed uuid.
     if let Some(m) = member {
@@ -2112,6 +2254,7 @@ fn build_context(
         resolved_mode(&effective_mode, &parent_thread, &identity),
         engine_kind,
         prompt_file.as_deref(),
+        &context_config,
     );
     let argv = match c3_core::engine::SubprocessEngine::new(engine_kind).plan(&request) {
         Ok(c3_core::engine::LaunchPlan::Subprocess(a)) => a,
@@ -2241,6 +2384,10 @@ fn build_context(
         nn,
         consult_n,
         consult_id,
+        consult_ref,
+        context_tokens,
+        context_config,
+        context_window,
         identity,
         coordinator,
         child_env_scrubbed,
@@ -2357,6 +2504,7 @@ fn make_request(
     mode: Mode,
     engine: EngineKind,
     prompt_file: Option<&Path>,
+    context_config: &[String],
 ) -> Request {
     let sandbox = if o.sandbox.is_empty() {
         "read-only".to_string()
@@ -2390,7 +2538,8 @@ fn make_request(
         mode,
         sandbox,
         schema_path: schema_arg,
-        extra_config: r.extra_config.clone(),
+        // (wave 28b, D15) the operator's items, then the context-window items (codex only)
+        extra_config: with_context_config(&r.extra_config, context_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(last_msg_path.to_path_buf())
         } else {
@@ -3295,7 +3444,7 @@ fn make_live_request_engine(ctx: &Context, mode: Mode) -> Request {
         mode,
         sandbox,
         schema_path: schema_arg,
-        extra_config: ctx.r.extra_config.clone(),
+        extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(ctx.last_msg_path.clone())
         } else {
@@ -3631,7 +3780,7 @@ fn make_live_request(ctx: &Context) -> Request {
         mode: resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity),
         sandbox,
         schema_path: schema_arg,
-        extra_config: ctx.r.extra_config.clone(),
+        extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
         output_last_message: Some(ctx.last_msg_path.clone()),
         prompt_file: None,
         max_model_steps: None,
@@ -4467,6 +4616,36 @@ fn finish(
         ctx.run_warnings.push(w.clone());
     }
 
+    // (wave 28c, D11) a reviewer that compacted its context is seen: the compactions its engine
+    // REPORTED in the event streams of every turn - n > 0 is recorded (ledger `compactions`) and
+    // warned about; none reported by a reviewer with a context window (context_tokens) is
+    // `unknown` (the installed codex's `exec --json` reports no compaction event: none seen is not
+    // none happened); otherwise null.
+    let compaction_warning = {
+        let cont = ctx.hpath("continue.events.jsonl");
+        let retry = ctx.hpath("denial-retry.events.jsonl");
+        let repair = ctx.hpath("repair.events.jsonl");
+        let mut paths: Vec<&Path> =
+            vec![ctx.events_path.as_path(), retry.as_path(), cont.as_path()];
+        if !ctx.is_codex() {
+            paths.push(repair.as_path());
+        }
+        let n = compaction_count(&paths) + sec.repair_compactions;
+        if n > 0 {
+            sec.compactions = Some(serde_json::Value::from(n));
+            let w = format!(
+                "the reviewer compacted its context {n} time(s) - the reply may rest on a summary of the brief"
+            );
+            sec.engine_warnings.push(w.clone());
+            Some(w)
+        } else {
+            if ctx.context_tokens > 0 {
+                sec.compactions = Some(serde_json::Value::String("unknown".into()));
+            }
+            None
+        }
+    };
+
     // Render the handoff markdown (and the salvaged partial file, when a turn was killed).
     let (handoff_md, partial_md) = render_handoff(
         &ctx,
@@ -4523,6 +4702,14 @@ fn finish(
     // pushes the warning naming the pid that may still run (the continuation was already
     // suppressed and the outcome already says so).
     entry.kill_confirmed = Some(kill_confirmed_state);
+    // (wave 28c, D11) the compaction warning in warnings[] (an engine's already came with its turn
+    // warnings; a codex entry records the run warnings).
+    if let Some(w) = &compaction_warning {
+        let v = serde_json::Value::String(w.clone());
+        if !entry.warnings.contains(&v) {
+            entry.warnings.push(v);
+        }
+    }
     if let Some((pid, why)) = &kill_unconfirmed {
         entry.warnings.push(serde_json::Value::String(format!(
             "kill not confirmed (main turn): {why}; pid {pid} may still run - check it, and stop it by hand if it does"
@@ -4716,10 +4903,24 @@ fn finish(
         );
     }
 
-    // Telemetry: record this consultation to the spool (errors ignored). The env switch is
-    // re-checked inside `record_consultation`; a dry run never reaches this point.
+    // Telemetry: record this consultation to the spool (errors ignored) - after the commit, so an
+    // event is never spooled for an uncommitted entry. The run's switch is re-checked inside
+    // `record_consultation`; a dry run never reaches this point.
+    // (wave 2b) an event that is not spooled is never lost silently: said on the console and
+    // counted (`c3 telemetry --status`); the entry is already committed.
     if let Some(entry) = &entry_for_telemetry {
-        let _ = telemetry::record_consultation(entry, None);
+        if let Err(e) = telemetry::record_consultation(
+            entry,
+            None,
+            &telemetry::Config {
+                telemetry: ctx.o.telemetry,
+            },
+        ) {
+            telemetry::note_not_spooled(&e.to_string());
+            println!(
+                "warning    : telemetry event not spooled ({e}) - counted (c3 telemetry --status)"
+            );
+        }
     }
 
     // Summary.
@@ -5075,7 +5276,7 @@ fn run_codex_secondary(
         mode: Mode::New,
         sandbox: sandbox.to_string(),
         schema_path: schema_arg,
-        extra_config: ctx.r.extra_config.clone(),
+        extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(last_path.to_path_buf())
         } else {
@@ -5682,9 +5883,11 @@ fn run_format_repair(
         drift_notes.len()
     );
 
-    // temp cleanup (an engine's kept repair events file is NOT removed).
+    // temp cleanup (an engine's kept repair events file is NOT removed). (wave 28c, D11) A codex
+    // repair turn's temp event stream is counted for compactions before it goes.
     let _ = std::fs::remove_file(&repair_last);
     if !is_engine {
+        sec.repair_compactions = compaction_count(&[repair_events.as_path()]);
         let _ = std::fs::remove_file(&repair_events);
     }
     let _ = std::fs::remove_file(&repair_stderr);
@@ -7177,6 +7380,8 @@ fn build_entry(
         ),
         role: Some(ctx.role.clone()),
         consult_id: ctx.consult_id.clone(),
+        // (0.6.1, U5) right after consult_id.
+        consult_ref: Some(ctx.consult_ref.clone()),
         lineage: ctx.identity.lineage.clone(),
         // (wave 27) the coordinator record right after `lineage`.
         coordinator: Some(ctx.coordinator.clone()),
@@ -7225,6 +7430,8 @@ fn build_entry(
             .map(|s| serde_json::Value::String(s.clone()))
             .collect(),
         extra_config_source: ctx.extra_config_source.clone(),
+        // (wave 28b, D15) the context window as it reached the engine (null without one).
+        context_window: Some(ctx.context_window.clone()),
         roster: ctx.roster_record.clone(),
         // Peak status evaluated at launch (`run_live` re-evaluated it as call 1).
         peak: ctx.peak,
@@ -7298,6 +7505,8 @@ fn build_entry(
             .map(|s| serde_json::Value::String(s.clone()))
             .collect(),
         usage: usage.clone(),
+        // (wave 28c, D11) right after usage.
+        compactions: Some(sec.compactions.clone()),
         wall_seconds: wall,
         finished_at: iso_now(),
         reviewer: build_reviewer(&ctx.identity, &ctx.harness),
@@ -7492,14 +7701,24 @@ mod telemetry_tests {
             n: 7,
             ..Default::default()
         };
-        let _ = telemetry::record_consultation(&entry, None);
+        let _ = telemetry::record_consultation(&entry, None, &off_cfg);
         assert_eq!(spool_pending(&home), 0, "env off must enqueue nothing");
+        // (0.6.1 parity, Get-TelemetrySwitch) any value that is not on counts as off.
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "maybe");
+        assert!(!telemetry::is_enabled(&off_cfg));
+        // A run's own `--telemetry on` wins over the environment (the plugin's -Telemetry on).
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "off");
+        let on_cfg = telemetry::Config {
+            telemetry: Some(true),
+        };
+        assert!(telemetry::is_enabled(&on_cfg));
+        assert_eq!(telemetry::switch(Some(true)).source, "-Telemetry");
 
         // Control: with the switch on, the same record DOES enqueue one event (proves the
         // guard suppresses, rather than the path being a no-op).
         std::env::remove_var("CODEX_CONSULT_TELEMETRY");
         assert!(telemetry::is_enabled(&telemetry::Config::default()));
-        let _ = telemetry::record_consultation(&entry, None);
+        let _ = telemetry::record_consultation(&entry, None, &telemetry::Config::default());
         assert_eq!(spool_pending(&home), 1, "switch on enqueues one event");
 
         std::env::remove_var("CODEX_HOME");

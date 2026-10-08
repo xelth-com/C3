@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use c3_core::ledger::{FindingCounts, FormatRetry, LedgerEntry, Reviewer, Usage};
 
-use c3::telemetry::{self, Config, Event, RatingEvent, Spool};
+use c3::telemetry::{self, Config, Event, RatingEvent, RatingInput, Spool};
 
 // --------------------------------------------------------------------------- helpers
 
@@ -143,11 +143,15 @@ fn allowlist_never_leaks_secrets_or_paths() {
 
     let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
     let d = &v["details"];
+    // (wave 2c, F02-2) classes only: an unknown engine, no vendor, a purpose and an outcome
+    // outside their closed sets
     assert_eq!(d["engine"], "other");
-    assert_eq!(d["provider"], "unknown");
-    assert_eq!(d["model"], "unknown");
-    assert_eq!(d["purpose"], "unknown");
-    assert_eq!(d["outcome"], "failed:unknown");
+    assert_eq!(d["provider"], "other");
+    assert_eq!(d["model"], "other");
+    assert_eq!(d["purpose"], "other");
+    assert_eq!(d["outcome"], "failed:bridge");
+    assert_eq!(v["severity"], "error");
+    assert_eq!(v["tags"], serde_json::json!(["other", "other"]));
     // The numeric/boolean allowlist still carries the useful shape.
     assert_eq!(d["tokens_in"], 12000);
     assert_eq!(d["tokens_out"], 900);
@@ -155,34 +159,88 @@ fn allowlist_never_leaks_secrets_or_paths() {
     assert_eq!(d["structured"], true);
     assert_eq!(d["format_retry"], true);
     assert_eq!(d["panel_size"], 3);
-    // The title mirrors the safe purpose label, never the raw text.
-    assert_eq!(v["title"], "unknown");
+    // The title mirrors the purpose class, never the raw text.
+    assert_eq!(v["title"], "other");
+}
+
+/// (wave 2c, F02-2) A private but syntactically harmless label - `customer-acme` as the roster
+/// provider, the model, the purpose, the failure class and the verdict, on a private endpoint -
+/// never leaves the machine: not in the consultation event, not in the rating event (whose
+/// reviewer goes through the SAME classifier), not in a complaint's last-run summary.
+#[test]
+fn a_private_label_never_reaches_any_payload() {
+    let entry = LedgerEntry {
+        n: 4,
+        when: "2026-10-08T10:00:00+02:00".into(),
+        purpose: "customer-acme".into(),
+        consult_ref: Some("6f1c2a9e-4b7d-4e2a-9c3f-0d8e5b7a1c24".into()),
+        reviewer: Reviewer {
+            provider: "customer-acme".into(),
+            model: "customer-acme-7b".into(),
+            engine: "codex".into(),
+            provider_config: serde_json::json!({"base_url": "https://llm.customer-acme.example/v1"}),
+            ..Default::default()
+        },
+        bridge_outcome: "failed: customer-acme".into(),
+        provider_failure: Some(c3_core::ledger::ProviderFailure {
+            class: "customer-acme".into(),
+            ..Default::default()
+        }),
+        verdict: "customer-acme".into(),
+        ..Default::default()
+    };
+    let ev = serde_json::to_string(&Event::from_ledger(&entry, Some(1), "i")).unwrap();
+    assert!(!ev.contains("acme"), "{ev}");
+    let v: serde_json::Value = serde_json::from_str(&ev).unwrap();
+    assert_eq!(v["details"]["provider"], "other");
+    assert_eq!(v["details"]["model"], "other");
+    assert_eq!(v["details"]["outcome"], "failed:unknown");
+    let judge = telemetry::Judge::unknown();
+    let input = RatingInput {
+        entry: &entry,
+        mark: "no",
+        rated_at: chrono::DateTime::parse_from_rfc3339("2026-10-08T12:00:00+02:00").unwrap(),
+        consult_when: None,
+        judge: &judge,
+        rating_rev: Some(1),
+    };
+    let rating = serde_json::to_string(&RatingEvent::from_rating(&input, "i")).unwrap();
+    assert!(!rating.contains("acme"), "{rating}");
+    // the same reviewer classes in both events (one code path)
+    let r: serde_json::Value = serde_json::from_str(&rating).unwrap();
+    for k in ["engine", "provider", "model", "purpose"] {
+        assert_eq!(r["details"][k], v["details"][k], "{k}");
+    }
+    // a known vendor on the same code path: the class and the closed-list model
+    let mut known = entry.clone();
+    known.reviewer.provider_config = serde_json::json!({"base_url": "https://api.z.ai/api/v1"});
+    known.reviewer.model = "GLM-5.3".into();
+    let k = serde_json::to_value(Event::from_ledger(&known, Some(1), "i")).unwrap();
+    assert_eq!(k["details"]["provider"], "zai");
+    assert_eq!(k["details"]["model"], "glm-5.3");
+    assert_eq!(k["tags"], serde_json::json!(["zai", "glm-5.3"]));
 }
 
 #[test]
 fn rating_event_allowlist_never_leaks_secrets_or_paths() {
-    // The rating event (M9 §7) is the later usefulness mark. Poison every text input,
-    // including the topic tags, and prove none reaches the payload.
+    // The rating event (0.6.1 shape) of a poisoned entry: every text input is a secret/path, the
+    // judge is unknown, and none of it reaches the payload.
     let entry = poisoned_entry();
-    const POISON: &str = "LEAK /home/u/.ssh/id_rsa secret=sk-live-DEADBEEF password token";
-    let topics = vec![
-        POISON.to_string(),
-        "security".to_string(),
-        "not-a-real-tag".to_string(),
-    ];
-    let event = RatingEvent::from_rating(&entry, "yes", 12, &topics, "testinstance");
+    let judge = telemetry::Judge::unknown();
+    let at = chrono::DateTime::parse_from_rfc3339("2026-10-08T21:00:00+02:00").unwrap();
+    let input = RatingInput {
+        entry: &entry,
+        mark: " Yes ",
+        rated_at: at,
+        consult_when: Some("LEAK /home/u/.ssh/id_rsa"),
+        judge: &judge,
+        rating_rev: Some(2),
+    };
+    let event = RatingEvent::from_rating(&input, "testinstance");
     let serialized = serde_json::to_string(&event).unwrap();
 
     for needle in [
-        "LEAK",
-        "id_rsa",
-        "sk-live",
-        "DEADBEEF",
-        "/home",
-        "password",
-        ".ssh",
-        "secret=",
-        "not-a-real-tag",
+        "LEAK", "id_rsa", "sk-live", "DEADBEEF", "/home", "password", ".ssh", "secret=",
     ] {
         assert!(
             !serialized.contains(needle),
@@ -191,16 +249,59 @@ fn rating_event_allowlist_never_leaks_secrets_or_paths() {
     }
     let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
     assert_eq!(v["event_type"], "rating");
+    let keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "app_id",
+            "app_version",
+            "instance_id",
+            "event_type",
+            "severity",
+            "title",
+            "details",
+            "tags",
+            "client_time",
+            "os",
+            "runtime"
+        ]
+    );
     let d = &v["details"];
+    let dkeys: Vec<&str> = d.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+    // the plugin's exact order; no consult_ref (the entry has none)
+    assert_eq!(
+        dkeys,
+        [
+            "engine",
+            "provider",
+            "model",
+            "purpose",
+            "mark",
+            "age_days",
+            "bridge_version",
+            "os",
+            "ps_version",
+            "judge",
+            "rating_rev"
+        ]
+    );
     assert_eq!(d["engine"], "other");
-    assert_eq!(d["provider"], "unknown");
-    assert_eq!(d["model"], "unknown");
-    assert_eq!(d["purpose"], "unknown");
     assert_eq!(d["mark"], "yes");
-    assert_eq!(d["age_days"], 12);
-    // Only the one vocabulary word survives; the secret and the unknown tag are dropped.
-    assert_eq!(d["topic_tags"], serde_json::json!(["security"]));
-    assert_eq!(v["title"], "unknown");
+    assert_eq!(d["age_days"], 0, "no consultation time parses: 0");
+    assert_eq!(
+        d["judge"],
+        serde_json::json!({"provider": "other", "model": "other", "source": "unknown"})
+    );
+    assert_eq!(d["rating_rev"], 2);
+    assert_eq!(d["ps_version"], "unknown");
+    // the title is the mark, the client time the mark's own `when` in UTC
+    assert_eq!(v["title"], "yes");
+    assert_eq!(v["severity"], "info");
+    assert_eq!(v["client_time"], "2026-10-08T19:00:00Z");
+    assert_eq!(
+        v["tags"],
+        serde_json::json!([d["provider"].clone(), d["model"].clone()])
+    );
 }
 
 #[test]
@@ -210,11 +311,12 @@ fn example_event_is_printed_for_the_report() {
         purpose: "diff-review".into(),
         reviewer: Reviewer {
             provider: "openai".into(),
-            model: "gpt-5".into(),
+            model: "gpt-5.1".into(),
             engine: "codex".into(),
+            provider_config: serde_json::json!({"builtin": "openai"}),
             ..Default::default()
         },
-        bridge_outcome: "ok".into(),
+        bridge_outcome: "usable reply".into(),
         structured: true,
         wall_seconds: 41.2,
         usage: Some(Usage {
@@ -238,6 +340,9 @@ fn example_event_is_printed_for_the_report() {
     let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
     assert_eq!(v["details"]["outcome"], "usable");
     assert_eq!(v["details"]["engine"], "codex");
+    assert_eq!(v["details"]["provider"], "openai");
+    assert_eq!(v["details"]["model"], "gpt-5.1");
+    assert_eq!(v["severity"], "info");
 }
 
 // --------------------------------------------------------------------------- instance id
@@ -395,26 +500,316 @@ fn complaint_declined_is_not_sent() {
     assert!(!dir.join("refs.ndjson").exists());
 }
 
-#[test]
-fn forget_me_deletes_local_state_and_asks_server() {
-    let dir = temp_dir("forget");
-    // Seed a salt, a spool and a stored reference.
-    telemetry::instance_id_in(&dir);
-    std::fs::write(dir.join("spool.ndjson"), "line\n").unwrap();
-    std::fs::write(
-        dir.join("refs.ndjson"),
-        "{\"public_ref\":\"T-7KQ4-M2XZ\"}\n",
-    )
-    .unwrap();
-    let (hub, _rx) = spawn_mock(200, "OK", r#"{"ok":true}"#);
+/// A scripted HTTP mock: answers `(code, body)` in order (the last one repeats) and records every
+/// request `(method, path?query)`. Returns the `.../T` base and the request log.
+fn scripted_mock(
+    answers: Vec<(u16, &'static str)>,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log2 = log.clone();
+    thread::spawn(move || {
+        for (k, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut first = String::new();
+            let _ = reader.read_line(&mut first);
+            let mut content_length = 0usize;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    content_length = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut buf = vec![0u8; content_length];
+            let _ = reader.read_exact(&mut buf);
+            let mut parts = first.split_whitespace();
+            log2.lock().unwrap().push(format!(
+                "{} {}",
+                parts.next().unwrap_or(""),
+                parts.next().unwrap_or("")
+            ));
+            let (code, body) = answers[k.min(answers.len() - 1)];
+            let resp = format!(
+                "HTTP/1.1 {code} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (format!("http://{addr}/T"), log)
+}
 
-    let outcome = telemetry::forget_me_at(&hub, &dir, |_plan| true).unwrap();
-    assert!(outcome.confirmed);
-    assert!(outcome.server_requested);
-    assert!(outcome.server_deleted);
+fn hub_at(base: &str) -> telemetry::Hub {
+    telemetry::Hub {
+        base: base.to_string(),
+        source: "test".into(),
+        error: String::new(),
+    }
+}
+
+/// (F02-3) A failed DELETE keeps the identity and the proof: nothing local is removed, the pending
+/// deletion records the instance id and the reference, producers spool nothing and the sender
+/// sends nothing meanwhile; the retry - even after the salt is gone - names the SAME instance and
+/// reference, and only its confirmation removes the local files.
+#[test]
+fn forget_failed_delete_keeps_the_identity_and_the_retry_uses_it() {
+    let dir = temp_dir("forget-retry");
+    let iid = telemetry::instance_id_in(&dir);
+    let spool = Spool::new(&dir, "http://127.0.0.1:9/T");
+    enqueue_one(&spool, "framing");
+    std::fs::write(dir.join("refs.ndjson"), "{\"public_ref\":\"CC-7Q\"}\n").unwrap();
+    let (hub, log) = scripted_mock(vec![
+        (503, r#"{"ok":false,"error":"maintenance"}"#),
+        (200, r#"{"ok":true,"deleted":3}"#),
+    ]);
+    let req = telemetry::ForgetRequest {
+        public_ref: Some("CC-7Q".into()),
+        local: true,
+        yes: true,
+    };
+    let first = telemetry::forget_at(&hub_at(&hub), &dir, &req, |_| true);
+    assert_eq!(first.exit, 3, "{:?}", first.lines);
+    assert!(!first.server_deleted);
+    let text = first.lines.join("\n");
+    assert!(
+        text.contains("did not confirm the deletion (HTTP 503: maintenance)"),
+        "{text}"
+    );
+    assert!(
+        text.contains("NOTHING was deleted - not there and not here"),
+        "{text}"
+    );
+    assert!(!text.contains("drops it on the next successful DELETE"));
+    // nothing local was removed
+    assert!(dir.join("salt").is_file() && dir.join("refs.ndjson").is_file());
+    assert_eq!(spool.pending(), 1);
+    let pending = telemetry::pending_deletion_in(&dir).expect("pending deletion recorded");
+    assert_eq!(pending.instance_id, iid);
+    assert_eq!(pending.public_ref, "CC-7Q");
+    assert_eq!(pending.attempts, 1);
+    // meanwhile: a producer spools nothing, the sender sends nothing
+    let entry = LedgerEntry {
+        purpose: "framing".into(),
+        ..Default::default()
+    };
+    let ev = Event::from_ledger(&entry, Some(1), "x");
+    assert!(spool.enqueue(&ev).is_err());
+    assert_eq!(spool.pending(), 1);
+    let r = Spool::new(&dir, hub.clone()).flush().unwrap();
+    assert!(!r.attempted && r.skipped.contains("deletion"), "{r:?}");
+    // the salt is gone (a local-only deletion, a crash): the pending record still identifies it
+    std::fs::remove_file(dir.join("salt")).unwrap();
+    let retry = telemetry::forget_at(
+        &hub_at(&hub),
+        &dir,
+        &telemetry::ForgetRequest {
+            public_ref: None,
+            local: true,
+            yes: true,
+        },
+        |_| true,
+    );
+    assert_eq!(retry.exit, 0, "{:?}", retry.lines);
+    assert!(retry.server_deleted);
+    let reqs = log.lock().unwrap().clone();
+    let want = format!("DELETE /T/v2/instances/{iid}?public_ref=CC-7Q");
+    assert_eq!(
+        reqs,
+        [want.clone(), want],
+        "both DELETEs name the same instance and proof"
+    );
+    // confirmed: now the local files go, and the pending record with them
+    assert!(!dir.join("refs.ndjson").exists() && !dir.join("spool.ndjson").exists());
+    assert!(telemetry::pending_deletion_in(&dir).is_none());
+    assert!(retry.lines.join("\n").contains("removed locally - "));
+}
+
+/// The plugin's -Forget refusals and -Local alone (asks; the intake keeps the data).
+#[test]
+fn forget_refusals_and_local_alone() {
+    let dir = temp_dir("forget-local");
+    let (hub, log) = scripted_mock(vec![(200, r#"{"ok":true}"#)]);
+    let none = telemetry::forget_at(
+        &hub_at(&hub),
+        &dir,
+        &telemetry::ForgetRequest::default(),
+        |_| true,
+    );
+    assert_eq!(none.exit, 1);
+    assert!(none.lines.join("\n").contains("needs -PublicRef <ref>"));
+    // a reference without a salt: no instance id, no request
+    let nosalt = telemetry::forget_at(
+        &hub_at(&hub),
+        &dir,
+        &telemetry::ForgetRequest {
+            public_ref: Some("CC-7Q".into()),
+            ..Default::default()
+        },
+        |_| true,
+    );
+    assert_eq!(nosalt.exit, 1);
+    assert!(nosalt.lines.join("\n").contains("no instance id"));
+    assert!(log.lock().unwrap().is_empty());
+    // -Local alone: says the intake keeps what was sent, asks; no -> nothing removed
+    let iid = telemetry::instance_id_in(&dir);
+    let no = telemetry::forget_at(
+        &hub_at(&hub),
+        &dir,
+        &telemetry::ForgetRequest {
+            local: true,
+            ..Default::default()
+        },
+        |_| false,
+    );
+    assert_eq!(no.exit, 1);
+    let t = no.lines.join("\n");
+    assert!(
+        t.contains(&format!(
+            "the intake still holds what this machine sent (instance {iid})"
+        )),
+        "{t}"
+    );
+    assert!(t.contains("-Forget -PublicRef <ref> BEFORE -Local"));
+    assert!(t.contains("nothing removed (no confirmation"));
+    assert!(dir.join("salt").is_file());
+    let yes = telemetry::forget_at(
+        &hub_at(&hub),
+        &dir,
+        &telemetry::ForgetRequest {
+            local: true,
+            ..Default::default()
+        },
+        |_| true,
+    );
+    assert_eq!(yes.exit, 0);
     assert!(!dir.join("salt").exists());
-    assert!(!dir.join("spool.ndjson").exists());
-    assert!(!dir.join("refs.ndjson").exists());
+    assert!(log.lock().unwrap().is_empty(), "-Local alone sends nothing");
+}
+
+// --------------------------------------------------------------------------- the outbox (F02-1)
+
+/// (F02-1) The lost-update race: the sender has read event A and holds its POST; event B is
+/// appended meanwhile; the intake accepts A; A is removed and B STAYS queued.
+#[test]
+fn outbox_keeps_an_event_appended_while_the_sender_posts() {
+    let dir = temp_dir("outbox-race");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    enqueue_one(&spool, "framing");
+    let (to_test, posted) = std::sync::mpsc::channel::<String>();
+    let (to_sender, proceed) = std::sync::mpsc::channel::<()>();
+    let d2 = dir.clone();
+    let sender = thread::spawn(move || {
+        Spool::new(&d2, "http://unused.invalid/T")
+            .flush_with(|body| {
+                to_test.send(body.to_string()).unwrap();
+                proceed.recv().unwrap(); // the intake holds its answer
+                true
+            })
+            .unwrap()
+    });
+    let body_a = posted.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(body_a.contains("\"framing\""));
+    // B arrives while A's POST is in flight
+    enqueue_one(&spool, "decision");
+    to_sender.send(()).unwrap();
+    let report = sender.join().unwrap();
+    assert_eq!(report.sent, 1);
+    let left = std::fs::read_to_string(dir.join("spool.ndjson")).unwrap();
+    assert_eq!(spool.pending(), 1, "B is still queued: {left}");
+    assert!(
+        left.contains("decision") && !left.contains("framing"),
+        "{left}"
+    );
+}
+
+/// One sender at a time: a flush that finds the sender lock held skips (nothing posted twice).
+#[test]
+fn outbox_second_sender_skips_while_the_first_holds_the_lock() {
+    let dir = temp_dir("outbox-two");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    enqueue_one(&spool, "framing");
+    let (to_test, posted) = std::sync::mpsc::channel::<()>();
+    let (to_sender, proceed) = std::sync::mpsc::channel::<()>();
+    let d2 = dir.clone();
+    let first = thread::spawn(move || {
+        Spool::new(&d2, "http://unused.invalid/T")
+            .flush_with(|_| {
+                to_test.send(()).unwrap();
+                proceed.recv().unwrap();
+                true
+            })
+            .unwrap()
+    });
+    posted.recv_timeout(Duration::from_secs(10)).unwrap();
+    let second = spool
+        .flush_with(|_| panic!("a second sender must not post"))
+        .unwrap();
+    assert!(second.skipped.contains("another flush"), "{second:?}");
+    to_sender.send(()).unwrap();
+    assert_eq!(first.join().unwrap().sent, 1);
+    assert_eq!(spool.pending(), 0);
+}
+
+/// The spool line is the plugin's `{v, kind, queued_unix, body}`; a rating backfilled long after
+/// its mark (an old client_time) is NOT dropped - the 7 days run from the queue time; a line C3
+/// wrote before wave 2 (the raw event) is still delivered; a torn line is ended by the next append
+/// and dropped by the sender, the new line stays whole; a send that fails keeps everything.
+#[test]
+fn outbox_line_shape_legacy_lines_torn_lines_and_queue_time() {
+    let dir = temp_dir("outbox-shape");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    let old = serde_json::json!({"app_id": "c3", "event_type": "rating", "client_time": "2000-01-01T00:00:00Z", "details": {}});
+    spool.enqueue_line(&old).unwrap();
+    let text = std::fs::read_to_string(dir.join("spool.ndjson")).unwrap();
+    let line: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+    let keys: Vec<&str> = line
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    assert_eq!(keys, ["v", "kind", "queued_unix", "body"]);
+    assert_eq!(line["kind"], "event");
+    assert!(line["body"].is_string());
+    // a legacy raw line (fresh client_time) and a torn line without its newline
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let legacy = format!(
+        r#"{{"app_id":"c3","event_type":"consultation","client_time":"{now}","details":{{}}}}"#
+    );
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join("spool.ndjson"))
+        .unwrap();
+    write!(f, "{legacy}\n{{\"v\":1,\"kind\":\"ev").unwrap();
+    drop(f);
+    enqueue_one(&spool, "decision");
+    assert_eq!(spool.pending(), 4);
+    // a failed send keeps everything but the torn line (dropped as unreadable)
+    let kept = spool.flush_with(|_| false).unwrap();
+    assert!(kept.attempted && kept.sent == 0);
+    assert_eq!(kept.dropped_stale, 1);
+    assert_eq!(spool.pending(), 3);
+    let posted = std::sync::Mutex::new(String::new());
+    let sent = spool
+        .flush_with(|b| {
+            *posted.lock().unwrap() = b.to_string();
+            true
+        })
+        .unwrap();
+    assert_eq!(
+        sent.sent, 3,
+        "the old rating (queued now), the legacy line and the new event"
+    );
+    assert_eq!(spool.pending(), 0);
+    let body = posted.lock().unwrap().clone();
+    assert!(body.contains("2000-01-01T00:00:00Z") && body.contains("decision"));
 }
 
 // --------------------------------------------------------------------------- off switch

@@ -297,16 +297,19 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             out.push(format!("brief sha256: {}", c3_core::sha256_hex(&bytes)));
         }
     }
-    // Telemetry status (C3's addition per README; the plugin has no such line). The plugin's
-    // dry-run block would place it after the `peak` line, but peak is not implemented yet, so
-    // it goes last in the label block to avoid disturbing the existing console-parity lines.
+    // Telemetry: the plugin's dry-run line (`telemetry   : on|off (<source>) - ...`, the switch as
+    // `Get-TelemetrySwitch` resolves it: the run's --telemetry wins over the variable). It goes
+    // last in the label block to avoid disturbing the existing console-parity lines.
     {
-        let cfg = crate::telemetry::Config {
-            telemetry: ctx.o.telemetry,
-        };
-        let st = crate::telemetry::status(&cfg);
-        let body = st.strip_prefix("telemetry: ").unwrap_or(&st);
-        out.push(format!("telemetry   : {body}"));
+        let sw = crate::telemetry::switch(ctx.o.telemetry);
+        if sw.on {
+            out.push(format!("telemetry   : on ({}) - after the commit ONE anonymised event of this consultation goes to the spool and a background sender delivers it (README \"Telemetry\"; CODEX_CONSULT_TELEMETRY=off or --telemetry off switches it off)", sw.source));
+        } else {
+            out.push(format!(
+                "telemetry   : off ({}) - nothing is spooled or sent",
+                sw.source
+            ));
+        }
     }
     // (wave 27) the coordinator, the scrubbed child environment and the brief prefix.
     // (wave 27c, D11/D12) a coordinator that parses but names no seat is said on the line, not
@@ -395,72 +398,180 @@ fn preview(ctx: &Context) -> Value {
         .clone()
         .map(Value::String)
         .unwrap_or(Value::Null);
-    json!({
-        "n": ctx.consult_n,
-        "when": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
-        "purpose": ctx.o.purpose,
-        "consult_id": ctx.consult_id,
-        "reviewer": serde_json::to_value(super::orchestrate::build_reviewer(&ctx.identity, &ctx.harness)).unwrap_or(Value::Null),
-        "lineage": ctx.identity.lineage,
-        "coordinator": serde_json::to_value(&ctx.coordinator).unwrap_or(Value::Null),
-        "preflight": ctx.preflight,
-        "preflight_warning": ctx.preflight_warning,
-        "roster": ctx.roster_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
-        "panel": super::orchestrate::build_member_panel(ctx).map(|p| serde_json::to_value(p).unwrap_or(Value::Null)).unwrap_or(Value::Null),
-        "extra_config": ctx.r.extra_config.clone(),
-        "extra_config_source": ctx.extra_config_source,
-        "parent_thread": ctx.parent_thread,
-        "thread": "<filled from the event stream>",
-        "thread_source": "events|rollout (verified by consultation id)|unknown",
-        "mode": ctx.effective_mode,
-        // (wave 26b, D16) the context-window fork/resume -> new downgrade, else null.
-        "mode_fallback": ctx.mode_fallback.as_ref().map(|m| serde_json::to_value(m).unwrap_or(Value::Null)).unwrap_or(Value::Null),
-        "command": command_str(ctx),
-        // (wave 27) child_env_scrubbed right after command; brief follows it, matching the plugin's
-        // dry-run preview and the ledger field order (reply/reply_json/events come after prompt_chars).
-        "child_env_scrubbed": ctx.child_env_scrubbed.iter().map(|s| Value::String(s.clone())).collect::<Vec<_>>(),
-        "brief": ctx.brief_ref,
-        "range": ctx.range_record.as_ref().map(|r| serde_json::to_value(r).unwrap_or(Value::Null)).unwrap_or(Value::Null),
-        "prompt_chars": ctx.prompt_text.chars().count(),
-        "reply": preview_rel(ctx, "md"),
-        "reply_json": if ctx.r.raw { Value::Null } else { Value::String(preview_rel(ctx, "reply.json")) },
-        "events": preview_rel(ctx, "events.jsonl"),
-        "model": model_label(ctx),
-        "effort": effort_sent,
-        "effort_requested": ctx.effort.requested,
-        "effort_sent": ctx.effort.sent.clone().map(Value::String).unwrap_or(Value::Null),
-        "effort_mapping": ctx.effort.mapping,
-        "effort_caps": ctx.effort.caps,
-        "max_words": ctx.r.max_words,
-        "sandbox": ctx.sandbox_record.clone(),
-        "timeout_sec": ctx.r.timeout_sec,
-        "timeout_source": ctx.r.timeout_source,
-        "continue_sec": ctx.r.continue_sec,
-        "peak": ctx.peak,
-        "peak_schedule": ctx.peak_schedule,
-        "peak_source": ctx.peak_source,
-        "peak_evaluated_at": ctx.peak_evaluated_at,
-        "schema": if ctx.r.raw { "" } else { "consult-reply v1" },
-        "schema_transport": ctx.transport.transport,
-        "schema_transport_source": ctx.transport.source,
-        "structured": if ctx.r.raw { Value::Bool(false) } else { Value::String("<true when the reply validates>".into()) },
-        "base_commit": ctx.revision.base_commit,
-        "reviewed_revision": ctx.revision.reviewed_revision,
-        "tree_sha256": ctx.revision.tree_sha256,
-        "tree_sha256_after": "<computed after the run>",
-        "tree_changed_during_review": "<true|false: a file's content changed during the run>",
-        "revision_moved": "<null, or \"<old base_commit> -> <new base_commit>\" when HEAD moved during the run>",
-        "changed_files": ctx.revision.changed_files,
-        "fingerprint_note": ctx.revision.fingerprint_note,
-        "bridge_outcome": "<usable reply | failed: ...>",
-        "warnings": ctx.run_warnings.clone(),
-        "denial_retry": Value::Null,
-        "usage": preview_usage(ctx),
-        "engine_run": preview_engine_run(ctx),
-        "wall_seconds": 0,
-        "finished_at": "<written at the commit>",
-        "commit_wait_ms": "<ms the commit waited for the write lock>"
-    })
+    let to_v = |r: Option<Value>| r.unwrap_or(Value::Null);
+    // The plugin's preview literal, key for key in its order (`codex-consult.ps1`, the `-DryRun`
+    // `$preview`); keys C3 does not model yet are left out rather than invented.
+    let mut m = serde_json::Map::new();
+    let mut put = |k: &str, v: Value| {
+        m.insert(k.to_string(), v);
+    };
+    put("n", json!(ctx.consult_n));
+    put(
+        "when",
+        json!(chrono::Local::now()
+            .format("%Y-%m-%dT%H:%M:%S%:z")
+            .to_string()),
+    );
+    put("purpose", json!(ctx.o.purpose));
+    put(
+        "topics",
+        Value::Array(ctx.o.topic.iter().map(|t| json!(t)).collect()),
+    );
+    put("role", json!(ctx.role));
+    put("consult_id", json!(ctx.consult_id));
+    // (0.6.1, U5) right after consult_id.
+    put("consult_ref", json!(ctx.consult_ref));
+    put(
+        "reviewer",
+        serde_json::to_value(super::orchestrate::build_reviewer(
+            &ctx.identity,
+            &ctx.harness,
+        ))
+        .unwrap_or(Value::Null),
+    );
+    put("lineage", json!(ctx.identity.lineage));
+    put(
+        "coordinator",
+        serde_json::to_value(&ctx.coordinator).unwrap_or(Value::Null),
+    );
+    put("preflight", json!(ctx.preflight));
+    put("preflight_warning", json!(ctx.preflight_warning));
+    put(
+        "roster",
+        to_v(
+            ctx.roster_record
+                .as_ref()
+                .map(|r| serde_json::to_value(r).unwrap_or(Value::Null)),
+        ),
+    );
+    put(
+        "panel",
+        to_v(
+            super::orchestrate::build_member_panel(ctx)
+                .map(|p| serde_json::to_value(p).unwrap_or(Value::Null)),
+        ),
+    );
+    put("parent_thread", json!(ctx.parent_thread));
+    put("thread", json!("<filled from the event stream>"));
+    put(
+        "thread_source",
+        json!("events|rollout (verified by consultation id)|unknown"),
+    );
+    put("mode", json!(ctx.effective_mode));
+    // (wave 26b, D16) the context-window fork/resume -> new downgrade, else null.
+    put(
+        "mode_fallback",
+        to_v(
+            ctx.mode_fallback
+                .as_ref()
+                .map(|m| serde_json::to_value(m).unwrap_or(Value::Null)),
+        ),
+    );
+    put("command", json!(command_str(ctx)));
+    // (wave 27) child_env_scrubbed right after command.
+    put(
+        "child_env_scrubbed",
+        Value::Array(ctx.child_env_scrubbed.iter().map(|s| json!(s)).collect()),
+    );
+    put("brief", json!(ctx.brief_ref));
+    put(
+        "range",
+        to_v(
+            ctx.range_record
+                .as_ref()
+                .map(|r| serde_json::to_value(r).unwrap_or(Value::Null)),
+        ),
+    );
+    put("prompt_chars", json!(ctx.prompt_text.chars().count()));
+    put("reply", json!(preview_rel(ctx, "md")));
+    put(
+        "reply_json",
+        if ctx.r.raw {
+            Value::Null
+        } else {
+            Value::String(preview_rel(ctx, "reply.json"))
+        },
+    );
+    put("events", json!(preview_rel(ctx, "events.jsonl")));
+    put("model", json!(model_label(ctx)));
+    put("effort", effort_sent.clone());
+    put("effort_requested", json!(ctx.effort.requested));
+    put("effort_sent", effort_sent);
+    put("effort_mapping", json!(ctx.effort.mapping));
+    put("effort_caps", json!(ctx.effort.caps));
+    put("max_words", json!(ctx.r.max_words));
+    put("sandbox", json!(ctx.sandbox_record));
+    put("timeout_sec", json!(ctx.r.timeout_sec));
+    put("timeout_source", json!(ctx.r.timeout_source));
+    put("continue_sec", json!(ctx.r.continue_sec));
+    put("extra_config", json!(ctx.r.extra_config.clone()));
+    put("extra_config_source", json!(ctx.extra_config_source));
+    // (wave 28b, D15) the context window as it would reach the engine (null without one).
+    put("context_window", to_v(ctx.context_window.clone()));
+    put("peak", json!(ctx.peak));
+    put("peak_schedule", json!(ctx.peak_schedule));
+    put("peak_source", json!(ctx.peak_source));
+    put("peak_evaluated_at", json!(ctx.peak_evaluated_at));
+    put(
+        "structured",
+        if ctx.r.raw {
+            Value::Bool(false)
+        } else {
+            Value::String("<true when the reply validates>".into())
+        },
+    );
+    put(
+        "schema",
+        json!(if ctx.r.raw { "" } else { "consult-reply v1" }),
+    );
+    put("schema_transport", json!(ctx.transport.transport));
+    put("schema_transport_source", json!(ctx.transport.source));
+    // (compat 0.3.0) the format-repair placeholder (null when the repair is off).
+    put(
+        "format_retry",
+        if ctx.r.repair_enabled {
+            Value::String("<null, or {attempted, reason, succeeded, thread, wall_seconds, usage, drift, original, events, schema_transport} after a format-repair turn>".into())
+        } else {
+            Value::Null
+        },
+    );
+    put("denial_retry", Value::Null);
+    put("base_commit", json!(ctx.revision.base_commit));
+    put("reviewed_revision", json!(ctx.revision.reviewed_revision));
+    put("tree_sha256", json!(ctx.revision.tree_sha256));
+    put("tree_sha256_after", json!("<computed after the run>"));
+    put(
+        "tree_changed_during_review",
+        json!("<true|false: a file's content changed during the run>"),
+    );
+    put(
+        "revision_moved",
+        json!(
+            "<null, or \"<old base_commit> -> <new base_commit>\" when HEAD moved during the run>"
+        ),
+    );
+    put("changed_files", json!(ctx.revision.changed_files));
+    put("fingerprint_note", json!(ctx.revision.fingerprint_note));
+    put("bridge_outcome", json!("<usable reply | failed: ...>"));
+    put("warnings", json!(ctx.run_warnings.clone()));
+    put("usage", preview_usage(ctx));
+    // (wave 28c, D11) right after usage.
+    put(
+        "compactions",
+        json!(if ctx.context_tokens > 0 {
+            "<n (the compactions the engine's stream reported), else 'unknown'>"
+        } else {
+            "<null, or n when the engine's stream reported a compaction>"
+        }),
+    );
+    put("engine_run", preview_engine_run(ctx));
+    put("wall_seconds", json!(0));
+    put("finished_at", json!("<written at the commit>"));
+    put(
+        "commit_wait_ms",
+        json!("<ms the commit waited for the write lock>"),
+    );
+    Value::Object(m)
 }
 
 /// The engine's command string for the dry-run `command :` line and the preview `command` field

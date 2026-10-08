@@ -16,6 +16,7 @@ use crate::liveness::{pending, proc};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -415,6 +416,7 @@ struct Ctx {
     status: String,
     useful: String,
     rating: bool,
+    telemetry: Option<bool>,
     repo_root: PathBuf,
     collab_root: PathBuf,
     task_dir: PathBuf,
@@ -431,6 +433,8 @@ struct Validated {
     status: String,
     useful: String,
     rating: bool,
+    /// (R24) the rating's `-Telemetry on|off` (`None` = `CODEX_CONSULT_TELEMETRY`).
+    telemetry: Option<bool>,
 }
 
 /// The plugin's argument validation (`codex-findings.ps1` lines 100-136), returning the
@@ -462,6 +466,21 @@ fn validate(args: &FindingsArgs) -> Result<Validated, String> {
     if !args.note.is_empty() && args.id.is_empty() && !rating {
         return Err("-Note only goes with -Id/-Status or -Rate.".to_string());
     }
+    // (R24) the telemetry switch of a rating: -Telemetry on|off, else CODEX_CONSULT_TELEMETRY
+    let tele = args.telemetry.trim().to_lowercase();
+    if !tele.is_empty() && !rating {
+        return Err("-Telemetry only goes with -Rate.".to_string());
+    }
+    if !tele.is_empty() && tele != "on" && tele != "off" {
+        return Err(format!(
+            "-Telemetry must be on or off (got '{tele}'); leave it out for CODEX_CONSULT_TELEMETRY (unset: on)."
+        ));
+    }
+    let telemetry = match tele.as_str() {
+        "on" => Some(true),
+        "off" => Some(false),
+        _ => None,
+    };
     let mut useful = args.useful.clone();
     if rating {
         let rate = match args.rate {
@@ -525,6 +544,7 @@ fn validate(args: &FindingsArgs) -> Result<Validated, String> {
         status,
         useful,
         rating,
+        telemetry,
     })
 }
 
@@ -533,6 +553,7 @@ fn run_inner(mut args: FindingsArgs) -> Result<i32, String> {
         status,
         useful,
         rating,
+        telemetry,
     } = validate(&args)?;
 
     // ------------------------------------------------------------------- paths
@@ -551,6 +572,7 @@ fn run_inner(mut args: FindingsArgs) -> Result<i32, String> {
         status,
         useful,
         rating,
+        telemetry,
         repo_root,
         collab_root,
         task_dir,
@@ -966,7 +988,13 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
         ));
     }
     let rate = ctx.args.rate.expect("rating implies rate");
-    let _guard = TaskLockGuard::acquire(ctx)?;
+    let switch = crate::telemetry::switch(ctx.telemetry);
+    // (0.6.1, U3 / F02-3) the rating's judge is resolved AT RATING TIME: the rating actor -
+    // CODEX_CONSULT_COORDINATOR of THIS process (the roster and the Codex config read here, before
+    // any lock) - else, inside the commit, the rated entry's own coordinator. (F06-1) Whatever the
+    // switch, it is SAVED in the mark (classes only), so the retry and a later backfill send it.
+    let actor = crate::telemetry::rating_actor();
+    let task_guard = TaskLockGuard::acquire(ctx)?;
 
     // Refused while any recovery record of the task is active.
     let pending = pending::read_task_pending_records(&ctx.task_dir);
@@ -989,7 +1017,8 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
         .map_err(|e| e.to_string())?;
     let entry = sessions
         .as_ref()
-        .and_then(|s| s.codex.consults.iter().find(|e| e.n == rate));
+        .and_then(|s| s.codex.consults.iter().find(|e| e.n == rate))
+        .cloned();
     let entry = match entry {
         Some(e) => e,
         None => {
@@ -1042,6 +1071,24 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
                 .collect()
         })
         .unwrap_or_default();
+
+    // Re-read findings.json under the lock (the FRESH store the mark goes into).
+    let mut findings = read_findings_typed(ctx)?;
+    // (0.6.1, F06-2) the mark's revision among its consultation's marks - 1 + the highest of the
+    // fresh store's (a mark without one counts as 0), allocated here under the task lock in the
+    // commit that writes the mark; every send of its event carries exactly this value.
+    let rating_rev = c3_core::findings::next_rating_rev(
+        findings.ratings.as_deref().unwrap_or(&[]),
+        &consult_id,
+        rate,
+    );
+    // (F06-1) the judge as the event carries it - classes only, never a label, a host or the raw
+    // CODEX_CONSULT_COORDINATOR value.
+    let judge = crate::telemetry::close_judge(&crate::telemetry::resolve_judge(
+        &entry,
+        actor.as_ref(),
+        None,
+    ));
     let mark = c3_core::findings::Rating {
         n: rate,
         consult_id: consult_id.clone(),
@@ -1055,26 +1102,23 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
         useful: ctx.useful.clone(),
         note: ctx.args.note.trim().to_string(),
         when: iso_timestamp(),
+        rating_rev: Some(Value::from(rating_rev)),
+        judge: Some(judge.to_value()),
+        telemetry_sent: None,
         extra: Default::default(),
     };
 
-    // Re-read findings.json under the lock; replace-or-append the mark. (wave 26, D2) the same
-    // consultation is matched by consult_id (case-insensitive) when both carry one, else by n
-    // (a mark recorded before wave 26 without a consult_id). The first match takes the new
-    // mark's position; any further duplicate of the same key is dropped.
-    let mut findings = read_findings_typed(ctx)?;
+    // Replace-or-append the mark. (wave 26, D2) the same consultation is matched by consult_id
+    // (case-insensitive) when both carry one, else by n (a mark recorded before wave 26 without a
+    // consult_id). The first match takes the new mark's position; any further duplicate of the
+    // same key is dropped.
     let mut replaced = false;
     let mut previous = String::new();
     {
         let ratings = findings.ratings.get_or_insert_with(Vec::new);
         let mut kept: Vec<c3_core::findings::Rating> = Vec::with_capacity(ratings.len() + 1);
         for old in ratings.drain(..) {
-            let same = if !consult_id.is_empty() && !old.consult_id.is_empty() {
-                old.consult_id.eq_ignore_ascii_case(&consult_id)
-            } else {
-                old.n == rate
-            };
-            if same {
+            if old.rates(&consult_id, rate) {
                 if !replaced {
                     previous = old.useful.clone();
                     kept.push(mark.clone());
@@ -1090,36 +1134,59 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
         *ratings = kept;
     }
 
+    // (0.6.1, F08-1) the mark - its judge, `when` and rating_rev - is durably committed FIRST; its
+    // event is spooled only after that, so no revision is ever published that the store does not
+    // hold (a failed write here returns: nothing is spooled).
     write_text_atomic(
         &ctx.findings_path,
         &findings.to_bytes().map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    drop(write_lock);
-
-    // (M9) the mark reaches the hub as its own allowlisted event - classes only (lineage,
-    // purpose, vocabulary topics, the mark, the age in days), spooled and sent with the next
-    // flush. It never blocks and never fails the rating; the environment switch is honoured
-    // inside.
+    // TEST HOOK (test mode only; 0.6.1, F08-1): CODEX_CONSULT_TEST_RATE_ABORT_AFTER_COMMIT=1 - the
+    // process exits (code 87) right after the mark's commit, before its event is spooled, as a
+    // crash would: the committed mark has no telemetry_sent and the backfill sends it later.
+    if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_RATE_ABORT_AFTER_COMMIT")
+        .is_some_and(|v| v.trim() == "1")
     {
-        let age_days = chrono::DateTime::parse_from_rfc3339(&entry.when)
-            .map(|w| {
-                (chrono::Utc::now() - w.with_timezone(&chrono::Utc))
-                    .num_days()
-                    .max(0)
-            })
-            .unwrap_or(0);
-        let raw_topics: Vec<String> = mark
-            .topics
-            .as_ref()
-            .map(|ts| {
-                ts.iter()
-                    .filter_map(|t| t.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let _ = crate::telemetry::record_rating(entry, &ctx.useful, age_days, &raw_topics);
+        std::process::exit(87);
     }
+
+    // (R24) telemetry on: the rating event of the COMMITTED mark goes into the spool now, still
+    // inside the write lock, waiting at most 1 s; spooled, a second store write under the same lock
+    // writes telemetry_sent (unix seconds) into the mark. A failure is retried for up to 5 s after
+    // both locks are released (below).
+    let rated_at = crate::telemetry::parse_mark_when(&mark.when);
+    let mut first: Option<Result<(), String>> = None;
+    let mut first_mark_why = String::new();
+    if switch.on {
+        let r = rated_at
+            .ok_or_else(|| "the mark's time does not parse".to_string())
+            .and_then(|at| {
+                spool_mark_event(
+                    &entry,
+                    &mark,
+                    &judge,
+                    rating_rev,
+                    at,
+                    Duration::from_secs(1),
+                )
+            });
+        if r.is_ok() {
+            first_mark_why = set_mark_telemetry_sent(&mut findings, &mark)
+                .and_then(|()| {
+                    write_text_atomic(
+                        &ctx.findings_path,
+                        &findings.to_bytes().map_err(|e| e.to_string())?,
+                    )
+                    .map_err(|e| e.to_string())
+                })
+                .err()
+                .unwrap_or_default();
+        }
+        first = Some(r);
+    }
+    drop(write_lock);
+    drop(task_guard);
 
     let purpose_text = if mark.purpose.is_empty() {
         "no purpose".to_string()
@@ -1137,7 +1204,123 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
             ctx.useful
         );
     }
+
+    // (R24) the mark is committed and both task locks are released. An event that did not go into
+    // the spool at the commit is retried now with up to 5 s - the SAME event (the mark's judge,
+    // rating_rev and `when`, never re-resolved or re-allocated); spooled, telemetry_sent is written
+    // into the mark (a store commit again); not spooled, it is warned about and counted, and the
+    // backfill sends it later. Never fails the rating: the exit code stays 0.
+    let Some(first) = first else {
+        return Ok(0);
+    };
+    let mut spooled = first.is_ok();
+    if spooled && !first_mark_why.is_empty() {
+        println!("{TOOL}: warning: the rating event was spooled, but telemetry_sent could not be written into the mark ({first_mark_why}) - c3 telemetry --backfill-ratings would send it once more");
+    }
+    if let Err(why1) = &first {
+        // TEST HOOK (test mode only; 0.6.1, F06-2): CODEX_CONSULT_TEST_RATE_RETRY_GATE=<path> - the
+        // retry after the locks waits (at most 60 s) until that file exists.
+        if let Some(gate) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_RATE_RETRY_GATE") {
+            let gate = gate.trim().to_string();
+            if !gate.is_empty() {
+                let t0 = std::time::Instant::now();
+                while !Path::new(&gate).exists() && t0.elapsed() < Duration::from_secs(60) {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+        let retry = rated_at
+            .ok_or_else(|| "the mark's time does not parse".to_string())
+            .and_then(|at| {
+                spool_mark_event(
+                    &entry,
+                    &mark,
+                    &judge,
+                    rating_rev,
+                    at,
+                    Duration::from_secs(5),
+                )
+            });
+        match retry {
+            Err(why2) => {
+                crate::telemetry::note_not_spooled(&why2);
+                println!("{TOOL}: warning: telemetry rating event not spooled ({why2}) - at the commit ({why1}) and for 5 s after it; c3 telemetry --backfill-ratings sends it later");
+            }
+            Ok(()) => {
+                spooled = true;
+                match commit_telemetry_sent(ctx, &mark) {
+                    Ok(()) => {}
+                    Err(why) if why == MARK_REPLACED_WHY => println!(
+                        "{TOOL}: the rating event (rating_rev {rating_rev}) was spooled after the consultation was rated again - the newer mark's event (a higher rating_rev) supersedes it"
+                    ),
+                    Err(why) => println!("{TOOL}: warning: the rating event was spooled, but telemetry_sent could not be written into the mark ({why}) - c3 telemetry --backfill-ratings would send it once more"),
+                }
+            }
+        }
+    }
+    if spooled {
+        crate::telemetry::flush_in_background().join_with_cap(Duration::from_secs(3));
+    }
     Ok(0)
+}
+
+/// Why a mark could not get its `telemetry_sent`: it was rated again meanwhile.
+const MARK_REPLACED_WHY: &str = "the mark is no longer in findings.json (rated again meanwhile)";
+
+/// Spool the rating event of `mark` (the mark's judge, rating_rev and `when`; age from its
+/// `consult_when`), waiting at most `wait`.
+fn spool_mark_event(
+    entry: &c3_core::ledger::LedgerEntry,
+    mark: &c3_core::findings::Rating,
+    judge: &crate::telemetry::Judge,
+    rating_rev: i64,
+    rated_at: chrono::DateTime<chrono::FixedOffset>,
+    wait: Duration,
+) -> Result<(), String> {
+    let consult_when = mark.consult_when.clone().flatten();
+    let input = crate::telemetry::RatingInput {
+        entry,
+        mark: &mark.useful,
+        rated_at,
+        consult_when: consult_when.as_deref(),
+        judge,
+        rating_rev: Some(rating_rev),
+    };
+    crate::telemetry::record_rating(&input, wait)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// `Set-RatingTelemetrySent` on an in-memory store: writes `telemetry_sent` (unix seconds, now)
+/// into the mark that IS `mark` (the same consultation, rating_rev and `when`) and has none yet.
+fn set_mark_telemetry_sent(
+    findings: &mut FindingsFile,
+    mark: &c3_core::findings::Rating,
+) -> Result<(), String> {
+    let now = chrono::Utc::now().timestamp();
+    for m in findings.ratings.iter_mut().flatten() {
+        if m.telemetry_sent.is_none() && m.same_mark(mark) {
+            m.telemetry_sent = Some(Value::from(now));
+            return Ok(());
+        }
+    }
+    Err(MARK_REPLACED_WHY.to_string())
+}
+
+/// `Set-RatingTelemetrySent` through a new store commit (the write lock, findings.json re-read
+/// under it) - the retry after the locks.
+fn commit_telemetry_sent(ctx: &Ctx, mark: &c3_core::findings::Rating) -> Result<(), String> {
+    let _lock = ctx
+        .store
+        .take_write_lock(&ctx.slug)
+        .map_err(|e| write_lock_err(ctx, e))?;
+    let mut findings = read_findings_typed(ctx)?;
+    set_mark_telemetry_sent(&mut findings, mark)?;
+    write_text_atomic(
+        &ctx.findings_path,
+        &findings.to_bytes().map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
 }
 
 // ----------------------------------------------------------------------------- -Id -Status

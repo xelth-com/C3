@@ -317,8 +317,89 @@ pub struct Rating {
     pub note: String,
     #[serde(default)]
     pub when: String,
+    /// (0.6.1, F06-2) The mark's own revision among its consultation's marks: 1 + the highest
+    /// `rating_rev` of the same consultation's marks in the store, allocated under the task lock in
+    /// the commit that writes the mark (a mark without one counts as 0). Every send of the mark's
+    /// rating event carries exactly this value. Absent in a mark rated before 0.6.1 (kept absent
+    /// on rewrite); kept as the raw JSON value so any form the plugin wrote round-trips.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating_rev: Option<Value>,
+    /// (0.6.1, U3 / F06-1) The judge `{provider, model, source}` resolved AT RATING TIME (classes
+    /// only) and saved with the mark - telemetry on or off - so every later send of its event (the
+    /// retry, the backfill) carries this judge. Absent in a mark rated before 0.6.1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<Value>,
+    /// (R24) Unix seconds of the moment the mark's rating event went into the telemetry spool; a
+    /// mark that has it is never sent again (`c3 telemetry --backfill-ratings` sends the others).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telemetry_sent: Option<Value>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl Rating {
+    /// `ConvertTo-RatingRev` of this mark's `rating_rev`: a whole number >= 1 (a JSON number or its
+    /// digits), else `None` (a mark rated before 0.6.1 has none).
+    pub fn rating_rev_value(&self) -> Option<i64> {
+        rating_rev_of(self.rating_rev.as_ref())
+    }
+
+    /// Whether this mark rates the consultation `(consult_id, n)`: by `consult_id` when both carry
+    /// one (case-insensitive), else by `n` (-Rate's replacement rule).
+    pub fn rates(&self, consult_id: &str, n: i64) -> bool {
+        if !consult_id.is_empty() && !self.consult_id.is_empty() {
+            self.consult_id.eq_ignore_ascii_case(consult_id)
+        } else {
+            self.n == n
+        }
+    }
+
+    /// `Test-RatingMarkSame`: the same consultation, the same `rating_rev` (none counts as 0) and
+    /// the same `when` (the instant; a time that does not parse compares as text).
+    pub fn same_mark(&self, other: &Rating) -> bool {
+        let same = if !self.consult_id.is_empty() && !other.consult_id.is_empty() {
+            self.consult_id.eq_ignore_ascii_case(&other.consult_id)
+        } else {
+            self.n == other.n
+        };
+        if !same {
+            return false;
+        }
+        if self.rating_rev_value().unwrap_or(0) != other.rating_rev_value().unwrap_or(0) {
+            return false;
+        }
+        match (
+            chrono::DateTime::parse_from_rfc3339(self.when.trim()),
+            chrono::DateTime::parse_from_rfc3339(other.when.trim()),
+        ) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => self.when == other.when,
+        }
+    }
+}
+
+/// `ConvertTo-RatingRev`: a whole number >= 1 (a JSON number, or a string of digits), else `None`.
+pub fn rating_rev_of(v: Option<&Value>) -> Option<i64> {
+    match v? {
+        Value::Number(n) => n.as_i64().filter(|r| *r >= 1),
+        Value::String(s) if !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) => {
+            s.parse::<i64>().ok().filter(|r| *r >= 1)
+        }
+        _ => None,
+    }
+}
+
+/// `Get-NextRatingRev`: the `rating_rev` of a NEW mark of the consultation `(consult_id, n)` - 1 +
+/// the highest among its existing marks in `ratings` (a mark without one counts as 0). Called under
+/// the task lock, in the commit that writes the mark.
+pub fn next_rating_rev(ratings: &[Rating], consult_id: &str, n: i64) -> i64 {
+    ratings
+        .iter()
+        .filter(|r| r.rates(consult_id, n))
+        .filter_map(|r| r.rating_rev_value())
+        .max()
+        .unwrap_or(0)
+        + 1
 }
 
 /// Deserialize an optional string so a *present* value (including `null`) becomes `Some(..)`

@@ -904,7 +904,7 @@ fn tool_defs() -> Value {
                     "schema_transport": { "type": "string", "description": "output-schema | prompt-only (empty = the endpoint default)." },
                     "format_retry": { "type": "integer", "description": "One format-repair turn if the reply is not valid JSON (0|1)." },
                     "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." },
-                    "telemetry": { "type": "string", "description": "on | off (default on)." }
+                    "telemetry": { "type": "string", "description": "on | off for this run (it wins over CODEX_CONSULT_TELEMETRY); omitted: the environment decides (unset: on)." }
                 },
                 "required": ["task", "purpose", "brief", "prompt", "reply_name"]
             }

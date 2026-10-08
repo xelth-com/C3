@@ -105,6 +105,14 @@ pub struct LedgerEntry {
     pub role: Option<String>,
     #[serde(default)]
     pub consult_id: String,
+    /// (0.6.1, U5) A SECOND random id of this consultation, minted by the process that commits the
+    /// entry (a panel member its own), derived from nothing (not the `consult_id` the reviewer sees
+    /// in the prompt, not a hash of anything local); a lower-case guid right after `consult_id`.
+    /// The telemetry events carry it (the consultation event and every rating event of the entry)
+    /// so the intake can link them. Absent in an entry recorded before 0.6.1 (kept absent on
+    /// rewrite).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consult_ref: Option<String>,
     #[serde(default)]
     pub reviewer: Reviewer,
     #[serde(default)]
@@ -203,6 +211,17 @@ pub struct LedgerEntry {
     pub extra_config: Vec<Value>,
     #[serde(default)]
     pub extra_config_source: String,
+    /// (wave 28b, D15) The reviewer's context window as it reached the engine: `{tokens,
+    /// auto_compact_limit, items}` for a codex reviewer whose roster entry names `context_tokens`
+    /// (`items`: the `-c` options added - the operator's own `-CodexConfig`/`codex_config` value of
+    /// a key wins and is not repeated), else `null`. Tri-state: absent in an entry recorded before
+    /// wave 28b (kept absent on rewrite); a fresh entry writes it in position.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub context_window: Option<Option<Value>>,
     /// The peak-window state: `$peak.Peak`, a `boolean|null` scalar
     /// (`codex-consult.ps1:3892`), not an object.
     #[serde(default)]
@@ -324,6 +343,17 @@ pub struct LedgerEntry {
     /// Token usage; `null` for an engine that does not report it.
     #[serde(default)]
     pub usage: Option<Usage>,
+    /// (wave 28c, D11) The compactions the engine REPORTED in the event streams of the run's turns:
+    /// a number when it reported one or more, `"unknown"` when none was reported by a reviewer with
+    /// a context window (`context_tokens` - none seen is not none happened), else `null`.
+    /// Tri-state: absent in an entry recorded before wave 28c; a fresh entry writes it in position
+    /// (right after `usage`).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub compactions: Option<Option<Value>>,
     /// The engine-run record (turns); `null` for a plain single Codex turn.
     #[serde(default)]
     pub engine_run: Option<EngineRun>,

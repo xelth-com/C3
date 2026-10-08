@@ -1877,6 +1877,9 @@ fn build_spec(
         "max_model_steps": o.max_model_steps,
         "topics": b.topics,
         "dry_run": o.dry_run,
+        // (0.6.1 parity) a panel passes its run's `--telemetry on|off` to its members ("" = the
+        // environment decides).
+        "telemetry": match o.telemetry { Some(true) => "on", Some(false) => "off", None => "" },
     });
     MemberSpec {
         id: b.panel_id.clone(),

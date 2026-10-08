@@ -12,6 +12,8 @@
 //! Endpoints (all under `https://xelth.com/T`): `POST /v2/events`,
 //! `POST /v2/complaints`, `DELETE /v2/instances/<id>?public_ref=<ref>`.
 
+pub mod backfill;
+pub mod classes;
 mod complaint;
 mod event;
 mod spool;
@@ -23,10 +25,16 @@ use uuid::Uuid;
 
 use c3_core::ledger::{LedgerEntry, SessionsFile};
 
-pub use complaint::{complain, complain_to, forget_me, forget_me_at, ForgetOutcome};
+pub use classes::{
+    close_judge, closed_judge, consult_ref_of, mark_judge, rating_actor, resolve_judge, Judge,
+};
+pub use complaint::{
+    complain, complain_to, forget, forget_at, newest_ref, pending_deletion_in, ForgetOutcome,
+    ForgetRequest, PendingDeletion,
+};
 pub(crate) use event::topic_slug;
-pub use event::{Details, Event, RatingDetails, RatingEvent};
-pub use spool::{flush_in_background, BackgroundFlush, FlushReport, Spool};
+pub use event::{Details, Event, RatingDetails, RatingEvent, RatingInput};
+pub use spool::{flush_in_background, flush_now, BackgroundFlush, FlushReport, Spool};
 
 /// The default T-hub base URL.
 const HUB_DEFAULT: &str = "https://xelth.com/T";
@@ -75,8 +83,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 // --------------------------------------------------------------------------- config / switches
 
 /// Caller-supplied run configuration: the `--telemetry on|off` value, if the caller passed
-/// one. The environment switch `CODEX_CONSULT_TELEMETRY=off` is read separately and always
-/// wins.
+/// one. (0.6.1 parity, `Get-TelemetrySwitch`) A run's own `--telemetry on|off` wins over the
+/// environment switch `CODEX_CONSULT_TELEMETRY` (see [`switch`]).
 #[derive(Debug, Clone, Default)]
 pub struct Config {
     /// `Some(false)` for `--telemetry off`, `Some(true)` for `--telemetry on`, `None` when
@@ -84,26 +92,84 @@ pub struct Config {
     pub telemetry: Option<bool>,
 }
 
-/// Whether telemetry is enabled: off if the environment switch is `off`, else off if
-/// `--telemetry off` was given, else on (the default).
-pub fn is_enabled(config: &Config) -> bool {
-    if env_off() {
-        return false;
+/// The telemetry switch as resolved (`Get-TelemetrySwitch`): on or off, and where that comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Switch {
+    pub on: bool,
+    /// `the default`, `-Telemetry` (a run's own `--telemetry on|off`), `CODEX_CONSULT_TELEMETRY`,
+    /// or `CODEX_CONSULT_TELEMETRY='<v>' (not on or off: counts as off)`.
+    pub source: String,
+}
+
+impl Switch {
+    /// `on` | `off`.
+    pub fn text(&self) -> &'static str {
+        if self.on {
+            "on"
+        } else {
+            "off"
+        }
     }
-    !matches!(config.telemetry, Some(false))
+}
+
+/// `Get-TelemetrySwitch`: a run's `--telemetry on|off` (`override_`) wins; else
+/// `CODEX_CONSULT_TELEMETRY` - unset or empty: ON (the default); `on`, `1`, `true`, `yes`: on;
+/// `off`, `0`, `false`, `no`, `none`: off; ANY other value counts as off (a switch that cannot be
+/// read never sends).
+pub fn switch(override_: Option<bool>) -> Switch {
+    if let Some(on) = override_ {
+        return Switch {
+            on,
+            source: "-Telemetry".into(),
+        };
+    }
+    let v = std::env::var("CODEX_CONSULT_TELEMETRY")
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    if v.is_empty() {
+        return Switch {
+            on: true,
+            source: "the default".into(),
+        };
+    }
+    if ["on", "1", "true", "yes"].contains(&v.as_str()) {
+        return Switch {
+            on: true,
+            source: "CODEX_CONSULT_TELEMETRY".into(),
+        };
+    }
+    if ["off", "0", "false", "no", "none"].contains(&v.as_str()) {
+        return Switch {
+            on: false,
+            source: "CODEX_CONSULT_TELEMETRY".into(),
+        };
+    }
+    Switch {
+        on: false,
+        source: format!("CODEX_CONSULT_TELEMETRY='{v}' (not on or off: counts as off)"),
+    }
+}
+
+/// Whether telemetry is enabled for a run ([`switch`] with the run's override).
+pub fn is_enabled(config: &Config) -> bool {
+    switch(config.telemetry).on
 }
 
 /// The dry-run status sentence.
 pub fn status(config: &Config) -> String {
-    if is_enabled(config) {
+    let sw = switch(config.telemetry);
+    if sw.on {
         format!(
             "telemetry: on (spool {} pending)",
             default_spool().pending()
         )
-    } else if env_off() {
+    } else if sw.source == "-Telemetry" {
+        "telemetry: off (--telemetry off)".to_string()
+    } else if sw.source == "CODEX_CONSULT_TELEMETRY" {
         "telemetry: off (CODEX_CONSULT_TELEMETRY=off)".to_string()
     } else {
-        "telemetry: off (--telemetry off)".to_string()
+        format!("telemetry: off ({})", sw.source)
     }
 }
 
@@ -128,6 +194,11 @@ fn real_home_telemetry_dir() -> PathBuf {
     }
 }
 
+/// The first-run notice's marker (`~/.codex/c3/telemetry/notice-shown`, the REAL home).
+pub fn notice_marker() -> PathBuf {
+    real_home_telemetry_dir().join("notice-shown")
+}
+
 /// [`first_run_notice`] at an explicit directory (for tests).
 pub fn first_run_notice_in(dir: &Path) -> Option<String> {
     let marker = dir.join("notice-shown");
@@ -139,47 +210,76 @@ pub fn first_run_notice_in(dir: &Path) -> Option<String> {
     Some(NOTICE.to_string())
 }
 
-/// True when the visible environment switch disables telemetry.
+/// True when the environment switch alone (no run override) disables telemetry - any value that
+/// is not on counts as off ([`switch`]). The priors download and the router read it.
 pub(crate) fn env_off() -> bool {
-    std::env::var("CODEX_CONSULT_TELEMETRY")
-        .map(|v| v.trim().eq_ignore_ascii_case("off"))
-        .unwrap_or(false)
+    !switch(None).on
 }
 
 // --------------------------------------------------------------------------- record
 
-/// Build the event for one consultation, enqueue it to the spool (unless the environment
-/// switch is off), and return the payload for the dry-run line. The call site in the
-/// consult flow is wired by the coordinator; failures are ignored there.
+/// Build the event for one consultation and enqueue it to the spool when the run's switch is on
+/// ([`is_enabled`] with `config`, the run's `--telemetry`); return the payload. The consult flow
+/// ignores failures.
 pub fn record_consultation(
     entry: &LedgerEntry,
     panel_size: Option<u32>,
+    config: &Config,
 ) -> Result<serde_json::Value> {
-    let event = Event::from_ledger(entry, panel_size, &instance_id());
-    let payload = serde_json::to_value(&event)?;
-    if !env_off() {
-        default_spool().enqueue(&event)?;
+    if !is_enabled(config) {
+        return Err(Error::new("telemetry is off"));
     }
+    let mut payload = serde_json::Value::Null;
+    default_spool().enqueue_built(std::time::Duration::from_secs(5), || {
+        let event = Event::from_ledger(entry, panel_size, &instance_id());
+        payload = serde_json::to_value(&event)?;
+        Ok(serde_json::to_string(&event)?)
+    })?;
     Ok(payload)
 }
 
-/// Build a rating event for a later usefulness mark (`c3 findings --rate`), enqueue it to the
-/// spool (unless the environment switch is off), and return the payload for the dry-run line
-/// (M9 §7). The call site in the findings tool is wired by the supervisor; failures are
-/// ignored there. `age_days` is the consultation's age when it was rated; `raw_topics` are
-/// the consultation's topics (mapped to the fixed vocabulary, never echoed as free text).
+/// Build the rating event of a COMMITTED mark (`c3 findings --rate`, `c3 telemetry
+/// --backfill-ratings`) and enqueue it; `Err(why)` when it was not spooled (the caller counts it
+/// and leaves the mark for the backfill). The caller decides the switch. `wait` bounds the wait
+/// for the spool (the commit's 1 s, the retry's and the backfill's 5 s).
 pub fn record_rating(
-    entry: &LedgerEntry,
-    mark: &str,
-    age_days: i64,
-    raw_topics: &[String],
+    input: &RatingInput<'_>,
+    wait: std::time::Duration,
 ) -> Result<serde_json::Value> {
-    let event = RatingEvent::from_rating(entry, mark, age_days, raw_topics, &instance_id());
-    let payload = serde_json::to_value(&event)?;
-    if !env_off() {
-        default_spool().enqueue_line(&event)?;
-    }
+    let mut payload = serde_json::Value::Null;
+    default_spool().enqueue_built(wait, || {
+        let event = RatingEvent::from_rating(input, &instance_id());
+        payload = serde_json::to_value(&event)?;
+        Ok(serde_json::to_string(&event)?)
+    })?;
     Ok(payload)
+}
+
+/// A mark's `when` (or any time C3 and the plugin write) as an instant; `None` when it does not
+/// parse.
+pub fn parse_mark_when(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    event::parse_when(s)
+}
+
+/// Count an event that could not be spooled (`Add-TelemetryNotSpooled`): one NDJSON line `{time,
+/// why}` appended to `<telemetry dir>/not-spooled.ndjson`; `c3 telemetry --status` counts them.
+/// Never fails the caller. (The plugin's per-producer files and the `.last` fold are wave 3.)
+pub fn note_not_spooled(why: &str) {
+    let dir = telemetry_dir();
+    let line = serde_json::json!({
+        "time": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        "why": c3_core::one_line(why),
+    })
+    .to_string();
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("not-spooled.ndjson"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{line}");
+    }
 }
 
 // --------------------------------------------------------------------------- instance id
@@ -282,12 +382,79 @@ fn default_spool() -> Spool {
     Spool::new(telemetry_dir(), default_hub())
 }
 
-/// The hub base URL, overridable by `C3_TELEMETRY_HUB` (for staging/tests).
-pub(crate) fn default_hub() -> String {
-    std::env::var("C3_TELEMETRY_HUB")
+/// The intake as resolved: its base URL (no trailing slash; empty when refused), where it comes
+/// from, and why it is refused (empty when usable).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hub {
+    pub base: String,
+    pub source: String,
+    pub error: String,
+}
+
+/// The intake (`Get-TelemetryUrl`, plus C3's own override): `C3_TELEMETRY_HUB` (C3's staging/test
+/// override, taken as given), else `CODEX_CONSULT_TELEMETRY_URL` (the operator setting the plugin
+/// reads too), else `https://xelth.com/T`. `CODEX_CONSULT_TELEMETRY_URL` must be an absolute https
+/// URL; plain http only for a LOOPBACK host (127.0.0.1, localhost, ::1) AND with
+/// `CODEX_CONSULT_TEST_MODE=1` (a harness's local intake) - anything else is refused (nothing is
+/// sent).
+pub fn hub() -> Hub {
+    if let Some(h) = std::env::var("C3_TELEMETRY_HUB")
         .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| HUB_DEFAULT.to_string())
+        .filter(|s| !s.trim().is_empty())
+    {
+        return Hub {
+            base: h.trim().trim_end_matches('/').to_string(),
+            source: "C3_TELEMETRY_HUB".into(),
+            error: String::new(),
+        };
+    }
+    let raw = std::env::var("CODEX_CONSULT_TELEMETRY_URL")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let (raw, source) = if raw.is_empty() {
+        (HUB_DEFAULT.to_string(), "the default".to_string())
+    } else {
+        (raw, "CODEX_CONSULT_TELEMETRY_URL".to_string())
+    };
+    let refused = |error: String| Hub {
+        base: String::new(),
+        source: source.clone(),
+        error,
+    };
+    let parsed = match url::Url::parse(&raw) {
+        Ok(u) if u.host_str().is_some_and(|h| !h.is_empty()) => u,
+        _ => {
+            return refused(format!(
+                "the intake URL '{raw}' ({source}) is not an absolute URL"
+            ))
+        }
+    };
+    if parsed.scheme() != "https" {
+        let loopback = match parsed.host() {
+            Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        };
+        if !(parsed.scheme() == "http" && loopback) {
+            return refused(format!("the intake URL '{raw}' ({source}) is refused: only https (plain http only for a loopback test intake in test mode)"));
+        }
+        if !c3_core::test_hooks::mode_on() {
+            return refused(format!("the intake URL '{raw}' ({source}) is refused: plain http to a loopback intake only with CODEX_CONSULT_TEST_MODE=1 (a harness); a real intake is https"));
+        }
+    }
+    Hub {
+        base: raw.trim_end_matches('/').to_string(),
+        source,
+        error: String::new(),
+    }
+}
+
+/// The hub base URL the senders use ([`hub`]); empty when the configured intake is refused (a
+/// spool then sends nothing).
+pub(crate) fn default_hub() -> String {
+    hub().base
 }
 
 /// Log a diagnostic to stderr only under `C3_DEBUG=1`.
@@ -339,12 +506,12 @@ fn newest_task_last_entry(collab_root: &Path) -> Option<LedgerEntry> {
     file.codex.consults.into_iter().last()
 }
 
-/// A summary built only from label/numeric fields (never a brief, thread or path).
+/// A summary built only from classes and numbers (never a label, a brief, a thread or a path).
 fn summarize_entry(entry: &LedgerEntry) -> String {
-    let engine =
-        event::safe_label(&entry.reviewer.engine, 32).unwrap_or_else(|| "unknown".to_string());
-    let purpose = event::safe_label(&entry.purpose, 48).unwrap_or_else(|| "unknown".to_string());
-    let verdict = event::safe_label(&entry.verdict, 48).unwrap_or_else(|| "unknown".to_string());
+    // (wave 2c, F02-2) classes only - a private label never reaches a complaint's context either
+    let (engine, _, _) = classes::reviewer_class(entry);
+    let purpose = classes::purpose_class(&entry.purpose);
+    let verdict = classes::verdict_class(&entry.verdict);
     let findings =
         entry.findings.blocker + entry.findings.major + entry.findings.minor + entry.findings.note;
     format!(
