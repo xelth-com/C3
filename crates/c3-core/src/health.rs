@@ -222,14 +222,54 @@ fn compact_duration_seconds(text: &str) -> Option<f64> {
 /// chrono [`TimeZone`] is one: `chrono::Local` at write time (the machine that saw the failure),
 /// a zone database's zone in the tests.
 pub trait ResetZone {
-    /// The offsets `wall` can have in this zone.
-    fn wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset>;
+    /// The offsets the zone itself reports for `wall` - its own classification, which is NOT
+    /// trusted at the exact edges of a transition (see [`ResetZone::wall_offsets`]).
+    fn reported_wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset>;
     /// This zone's offset at the UTC instant `utc`.
     fn utc_offset(&self, utc: NaiveDateTime) -> FixedOffset;
+
+    /// (F04-2) The offsets `wall` GENUINELY has in this zone, normalised against a UTC-to-local
+    /// round trip: an offset `o` is genuine only when the zone's offset at the instant `wall - o`
+    /// is `o` again (local(utc(wall at o)) == wall). The candidates are the reported offsets and
+    /// the zone's offsets a day before and a day after (both sides of any transition near
+    /// `wall`). Two genuine offsets: the repeated hour (`Ambiguous`, the earlier instant first);
+    /// one: `Single`; none: a spring-forward gap (`None`). This corrects chrono's Windows
+    /// `Local`, whose boundary classification counts the exact END of a repeated hour (03:00 on
+    /// the Berlin fall-back day) as ambiguous and the exact START of a gap (02:00 on the
+    /// spring-forward day) as a single wall time at the earlier offset - .NET (the plugin) and the
+    /// zone database say: 03:00 is +01:00 only, 02:00 does not exist.
+    fn wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset> {
+        let mut cands: Vec<FixedOffset> = match self.reported_wall_offsets(wall) {
+            LocalResult::Single(o) => vec![o],
+            LocalResult::Ambiguous(a, b) => vec![a, b],
+            LocalResult::None => Vec::new(),
+        };
+        let probes = [
+            wall.checked_sub_signed(Duration::days(1)),
+            wall.checked_add_signed(Duration::days(1)),
+        ];
+        cands.extend(probes.into_iter().flatten().map(|p| self.utc_offset(p)));
+        let mut genuine: Vec<FixedOffset> = Vec::new();
+        for o in cands {
+            let round_trip = wall
+                .checked_sub_offset(o)
+                .is_some_and(|utc| self.utc_offset(utc) == o);
+            if round_trip && !genuine.contains(&o) {
+                genuine.push(o);
+            }
+        }
+        // the earlier instant first: the larger offset
+        genuine.sort_by_key(|o| std::cmp::Reverse(o.local_minus_utc()));
+        match genuine.as_slice() {
+            [] => LocalResult::None,
+            [o] => LocalResult::Single(*o),
+            [a, b, ..] => LocalResult::Ambiguous(*a, *b),
+        }
+    }
 }
 
 impl<T: TimeZone> ResetZone for T {
-    fn wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset> {
+    fn reported_wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset> {
         self.offset_from_local_datetime(&wall).map(|o| o.fix())
     }
     fn utc_offset(&self, utc: NaiveDateTime) -> FixedOffset {
@@ -2034,6 +2074,174 @@ mod retry_after_tests {
         assert_eq!(
             retry_after_ref("blocked until jun 21:43", r).map(format_offset_iso),
             None
+        );
+    }
+
+    // ---- (F04-2) the exact edges of a transition, normalised against a UTC round trip ----
+
+    /// (F04-2) The exact edges of Berlin's 2026 transitions: (name, message, reference, expected).
+    /// The expected instants are the plugin's own (`Get-RetryAfter -TimeZone` with `W. Europe
+    /// Standard Time`, v0.6.1, run on .NET): 03:00 on the fall-back day is +01:00 only (the
+    /// repeated hour is 02:00..02:59), 02:00 on the spring-forward day does not exist (dated: the
+    /// offset after the transition; time-only: the first valid instant after the gap).
+    const BOUNDARIES: &[(&str, &str, &str, &str)] = &[
+        ("autumn time-only 03:00 at the second 02:00 -> 03:00+01:00, one hour after the reference", "try again at 3:00 AM", "2026-10-25T02:00:00+01:00", "2026-10-25T03:00:00+01:00"),
+        ("autumn dated 03:00 -> +01:00", "try again at Oct 25th, 2026 3:00 AM", "2026-10-24T12:00:00+02:00", "2026-10-25T03:00:00+01:00"),
+        ("spring dated 02:00 (the gap's start) -> the offset after the transition, +02:00", "try again at Mar 29th, 2026 2:00 AM", "2026-03-28T12:00:00+01:00", "2026-03-29T02:00:00+02:00"),
+        ("spring time-only 02:00 (the gap's start) -> the first valid instant after the gap", "try again at 2:00 AM", "2026-03-29T01:50:00+01:00", "2026-03-29T03:00:00+02:00"),
+        ("autumn dated 02:00 (the repeated hour's start) -> the offset before, +02:00", "try again at Oct 25th, 2026 2:00 AM", "2026-10-24T12:00:00+02:00", "2026-10-25T02:00:00+02:00"),
+        ("spring time-only 03:00 (the gap's end) -> 03:00+02:00", "try again at 3:00 AM", "2026-03-29T01:50:00+01:00", "2026-03-29T03:00:00+02:00"),
+    ];
+
+    fn boundary_failures(zone: &dyn ResetZone) -> Vec<String> {
+        BOUNDARIES
+            .iter()
+            .filter_map(|(name, msg, reference, want)| {
+                let got = retry_after_in(msg, dto(reference), zone)
+                    .map(format_offset_iso)
+                    .unwrap_or_default();
+                (got != *want).then(|| format!("{name}: got '{got}', want '{want}'"))
+            })
+            .collect()
+    }
+
+    fn wall(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").unwrap()
+    }
+
+    fn hours(h: i32) -> FixedOffset {
+        FixedOffset::east_opt(h * 3600).unwrap()
+    }
+
+    /// Berlin 2026 as chrono's Windows `Local` classifies it (chrono 0.4.45
+    /// `lookup_with_dst_transitions`): the fold's wall-time range is closed at BOTH ends (03:00 on
+    /// the fall-back day ambiguous), the gap's start a single wall time at the earlier offset
+    /// (02:00 on the spring-forward day +01:00); its UTC-to-local offsets are right. So the F04-2
+    /// normalisation is proven on every machine, not only on a Berlin Windows one.
+    struct WindowsLikeBerlin2026;
+
+    impl ResetZone for WindowsLikeBerlin2026 {
+        fn reported_wall_offsets(&self, w: NaiveDateTime) -> LocalResult<FixedOffset> {
+            if w <= wall("2026-03-29T02:00:00") {
+                LocalResult::Single(hours(1))
+            } else if w < wall("2026-03-29T03:00:00") {
+                LocalResult::None
+            } else if w < wall("2026-10-25T02:00:00") {
+                LocalResult::Single(hours(2))
+            } else if w <= wall("2026-10-25T03:00:00") {
+                LocalResult::Ambiguous(hours(2), hours(1))
+            } else {
+                LocalResult::Single(hours(1))
+            }
+        }
+        fn utc_offset(&self, utc: NaiveDateTime) -> FixedOffset {
+            if utc >= wall("2026-03-29T01:00:00") && utc < wall("2026-10-25T01:00:00") {
+                hours(2)
+            } else {
+                hours(1)
+            }
+        }
+    }
+
+    #[test]
+    fn wall_offsets_are_normalised_against_a_utc_round_trip() {
+        let z = WindowsLikeBerlin2026;
+        // the raw classification is the faulty one ...
+        assert_eq!(
+            z.reported_wall_offsets(wall("2026-10-25T03:00:00")),
+            LocalResult::Ambiguous(hours(2), hours(1))
+        );
+        assert_eq!(
+            z.reported_wall_offsets(wall("2026-03-29T02:00:00")),
+            LocalResult::Single(hours(1))
+        );
+        // ... the normalised one is the zone's: false ambiguity dropped, the boundary gap
+        // recognised, the genuine repeated hour kept (earlier instant first)
+        let cases = [
+            ("2026-10-25T01:59:00", LocalResult::Single(hours(2))),
+            (
+                "2026-10-25T02:00:00",
+                LocalResult::Ambiguous(hours(2), hours(1)),
+            ),
+            (
+                "2026-10-25T02:59:00",
+                LocalResult::Ambiguous(hours(2), hours(1)),
+            ),
+            ("2026-10-25T03:00:00", LocalResult::Single(hours(1))),
+            ("2026-03-29T01:59:00", LocalResult::Single(hours(1))),
+            ("2026-03-29T02:00:00", LocalResult::None),
+            ("2026-03-29T02:59:00", LocalResult::None),
+            ("2026-03-29T03:00:00", LocalResult::Single(hours(2))),
+        ];
+        for (w, want) in cases {
+            assert_eq!(z.wall_offsets(wall(w)), want, "{w} (Windows-like)");
+            assert_eq!(berlin().wall_offsets(wall(w)), want, "{w} (Europe/Berlin)");
+        }
+    }
+
+    #[test]
+    fn reset_boundaries_follow_the_plugin_in_every_zone_implementation() {
+        let bad = boundary_failures(&berlin());
+        assert!(bad.is_empty(), "Europe/Berlin:\n{}", bad.join("\n"));
+        let bad = boundary_failures(&WindowsLikeBerlin2026);
+        assert!(bad.is_empty(), "Windows-like Berlin:\n{}", bad.join("\n"));
+    }
+
+    /// (F04-2, RC2) The production zone: `chrono::Local` on a Windows machine whose zone is
+    /// `W. Europe Standard Time`. Any other machine zone skips the test (it says so): the zone is
+    /// recognised by its 2026 offsets (+01:00 in winter, +02:00 in summer) and transition instants
+    /// (01:00Z on 2026-03-29 and 2026-10-25), which every zone with Berlin's rules shares.
+    #[test]
+    #[cfg(windows)]
+    fn windows_local_reset_boundaries() {
+        let local = chrono::Local;
+        let off = |utc: &str| {
+            ResetZone::utc_offset(&local, dto(utc).naive_utc()).local_minus_utc() / 3600
+        };
+        let berlin_rules = [
+            ("2026-01-15T12:00:00Z", 1),
+            ("2026-07-15T12:00:00Z", 2),
+            ("2026-03-29T00:59:59Z", 1),
+            ("2026-03-29T01:00:00Z", 2),
+            ("2026-10-25T00:59:59Z", 2),
+            ("2026-10-25T01:00:00Z", 1),
+        ]
+        .iter()
+        .all(|(utc, h)| off(utc) == *h);
+        if !berlin_rules {
+            println!(
+                "windows_local_reset_boundaries SKIPPED: the machine zone is not W. Europe Standard Time (offsets {:+} / {:+} in winter / summer 2026)",
+                off("2026-01-15T12:00:00Z"),
+                off("2026-07-15T12:00:00Z")
+            );
+            return;
+        }
+        println!(
+            "windows_local_reset_boundaries: the machine zone has W. Europe Standard Time's 2026 rules - production chrono::Local"
+        );
+        for w in ["2026-10-25T03:00:00", "2026-03-29T02:00:00"] {
+            println!(
+                "  {w}: chrono reports {:?}, normalised {:?}",
+                local.reported_wall_offsets(wall(w)),
+                local.wall_offsets(wall(w))
+            );
+        }
+        for (name, msg, reference, want) in BOUNDARIES {
+            let got = retry_after_in(msg, dto(reference), &local).map(format_offset_iso);
+            println!("  {name}: {msg} @ {reference} -> {got:?}");
+            assert_eq!(got.as_deref(), Some(*want), "{name}");
+        }
+        assert_eq!(
+            local.wall_offsets(wall("2026-10-25T03:00:00")),
+            LocalResult::Single(hours(1))
+        );
+        assert_eq!(
+            local.wall_offsets(wall("2026-03-29T02:00:00")),
+            LocalResult::None
+        );
+        assert_eq!(
+            local.wall_offsets(wall("2026-10-25T02:30:00")),
+            LocalResult::Ambiguous(hours(2), hours(1))
         );
     }
 }

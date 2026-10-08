@@ -266,12 +266,14 @@ fn codex_name_rule(name: &str, cmd: &str, launcher: &str) -> String {
     String::new()
 }
 
-/// An image name without a trailing `.exe` (any case).
+/// An image name without a trailing `.exe` (any case). (F04-1) Boundary-safe: the candidate
+/// suffix is taken with `str::get`, so a name whose last four bytes start inside a character
+/// (a Linux `/proc/<pid>/comm` such as `日本`) is returned unchanged instead of panicking.
 fn strip_exe(name: &str) -> &str {
-    if name.len() >= 4 && name[name.len() - 4..].eq_ignore_ascii_case(".exe") {
-        &name[..name.len() - 4]
-    } else {
-        name
+    let cut = name.len().saturating_sub(4);
+    match name.get(cut..) {
+        Some(tail) if tail.eq_ignore_ascii_case(".exe") => &name[..cut],
+        _ => name,
     }
 }
 
@@ -1599,5 +1601,51 @@ mod tests {
             "{}",
             out.check
         );
+    }
+
+    // ---- (F04-1, RC1) a Unicode process name never panics the classifier or the scan ----
+
+    #[test]
+    fn strip_exe_is_boundary_safe() {
+        assert_eq!(strip_exe("日本"), "日本");
+        assert_eq!(strip_exe("日本.exe"), "日本");
+        assert_eq!(strip_exe("日本.EXE"), "日本");
+        assert_eq!(strip_exe("aé.ex"), "aé.ex");
+        assert_eq!(strip_exe("codex.Exe"), "codex");
+        assert_eq!(strip_exe(".exe"), "");
+        assert_eq!(strip_exe("exe"), "exe");
+        assert_eq!(strip_exe(""), "");
+    }
+
+    #[test]
+    fn unicode_name_codex_match_completes_without_a_match() {
+        let m = codex_match("日本", "unrelated", "");
+        assert_eq!(m.rule, "");
+        assert_eq!(m.excluded, "");
+        assert_eq!(
+            codex_server_exclusion("日本", "unrelated"),
+            ServerExclusion::default()
+        );
+        assert_eq!(command_line_gap("日本", "unrelated"), "");
+        // with a recorded launcher too (the launcher-basename branch strips the name)
+        let m = codex_match("日本", "unrelated", r"C:\x\codex.exe");
+        assert_eq!((m.rule.as_str(), m.excluded.as_str()), ("", ""));
+    }
+
+    #[test]
+    fn unicode_name_scan_completes_without_a_match_or_an_exclusion() {
+        let since = at(100).unwrap();
+        let procs = vec![
+            p(7000, 1, "日本", 150, "unrelated"),
+            p(7001, 1, "日本", 150, "日本"),
+            p(7002, 1, "codex.exe", 150, "codex.exe exec --json -"),
+        ];
+        for on_windows in [true, false] {
+            let out = find_codex_processes(&procs, since, "t", "", 0, 42, on_windows);
+            let found: Vec<u32> = out.found.iter().map(|f| f.pid).collect();
+            assert_eq!(found, vec![7002], "{:?}", out.found);
+            assert!(out.excluded.is_empty(), "{:?}", out.excluded);
+            assert!(!out.check.contains("excluded:"), "{}", out.check);
+        }
     }
 }

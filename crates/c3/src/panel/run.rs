@@ -385,25 +385,6 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         })
         .collect();
 
-    // (wave 26b, D11) the per-member timeout exceptions for the `Timeout:` header: an eligible
-    // member whose roster entry names a timeout_sec, unless an explicit --timeout-sec applies to all.
-    let timeout_exceptions: Vec<String> = if r.timeout_source == "explicit" {
-        Vec::new()
-    } else {
-        members
-            .iter()
-            .filter(|m| m.state != "skipped" && m.entry.timeout_sec >= 60)
-            .map(|m| {
-                format!(
-                    "#{} {} {} s (roster)",
-                    m.entry.position,
-                    format_reviewer_lineage(&m.provider, &m.model, &m.engine),
-                    m.entry.timeout_sec
-                )
-            })
-            .collect()
-    };
-
     let (size_wanted, size_source) = if o.panel_all {
         (0, "-PanelAll")
     } else if o.panel_size_given {
@@ -452,6 +433,43 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
             1,
         ));
     }
+
+    // (F04-3) The FINAL routed state of every roster entry, by position: `select_panel_routing`
+    // revives a required entry the weighty or light gate held back (`run`, no reason) and marks an
+    // eligible one without a seat `not-picked`. The plugin mutates its shared member objects there,
+    // so everything recorded after routing (the members / skipped records, every child's member
+    // spec, the Timeout line) reads these states, never the selection's earlier ones.
+    let routed_state: HashMap<i64, (String, String)> = route
+        .members
+        .iter()
+        .map(|m| (m.position, (m.state.clone(), m.reason.clone())))
+        .collect();
+
+    // (wave 26b, D11) the per-member timeout exceptions for the `Timeout:` header: a SEATED
+    // member (seat order, as the plugin's slots) whose roster entry names a timeout_sec, unless an
+    // explicit --timeout-sec applies to all.
+    let timeout_exceptions: Vec<String> = if r.timeout_source == "explicit" {
+        Vec::new()
+    } else {
+        route
+            .picked
+            .iter()
+            .filter_map(|p| {
+                members
+                    .iter()
+                    .find(|m| m.entry.position as i64 == p.position)
+            })
+            .filter(|m| m.entry.timeout_sec >= 60)
+            .map(|m| {
+                format!(
+                    "#{} {} {} s (roster)",
+                    m.entry.position,
+                    format_reviewer_lineage(&m.provider, &m.model, &m.engine),
+                    m.entry.timeout_sec
+                )
+            })
+            .collect()
+    };
 
     let mut warnings: Vec<String> = route.warnings.clone();
 
@@ -612,32 +630,33 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
 
     let panel_id = uuid::Uuid::new_v4().to_string();
 
-    // The members / skipped records (roster order), the display rows and the runners.
-    let members_record: Vec<MemberBrief> = selection
-        .members
-        .iter()
-        .map(|m| MemberBrief {
+    // The members / skipped records (roster order), the display rows and the runners. (F04-3)
+    // The roster identity from the selection, the state and reason from the FINAL routing (joined
+    // by position): a required light or weighty entry that runs is recorded `run`, an eligible
+    // one without a seat `not-picked` (no skip, D6).
+    let mut members_record: Vec<MemberBrief> = Vec::new();
+    let mut skipped_rows: Vec<Value> = Vec::new();
+    for m in &selection.members {
+        let (state, reason) = routed_state
+            .get(&(m.entry.position as i64))
+            .cloned()
+            .unwrap_or_else(|| (m.state.clone(), m.reason.clone()));
+        if state == "skipped" {
+            skipped_rows.push(json!({
+                "provider": m.entry.provider,
+                "model": m.identity.model,
+                "engine": if m.entry.engine.is_empty() { "codex".to_string() } else { m.entry.engine.clone() },
+                "reason": reason,
+            }));
+        }
+        members_record.push(MemberBrief {
             provider: m.entry.provider.clone(),
             model: m.identity.model.clone(),
-            state: m.state.clone(),
-            reason: m.reason.clone(),
-        })
-        .collect();
-    let skipped_record: Value = Value::Array(
-        selection
-            .members
-            .iter()
-            .filter(|m| m.state == "skipped")
-            .map(|m| {
-                json!({
-                    "provider": m.entry.provider,
-                    "model": m.identity.model,
-                    "engine": if m.entry.engine.is_empty() { "codex".to_string() } else { m.entry.engine.clone() },
-                    "reason": m.reason,
-                })
-            })
-            .collect(),
-    );
+            state,
+            reason,
+        });
+    }
+    let skipped_record: Value = Value::Array(skipped_rows);
 
     let mut runners: Vec<RunnerInfo> = Vec::new();
     // (wave 27, R13 D3) seated members that ARE the coordinator's own model: warned once in the
