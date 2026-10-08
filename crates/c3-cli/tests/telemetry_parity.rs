@@ -307,6 +307,11 @@ fn ledger_order_consult_ref_and_the_consultation_event() {
     assert_eq!(evs.len(), 2, "{evs:#?}");
     for (ev, r) in evs.iter().zip([r1, r2]) {
         assert_eq!(ev["event_type"], "consultation");
+        // (wave 2c) the built-in openai provider's class, the closed-list model, a usable outcome
+        assert_eq!(ev["details"]["provider"], "openai");
+        assert_eq!(ev["details"]["model"], "gpt-5.1");
+        assert_eq!(ev["details"]["outcome"], "usable");
+        assert_eq!(ev["severity"], "info");
         let d = ev["details"].as_object().unwrap();
         assert_eq!(
             d.keys().next_back().map(|s| s.as_str()),
@@ -340,6 +345,27 @@ fn telemetry_off_writes_nothing_and_a_runs_switch_wins() {
         &[("CODEX_CONSULT_TELEMETRY", "maybe")],
     );
     assert_eq!(odd.status.code(), Some(0), "{}", text(&odd));
+    assert_eq!(e.spool_lines().len(), 1);
+    // the dry run names the switch and its source; a value other than on|off is refused
+    let dry = e.consult(
+        &["--reply-name", "d1", "--dry-run", "--telemetry", "off"],
+        &[],
+    );
+    assert!(
+        text(&dry).contains("telemetry   : off (-Telemetry) - nothing is spooled or sent"),
+        "{}",
+        text(&dry)
+    );
+    let dry2 = e.consult(
+        &["--reply-name", "d2", "--dry-run"],
+        &[("CODEX_CONSULT_TELEMETRY", "off")],
+    );
+    assert!(text(&dry2).contains("telemetry   : off (CODEX_CONSULT_TELEMETRY) - nothing"));
+    let dry3 = e.consult(&["--reply-name", "d3", "--dry-run"], &[]);
+    assert!(text(&dry3).contains("telemetry   : on (the default) - after the commit ONE"));
+    let bad = e.consult(&["--reply-name", "d4", "--telemetry", "maybe"], &[]);
+    assert_eq!(bad.status.code(), Some(1));
+    assert!(text(&bad).contains("-Telemetry must be on or off (got 'maybe')"));
     assert_eq!(e.spool_lines().len(), 1);
     let _ = std::fs::remove_dir_all(&e.work);
 }
@@ -538,7 +564,11 @@ fn rating_judge_rev_telemetry_sent_and_the_backfill_rc1() {
         .all(|v| v["details"]["consult_ref"] == cref.as_str()));
     // no label and no host in any event, never the refused value
     let raw = e.spool_lines().join("\n");
-    assert!(!raw.contains("JudgeLabel") && !raw.contains("[x]"));
+    assert!(!raw.contains("JudgeLabel") && !raw.contains("[x]") && !raw.contains("ZAI"));
+    // (wave 2c) the reviewer as classes: the vendor class of api.z.ai, never the label ZAI
+    assert_eq!(evs[0]["details"]["provider"], "zai");
+    assert_eq!(evs[0]["details"]["model"], "glm-5.3");
+    assert_eq!(evs[0]["tags"], serde_json::json!(["zai", "glm-5.3"]));
     assert!(!raw.contains("claude-code") && !raw.contains("\"host\""));
     assert!(!e.findings_text().contains("[x]"));
     let marks = e.marks();
@@ -599,7 +629,7 @@ fn rating_judge_rev_telemetry_sent_and_the_backfill_rc1() {
     let dt = text(&dry);
     assert!(
         dt.contains(&format!(
-            "(codex), purpose diff-review, mark partly, age_days 0, client_time {}, judge moonshot / k3 (rating_actor)",
+            "codex-telemetry: would send: zai / glm-5.3 (codex), purpose diff-review, mark partly, age_days 0, client_time {}, judge moonshot / k3 (rating_actor)",
             utc_of(m["when"].as_str().unwrap())
         )),
         "{dt}"
@@ -706,6 +736,16 @@ fn backfill_of_a_mark_without_a_saved_judge_never_takes_the_backfills_coordinato
     // entry 2: no coordinator -> unknown; no consult_ref key
     assert_eq!(judge_of(&evs[1]), "other/other/unknown");
     assert_eq!(keys(&evs[1]["details"]), RATING_DETAIL_KEYS);
+    // (wave 2c) the labels of the seeded reviewers never leave: MyGLM-Plan on api.z.ai is zai,
+    // AcmeCorp-Legal on its private host other / other
+    let raw = e.spool_lines().join("\n");
+    assert!(
+        !raw.to_lowercase().contains("acmecorp") && !raw.contains("MyGLM"),
+        "{raw}"
+    );
+    assert_eq!(evs[0]["details"]["provider"], "zai");
+    assert_eq!(evs[1]["details"]["provider"], "other");
+    assert_eq!(evs[1]["details"]["model"], "other");
     let marks = e.marks();
     assert!(marks[0]["telemetry_sent"].is_i64() && marks[1]["telemetry_sent"].is_i64());
     assert!(marks[2].get("telemetry_sent").is_none());

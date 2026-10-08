@@ -36,6 +36,8 @@ param(
     [string]$Evidence = '',
     [int]$Rate = 0,
     [string]$Useful = '',
+    # (wave 2c; R24) on | off for this -Rate; forwarded as --telemetry (c3 refuses it without -Rate).
+    [string]$Telemetry = '',
 
     # Not a parameter of the reference script (cli-surface.md Open question 1);
     # forwarded as --json when passed, otherwise omitted entirely.
@@ -90,6 +92,7 @@ if ($Note) { $c3Args.Add('--note'); $c3Args.Add($Note) }
 if ($Evidence) { $c3Args.Add('--evidence'); $c3Args.Add($Evidence) }
 if ($Rate -ne 0) { $c3Args.Add('--rate'); $c3Args.Add([string]$Rate) }
 if ($Useful) { $c3Args.Add('--useful'); $c3Args.Add($Useful) }
+if ($Telemetry) { $c3Args.Add('--telemetry'); $c3Args.Add($Telemetry) }
 if ($Json) { $c3Args.Add('--json') }
 
 & $c3 @c3Args

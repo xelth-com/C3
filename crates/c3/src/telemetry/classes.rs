@@ -179,9 +179,61 @@ pub(crate) static VENDORS: [Vendor; 10] = [
     },
 ];
 
-/// The row of a class name (exact), if the table has one.
+/// (C3 extension, wave 2c) The `http` engine's OpenRouter route: the class `openrouter` for the
+/// host `openrouter.ai` (and its subdomains). OpenRouter resells other labs' models under
+/// `<vendor>/<model>` ids, so its model token is that form - sent only when the vendor part is an
+/// OpenRouter vendor slug of [`OPENROUTER_VENDORS`] AND the model part EQUALS an entry of that
+/// class's closed list (after lower-casing, `[1m]` stripped), else `other`
+/// ([`openrouter_model_token`]). Not a row of the plugin's table: the plugin has no http engine.
+pub(crate) static OPENROUTER: Vendor = Vendor {
+    class: "openrouter",
+    hosts: &["openrouter.ai"],
+    engine: "",
+    builtin: "",
+    models: &[],
+};
+
+/// (C3 extension) OpenRouter's vendor slugs and the class of the table whose closed model list
+/// their model part is checked against.
+pub(crate) const OPENROUTER_VENDORS: [(&str, &str); 9] = [
+    ("openai", "openai"),
+    ("anthropic", "anthropic"),
+    ("google", "google"),
+    ("z-ai", "zai"),
+    ("moonshotai", "moonshot"),
+    ("minimax", "minimax"),
+    ("xiaomi", "xiaomi"),
+    ("qwen", "alibaba"),
+    ("meta-llama", "meta"),
+];
+
+/// (C3 extension) The model token of an OpenRouter reviewer: `<slug>/<listed model>` when the
+/// vendor slug is one of [`OPENROUTER_VENDORS`] and the model part EQUALS an entry of that
+/// class's closed list (the table's own text), else `other`; `unknown` for no model.
+pub(crate) fn openrouter_model_token(model: &str) -> String {
+    let m = model.trim().to_lowercase();
+    if m.is_empty() {
+        return "unknown".to_string();
+    }
+    let m = m.strip_suffix("[1m]").unwrap_or(&m);
+    let Some((slug, rest)) = m.split_once('/') else {
+        return "other".to_string();
+    };
+    let Some((slug, class)) = OPENROUTER_VENDORS.iter().find(|(s, _)| *s == slug) else {
+        return "other".to_string();
+    };
+    match model_token(vendor_of_class(class), rest).as_str() {
+        "other" | "unknown" => "other".to_string(),
+        listed => format!("{slug}/{listed}"),
+    }
+}
+
+/// The row of a class name (exact) - the plugin's table, plus C3's `openrouter`.
 pub(crate) fn vendor_of_class(class: &str) -> Option<&'static Vendor> {
-    VENDORS.iter().find(|v| v.class == class)
+    VENDORS
+        .iter()
+        .find(|v| v.class == class)
+        .or_else(|| (class == OPENROUTER.class).then_some(&OPENROUTER))
 }
 
 /// The row of an engine (agy google, muse meta, claude anthropic); `None` for codex, http and
@@ -203,11 +255,14 @@ pub(crate) fn vendor_by_host(base_url: &str) -> Option<&'static Vendor> {
     if host.is_empty() || host.starts_with('[') {
         return None;
     }
-    VENDORS.iter().find(|v| {
-        v.hosts
-            .iter()
-            .any(|h| host == *h || host.ends_with(&format!(".{h}")))
-    })
+    VENDORS
+        .iter()
+        .chain(std::iter::once(&OPENROUTER))
+        .find(|v| {
+            v.hosts
+                .iter()
+                .any(|h| host == *h || host.ends_with(&format!(".{h}")))
+        })
 }
 
 /// `Get-TelemetryModelToken`: the entry of `vendor`'s closed list the model EQUALS after
@@ -221,6 +276,9 @@ pub(crate) fn model_token(vendor: Option<&Vendor>, model: &str) -> String {
     let Some(v) = vendor else {
         return "other".to_string();
     };
+    if v.class == OPENROUTER.class {
+        return openrouter_model_token(&m);
+    }
     let m = m.strip_suffix("[1m]").unwrap_or(&m);
     v.models
         .iter()
@@ -254,6 +312,140 @@ pub(crate) fn vendor_of_reviewer(engine: &str, provider_config: &Value) -> Optio
     VENDORS
         .iter()
         .find(|v| !v.builtin.is_empty() && v.builtin == builtin)
+}
+
+// --------------------------------------------------------------------------- the reviewer
+
+/// The engines an event may name (`$script:EngineNames` plus C3's `http`); anything else `other`.
+pub(crate) const ENGINES: [&str; 5] = ["codex", "agy", "muse", "claude", "http"];
+
+/// `$script:ConsultPurposes`: the purposes an event may name; anything else `other`, none `none`.
+pub(crate) const PURPOSES: [&str; 8] = [
+    "framing",
+    "decision",
+    "checkpoint",
+    "core-contract",
+    "acceptance",
+    "diff-review",
+    "stuck",
+    "chore",
+];
+
+/// `$script:TelemetryFailureClasses`: the failure classes an outcome may name.
+pub(crate) const FAILURE_CLASSES: [&str; 10] = [
+    "auth",
+    "quota",
+    "capability",
+    "transport",
+    "permission",
+    "operator",
+    "unknown",
+    "timeout",
+    "stalled",
+    "bridge",
+];
+
+/// The reviewer of a ledger entry as an event carries it (`Get-TelemetryReviewerClass`) - ONE code
+/// path for the consultation and the rating event: `(engine, provider, model)` - the engine (a
+/// name of [`ENGINES`], else other), the vendor CLASS of the endpoint (`provider_config.base_url`'s
+/// host, else the engine's row, else codex's built-in provider; else other), the model through
+/// that class's closed list (`other` outside it, `unknown` without a model). The roster label and
+/// the model as typed are never read into the event.
+pub fn reviewer_class(entry: &LedgerEntry) -> (String, String, String) {
+    let rev = &entry.reviewer;
+    let engine = if rev.engine.trim().is_empty() {
+        "codex"
+    } else {
+        rev.engine.trim()
+    };
+    let engine = if ENGINES.contains(&engine) {
+        engine
+    } else {
+        "other"
+    };
+    let vendor = if engine == "other" {
+        None
+    } else {
+        vendor_of_reviewer(engine, &rev.provider_config)
+    };
+    let model_raw = if rev.model.trim().is_empty() {
+        entry.model.as_str()
+    } else {
+        rev.model.as_str()
+    };
+    (
+        engine.to_string(),
+        vendor.map(|v| v.class).unwrap_or("other").to_string(),
+        model_token(vendor, model_raw),
+    )
+}
+
+/// `Get-TelemetryPurpose`: one of [`PURPOSES`], `none` without one, else `other`.
+pub fn purpose_class(purpose: &str) -> String {
+    let p = purpose.trim();
+    if p.is_empty() {
+        "none".into()
+    } else if PURPOSES.contains(&p) {
+        p.into()
+    } else {
+        "other".into()
+    }
+}
+
+/// `Get-TelemetryOutcome`: `(outcome, severity)` - `usable` (`usable-after-continuation` after a
+/// timeout continuation) with `info`; else `failed:<class>` - the provider failure's class, else
+/// from the bridge outcome (`timeout`, `stalled`, `operator` - the operator's kick -, else
+/// `bridge`), a class outside [`FAILURE_CLASSES`] `unknown` - with `warning` for auth, quota and
+/// operator and `error` for every other class.
+pub fn outcome_class(entry: &LedgerEntry) -> (String, &'static str) {
+    let bo = entry.bridge_outcome.as_str();
+    if c3_core::health::is_usable_outcome(bo) {
+        let o = if bo.contains("after a timeout continuation") {
+            "usable-after-continuation"
+        } else {
+            "usable"
+        };
+        return (o.into(), "info");
+    }
+    let mut class = entry
+        .provider_failure
+        .as_ref()
+        .map(|p| p.class.trim().to_string())
+        .unwrap_or_default();
+    if class.is_empty() {
+        class = if bo.starts_with("failed: timeout") {
+            "timeout"
+        } else if bo.starts_with("failed: stalled") {
+            "stalled"
+        } else if bo.contains("stopped by the operator") {
+            "operator"
+        } else {
+            "bridge"
+        }
+        .into();
+    }
+    if !FAILURE_CLASSES.contains(&class.as_str()) {
+        class = "unknown".into();
+    }
+    let sev = if ["auth", "quota", "operator"].contains(&class.as_str()) {
+        "warning"
+    } else {
+        "error"
+    };
+    (format!("failed:{class}"), sev)
+}
+
+/// A verdict as a complaint's last-run summary may carry it: one of the reply schema's verdicts,
+/// `none` without one, else `other`.
+pub(crate) fn verdict_class(verdict: &str) -> String {
+    let v = verdict.trim();
+    if v.is_empty() {
+        "none".into()
+    } else if ["ACCEPT", "HOLD", "REJECT", "ADVISE"].contains(&v) {
+        v.into()
+    } else {
+        "other".into()
+    }
 }
 
 // --------------------------------------------------------------------------- consult_ref
@@ -555,6 +747,7 @@ pub fn closed_judge(provider: &str, model: &str, source: &str) -> Judge {
     };
     let model = match vendor {
         Some(v) if !model.is_empty() && v.models.contains(&model) => model,
+        Some(v) if v.class == OPENROUTER.class && openrouter_model_token(model) == model => model,
         _ => "other",
     };
     Judge {
@@ -689,6 +882,110 @@ mod tests {
         assert_eq!(
             mark_judge(Some(&serde_json::json!({"provider": "openai"}))),
             None
+        );
+    }
+
+    #[test]
+    fn openrouter_classes_are_closed() {
+        assert_eq!(
+            vendor_by_host("https://openrouter.ai/api/v1")
+                .unwrap()
+                .class,
+            "openrouter"
+        );
+        let or = vendor_of_class("openrouter");
+        assert_eq!(model_token(or, "openai/GPT-5.1"), "openai/gpt-5.1");
+        assert_eq!(model_token(or, "z-ai/glm-5.3"), "z-ai/glm-5.3");
+        assert_eq!(model_token(or, "moonshotai/kimi-k3"), "moonshotai/kimi-k3");
+        // the model part outside its class's list, an unknown vendor slug, no slug at all
+        assert_eq!(model_token(or, "openai/customer-acme-ft"), "other");
+        assert_eq!(model_token(or, "customer-acme/gpt-5.1"), "other");
+        assert_eq!(model_token(or, "gpt-5.1"), "other");
+        assert_eq!(
+            closed_judge("openrouter", "openai/gpt-5.1", "rating_actor").model,
+            "openai/gpt-5.1"
+        );
+        assert_eq!(
+            closed_judge("openrouter", "acme/x", "rating_actor").model,
+            "other"
+        );
+    }
+
+    #[test]
+    fn reviewer_purpose_and_outcome_classes() {
+        let mut e = LedgerEntry::default();
+        e.reviewer.provider = "customer-acme".into();
+        e.reviewer.model = "customer-acme-7b".into();
+        e.reviewer.engine = "codex".into();
+        e.reviewer.provider_config =
+            serde_json::json!({"base_url": "https://llm.customer-acme.example/v1"});
+        assert_eq!(
+            reviewer_class(&e),
+            ("codex".into(), "other".into(), "other".into())
+        );
+        e.reviewer.provider_config = serde_json::json!({"base_url": "https://api.z.ai/api/v1"});
+        e.reviewer.model = "glm-5.3".into();
+        assert_eq!(
+            reviewer_class(&e),
+            ("codex".into(), "zai".into(), "glm-5.3".into())
+        );
+        e.reviewer.provider_config = serde_json::json!({"builtin": "openai"});
+        e.reviewer.model = "gpt-6-astra".into();
+        assert_eq!(reviewer_class(&e).1, "openai");
+        e.reviewer.engine = "muse".into();
+        e.reviewer.provider_config = Value::Null;
+        e.reviewer.model = String::new();
+        e.model = String::new();
+        assert_eq!(
+            reviewer_class(&e),
+            ("muse".into(), "meta".into(), "unknown".into())
+        );
+        e.reviewer.engine = "customer-acme".into();
+        assert_eq!(reviewer_class(&e).0, "other");
+        assert_eq!(purpose_class("customer-acme"), "other");
+        assert_eq!(purpose_class(""), "none");
+        assert_eq!(purpose_class("diff-review"), "diff-review");
+        e.bridge_outcome = "usable reply".into();
+        assert_eq!(outcome_class(&e), ("usable".into(), "info"));
+        e.bridge_outcome = "usable reply (after a timeout continuation)".into();
+        assert_eq!(outcome_class(&e).0, "usable-after-continuation");
+        e.bridge_outcome = "failed: timeout after 600 s".into();
+        assert_eq!(outcome_class(&e), ("failed:timeout".into(), "error"));
+        e.provider_failure = Some(c3_core::ledger::ProviderFailure {
+            class: "quota".into(),
+            ..Default::default()
+        });
+        assert_eq!(outcome_class(&e), ("failed:quota".into(), "warning"));
+        e.provider_failure.as_mut().unwrap().class = "customer-acme".into();
+        assert_eq!(outcome_class(&e).0, "failed:unknown");
+        assert_eq!(verdict_class("customer-acme"), "other");
+    }
+
+    #[test]
+    fn http_reviewers_get_c3_classes() {
+        let mut e = LedgerEntry::default();
+        e.reviewer.engine = "http".into();
+        e.reviewer.provider = "or-label".into();
+        e.reviewer.provider_config = serde_json::json!({"engine": "http", "base_url": "https://openrouter.ai/api/v1", "model": "x"});
+        e.reviewer.model = "openai/gpt-5.1".into();
+        assert_eq!(
+            reviewer_class(&e),
+            ("http".into(), "openrouter".into(), "openai/gpt-5.1".into())
+        );
+        e.reviewer.model = "customer-acme/private-7b".into();
+        assert_eq!(reviewer_class(&e).2, "other");
+        // an OpenAI-compatible endpoint of a listed vendor: that vendor's class and list
+        e.reviewer.provider_config =
+            serde_json::json!({"engine": "http", "base_url": "https://api.z.ai/api/paas/v4"});
+        e.reviewer.model = "glm-5.3".into();
+        assert_eq!(reviewer_class(&e).1, "zai");
+        assert_eq!(reviewer_class(&e).2, "glm-5.3");
+        // a private host: other / other
+        e.reviewer.provider_config =
+            serde_json::json!({"engine": "http", "base_url": "http://localhost:8080/v1"});
+        assert_eq!(
+            reviewer_class(&e),
+            ("http".into(), "other".into(), "other".into())
         );
     }
 

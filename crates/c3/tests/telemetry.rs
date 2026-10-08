@@ -143,11 +143,15 @@ fn allowlist_never_leaks_secrets_or_paths() {
 
     let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
     let d = &v["details"];
+    // (wave 2c, F02-2) classes only: an unknown engine, no vendor, a purpose and an outcome
+    // outside their closed sets
     assert_eq!(d["engine"], "other");
-    assert_eq!(d["provider"], "unknown");
-    assert_eq!(d["model"], "unknown");
-    assert_eq!(d["purpose"], "unknown");
-    assert_eq!(d["outcome"], "failed:unknown");
+    assert_eq!(d["provider"], "other");
+    assert_eq!(d["model"], "other");
+    assert_eq!(d["purpose"], "other");
+    assert_eq!(d["outcome"], "failed:bridge");
+    assert_eq!(v["severity"], "error");
+    assert_eq!(v["tags"], serde_json::json!(["other", "other"]));
     // The numeric/boolean allowlist still carries the useful shape.
     assert_eq!(d["tokens_in"], 12000);
     assert_eq!(d["tokens_out"], 900);
@@ -155,8 +159,66 @@ fn allowlist_never_leaks_secrets_or_paths() {
     assert_eq!(d["structured"], true);
     assert_eq!(d["format_retry"], true);
     assert_eq!(d["panel_size"], 3);
-    // The title mirrors the safe purpose label, never the raw text.
-    assert_eq!(v["title"], "unknown");
+    // The title mirrors the purpose class, never the raw text.
+    assert_eq!(v["title"], "other");
+}
+
+/// (wave 2c, F02-2) A private but syntactically harmless label - `customer-acme` as the roster
+/// provider, the model, the purpose, the failure class and the verdict, on a private endpoint -
+/// never leaves the machine: not in the consultation event, not in the rating event (whose
+/// reviewer goes through the SAME classifier), not in a complaint's last-run summary.
+#[test]
+fn a_private_label_never_reaches_any_payload() {
+    let entry = LedgerEntry {
+        n: 4,
+        when: "2026-10-08T10:00:00+02:00".into(),
+        purpose: "customer-acme".into(),
+        consult_ref: Some("6f1c2a9e-4b7d-4e2a-9c3f-0d8e5b7a1c24".into()),
+        reviewer: Reviewer {
+            provider: "customer-acme".into(),
+            model: "customer-acme-7b".into(),
+            engine: "codex".into(),
+            provider_config: serde_json::json!({"base_url": "https://llm.customer-acme.example/v1"}),
+            ..Default::default()
+        },
+        bridge_outcome: "failed: customer-acme".into(),
+        provider_failure: Some(c3_core::ledger::ProviderFailure {
+            class: "customer-acme".into(),
+            ..Default::default()
+        }),
+        verdict: "customer-acme".into(),
+        ..Default::default()
+    };
+    let ev = serde_json::to_string(&Event::from_ledger(&entry, Some(1), "i")).unwrap();
+    assert!(!ev.contains("acme"), "{ev}");
+    let v: serde_json::Value = serde_json::from_str(&ev).unwrap();
+    assert_eq!(v["details"]["provider"], "other");
+    assert_eq!(v["details"]["model"], "other");
+    assert_eq!(v["details"]["outcome"], "failed:unknown");
+    let judge = telemetry::Judge::unknown();
+    let input = RatingInput {
+        entry: &entry,
+        mark: "no",
+        rated_at: chrono::DateTime::parse_from_rfc3339("2026-10-08T12:00:00+02:00").unwrap(),
+        consult_when: None,
+        judge: &judge,
+        rating_rev: Some(1),
+    };
+    let rating = serde_json::to_string(&RatingEvent::from_rating(&input, "i")).unwrap();
+    assert!(!rating.contains("acme"), "{rating}");
+    // the same reviewer classes in both events (one code path)
+    let r: serde_json::Value = serde_json::from_str(&rating).unwrap();
+    for k in ["engine", "provider", "model", "purpose"] {
+        assert_eq!(r["details"][k], v["details"][k], "{k}");
+    }
+    // a known vendor on the same code path: the class and the closed-list model
+    let mut known = entry.clone();
+    known.reviewer.provider_config = serde_json::json!({"base_url": "https://api.z.ai/api/v1"});
+    known.reviewer.model = "GLM-5.3".into();
+    let k = serde_json::to_value(Event::from_ledger(&known, Some(1), "i")).unwrap();
+    assert_eq!(k["details"]["provider"], "zai");
+    assert_eq!(k["details"]["model"], "glm-5.3");
+    assert_eq!(k["tags"], serde_json::json!(["zai", "glm-5.3"]));
 }
 
 #[test]
@@ -249,11 +311,12 @@ fn example_event_is_printed_for_the_report() {
         purpose: "diff-review".into(),
         reviewer: Reviewer {
             provider: "openai".into(),
-            model: "gpt-5".into(),
+            model: "gpt-5.1".into(),
             engine: "codex".into(),
+            provider_config: serde_json::json!({"builtin": "openai"}),
             ..Default::default()
         },
-        bridge_outcome: "ok".into(),
+        bridge_outcome: "usable reply".into(),
         structured: true,
         wall_seconds: 41.2,
         usage: Some(Usage {
@@ -277,6 +340,9 @@ fn example_event_is_printed_for_the_report() {
     let v: serde_json::Value = serde_json::from_str(&pretty).unwrap();
     assert_eq!(v["details"]["outcome"], "usable");
     assert_eq!(v["details"]["engine"], "codex");
+    assert_eq!(v["details"]["provider"], "openai");
+    assert_eq!(v["details"]["model"], "gpt-5.1");
+    assert_eq!(v["severity"], "info");
 }
 
 // --------------------------------------------------------------------------- instance id

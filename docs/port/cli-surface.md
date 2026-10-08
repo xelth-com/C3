@@ -202,6 +202,9 @@ unlike R12). Flagged as an open question below.
 4. **`-FormatRetry`/`-DenialRetry` arity**: RESOLVED — `c3` takes them as `--format-retry <0|1>`
    (default 1) and `--denial-retry <0|1>` (default 1), an integer mirroring the plugin, not a
    boolean pair.
-5. **`CODEX_CONSULT_TELEMETRY`**: implemented (milestone 5) — `on|off`, also `--telemetry off` per
-   run. `CODEX_CONSULT_ROOT` is not a `c3` env var; the collab dir is `--collab-dir`, resolved
+5. **`CODEX_CONSULT_TELEMETRY`**: implemented (milestone 5) — `on|off` (wave 2: the plugin's
+   `Get-TelemetrySwitch` - any other value counts as off), also `--telemetry on|off` per run, which
+   wins over the variable (`c3 consult`, `c3 findings --rate`, `c3 telemetry --flush |
+   --backfill-ratings`); `c3 telemetry` takes the plugin's `codex-telemetry.ps1` forms (`--status`,
+   `--flush`, `--forget`, `--backfill-ratings`, see `wave2-telemetry.md`). `CODEX_CONSULT_ROOT` is not a `c3` env var; the collab dir is `--collab-dir`, resolved
    against the git repo root.

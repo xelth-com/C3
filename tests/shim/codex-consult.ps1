@@ -91,6 +91,9 @@ param(
     [int]$MaxModelSteps = 0,
     [int]$DenialRetry = 1,
     [switch]$DryRun,
+    # (wave 2c) on | off for this run (it wins over CODEX_CONSULT_TELEMETRY); forwarded as
+    # --telemetry. C3 posts only to CODEX_CONSULT_TELEMETRY_URL (a harness's loopback intake).
+    [string]$Telemetry = '',
 
     # RESERVED (R12 design; not yet in codex-consult.ps1's own param block - see
     # cli-surface.md section 1 and Open question 2). Forwarded when passed so the shim
@@ -258,6 +261,7 @@ if ($MaxModelSteps -ne 0) { $c3Args.Add('--max-model-steps'); $c3Args.Add([strin
 # Same as --format-retry above: c3's --denial-retry takes a value (0|1), not a boolean pair.
 $c3Args.Add('--denial-retry'); $c3Args.Add([string]$DenialRetry)
 if ($DryRun) { $c3Args.Add('--dry-run') }
+if ($Telemetry) { $c3Args.Add('--telemetry'); $c3Args.Add($Telemetry) }
 
 # R12 flags (a run / the -Detach foreground / the -DetachId background; -Status/-Wait handled
 # above). -Id/-Prune/-WaitTimeoutSec without -Status/-Wait are forwarded so c3 refuses them.

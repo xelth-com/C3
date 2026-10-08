@@ -155,8 +155,9 @@ The harnesses no longer need the shim inside a plugin checkout: `tests/run-all.p
 directory, and the one-harness form is `run-all.ps1 -ScriptsDir <dir> -Only <harness>`. For the
 plugin at **v0.6.1** that directory holds:
 
-- the five C3 shims from `tests/shim/` under the plugin's script names (`codex-providers.ps1`,
-  `codex-consult.ps1`, `codex-findings.ps1`, `codex-scoreboard.ps1`, `codex-consult-hook.ps1`);
+- the six C3 shims from `tests/shim/` under the plugin's script names (`codex-providers.ps1`,
+  `codex-consult.ps1`, `codex-findings.ps1`, `codex-scoreboard.ps1`, `codex-consult-hook.ps1`
+  and - wave 2c, F02-4 - `codex-telemetry.ps1`);
 - an unmodified copy of the plugin's `codex-consult-common.ps1` (several harnesses dot-source it
   for their in-process UNIT checks - e.g. harness-roster's `Get-RetryAfter` samples run against the
   plugin's own function, not through `c3`);
@@ -166,7 +167,46 @@ plugin at **v0.6.1** that directory holds:
 - a sibling `schemas/consult-reply.schema.json` (`<scripts dir>/../schemas/`), unmodified.
 
 `C3_EXE` names the binary the shims run (a copy of `target\debug\c3.exe` keeps a concurrent
-`cargo test` from replacing it mid-run). Run the harnesses ONE AT A TIME. The plugin's
-`codex-telemetry.ps1` (0.6.x) has no C3 shim; no harness in the wave-1 set calls it. Copy the
-library files from the tag (`git show v0.6.1:plugins/codex-consult/scripts/<file>`) rather than
-checking anything out in the plugin repository.
+`cargo test` from replacing it mid-run). Run the harnesses ONE AT A TIME. Copy the library files
+from the tag (`git show v0.6.1:plugins/codex-consult/scripts/<file>`) rather than checking
+anything out in the plugin repository.
+
+The staging recipe (wave 2, Git Bash; `$S` a scratch directory):
+
+```
+mkdir -p "$S/scripts" "$S/schemas"
+cp tests/shim/*.ps1 "$S/scripts/"                       # the six shims
+for f in codex-consult-common.ps1 codex-consult-detached.ps1; do
+  git -C <plugin checkout> show v0.6.1:plugins/codex-consult/scripts/$f > "$S/scripts/$f"; done
+git -C <plugin checkout> show v0.6.1:plugins/codex-consult/schemas/consult-reply.schema.json   > "$S/schemas/consult-reply.schema.json"
+C3_EXE=<copy of c3.exe> powershell -NoProfile -ExecutionPolicy Bypass -File   <plugin checkout>/tests/run-all.ps1 -ScriptsDir "$S/scripts" -Only harness-telemetry
+```
+
+(under the machine's harness mutex `%TEMP%\codex-consult-tests\HARNESS.lock`, held open
+exclusively for one harness at a time).
+
+### The telemetry shim (wave 2c)
+
+`codex-telemetry.ps1` maps the plugin's forms onto `c3 telemetry` / `c3 complain`: `-Flush` ->
+`--flush`, `-Status` -> `--status`, `-Forget [-PublicRef <ref>] [-Local] [-Yes]` -> `--forget
+[--public-ref ..] [--local] [--yes]`, `-BackfillRatings [-DryRun] [-CollabDir ..] [-Telemetry ..]`
+-> `--backfill-ratings ..`, `-Complain "<text>" [-Yes] [-CollabDir ..]` -> `complain` (`-Contact`
+and `-Task` are accepted and dropped: C3's complaint takes neither). A call without a form, or
+`-Local` / `-PublicRef` without `-Forget`, reaches c3, which refuses it with the plugin's wording
+(exit 1). The `codex-consult.ps1` and `codex-findings.ps1` shims forward `-Telemetry on|off` as
+`--telemetry` (a run's switch wins over `CODEX_CONSULT_TELEMETRY`, as in the plugin).
+
+Safety nets: the consult/findings shims still set `CODEX_CONSULT_TELEMETRY=off` when the caller
+left it unset (a fake consultation never spools unless the harness asks with `-Telemetry on`); the
+telemetry shim does not force the switch (`-Status` must report the caller's), but points the
+intake at a closed loopback port when neither `CODEX_CONSULT_TELEMETRY_URL` nor `C3_TELEMETRY_HUB`
+is set and sets `C3_PRIORS=off` unless given. C3 itself honours `CODEX_CONSULT_TELEMETRY_URL` with
+the plugin's rule (https; plain http only to a loopback host with `CODEX_CONSULT_TEST_MODE=1`).
+
+What the telemetry checks can and cannot see: C3 keeps its OWN telemetry files under
+`<codex home>/c3/telemetry/` (app id `c3`, its own salt and instance id, its own outbox - see
+`wave2-telemetry.md`), so every harness-telemetry / fixes28d / fixes28e check that reads the
+plugin's `<codex home>/telemetry-spool/`, `telemetry-salt`, `.last` or `telemetry-not-spooled-*`
+files, or walks an event against the plugin's `app_id` `codex-consult` allowlist, fails by design
+against C3; the checks that run C3's own surface (the ledger's `consult_ref`, the marks'
+`rating_rev` / `judge`, the refusals, the status lines) are real C3 oracles.

@@ -297,16 +297,19 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             out.push(format!("brief sha256: {}", c3_core::sha256_hex(&bytes)));
         }
     }
-    // Telemetry status (C3's addition per README; the plugin has no such line). The plugin's
-    // dry-run block would place it after the `peak` line, but peak is not implemented yet, so
-    // it goes last in the label block to avoid disturbing the existing console-parity lines.
+    // Telemetry: the plugin's dry-run line (`telemetry   : on|off (<source>) - ...`, the switch as
+    // `Get-TelemetrySwitch` resolves it: the run's --telemetry wins over the variable). It goes
+    // last in the label block to avoid disturbing the existing console-parity lines.
     {
-        let cfg = crate::telemetry::Config {
-            telemetry: ctx.o.telemetry,
-        };
-        let st = crate::telemetry::status(&cfg);
-        let body = st.strip_prefix("telemetry: ").unwrap_or(&st);
-        out.push(format!("telemetry   : {body}"));
+        let sw = crate::telemetry::switch(ctx.o.telemetry);
+        if sw.on {
+            out.push(format!("telemetry   : on ({}) - after the commit ONE anonymised event of this consultation goes to the spool and a background sender delivers it (README \"Telemetry\"; CODEX_CONSULT_TELEMETRY=off or --telemetry off switches it off)", sw.source));
+        } else {
+            out.push(format!(
+                "telemetry   : off ({}) - nothing is spooled or sent",
+                sw.source
+            ));
+        }
     }
     // (wave 27) the coordinator, the scrubbed child environment and the brief prefix.
     // (wave 27c, D11/D12) a coordinator that parses but names no seat is said on the line, not

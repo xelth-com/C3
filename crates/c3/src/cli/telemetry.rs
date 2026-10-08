@@ -236,6 +236,13 @@ pub fn run_telemetry(args: TelemetryArgs) -> i32 {
             );
             return 0;
         }
+        // the intake URL refused (CODEX_CONSULT_TELEMETRY_URL not https, plain http not to a
+        // loopback host in test mode): refused before any connection
+        let hub = telemetry::hub();
+        if !hub.error.is_empty() {
+            println!("{TOOL}: not delivered: {}", hub.error);
+            return 1;
+        }
         return match telemetry::flush_now() {
             Ok(r) if !r.skipped.is_empty() => {
                 println!("{TOOL}: skipped - {}", r.skipped);

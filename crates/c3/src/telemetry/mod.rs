@@ -506,12 +506,12 @@ fn newest_task_last_entry(collab_root: &Path) -> Option<LedgerEntry> {
     file.codex.consults.into_iter().last()
 }
 
-/// A summary built only from label/numeric fields (never a brief, thread or path).
+/// A summary built only from classes and numbers (never a label, a brief, a thread or a path).
 fn summarize_entry(entry: &LedgerEntry) -> String {
-    let engine =
-        event::safe_label(&entry.reviewer.engine, 32).unwrap_or_else(|| "unknown".to_string());
-    let purpose = event::safe_label(&entry.purpose, 48).unwrap_or_else(|| "unknown".to_string());
-    let verdict = event::safe_label(&entry.verdict, 48).unwrap_or_else(|| "unknown".to_string());
+    // (wave 2c, F02-2) classes only - a private label never reaches a complaint's context either
+    let (engine, _, _) = classes::reviewer_class(entry);
+    let purpose = classes::purpose_class(&entry.purpose);
+    let verdict = classes::verdict_class(&entry.verdict);
     let findings =
         entry.findings.blocker + entry.findings.major + entry.findings.minor + entry.findings.note;
     format!(

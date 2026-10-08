@@ -1,15 +1,13 @@
 //! The T-hub event and its typed `details` allowlist.
 //!
-//! Privacy by construction (DESIGN §3 invariant 8, README "Telemetry"): the payload is
-//! a fixed set of numeric, boolean and *label* fields. No field carries free text, a
-//! path, a task name, a prompt, a brief, a thread id, a finding text or anything
-//! key-shaped, because the four label fields ([`Details::engine`], `provider`, `model`,
-//! `purpose`) are the only `String`s copied from the ledger and each passes through
-//! [`safe_label`]/[`engine_label`] first: a value with whitespace, a `/`, `\`, `=`, a
-//! control char, a secret-name token, or an unexpected charset is replaced by a
-//! placeholder rather than echoed. The seeded-secret test in `tests/telemetry.rs` builds
-//! an event from a ledger entry with secrets and paths in every text field and asserts
-//! none of them reach the serialized payload.
+//! Privacy by construction (DESIGN §3 invariant 8, README "Telemetry"): the payload is a fixed
+//! set of numeric, boolean and CLASS fields. (wave 2c, F02-2) Every string the events carry comes
+//! from a CLOSED set ([`crate::telemetry::classes`]): the engine, the vendor class of the endpoint
+//! and the model as the table spells it (`other` / `unknown` otherwise), the purpose, the outcome
+//! class, the mark, the judge's classes - never a roster label, a model or a purpose as the
+//! operator typed it, so a syntactically harmless private label (`customer-acme`) can never leave
+//! the machine. The seeded-secret tests in `tests/telemetry.rs` build events from entries with
+//! secrets, paths and private labels in every text field and assert none reaches the payload.
 
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::Serialize;
@@ -33,31 +31,34 @@ const SECRET_TOKENS: [&str; 6] = [
     "bearer",
 ];
 
-/// One telemetry event: the exact T-hub event shape (README "The event").
+/// One telemetry event: the exact T-hub event shape (README "The event"), the top level in the
+/// plugin's order.
 #[derive(Debug, Clone, Serialize)]
 pub struct Event {
     pub app_id: &'static str,
     pub app_version: &'static str,
     pub instance_id: String,
     pub event_type: &'static str,
+    /// `info` (a usable reply), `warning` (auth, quota, operator) or `error` (every other failure).
     pub severity: &'static str,
-    /// The purpose label (same safe value as `details.purpose`); never free text.
+    /// The purpose class (the same value as `details.purpose`).
     pub title: String,
     pub details: Details,
+    /// `[provider, model]` - the same two classes as `details`.
+    pub tags: Vec<String>,
     /// RFC 3339 UTC, seconds precision.
     pub client_time: String,
     pub os: String,
     pub runtime: String,
-    pub tags: Vec<String>,
 }
 
 /// The `details` object: the typed allowlist. Field order matches the public keys the
 /// T-hub page shows (README "The event").
 #[derive(Debug, Clone, Serialize)]
 pub struct Details {
-    /// `codex | agy | muse | http | other`.
+    /// `codex | agy | muse | claude | http | other`.
     pub engine: String,
-    /// Provider label (safe) or `unknown`.
+    /// The vendor CLASS of the endpoint (`classes::reviewer_class`), else `other`.
     pub provider: String,
     /// Model label (safe) or `unknown`.
     pub model: String,
@@ -101,7 +102,9 @@ impl Event {
     /// coordinator's known seat count; when `None` it falls back to `entry.panel.of` or 1.
     /// `instance_id` is passed in so the caller controls when the salt file is touched.
     pub fn from_ledger(entry: &LedgerEntry, panel_size: Option<u32>, instance_id: &str) -> Self {
-        let purpose = label_or(&entry.purpose, 48);
+        let purpose = classes::purpose_class(&entry.purpose);
+        let (engine, provider, model) = classes::reviewer_class(entry);
+        let (outcome, severity) = classes::outcome_class(entry);
         let (tokens_in, tokens_out) = entry
             .usage
             .as_ref()
@@ -121,11 +124,11 @@ impl Event {
                 .unwrap_or(1)
         });
         let details = Details {
-            engine: engine_label(&entry.reviewer.engine),
-            provider: label_or(&entry.reviewer.provider, 64),
-            model: label_or(&entry.reviewer.model, 64),
+            engine,
+            provider,
+            model,
             purpose: purpose.clone(),
-            outcome: outcome_class(entry),
+            outcome,
             wall_seconds: entry.wall_seconds,
             tokens_in,
             tokens_out,
@@ -154,18 +157,19 @@ impl Event {
             rejected: None,
             consult_ref: classes::consult_ref_of(entry),
         };
+        let tags = vec![details.provider.clone(), details.model.clone()];
         Event {
             app_id: "c3",
             app_version: APP_VERSION,
             instance_id: instance_id.to_string(),
             event_type: "consultation",
-            severity: "info",
+            severity,
             title: purpose,
             details,
+            tags,
             client_time: now_rfc3339(),
             os: os_label(),
             runtime: runtime_label(),
-            tags: Vec::new(),
         }
     }
 }
@@ -281,20 +285,22 @@ pub struct RatingInput<'a> {
 }
 
 impl RatingEvent {
-    /// Build a rating event. Every text input passes through a closed set (the mark, the judge's
-    /// allowlist) or the label rules, so no path, prompt, id or secret can reach the payload.
+    /// Build a rating event. Every text input passes through a closed set (the reviewer through the
+    /// consultation event's own code path, the purpose, the mark, the judge's allowlist), so no
+    /// label, path, prompt, id or secret can reach the payload.
     pub fn from_rating(input: &RatingInput<'_>, instance_id: &str) -> Self {
         let entry = input.entry;
-        let purpose = label_or(&entry.purpose, 48);
+        let purpose = classes::purpose_class(&entry.purpose);
+        let (engine, provider, model) = classes::reviewer_class(entry);
         let mark = match input.mark.trim().to_ascii_lowercase().as_str() {
             m @ ("yes" | "partly" | "no") => m.to_string(),
             _ => "other".to_string(),
         };
         let rated_utc = input.rated_at.with_timezone(&Utc);
         let details = RatingDetails {
-            engine: engine_label(&entry.reviewer.engine),
-            provider: label_or(&entry.reviewer.provider, 64),
-            model: label_or(&entry.reviewer.model, 64),
+            engine,
+            provider,
+            model,
             purpose,
             mark: mark.clone(),
             age_days: age_days(&entry.when, rated_utc, input.consult_when),
@@ -355,51 +361,12 @@ pub(crate) fn age_days(
     }
 }
 
-/// The outcome class from the ledger: `usable`, or `failed:<class>` where the class is a
-/// safe label taken from the provider failure (preferred) or the bridge outcome.
-fn outcome_class(entry: &LedgerEntry) -> String {
-    if let Some(pf) = &entry.provider_failure {
-        let class = safe_label(&pf.class, 48).unwrap_or_else(|| "unknown".to_string());
-        return format!("failed:{class}");
-    }
-    let bo = entry.bridge_outcome.trim();
-    let usable = bo.is_empty()
-        || bo.eq_ignore_ascii_case("ok")
-        || bo.eq_ignore_ascii_case("usable")
-        || bo.eq_ignore_ascii_case("success")
-        || bo.eq_ignore_ascii_case("completed")
-        || bo.eq_ignore_ascii_case("done");
-    if usable {
-        "usable".to_string()
-    } else {
-        let class = safe_label(bo, 48).unwrap_or_else(|| "unknown".to_string());
-        format!("failed:{class}")
-    }
-}
-
-/// Map an engine name to the closed vocabulary; anything else is `other` (never echoed).
-fn engine_label(raw: &str) -> String {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "codex" => "codex",
-        "agy" => "agy",
-        "muse" => "muse",
-        "http" => "http",
-        _ => "other",
-    }
-    .to_string()
-}
-
-/// A label that is safe or the placeholder `unknown`.
-fn label_or(raw: &str, max: usize) -> String {
-    safe_label(raw, max).unwrap_or_else(|| "unknown".to_string())
-}
-
 /// Return the label only if it is a plain, short, secret-free token; otherwise `None`.
 /// Rejects whitespace, control chars, `\`, `=`, over-length values, secret-name tokens, and
-/// anything outside `[A-Za-z0-9._:/-]` starting with an alphanumeric. A single `/` is allowed
-/// so an OpenRouter model id (`openai/gpt-5`) survives as its own label; two or more `/`, or a
-/// `\`, still reads as a path and is dropped. This keeps paths, prompts, free text and
-/// key-shaped strings impossible to echo.
+/// anything outside `[A-Za-z0-9._:/-]` starting with an alphanumeric (a single `/` allowed, two
+/// or more read as a path). (wave 2c, F02-2) A PRE-FILTER only: a token that passes it is still
+/// private (`customer-acme` does), so no event field is ever this function's result - the only
+/// caller maps it onto the closed topic vocabulary ([`topic_slug`]) and sends the vocabulary word.
 pub(crate) fn safe_label(raw: &str, max: usize) -> Option<String> {
     let s = raw.trim();
     if s.is_empty() || s.len() > max {
