@@ -28,10 +28,13 @@ use c3_core::ledger::{LedgerEntry, SessionsFile};
 pub use classes::{
     close_judge, closed_judge, consult_ref_of, mark_judge, rating_actor, resolve_judge, Judge,
 };
-pub use complaint::{complain, complain_to, forget_me, forget_me_at, ForgetOutcome};
+pub use complaint::{
+    complain, complain_to, forget, forget_at, newest_ref, pending_deletion_in, ForgetOutcome,
+    ForgetRequest, PendingDeletion,
+};
 pub(crate) use event::topic_slug;
 pub use event::{Details, Event, RatingDetails, RatingEvent, RatingInput};
-pub use spool::{flush_in_background, BackgroundFlush, FlushReport, Spool};
+pub use spool::{flush_in_background, flush_now, BackgroundFlush, FlushReport, Spool};
 
 /// The default T-hub base URL.
 const HUB_DEFAULT: &str = "https://xelth.com/T";
@@ -191,6 +194,11 @@ fn real_home_telemetry_dir() -> PathBuf {
     }
 }
 
+/// The first-run notice's marker (`~/.codex/c3/telemetry/notice-shown`, the REAL home).
+pub fn notice_marker() -> PathBuf {
+    real_home_telemetry_dir().join("notice-shown")
+}
+
 /// [`first_run_notice`] at an explicit directory (for tests).
 pub fn first_run_notice_in(dir: &Path) -> Option<String> {
     let marker = dir.join("notice-shown");
@@ -221,9 +229,12 @@ pub fn record_consultation(
     if !is_enabled(config) {
         return Err(Error::new("telemetry is off"));
     }
-    let event = Event::from_ledger(entry, panel_size, &instance_id());
-    let payload = serde_json::to_value(&event)?;
-    default_spool().enqueue(&event)?;
+    let mut payload = serde_json::Value::Null;
+    default_spool().enqueue_built(std::time::Duration::from_secs(5), || {
+        let event = Event::from_ledger(entry, panel_size, &instance_id());
+        payload = serde_json::to_value(&event)?;
+        Ok(serde_json::to_string(&event)?)
+    })?;
     Ok(payload)
 }
 
@@ -235,9 +246,12 @@ pub fn record_rating(
     input: &RatingInput<'_>,
     wait: std::time::Duration,
 ) -> Result<serde_json::Value> {
-    let event = RatingEvent::from_rating(input, &instance_id());
-    let payload = serde_json::to_value(&event)?;
-    default_spool().enqueue_line_within(&event, wait)?;
+    let mut payload = serde_json::Value::Null;
+    default_spool().enqueue_built(wait, || {
+        let event = RatingEvent::from_rating(input, &instance_id());
+        payload = serde_json::to_value(&event)?;
+        Ok(serde_json::to_string(&event)?)
+    })?;
     Ok(payload)
 }
 

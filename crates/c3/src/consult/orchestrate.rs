@@ -4906,14 +4906,21 @@ fn finish(
     // Telemetry: record this consultation to the spool (errors ignored) - after the commit, so an
     // event is never spooled for an uncommitted entry. The run's switch is re-checked inside
     // `record_consultation`; a dry run never reaches this point.
+    // (wave 2b) an event that is not spooled is never lost silently: said on the console and
+    // counted (`c3 telemetry --status`); the entry is already committed.
     if let Some(entry) = &entry_for_telemetry {
-        let _ = telemetry::record_consultation(
+        if let Err(e) = telemetry::record_consultation(
             entry,
             None,
             &telemetry::Config {
                 telemetry: ctx.o.telemetry,
             },
-        );
+        ) {
+            telemetry::note_not_spooled(&e.to_string());
+            println!(
+                "warning    : telemetry event not spooled ({e}) - counted (c3 telemetry --status)"
+            );
+        }
     }
 
     // Summary.

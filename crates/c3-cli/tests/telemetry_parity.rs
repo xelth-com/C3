@@ -711,3 +711,38 @@ fn backfill_of_a_mark_without_a_saved_judge_never_takes_the_backfills_coordinato
     assert!(marks[2].get("telemetry_sent").is_none());
     let _ = std::fs::remove_dir_all(&e.work);
 }
+
+// --------------------------------------------------------------------------- STATUS / FORGET (CLI)
+
+#[test]
+fn telemetry_status_and_the_form_refusals() {
+    let e = setup("tel-status");
+    let st = e.c3(
+        &["telemetry", "--status"],
+        &[("CODEX_CONSULT_TELEMETRY", "off")],
+    );
+    assert_eq!(st.status.code(), Some(0), "{}", text(&st));
+    let t = text(&st);
+    assert!(t.contains("telemetry off (CODEX_CONSULT_TELEMETRY)"), "{t}");
+    assert!(t.contains("0 event(s), 0 complaint(s) in 0 file(s)"), "{t}");
+    assert!(t.contains("\nlast flush : never"), "{t}");
+    assert!(t.contains("none yet"), "{t}");
+    assert!(
+        !e.home.join("c3").join("telemetry").join("salt").exists(),
+        "-Status creates no salt"
+    );
+    let none = e.c3(&["telemetry"], &[]);
+    assert_eq!(none.status.code(), Some(1));
+    assert!(text(&none).contains("give exactly one of -Flush, -Status, -Complain"));
+    let local = e.c3(&["telemetry", "--status", "--local"], &[]);
+    assert_eq!(local.status.code(), Some(1));
+    assert!(text(&local).contains("-Local goes with -Forget"));
+    let forget = e.c3(&["telemetry", "--forget"], &[]);
+    assert_eq!(forget.status.code(), Some(1));
+    assert!(text(&forget).contains("needs -PublicRef <ref>"));
+    // forget-me without any stored reference: nothing sent, nothing removed
+    let fm = e.c3(&["forget-me", "--yes"], &[]);
+    assert_eq!(fm.status.code(), Some(1), "{}", text(&fm));
+    assert!(text(&fm).contains("no public reference is stored"));
+    let _ = std::fs::remove_dir_all(&e.work);
+}
