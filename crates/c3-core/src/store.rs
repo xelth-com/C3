@@ -189,9 +189,7 @@ impl LockRecord {
 }
 
 fn hostname() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    crate::host::machine_name()
 }
 
 /// The recovery record (`New-PendingRecord`). Field order matches the literal. The recovery
@@ -699,22 +697,21 @@ fn try_open_exclusive(path: &Path) -> io::Result<Option<File>> {
 
 #[cfg(unix)]
 fn try_open_exclusive(path: &Path) -> io::Result<Option<File>> {
-    use fs4::fs_std::FileExt;
     let f = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(path)?;
-    // There is no share mode on Unix; take a non-blocking exclusive advisory lock instead.
-    // A separate open in the same or another process gets its own file description, so its
-    // try-lock fails while this one is held - the exclusion the plugin's FileShare.None
-    // gives on Windows.
-    match FileExt::try_lock_exclusive(&f) {
-        Ok(true) => Ok(Some(f)),
-        Ok(false) => Ok(None),
-        Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(None),
-        Err(e) => Err(e),
+    // There is no share mode on Unix; take a non-blocking exclusive advisory lock instead
+    // (std's `File::try_lock`, `flock(LOCK_EX | LOCK_NB)` on Linux). A separate open in the
+    // same or another process gets its own file description, so its try-lock fails while this
+    // one is held - the exclusion the plugin's FileShare.None gives on Windows. The lock goes
+    // with the handle: dropped, closed or killed, it is released.
+    match f.try_lock() {
+        Ok(()) => Ok(Some(f)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
     }
 }
 

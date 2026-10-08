@@ -809,7 +809,6 @@ fn try_open_exclusive(path: &Path) -> std::io::Result<Option<std::fs::File>> {
 
 #[cfg(all(feature = "index-surreal", unix))]
 fn try_open_exclusive(path: &Path) -> std::io::Result<Option<std::fs::File>> {
-    use fs4::fs_std::FileExt;
     use std::fs::OpenOptions;
     let f = OpenOptions::new()
         .read(true)
@@ -817,10 +816,11 @@ fn try_open_exclusive(path: &Path) -> std::io::Result<Option<std::fs::File>> {
         .create(true)
         .truncate(false)
         .open(path)?;
-    match FileExt::try_lock_exclusive(&f) {
-        Ok(true) => Ok(Some(f)),
-        Ok(false) => Ok(None),
-        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
-        Err(e) => Err(e),
+    // An exclusive advisory lock (std's `File::try_lock`), the same exclusion c3-core's TaskLock
+    // takes on Unix.
+    match f.try_lock() {
+        Ok(()) => Ok(Some(f)),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
     }
 }

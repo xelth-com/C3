@@ -1,0 +1,102 @@
+{
+  "pack_version": 1,
+  "kind": "reviewer",
+  "generated": "2026-10-08T07:47:11.812306836+00:00",
+  "index": {
+    "used": false,
+    "source": "feature-off",
+    "hits": 0,
+    "files_added": 0
+  },
+  "peers": [],
+  "recipe": {
+    "brief": ".collab/cloud-linux/handoffs/04-claude-diff-review.md",
+    "focus": [
+      "crates/c3/src/http_engine/mod.rs",
+      "crates/c3/src/consult/http.rs",
+      "crates/c3/src/liveness/proc.rs",
+      "crates/c3-core/src/health.rs",
+      "crates/c3/src/engines/subprocess.rs",
+      "crates/c3/src/consult/detach.rs",
+      "crates/c3/src/index/embed.rs",
+      "crates/c3-core/src/host.rs"
+    ],
+    "budget": 6000,
+    "task": "cloud-linux",
+    "anchor": null
+  },
+  "revision": {
+    "reviewed_revision": "cb02cc8",
+    "content_sha256": "023fc0e30696dd7195e2c47b18d11dfe6d82ac664eb373ef2f7507a46d91ebdf"
+  },
+  "redactions": 2,
+  "coverage": {
+    "focus_files": 8,
+    "periphery_shown": 0,
+    "periphery_candidates": 190
+  },
+  "files": [
+    {
+      "path": ".collab/cloud-linux/handoffs/04-claude-diff-review.md",
+      "sha256": "8196067232cd6a79520f55dec66d0d991a23b6af9bcd7e96dc828aebdfa6b371",
+      "role": "brief"
+    },
+    {
+      "path": "crates/c3-core/src/health.rs",
+      "sha256": "05c1f249bb307794f0460f44f8341bb7b0a45961a90270313efd1547c4d865e4",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3-core/src/host.rs",
+      "sha256": "5b37431ecb77ec3b5c743e15ab012cd6c7e875948cec898db8997952adfb69cb",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/src/consult/detach.rs",
+      "sha256": "5c097fd1709d955b7754d011b30d487fc1d248640124107572a26092d2778f8a",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/src/consult/http.rs",
+      "sha256": "de808806b1b717b863558f90032f613957a8a3235a7d5e852ea2d0df9bc48f33",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/src/engines/subprocess.rs",
+      "sha256": "a05673741bbd7e64151b5bff7fdd611984a852182275ef53b0110780e3334c3f",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/src/http_engine/mod.rs",
+      "sha256": "3dd9b105b602e36a13ddfc17f750973c809e2fc1f881cad68d3f28d6bc975f2c",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/src/index/embed.rs",
+      "sha256": "ecc43a65b7b840e76813f8c51c600c6e8633599b24b80d81c5599f5e4090d07b",
+      "role": "focus"
+    },
+    {
+      "path": "crates/c3/src/liveness/proc.rs",
+      "sha256": "12c6e615c016fa0e19f65cc12d96bc6ae388ee4f59fecbf5addf32a3697614cc",
+      "role": "focus"
+    }
+  ],
+  "path_map": {
+    ".collab/cloud-linux/handoffs/04-claude-diff-review.md": "8196067232cd6a79520f55dec66d0d991a23b6af9bcd7e96dc828aebdfa6b371",
+    "crates/c3-core/src/health.rs": "05c1f249bb307794f0460f44f8341bb7b0a45961a90270313efd1547c4d865e4",
+    "crates/c3-core/src/host.rs": "5b37431ecb77ec3b5c743e15ab012cd6c7e875948cec898db8997952adfb69cb",
+    "crates/c3/src/consult/detach.rs": "5c097fd1709d955b7754d011b30d487fc1d248640124107572a26092d2778f8a",
+    "crates/c3/src/consult/http.rs": "de808806b1b717b863558f90032f613957a8a3235a7d5e852ea2d0df9bc48f33",
+    "crates/c3/src/engines/subprocess.rs": "a05673741bbd7e64151b5bff7fdd611984a852182275ef53b0110780e3334c3f",
+    "crates/c3/src/http_engine/mod.rs": "3dd9b105b602e36a13ddfc17f750973c809e2fc1f881cad68d3f28d6bc975f2c",
+    "crates/c3/src/index/embed.rs": "ecc43a65b7b840e76813f8c51c600c6e8633599b24b80d81c5599f5e4090d07b",
+    "crates/c3/src/liveness/proc.rs": "12c6e615c016fa0e19f65cc12d96bc6ae388ee4f59fecbf5addf32a3697614cc"
+  },
+  "request": {
+    "url": "https://openrouter.ai/api/v1/chat/completions",
+    "model": "nvidia/nemotron-3-super-120b-a12b:free",
+    "response_format": "json_object",
+    "prompt_sha256": "c4d171fa84c71c792ab0bc1ecd9697b3f3fc87d0548d99b5518af5f77f4fb0c9"
+  }
+}

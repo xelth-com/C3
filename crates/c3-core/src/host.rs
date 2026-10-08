@@ -11,6 +11,29 @@
 use crate::ledger::Coordinator;
 use crate::roster::RosterEntry;
 
+/// This machine's name, as the records' `host` and the "elsewhere" checks use it
+/// (`[Environment]::MachineName` in the plugin): `COMPUTERNAME`, else `HOSTNAME`, else (not on
+/// Windows, where `COMPUTERNAME` is always set) the kernel's host name from `/etc/hostname`, since
+/// a Linux shell rarely exports `HOSTNAME` and a blank host would make every record look local.
+pub fn machine_name() -> String {
+    let from_env = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return from_env;
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(name) = std::fs::read_to_string("/etc/hostname") {
+            let name = name.trim();
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    from_env
+}
+
 /// The exact host-marker names, in `$script:HostMarkerNames` source order (wave 27 + 27b). These
 /// are removed by exact name — never the whole `CLAUDE_CODE_` prefix, so `CLAUDE_CODE_USE_BEDROCK`
 /// (and a future claude engine's settings) survive.

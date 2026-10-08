@@ -4,16 +4,24 @@
 //! to that kill, and a recovery record naming a live process is judged active (so the next run
 //! is refused). These exercise the real spawn/kill path, not just the pure record logic.
 
+// The spawn/kill tests below run a `.cmd` launcher through cmd.exe, so they and their helpers
+// are Windows-only; the start-time test at the end runs everywhere.
+#[cfg(windows)]
 use std::sync::atomic::{AtomicU32, Ordering};
+#[cfg(windows)]
 use std::sync::Arc;
+#[cfg(windows)]
 use std::time::Duration;
 
+#[cfg(windows)]
 use c3_core::engine::PromptDelivery;
 
+#[cfg(windows)]
 use c3::engines::subprocess::{run_turn, SpawnRequest};
 use c3::liveness::proc;
 
 /// A `.cmd` that hangs for a while, so the turn is killed on its timeout.
+#[cfg(windows)] // a cmd.exe batch file
 fn hanging_launcher(dir: &std::path::Path) -> std::path::PathBuf {
     let p = dir.join("hang.cmd");
     // `ping -n 30` waits ~29 s; well past the 1 s test timeout.
@@ -21,6 +29,7 @@ fn hanging_launcher(dir: &std::path::Path) -> std::path::PathBuf {
     p
 }
 
+#[cfg(windows)] // used by the Windows-only spawn tests
 fn scratch_dir(tag: &str) -> std::path::PathBuf {
     let d = std::env::temp_dir().join(format!("c3-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);

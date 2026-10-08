@@ -47,9 +47,7 @@ fn refuse(msg: &str) -> i32 {
 
 /// This host's name, matching the record's `host` and the elsewhere check (`[Environment]::MachineName`).
 pub fn machine_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    c3_core::host::machine_name()
 }
 
 fn iso_now() -> String {
@@ -736,8 +734,8 @@ fn spawn_background(
     let log_err = log_file
         .try_clone()
         .map_err(|e| format!("could not open the log file ({e})"))?;
-    Command::new(exe)
-        .arg("consult")
+    let mut cmd = Command::new(exe);
+    cmd.arg("consult")
         .arg("--task")
         .arg(task)
         .arg("--collab-dir")
@@ -747,8 +745,15 @@ fn spawn_background(
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_err))
-        .spawn()
+        .stderr(Stdio::from(log_err));
+    // Its own process group (the Unix counterpart of CREATE_NEW_PROCESS_GROUP): a Ctrl-C or a
+    // group kill aimed at the foreground never reaches the background.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.spawn()
         .map(|_| ())
         .map_err(|e| format!("could not start the background process ({e})"))
 }

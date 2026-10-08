@@ -471,10 +471,10 @@ dependencies = [
  "chrono",
  "clap",
  "ed25519-dalek",
- "fs4",
  "globset",
  "ignore",
  "regex",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
@@ -483,6 +483,7 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -501,7 +502,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "fancy-regex",
- "fs4",
  "regex",
  "serde",
  "serde_json",
@@ -1257,16 +1257,6 @@ checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
 dependencies = [
  "libc",
  "winapi",
-]
-
-[[package]]
-name = "fs4"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e72ed92b67c146290f88e9c89d60ca163ea417a446f61ffd7b72df3e7f1dfd5"
-dependencies = [
- "rustix",
- "windows-sys 0.61.2",
 ]
 
 [[package]]

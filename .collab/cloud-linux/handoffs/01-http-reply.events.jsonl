@@ -1,0 +1,2 @@
+{"event":"request","method":"POST","url":"https://openrouter.ai/api/v1/chat/completions","model":"nvidia/nemotron-3.5-lightning:free","messages":2,"body_bytes":76184,"pack_sha256":"87fae12f0f949bcff628098e95a22d065d4fc0e3fb3f6021d3ec6fe03d07b707","headers":["content-type"],"auth":"proxy","proxy":true}
+{"event":"error","class":"transport","message":"https://openrouter.ai/api/v1/chat/completions: Connection Failed: tls connection init failed: invalid peer certificate: UnknownIssuer","elapsed_seconds":0.3}

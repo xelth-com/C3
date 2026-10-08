@@ -111,6 +111,21 @@ The `index-surreal` feature (on by default) pulls in SurrealDB, which adds ~26 m
 cold release build; `--no-default-features` compiles it out for a fast development loop and
 CI builds both variants.
 
+### Platforms
+
+Windows 11 is where every harness ran and where the PowerShell plugin's evals are the oracle;
+since the Linux port (`docs/port/linux-port.md`) the same tree builds, lints and tests on
+Ubuntu x86_64 too, and `.github/workflows/ci.yml` runs fmt, clippy and the test suites on
+`ubuntu-latest` and `windows-latest` (the SurrealDB build only on Ubuntu). What differs on
+Linux: process liveness and the tree kill come from `/proc` and `kill` instead of the Win32
+APIs and `taskkill /T`, the file locks are `flock` advisory locks instead of share modes, and
+a detached run is a child in its own process group instead of a `cmd.exe` launch; the files
+written are the same bytes. The tests that need Windows (cmd.exe launchers, Windows launcher
+paths) are gated `#[cfg(windows)]` with a reason each. macOS is untested. For a sandbox whose
+egress proxy carries the credential and re-terminates TLS, the `http` engine honours
+`HTTPS_PROXY`, `C3_HTTP_AUTH_PROXY=<host,...>` (no `Authorization` header, no key read) and
+`C3_HTTP_CA_BUNDLE=<pem>` (extra trust anchors) — see `docs/port/linux-port.md`.
+
 A cargo workspace of three crates: `crates/c3-core` (contracts and file formats),
 `crates/c3` (runtime modules), `crates/c3-cli` (the binary). Each ported piece brings its
 own dependencies when it needs them; SurrealDB arrives with milestone 8 behind a feature.

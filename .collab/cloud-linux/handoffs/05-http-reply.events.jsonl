@@ -1,0 +1,2 @@
+{"event":"request","method":"POST","url":"https://openrouter.ai/api/v1/chat/completions","model":"google/gemma-4-31b-it:free","messages":2,"body_bytes":89533,"pack_sha256":"6800ebba1b0d1f20965097e14b02541351ef2a19779cb095f61f3724fc5a5505","headers":["content-type"],"auth":"proxy","proxy":true,"ca_bundle":true}
+{"event":"error","class":"burst","code":"429","message":"provider error: Provider returned error","elapsed_seconds":0.7,"retry_after":null}

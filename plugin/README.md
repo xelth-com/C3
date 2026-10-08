@@ -65,6 +65,11 @@ then a binary bundled at `<plugin root>/bin/`, then PATH), runs `c3 hook`, and p
 one-line output. If `c3` cannot be found, the wrapper prints one line saying so and still
 exits 0 — a missing binary never blocks a Claude Code session from starting.
 
+Platforms: the `c3` binary builds and passes its test suites on Windows 11 and on Ubuntu
+x86_64 (the Linux port, `docs/port/linux-port.md`); the plugin's own files are the same on
+both, and the `.collab` files a Linux `c3` writes are byte-compatible with the Windows ones.
+macOS is untested.
+
 The `skills/consult/SKILL.md`, `skills/coordinate/SKILL.md` and
 `skills/setup-providers/SKILL.md` files are the C3 versions of the PowerShell plugin's
 `consult-codex`, `coordinate` and `setup-providers` skills: same rules, every command

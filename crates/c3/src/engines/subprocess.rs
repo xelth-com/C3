@@ -597,9 +597,24 @@ fn kill_tree(child: &mut Child) -> Vec<u32> {
     }
     #[cfg(not(windows))]
     {
+        // Best effort without `taskkill /T`: the descendants from the process table first (the
+        // launcher's own children would otherwise outlive it as orphans), then the child.
+        for pid in crate::liveness::proc::descendants_of(child.id()) {
+            kill_pid_unix(pid);
+        }
         let _ = child.kill();
         Vec::new()
     }
+}
+
+/// `kill -9 <pid>` through the `kill` binary (no libc dependency); best effort.
+#[cfg(not(windows))]
+fn kill_pid_unix(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-9", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Kill the process tree rooted at `pid` (a tree WE started, by pid — never by name). On Windows
@@ -619,11 +634,10 @@ pub fn kill_tree_by_pid(pid: u32) {
     }
     #[cfg(not(windows))]
     {
-        let _ = Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        for d in crate::liveness::proc::descendants_of(pid) {
+            kill_pid_unix(d);
+        }
+        kill_pid_unix(pid);
     }
 }
 

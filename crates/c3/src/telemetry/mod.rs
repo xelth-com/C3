@@ -238,11 +238,10 @@ fn read_or_create_salt(dir: &Path) -> String {
     salt
 }
 
-/// The machine name, from the same environment the reference client reads.
+/// The machine name, from the same environment the reference client reads (plus, off Windows,
+/// `/etc/hostname` when the shell exports no `HOSTNAME`).
 fn machine_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    c3_core::host::machine_name()
 }
 
 fn to_hex(bytes: &[u8]) -> String {

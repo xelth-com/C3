@@ -237,9 +237,7 @@ mod tests {
         // recorded-pid rule finds it alive → active → a real run is refused.
         let me = std::process::id();
         let start = crate::liveness::proc::process_start_iso(me).unwrap_or_default();
-        let host = std::env::var("COMPUTERNAME")
-            .or_else(|_| std::env::var("HOSTNAME"))
-            .unwrap_or_default();
+        let host = c3_core::host::machine_name();
         let json = format!(
             r#"{{"state":"running","n":5,"nn":"07","reply":"handoffs/07-codex-old.md","started":"2026-01-01T00:00:00+00:00","pid":1,"start_time":"","host":"{host}","launcher":"","child_pid":{me},"child_start_time":"{start}","survivors":[],"note":""}}"#
         );

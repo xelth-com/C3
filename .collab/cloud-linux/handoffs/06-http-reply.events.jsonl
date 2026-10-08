@@ -1,0 +1,2 @@
+{"event":"request","method":"POST","url":"https://openrouter.ai/api/v1/chat/completions","model":"nvidia/nemotron-3-super-120b-a12b:free","messages":2,"body_bytes":89545,"pack_sha256":"6800ebba1b0d1f20965097e14b02541351ef2a19779cb095f61f3724fc5a5505","headers":["content-type"],"auth":"proxy","proxy":true,"ca_bundle":true}
+{"event":"response","status":200,"id":"gen-1791444710-BjMVoglAK9FKCo3tdBp4","body_bytes":117239,"elapsed_seconds":131.4}

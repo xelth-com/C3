@@ -1981,7 +1981,8 @@ fn panel_member_guard(timeout: i64, continue_sec: i64, repair: bool, denial: boo
     g as f64
 }
 
-/// Kill a member's process tree (`Stop-ProcessTree`): `taskkill /F /T` on Windows, else a kill.
+/// Kill a member's process tree (`Stop-ProcessTree`): `taskkill /F /T` on Windows, else the
+/// descendants from the process table (best effort) and then the member itself.
 fn kill_tree(child: &mut Child) {
     #[cfg(windows)]
     {
@@ -1991,6 +1992,16 @@ fn kill_tree(child: &mut Child) {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
+    }
+    #[cfg(not(windows))]
+    {
+        for pid in crate::liveness::proc::descendants_of(child.id()) {
+            let _ = Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -2084,9 +2095,7 @@ fn iso_now() -> String {
 }
 
 fn pending_host() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_default()
+    c3_core::host::machine_name()
 }
 
 fn round1(x: f64) -> f64 {

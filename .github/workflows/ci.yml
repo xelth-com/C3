@@ -1,0 +1,94 @@
+# C3 continuous integration: format, lint and test on Linux and Windows.
+#
+# - fmt and clippy (both feature sets) and `cargo test --no-default-features` run on both
+#   runners; the default-features test (SurrealDB behind `index-surreal`) runs on ubuntu only,
+#   where the cold build is affordable.
+# - No secrets: nothing here needs a key, and the live `http` runs are never part of CI.
+# - The cargo registry and the target directory are cached per lock file and feature set.
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: ${{ matrix.os }} / no-default-features
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+          rustc --version && cargo --version
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+      - name: Cache target (no-default-features)
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: target-nodefault-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: target-nodefault-${{ runner.os }}-
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy (no default features)
+        run: cargo clippy -p c3 -p c3-core -p c3-cli --all-targets --no-default-features -- -D warnings
+      - name: Test (no default features)
+        run: cargo test --workspace --no-default-features
+
+  default-features:
+    name: ${{ matrix.os }} / default features
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+          rustc --version && cargo --version
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: cargo-registry-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-registry-${{ runner.os }}-
+      - name: Cache target (default features)
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: target-default-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: target-default-${{ runner.os }}-
+      - name: Clippy (default features)
+        run: cargo clippy -p c3 -p c3-core -p c3-cli --all-targets -- -D warnings
+      - name: Test (default features, ubuntu only)
+        if: runner.os == 'Linux'
+        run: cargo test --workspace
