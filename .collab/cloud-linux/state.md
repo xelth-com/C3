@@ -23,7 +23,6 @@ full; the budget is the periphery's). Handoff numbers skip 04, which is the brie
 | 3 (05) | `openrouter :: google/gemma-4-31b-it:free [http]` | `brief.md` | failed: burst — 429 `Provider returned error` from the free upstream 0.7 s after the request. The proxy, the CA bundle and the header-less auth all worked: a real OpenRouter error envelope came back | 0.7 s | - | - |
 | 4 (06) | `openrouter :: nvidia/nemotron-3-super-120b-a12b:free [http]` | `brief.md` | a complete HTTP exchange (200, 117 KB body) but the reply was `{"": ""}`: the model spent 13 814 of its 13 821 output tokens on reasoning and emitted an empty object under JSON mode; recorded INVALID, raw kept, no findings | 131.4 s | 26 405 / 13 821 (13 814 reasoning) | no |
 | 5 (07) | `openrouter :: openai/gpt-6-luna [http]` | `brief.md` | usable, HOLD (the schema expects ADVISE for `decision`, recorded as invalid verdict), 5 findings F07-1..F07-5 (4 major, 1 minor); the normaliser repaired five `evidence` objects wrapped in arrays and kept the model's own text in `07-http-reply.original.json` | 183.3 s | 26 405 / 16 961 | yes |
-RUN-ROWS
 
 ## What the runs proved
 
