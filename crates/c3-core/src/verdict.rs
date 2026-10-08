@@ -25,10 +25,26 @@ pub struct PreflightVerdict {
     pub hit: Option<DateTime<FixedOffset>>,
     pub until: Option<DateTime<FixedOffset>>,
     pub credential: Option<CredentialResult>,
+    /// (wave 24c) the blocking quota record is a burst 429 (`kind` `quota-unknown-reset` only).
+    pub burst: bool,
+    /// (wave 29b, E5 - C3 wave 1b) set when the entry is out because its PLAN is out on another
+    /// route ([`crate::plan::plan_quota_verdict`]): the plan and the label of that route, for
+    /// the availability views.
+    pub plan_quota: Option<PlanQuotaRef>,
+}
+
+/// The plan a verdict was judged by (`PlanQuota { Plan; Label }`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanQuotaRef {
+    pub plan: String,
+    /// The provider label of the route the blocking record was recorded on (`another route`
+    /// when no roster entry of the plan names that fingerprint).
+    pub label: String,
 }
 
 impl PreflightVerdict {
-    fn available() -> Self {
+    /// An `available` verdict with every other field empty.
+    pub fn available() -> Self {
         PreflightVerdict {
             state: "available".into(),
             preflight: String::new(),
@@ -39,6 +55,8 @@ impl PreflightVerdict {
             hit: None,
             until: None,
             credential: None,
+            burst: false,
+            plan_quota: None,
         }
     }
 }
@@ -141,10 +159,16 @@ pub fn verdict_with_credential(
         let out_min = (q.until - q.hit).num_minutes();
         v.state = "unavailable".into();
         v.kind = "quota-unknown-reset".into();
+        v.burst = is_burst;
         v.hit = Some(q.hit);
         v.until = Some(q.until);
         v.reason = format!(
-            "usage limit hit {}, reset unknown; retry after {until_iso}",
+            "{} hit {}, reset unknown; retry after {until_iso}",
+            if is_burst {
+                "burst limit (429)"
+            } else {
+                "usage limit"
+            },
             q.hit_iso
         );
         v.preflight = format!("unavailable: {}", v.reason);

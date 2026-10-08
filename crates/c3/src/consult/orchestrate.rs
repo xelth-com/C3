@@ -302,6 +302,15 @@ fn effort_plan(id: &ReviewerIdentity, requested: &str, native: &str) -> EffortPl
     }
 }
 
+/// (wave 1b, 0.6.0 E5) What the direct run's plan check needs: the roster, the run's roster entry,
+/// the codex launcher and the OpenAI base URL the plan's identities resolve with.
+pub(crate) struct PlanCheck<'a> {
+    pub(crate) roster: &'a c3_core::roster::Roster,
+    pub(crate) entry: &'a c3_core::roster::RosterEntry,
+    pub(crate) codex_launcher: &'a str,
+    pub(crate) openai_base_url: &'a str,
+}
+
 /// The preflight verdict for the codex engine (M2c: credentials only). Returns the
 /// `preflight` string for the ledger and, for a real run, an optional `(refusal, exit_code)`.
 /// A non-openai provider's credential check is deferred: it is left unevaluated (`""`) and
@@ -315,6 +324,9 @@ fn resolve_preflight(
     // (wave 26b, D-auth) the selected reviewer's roster entry declares `auth: "none"`: a provider
     // whose table has no env_key/bearer is then "ok: declared anonymous in the roster".
     anonymous: bool,
+    // (wave 1b, 0.6.0 E5) the roster and the run's roster entry: a usage limit on another route of
+    // the entry's plan refuses the run too (`Get-PlanQuotaVerdict`, the direct-run form).
+    plan: Option<PlanCheck<'_>>,
 ) -> (String, Option<(String, i32)>, String, Option<String>) {
     // The plugin refuses a preflight through `Stop-WithError` (exit 1, nothing written,
     // `codex-consult.ps1:304`); c3 matches that, not cli-surface.md's aspirational exit 2/3.
@@ -325,11 +337,15 @@ fn resolve_preflight(
     // matched by the resolved identity's provider fingerprint: a recorded auth failure (within
     // 24 h), usage limit (with a reset), burst 429 (10 min) or reset-less quota (60 min) blocks
     // a later run before the lock (F09-2/4).
+    let utc_now = c3_core::peak::consult_clock(0)
+        .map(|(u, _, _)| u)
+        .unwrap_or_else(|_| chrono::Utc::now());
+    let consults = if id.resolved {
+        providers::read_all_task_consults_health(collab_root)
+    } else {
+        Vec::new()
+    };
     let health = if id.resolved {
-        let consults = providers::read_all_task_consults_health(collab_root);
-        let utc_now = c3_core::peak::consult_clock(0)
-            .map(|(u, _, _)| u)
-            .unwrap_or_else(|_| chrono::Utc::now());
         Some(c3_core::health::endpoint_health(
             &consults,
             &id.fingerprint,
@@ -365,7 +381,21 @@ fn resolve_preflight(
         .reason
         .strip_prefix("not checked - `codex login status` was skipped: ")
         .map(|why| format!("a launcher probe was skipped: {why}"));
-    let v = verdict_with_credential(id, health.as_ref(), cred, false);
+    let mut v = verdict_with_credential(id, health.as_ref(), cred, false);
+    // (wave 29b, E5) a usage limit on another route of the roster entry's plan refuses the run too
+    if let Some(pc) = plan {
+        if pc.roster.exists && !pc.entry.plan.is_empty() {
+            let ctx = providers::Ctx::for_consult(
+                config.clone(),
+                consults,
+                pc.roster.clone(),
+                pc.codex_launcher.to_string(),
+                pc.openai_base_url.to_string(),
+                utc_now,
+            );
+            v = ctx.plan_verdict(v, pc.entry, id, false);
+        }
+    }
     if v.state == "available" {
         (v.preflight, None, v.label, probe_warning)
     } else {
@@ -551,6 +581,9 @@ pub(crate) struct Context {
     pub(crate) recovery_lines: Vec<String>,
     /// The panel member spec this run honours (`--panel-spec`); `None` for a single run.
     pub(crate) panel_member: Option<crate::panel::member::MemberSpec>,
+    /// (wave 1b, 0.6.0 E16) the run's roster entry's plan (`""` without one): its machine-wide
+    /// running row carries it, so a panel elsewhere counts this run against the plan's limit.
+    pub(crate) plan: String,
     /// The member's role name (empty when none), for the ledger `role` field.
     pub(crate) role: String,
     /// The panel-wide roles note (ledger `panel.roles_note`), if any.
@@ -1672,8 +1705,20 @@ fn build_context(
                 .as_ref()
                 .map(|e| e.auth == "none")
                 .unwrap_or(false);
-            let (p, refusal, label, probe_warning) =
-                resolve_preflight(&identity, &engine_launcher, &config, &collab_root, anon);
+            let plan_check = roster_entry.as_ref().map(|e| PlanCheck {
+                roster: &roster,
+                entry: e,
+                codex_launcher: &launcher,
+                openai_base_url: &openai_base_url,
+            });
+            let (p, refusal, label, probe_warning) = resolve_preflight(
+                &identity,
+                &engine_launcher,
+                &config,
+                &collab_root,
+                anon,
+                plan_check,
+            );
             // (D4) a skipped launcher probe warns (deduped), in both the dry-run preview and the
             // real run's ledger warnings[].
             if let Some(w) = probe_warning {
@@ -2246,6 +2291,10 @@ fn build_context(
         recovery_dry_lines,
         recovery_lines: Vec::new(),
         panel_member: member.cloned(),
+        plan: roster_entry
+            .as_ref()
+            .map(|e| e.plan.clone())
+            .unwrap_or_default(),
         role: member.map(|m| m.role.clone()).unwrap_or_default(),
         roles_note,
         mode_fallback,
@@ -3131,6 +3180,9 @@ fn run_live(mut ctx: Context) -> i32 {
                 .map(|m| m.id.clone())
                 .unwrap_or_default(),
             since: iso_now(),
+            // (wave 29b, E16) with the roster entry's plan: a panel elsewhere counts it against
+            // the plan
+            plan: ctx.plan.clone(),
         };
         let _ = c3_core::health::register_machine_running(hp, row, &|pid, st| {
             crate::liveness::proc::pid_alive(pid, st)

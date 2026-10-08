@@ -9,6 +9,11 @@
 //! read or written - D12), and the top-level `require` (`{"<purpose>": ["<reviewer>", ...]}`:
 //! the reviewers a `-Panel` of that purpose must include - D7; every matcher must name an
 //! entry at load or the roster is unusable) and `ext`. `roster_version` stays `1`.
+//!
+//! 0.6.0 (wave 29b, E5/E7 - C3 wave 1b): the per-entry `plan` (a slug naming the coding plan
+//! whose quota the entry's route spends, on an entry of ANY engine - [`PLAN_SLUG_RE`]) and the
+//! key `endpoint` (accepted by name, refused on every entry: it belongs to the claude engine's
+//! auth `endpoint`, which C3 does not run yet); a `parallel` key may name a plan.
 
 use serde_json::Value;
 
@@ -25,6 +30,23 @@ pub const CONSULT_PURPOSES: &[&str] = &[
     "stuck",
     "chore",
 ];
+
+/// (0.6.0, wave 29b E5) The plan slug: 2 to 32 characters - lowercase letters, digits and `-`,
+/// starting with a letter (`$script:PlanSlugRe`, matched case-sensitively).
+pub const PLAN_SLUG_RE: &str = r"^[a-z][a-z0-9-]{1,31}$";
+
+/// Whether `value` is a plan slug ([`PLAN_SLUG_RE`]).
+pub fn is_plan_slug(value: &str) -> bool {
+    regex::Regex::new(PLAN_SLUG_RE).unwrap().is_match(value)
+}
+
+/// The refusal `why` of a `plan` value that is not a slug (`at` is `entry <n>`; `got` the
+/// value as compact JSON) - the plugin's exact wording.
+pub fn plan_slug_problem(at: &str, got: &str) -> String {
+    format!(
+        "{at}: plan must be a slug of 2 to 32 characters - lowercase letters, digits and \"-\", starting with a letter (e.g. \"zai\"; got {got})"
+    )
+}
 
 /// One validated roster entry.
 #[derive(Debug, Clone, Default)]
@@ -54,6 +76,10 @@ pub struct RosterEntry {
     /// (wave 26b, D16) the reviewer's context window in tokens (>= 32000); `0` when the entry
     /// names none (no context budgeting for this reviewer).
     pub context_tokens: i64,
+    /// (0.6.0, wave 29b E5) the coding plan whose quota this entry's route spends (a slug,
+    /// [`PLAN_SLUG_RE`]); `""` when the entry names none. Every entry of one plan shares its
+    /// quota (a usage limit on one route marks the others out) and its scheduling group.
+    pub plan: String,
 }
 
 /// The roster (`Read-ReviewerRoster`'s result).
@@ -418,23 +444,23 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                     "model",
                     "codex_config",
                     "auth",
+                    // (0.6.0, wave 29b E1/E5) the claude engine's endpoint block (refused below on
+                    // every entry C3 can run) and the plan of any entry
+                    "endpoint",
+                    "plan",
                     "panel",
                     "engine",
                     "lab",
                     "roles",
-                    "ext",
-                    // Accepted by the plugin at HEAD (post wave 26) with runtime semantics not yet
-                    // documented: per-entry timeout, stall detection and context budget. C3 accepts
-                    // them as opaque so a roster the plugin accepts is never refused here; the
-                    // semantics are ported when the plugin documents them.
                     "timeout_sec",
                     "stall_sec",
                     "context_tokens",
+                    "ext",
                 ]
                 .contains(&key.as_str())
                 {
                     why = format!(
-                        "{at} has an unknown key '{key}' (allowed: provider, model, codex_config, auth, panel, engine, lab, roles, ext, timeout_sec, stall_sec, context_tokens)"
+                        "{at} has an unknown key '{key}' (allowed: provider, model, codex_config, auth, endpoint, plan, panel, engine, lab, roles, timeout_sec, stall_sec, context_tokens, ext)"
                     );
                     break;
                 }
@@ -457,12 +483,69 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             if d3_bad {
                 break;
             }
-            // ext (D12): validated as an object, otherwise ignored (checked first, matching the
-            // plugin's per-entry order).
+            // (wave 26b, D11) timeout_sec: an integer from 60 to 86400 (seconds). The three numeric
+            // keys come first, then ext and the plan - the plugin's per-entry order (0.6.0).
+            let mut timeout_sec: i64 = 0;
+            if let Some(tv) = iobj.get("timeout_sec") {
+                if !is_json_integer(tv)
+                    || tv.as_f64().unwrap_or(0.0) < 60.0
+                    || tv.as_f64().unwrap_or(0.0) > 86400.0
+                {
+                    why = format!(
+                        "{at}: timeout_sec must be an integer from 60 to 86400 (seconds; got {})",
+                        compact(tv)
+                    );
+                    break;
+                }
+                timeout_sec = tv.as_i64().unwrap_or(0);
+            }
+            // (wave 26b, D16) context_tokens: an integer from 32000 to 100000000.
+            let mut context_tokens: i64 = 0;
+            if let Some(cv) = iobj.get("context_tokens") {
+                if !is_json_integer(cv)
+                    || cv.as_f64().unwrap_or(0.0) < 32000.0
+                    || cv.as_f64().unwrap_or(0.0) > 100_000_000.0
+                {
+                    why = format!(
+                        "{at}: context_tokens must be an integer from 32000 to 100000000 (the reviewer's context window in tokens, e.g. 256000; got {})",
+                        compact(cv)
+                    );
+                    break;
+                }
+                context_tokens = cv.as_i64().unwrap_or(0);
+            }
+            // (wave 26b, D12) stall_sec: an integer from 0 (off) to 86400 (seconds without an event).
+            let mut stall_sec: i64 = -1;
+            if let Some(sv) = iobj.get("stall_sec") {
+                if !is_json_integer(sv)
+                    || sv.as_f64().unwrap_or(-1.0) < 0.0
+                    || sv.as_f64().unwrap_or(-1.0) > 86400.0
+                {
+                    why = format!(
+                        "{at}: stall_sec must be an integer from 0 (off) to 86400 (seconds without an event; got {})",
+                        compact(sv)
+                    );
+                    break;
+                }
+                stall_sec = sv.as_i64().unwrap_or(-1);
+            }
+            // ext (D12): validated as an object, otherwise ignored.
             if let Some(xv) = iobj.get("ext") {
                 if !xv.is_object() {
                     why = format!("{at}: ext must be an object (the extension point of other implementations; got {})", compact(xv));
                     break;
+                }
+            }
+            // (0.6.0, wave 29b E5) the plan (the quota a route shares with the other routes to the
+            // same coding plan): a slug, on any entry of any engine.
+            let mut plan = String::new();
+            if let Some(pv) = iobj.get("plan") {
+                match pv.as_str() {
+                    Some(s) if is_plan_slug(s) => plan = s.to_string(),
+                    _ => {
+                        why = plan_slug_problem(&at, &compact(pv));
+                        break;
+                    }
                 }
             }
             // lab (D1): a non-empty string without surrounding blanks, kept canonical lowercase.
@@ -611,50 +694,14 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                     break;
                 }
             }
-            // (wave 26b, D11) timeout_sec: an integer from 60 to 86400 (seconds).
-            let mut timeout_sec: i64 = 0;
-            if let Some(tv) = iobj.get("timeout_sec") {
-                if !is_json_integer(tv)
-                    || tv.as_f64().unwrap_or(0.0) < 60.0
-                    || tv.as_f64().unwrap_or(0.0) > 86400.0
-                {
-                    why = format!(
-                        "{at}: timeout_sec must be an integer from 60 to 86400 (seconds; got {})",
-                        compact(tv)
-                    );
-                    break;
-                }
-                timeout_sec = tv.as_i64().unwrap_or(0);
-            }
-            // (wave 26b, D16) context_tokens: an integer from 32000 to 100000000.
-            let mut context_tokens: i64 = 0;
-            if let Some(cv) = iobj.get("context_tokens") {
-                if !is_json_integer(cv)
-                    || cv.as_f64().unwrap_or(0.0) < 32000.0
-                    || cv.as_f64().unwrap_or(0.0) > 100_000_000.0
-                {
-                    why = format!(
-                        "{at}: context_tokens must be an integer from 32000 to 100000000 (the reviewer's context window in tokens, e.g. 256000; got {})",
-                        compact(cv)
-                    );
-                    break;
-                }
-                context_tokens = cv.as_i64().unwrap_or(0);
-            }
-            // (wave 26b, D12) stall_sec: an integer from 0 (off) to 86400 (seconds without an event).
-            let mut stall_sec: i64 = -1;
-            if let Some(sv) = iobj.get("stall_sec") {
-                if !is_json_integer(sv)
-                    || sv.as_f64().unwrap_or(-1.0) < 0.0
-                    || sv.as_f64().unwrap_or(-1.0) > 86400.0
-                {
-                    why = format!(
-                        "{at}: stall_sec must be an integer from 0 (off) to 86400 (seconds without an event; got {})",
-                        compact(sv)
-                    );
-                    break;
-                }
-                stall_sec = sv.as_i64().unwrap_or(-1);
+            // (0.6.0, wave 29b E1) the endpoint block belongs to engine claude with auth
+            // "endpoint" only - an engine C3 does not run yet (wave 4), so every entry C3 accepts
+            // refuses it with the plugin's text.
+            if iobj.contains_key("endpoint") {
+                why = format!(
+                    "{at}: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine {engine})"
+                );
+                break;
             }
             if let Some(other) = entries
                 .iter()
@@ -695,6 +742,7 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 timeout_sec,
                 stall_sec,
                 context_tokens,
+                plan,
             });
         }
     }
@@ -710,8 +758,13 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 }
                 Some(pmap) => {
                     for (name, val) in pmap {
-                        if !entries.iter().any(|e| &e.provider == name) {
-                            why = format!("parallel names the provider label '{name}', which no entry of the roster uses");
+                        // (0.6.0, wave 29b E7) a key names a provider label or a plan (the plan's
+                        // scheduling group)
+                        if !entries
+                            .iter()
+                            .any(|e| &e.provider == name || (!e.plan.is_empty() && &e.plan == name))
+                        {
+                            why = format!("parallel names the provider label '{name}', which no entry of the roster uses (as its provider label or its plan)");
                             break;
                         }
                         if !is_json_integer(val) || val.as_f64().unwrap_or(0.0) < 1.0 {
@@ -1057,6 +1110,127 @@ mod tests {
                 .contains(r#"entry 1: panel must be "always", "weighty" or "light" (got "heavy")"#),
             "{}",
             bad.error
+        );
+    }
+
+    fn why(json: &str) -> String {
+        let r = validate_roster("R.json", json, None);
+        assert!(!r.error.is_empty(), "expected a refusal: {json}");
+        let pre = "the reviewer roster 'R.json' is not usable: ";
+        let s = r.error.strip_prefix(pre).unwrap_or(&r.error);
+        s.split(". Fix it or move it aside")
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn plan_is_a_slug_on_any_engine() {
+        // (0.6.0, wave 29b E5) a plan on a codex entry and on an agy/muse entry; omitted = ""
+        let r = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","model":"glm-5.3","plan":"zai"},{"provider":"gemini","engine":"agy","model":"gemini-3-pro","plan":"google-ai-pro"},{"provider":"openai","model":"gpt-5.1"},{"provider":"ZAI2","model":"glm-5.3-flash","plan":"zai"}]}"##,
+        );
+        let plans: Vec<&str> = r.entries.iter().map(|e| e.plan.as_str()).collect();
+        assert_eq!(plans, vec!["zai", "google-ai-pro", "", "zai"]);
+        // the slug rule (case-sensitive, 2..32, a letter first, letters/digits/-)
+        for good in [
+            "zai",
+            "ab",
+            "a1",
+            "kimi-code",
+            "a234567890123456789012345678901b",
+        ] {
+            assert!(is_plan_slug(good), "{good}");
+        }
+        for bad in [
+            "",
+            "z",
+            "Zai",
+            "1zai",
+            "-zai",
+            "zai_x",
+            "zai.x",
+            "zai x",
+            "a2345678901234567890123456789012c",
+        ] {
+            assert!(!is_plan_slug(bad), "{bad}");
+        }
+        let text = |v: &str| {
+            format!(
+                "entry 1: plan must be a slug of 2 to 32 characters - lowercase letters, digits and \"-\", starting with a letter (e.g. \"zai\"; got {v})"
+            )
+        };
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":"ZAI"}]}"##),
+            text("\"ZAI\"")
+        );
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":"z"}]}"##),
+            text("\"z\"")
+        );
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":5}]}"##),
+            text("5")
+        );
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":["zai"]}]}"##),
+            text("[\"zai\"]")
+        );
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":null}]}"##),
+            text("null")
+        );
+        // the plugin's per-entry order: timeout/context/stall, ext, plan, then lab ...
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":"Z","lab":""}]}"##),
+            text("\"Z\"")
+        );
+        assert!(why(
+            r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":"Z","timeout_sec":5}]}"##
+        )
+        .starts_with("entry 1: timeout_sec must be"));
+        assert!(why(
+            r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","plan":"Z","ext":1}]}"##
+        )
+        .starts_with("entry 1: ext must be an object"));
+    }
+
+    #[test]
+    fn the_unknown_key_list_and_the_endpoint_key_are_the_plugins() {
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","modle":"glm-5.3"}]}"##),
+            "entry 1 has an unknown key 'modle' (allowed: provider, model, codex_config, auth, endpoint, plan, panel, engine, lab, roles, timeout_sec, stall_sec, context_tokens, ext)"
+        );
+        // endpoint is the claude engine's (auth "endpoint", wave 4): refused on every engine C3 runs
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"K"},"plan":"zai"}]}"##),
+            "entry 1: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine codex)"
+        );
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"gemini","engine":"agy","model":"gemini-3-pro","endpoint":{}}]}"##),
+            "entry 1: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine agy)"
+        );
+    }
+
+    #[test]
+    fn parallel_may_name_a_plan() {
+        // (0.6.0, wave 29b E7) a parallel key names a provider label or a plan
+        let r = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","model":"glm-5.3","plan":"zai"},{"provider":"openai","model":"gpt-5.1"}],"parallel":{"zai":2,"openai":1}}"##,
+        );
+        assert_eq!(
+            r.parallel,
+            vec![("zai".to_string(), 2), ("openai".to_string(), 1)]
+        );
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","model":"glm-5.3"}],"parallel":{"zai":2}}"##),
+            "parallel names the provider label 'zai', which no entry of the roster uses (as its provider label or its plan)"
+        );
+        assert_eq!(
+            why(
+                r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","model":"glm-5.3","plan":"zai"}],"parallel":{"zai":0}}"##
+            ),
+            "parallel.zai must be an integer >= 1 (got 0)"
         );
     }
 }

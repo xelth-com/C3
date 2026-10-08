@@ -56,6 +56,10 @@ pub struct HttpReviewer {
     /// (S6) The reviewer pack's periphery budget in tokens (`0..=200000`); `-1` when the entry
     /// names none (the run then takes `--pack-budget`, else [`DEFAULT_PACK_TOKENS`]).
     pub pack_tokens: i64,
+    /// (wave 1b, 0.6.0 E5) The coding plan whose quota this route spends (a slug, the plugin's
+    /// rule); `""` when the entry names none. Shared with every roster entry of that plan: a
+    /// usage limit propagates, the routes share one scheduling group and one machine-wide wait.
+    pub plan: String,
 }
 
 /// The default OpenRouter API base (mirrors `crate`-side `http_engine::DEFAULT_BASE_URL`).
@@ -78,6 +82,7 @@ const ALLOWED_KEYS: &[&str] = &[
     "roles",
     "api_billing",
     "pack_tokens",
+    "plan",
 ];
 
 /// (S6) The default periphery-token budget for an http reviewer pack when neither the roster nor
@@ -355,6 +360,7 @@ impl HttpReviewer {
             timeout_sec: 0,
             stall_sec: -1,
             context_tokens: 0,
+            plan: self.plan.clone(),
         }
     }
 }
@@ -681,6 +687,19 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
             }
             pack_tokens = tv.as_i64().unwrap_or(-1);
         }
+        // (wave 1b, 0.6.0 E5) plan: the slug rule and wording of an ordinary entry's plan.
+        let mut plan = String::new();
+        if let Some(pv) = iobj.get("plan") {
+            match pv.as_str() {
+                Some(s) if crate::roster::is_plan_slug(s) => plan = s.to_string(),
+                _ => {
+                    return Err(crate::roster::plan_slug_problem(
+                        &at,
+                        &serde_json::to_string(pv).unwrap_or_default(),
+                    ))
+                }
+            }
+        }
         // A duplicate reviewer (provider + model) within the extension, matching the plugin's
         // duplicate-entry refusal wording.
         if let Some(dup) = out
@@ -708,6 +727,7 @@ pub fn parse_ext_reviewers(data: &Value, plugin_count: usize) -> Result<Vec<Http
             roles,
             api_billing_accepted,
             pack_tokens,
+            plan,
         });
     }
     Ok(out)
@@ -783,6 +803,23 @@ mod tests {
 
     fn one(inner: &str) -> String {
         err(&format!(r#"{{"ext":{{"c3":{{"reviewers":[{inner}]}}}}}}"#))
+    }
+
+    #[test]
+    fn an_http_reviewer_may_name_a_plan() {
+        // (wave 1b, 0.6.0 E5) the plan of an http route: the slug rule and wording of a plugin entry
+        let v = parse(
+            r#"{"ext":{"c3":{"reviewers":[{"provider":"or","model":"z-ai/glm-5.3","plan":"zai"},{"provider":"or","model":"m2"}]}}}"#,
+            1,
+        )
+        .unwrap();
+        assert_eq!(v[0].plan, "zai");
+        assert_eq!(v[0].to_entry().plan, "zai");
+        assert!(v[1].plan.is_empty());
+        assert_eq!(
+            one(r#"{"provider":"or","model":"m","plan":"Zai"}"#),
+            "ext.c3.reviewers entry 1: plan must be a slug of 2 to 32 characters - lowercase letters, digits and \"-\", starting with a letter (e.g. \"zai\"; got \"Zai\")"
+        );
     }
 
     #[test]
