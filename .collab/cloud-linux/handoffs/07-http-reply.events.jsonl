@@ -1,0 +1,1 @@
+{"event":"request","method":"POST","url":"https://openrouter.ai/api/v1/chat/completions","model":"openai/gpt-6-luna","messages":2,"body_bytes":89524,"pack_sha256":"6800ebba1b0d1f20965097e14b02541351ef2a19779cb095f61f3724fc5a5505","headers":["content-type"],"auth":"proxy","proxy":true,"ca_bundle":true}
