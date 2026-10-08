@@ -508,10 +508,8 @@ mod imp {
             if length == 0 || header + length > buf.len() {
                 return String::new();
             }
-            let units: Vec<u16> = buf[header..header + length]
-                .chunks_exact(2)
-                .map(|c| u16::from_ne_bytes([c[0], c[1]]))
-                .collect();
+            let (pairs, _) = buf[header..header + length].as_chunks::<2>();
+            let units: Vec<u16> = pairs.iter().map(|c| u16::from_ne_bytes(*c)).collect();
             String::from_utf16_lossy(&units)
         }
     }
