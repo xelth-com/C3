@@ -17,7 +17,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 
 use crate::telemetry::event::Event;
-use crate::telemetry::{debug_log, default_hub, env_off, telemetry_dir, Result};
+use crate::telemetry::{debug_log, default_hub, telemetry_dir, Result};
 
 /// Maximum events per POST (README: `≤ 100`).
 const MAX_BATCH: usize = 100;
@@ -67,6 +67,15 @@ impl Spool {
 
     /// Append one event as a single NDJSON line.
     pub fn enqueue(&self, event: &Event) -> Result<()> {
+        self.enqueue_line(event)
+    }
+
+    /// Append any serializable allowlisted event, waiting at most `wait` for the spool.
+    pub fn enqueue_line_within<T: serde::Serialize>(
+        &self,
+        event: &T,
+        _wait: Duration,
+    ) -> Result<()> {
         self.enqueue_line(event)
     }
 
@@ -139,6 +148,10 @@ impl Spool {
     }
 
     fn post_events(&self, body: &str) -> bool {
+        if self.hub.trim().is_empty() {
+            // the configured intake is refused (`telemetry::hub`): nothing is sent
+            return false;
+        }
         let url = format!("{}/v2/events", self.hub.trim_end_matches('/'));
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(SEND_TIMEOUT)
@@ -178,13 +191,13 @@ impl BackgroundFlush {
     }
 }
 
-/// Spawn a background flush of the default spool at the start of a consultation. Does
-/// nothing over the network when telemetry is switched off, but still returns a handle so
-/// the call site is uniform.
+/// Spawn a background flush of the default spool (a consultation's start, after a rating or a
+/// backfill). The CALLER decides the switch (a run's own `--telemetry on` wins over the
+/// environment); the priors refresh keeps its own environment gate.
 pub fn flush_in_background() -> BackgroundFlush {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        if !env_off() {
+        {
             let _ = Spool::new(telemetry_dir(), default_hub()).flush();
             // The priors refresh runs AFTER the events are sent (M9 §3, F8): once a day at most,
             // injected fetcher in tests. A panic or error inside it must never affect the flush,

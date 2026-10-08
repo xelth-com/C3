@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use c3_core::ledger::{FindingCounts, FormatRetry, LedgerEntry, Reviewer, Usage};
 
-use c3::telemetry::{self, Config, Event, RatingEvent, Spool};
+use c3::telemetry::{self, Config, Event, RatingEvent, RatingInput, Spool};
 
 // --------------------------------------------------------------------------- helpers
 
@@ -161,28 +161,24 @@ fn allowlist_never_leaks_secrets_or_paths() {
 
 #[test]
 fn rating_event_allowlist_never_leaks_secrets_or_paths() {
-    // The rating event (M9 §7) is the later usefulness mark. Poison every text input,
-    // including the topic tags, and prove none reaches the payload.
+    // The rating event (0.6.1 shape) of a poisoned entry: every text input is a secret/path, the
+    // judge is unknown, and none of it reaches the payload.
     let entry = poisoned_entry();
-    const POISON: &str = "LEAK /home/u/.ssh/id_rsa secret=sk-live-DEADBEEF password token";
-    let topics = vec![
-        POISON.to_string(),
-        "security".to_string(),
-        "not-a-real-tag".to_string(),
-    ];
-    let event = RatingEvent::from_rating(&entry, "yes", 12, &topics, "testinstance");
+    let judge = telemetry::Judge::unknown();
+    let at = chrono::DateTime::parse_from_rfc3339("2026-10-08T21:00:00+02:00").unwrap();
+    let input = RatingInput {
+        entry: &entry,
+        mark: " Yes ",
+        rated_at: at,
+        consult_when: Some("LEAK /home/u/.ssh/id_rsa"),
+        judge: &judge,
+        rating_rev: Some(2),
+    };
+    let event = RatingEvent::from_rating(&input, "testinstance");
     let serialized = serde_json::to_string(&event).unwrap();
 
     for needle in [
-        "LEAK",
-        "id_rsa",
-        "sk-live",
-        "DEADBEEF",
-        "/home",
-        "password",
-        ".ssh",
-        "secret=",
-        "not-a-real-tag",
+        "LEAK", "id_rsa", "sk-live", "DEADBEEF", "/home", "password", ".ssh", "secret=",
     ] {
         assert!(
             !serialized.contains(needle),
@@ -191,16 +187,59 @@ fn rating_event_allowlist_never_leaks_secrets_or_paths() {
     }
     let v: serde_json::Value = serde_json::from_str(&serialized).unwrap();
     assert_eq!(v["event_type"], "rating");
+    let keys: Vec<&str> = v.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "app_id",
+            "app_version",
+            "instance_id",
+            "event_type",
+            "severity",
+            "title",
+            "details",
+            "tags",
+            "client_time",
+            "os",
+            "runtime"
+        ]
+    );
     let d = &v["details"];
+    let dkeys: Vec<&str> = d.as_object().unwrap().keys().map(|k| k.as_str()).collect();
+    // the plugin's exact order; no consult_ref (the entry has none)
+    assert_eq!(
+        dkeys,
+        [
+            "engine",
+            "provider",
+            "model",
+            "purpose",
+            "mark",
+            "age_days",
+            "bridge_version",
+            "os",
+            "ps_version",
+            "judge",
+            "rating_rev"
+        ]
+    );
     assert_eq!(d["engine"], "other");
-    assert_eq!(d["provider"], "unknown");
-    assert_eq!(d["model"], "unknown");
-    assert_eq!(d["purpose"], "unknown");
     assert_eq!(d["mark"], "yes");
-    assert_eq!(d["age_days"], 12);
-    // Only the one vocabulary word survives; the secret and the unknown tag are dropped.
-    assert_eq!(d["topic_tags"], serde_json::json!(["security"]));
-    assert_eq!(v["title"], "unknown");
+    assert_eq!(d["age_days"], 0, "no consultation time parses: 0");
+    assert_eq!(
+        d["judge"],
+        serde_json::json!({"provider": "other", "model": "other", "source": "unknown"})
+    );
+    assert_eq!(d["rating_rev"], 2);
+    assert_eq!(d["ps_version"], "unknown");
+    // the title is the mark, the client time the mark's own `when` in UTC
+    assert_eq!(v["title"], "yes");
+    assert_eq!(v["severity"], "info");
+    assert_eq!(v["client_time"], "2026-10-08T19:00:00Z");
+    assert_eq!(
+        v["tags"],
+        serde_json::json!([d["provider"].clone(), d["model"].clone()])
+    );
 }
 
 #[test]

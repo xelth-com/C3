@@ -11,9 +11,12 @@
 //! an event from a ledger entry with secrets and paths in every text field and asserts
 //! none of them reach the serialized payload.
 
+use chrono::{DateTime, FixedOffset, Utc};
 use serde::Serialize;
 
 use c3_core::ledger::LedgerEntry;
+
+use crate::telemetry::classes::{self, Judge};
 
 /// The C3 crate version, sent as `app_version`.
 pub(crate) const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -86,6 +89,11 @@ pub struct Details {
     /// Rejected finding count once findings settle; else absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rejected: Option<i64>,
+    /// (0.6.1, U5) The ledger entry's `consult_ref` - the random id that links this consultation to
+    /// its rating events - LAST, only when the entry has one (an entry recorded before 0.6.1 has
+    /// none, and its event no such key).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consult_ref: Option<String>,
 }
 
 impl Event {
@@ -144,6 +152,7 @@ impl Event {
             useful: None,
             verified: None,
             rejected: None,
+            consult_ref: classes::consult_ref_of(entry),
         };
         Event {
             app_id: "c3",
@@ -202,17 +211,13 @@ pub(crate) fn topic_slug(raw: &str) -> Option<&'static str> {
     TOPIC_VOCAB.iter().copied().find(|v| *v == mapped)
 }
 
-/// The topic tag for the wire: the vocabulary slug, or `other`.
-pub(crate) fn topic_label(raw: &str) -> String {
-    topic_slug(raw)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "other".to_string())
-}
-
-/// A rating event: the coordinator's later usefulness mark for a consultation (`c3 findings
-/// --rate`), reaching the hub as its own allowlisted event (M9 §7). Carries only classes:
-/// the lineage labels, the purpose label, the topic tags from the fixed vocabulary, the mark
-/// and the consultation's age in days — no ids, no paths, no free text.
+/// A rating event: the judge's later usefulness mark of a consultation (`c3 findings --rate`,
+/// `c3 telemetry --backfill-ratings`), reaching the hub as its own allowlisted event - the plugin's
+/// `New-TelemetryRatingEvent` (0.6.1): the top level in the consultation event's order with
+/// `event_type` rating, `severity` info, the mark as the `title` and `tags` `[provider, model]`;
+/// `client_time` is the MARK's own `when` on every path (the send at the commit, the retry after the
+/// locks, the backfill). No ids, no paths, no free text: never the note, the topics, the task, the
+/// consultation's id, `n` or lineage, never a coordinator's label or host.
 #[derive(Debug, Clone, Serialize)]
 pub struct RatingEvent {
     pub app_id: &'static str,
@@ -222,76 +227,130 @@ pub struct RatingEvent {
     pub severity: &'static str,
     pub title: String,
     pub details: RatingDetails,
+    pub tags: Vec<String>,
     pub client_time: String,
     pub os: String,
     pub runtime: String,
-    pub tags: Vec<String>,
 }
 
-/// The `details` allowlist of a rating event.
+/// The `details` allowlist of a rating event, in the plugin's exact order
+/// (`$script:TelemetryRatingDetailKeys`): `engine, provider, model, purpose, mark, age_days,
+/// bridge_version, os, ps_version, judge`, then `rating_rev` (a mark rated since 0.6.1) and
+/// `consult_ref` (an entry recorded since 0.6.1) when present.
 #[derive(Debug, Clone, Serialize)]
 pub struct RatingDetails {
     pub engine: String,
     pub provider: String,
     pub model: String,
     pub purpose: String,
-    /// `yes | partly | no`.
+    /// `yes | partly | no` (anything else `other`).
     pub mark: String,
-    /// The consultation's age in days at the time it was rated.
+    /// The whole days from the consultation's time to the mark's (`0` the same day).
     pub age_days: i64,
+    /// The C3 version.
+    pub bridge_version: String,
     pub os: String,
-    pub runtime: String,
-    /// Topic tags from the fixed vocabulary (never free text); empty when none apply.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub topic_tags: Vec<String>,
+    /// The plugin's `$PSVersionTable.PSVersion` token; C3 runs no PowerShell: `unknown` (the
+    /// plugin's own rule for an empty value).
+    pub ps_version: String,
+    /// `{provider, model, source}` - classes only.
+    pub judge: Judge,
+    /// (F06-2) The mark's own revision among its consultation's marks (>= 1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rating_rev: Option<i64>,
+    /// (U5) The rated entry's `consult_ref`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consult_ref: Option<String>,
+}
+
+/// What a rating event is built from: the rated ledger entry and the MARK as saved.
+#[derive(Debug, Clone)]
+pub struct RatingInput<'a> {
+    /// The rated consultation's ledger entry.
+    pub entry: &'a LedgerEntry,
+    /// `yes | partly | no` (normalised; anything else is sent as `other`).
+    pub mark: &'a str,
+    /// The mark's own `when` (client_time and the age are taken from it).
+    pub rated_at: DateTime<FixedOffset>,
+    /// The consultation's time as the mark recorded it (`consult_when`), else the entry's `when`.
+    pub consult_when: Option<&'a str>,
+    /// The judge the mark saved (resolved at rating time).
+    pub judge: &'a Judge,
+    /// The mark's `rating_rev` (none for a mark rated before 0.6.1).
+    pub rating_rev: Option<i64>,
 }
 
 impl RatingEvent {
-    /// Build a rating event from the rated consultation's ledger entry, the mark and the age
-    /// in days. Every text input passes through [`safe_label`]/[`engine_label`]/[`topic_label`],
-    /// so no path, prompt, id or secret can reach the payload.
-    pub fn from_rating(
-        entry: &LedgerEntry,
-        mark: &str,
-        age_days: i64,
-        raw_topics: &[String],
-        instance_id: &str,
-    ) -> Self {
+    /// Build a rating event. Every text input passes through a closed set (the mark, the judge's
+    /// allowlist) or the label rules, so no path, prompt, id or secret can reach the payload.
+    pub fn from_rating(input: &RatingInput<'_>, instance_id: &str) -> Self {
+        let entry = input.entry;
         let purpose = label_or(&entry.purpose, 48);
-        let mark = match mark.trim().to_ascii_lowercase().as_str() {
+        let mark = match input.mark.trim().to_ascii_lowercase().as_str() {
             m @ ("yes" | "partly" | "no") => m.to_string(),
             _ => "other".to_string(),
         };
-        let mut topic_tags: Vec<String> = Vec::new();
-        for t in raw_topics {
-            let tag = topic_label(t);
-            if tag != "other" && !topic_tags.contains(&tag) {
-                topic_tags.push(tag);
-            }
-        }
+        let rated_utc = input.rated_at.with_timezone(&Utc);
         let details = RatingDetails {
             engine: engine_label(&entry.reviewer.engine),
             provider: label_or(&entry.reviewer.provider, 64),
             model: label_or(&entry.reviewer.model, 64),
-            purpose: purpose.clone(),
-            mark,
-            age_days,
+            purpose,
+            mark: mark.clone(),
+            age_days: age_days(&entry.when, rated_utc, input.consult_when),
+            bridge_version: APP_VERSION.to_string(),
             os: os_label(),
-            runtime: runtime_label(),
-            topic_tags,
+            ps_version: "unknown".to_string(),
+            judge: classes::close_judge(input.judge),
+            rating_rev: input.rating_rev.filter(|r| *r >= 1),
+            consult_ref: classes::consult_ref_of(entry),
         };
+        let tags = vec![details.provider.clone(), details.model.clone()];
         RatingEvent {
             app_id: "c3",
             app_version: APP_VERSION,
             instance_id: instance_id.to_string(),
             event_type: "rating",
             severity: "info",
-            title: purpose,
+            title: mark,
             details,
-            client_time: now_rfc3339(),
+            tags,
+            client_time: rated_utc.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
             os: os_label(),
             runtime: runtime_label(),
-            tags: Vec::new(),
+        }
+    }
+}
+
+/// `ConvertTo-WhenOffset` for the times C3 and the plugin write (`yyyy-MM-ddTHH:mm:sszzz`, any RFC
+/// 3339 instant); `None` when it does not parse.
+pub(crate) fn parse_when(s: &str) -> Option<DateTime<FixedOffset>> {
+    let t = s.trim();
+    if t.is_empty() {
+        return None;
+    }
+    DateTime::parse_from_rfc3339(t).ok()
+}
+
+/// `Get-TelemetryAgeDays`: the whole days between the consultation's time - `consult_when` when it
+/// parses, else the entry's `when` - and `rated_at`, floored, never below 0; 0 when no time parses.
+pub(crate) fn age_days(
+    entry_when: &str,
+    rated_at: DateTime<Utc>,
+    consult_when: Option<&str>,
+) -> i64 {
+    let w = consult_when
+        .and_then(parse_when)
+        .or_else(|| parse_when(entry_when));
+    match w {
+        None => 0,
+        Some(w) => {
+            let secs = (rated_at - w.with_timezone(&Utc)).num_seconds();
+            if secs < 0 {
+                0
+            } else {
+                secs / 86_400
+            }
         }
     }
 }

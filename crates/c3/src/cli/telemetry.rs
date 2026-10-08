@@ -31,11 +31,34 @@ pub struct ForgetMeArgs {
     pub yes: bool,
 }
 
-/// Arguments of `c3 telemetry <action>`.
-#[derive(Args, Debug)]
+/// Arguments of `c3 telemetry` - one form per call (the plugin's `codex-telemetry.ps1` forms):
+/// `--status` (or the `status` subcommand) and `--backfill-ratings [--dry-run]`.
+#[derive(Args, Debug, Default)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct TelemetryArgs {
     #[command(subcommand)]
-    pub action: TelemetryAction,
+    pub action: Option<TelemetryAction>,
+
+    /// The switch and where it comes from, the intake, the spool, the instance id. Reads only.
+    #[arg(long)]
+    pub status: bool,
+
+    /// (R24) Send the marks of this repository's tasks that were never sent (findings.json
+    /// `ratings` without `telemetry_sent`) as rating events, once.
+    #[arg(long)]
+    pub backfill_ratings: bool,
+
+    /// With `--backfill-ratings`: print what would be sent (classes only), write nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// With `--backfill-ratings`: where consultations are stored (relative: to the git repo root).
+    #[arg(long, default_value = ".collab")]
+    pub collab_dir: String,
+
+    /// With `--backfill-ratings`: on | off for this call; empty = `CODEX_CONSULT_TELEMETRY`.
+    #[arg(long, default_value = "")]
+    pub telemetry: String,
 }
 
 /// The `c3 telemetry` actions.
@@ -116,20 +139,46 @@ pub fn run_forget_me(args: ForgetMeArgs) -> i32 {
     }
 }
 
-/// `c3 telemetry status`: the dry-run status sentence plus the instance id, read-only (it
-/// never creates the telemetry salt).
+/// `c3 telemetry`: exactly one form - `--status` / `status` (read-only: it never creates the
+/// telemetry salt) or `--backfill-ratings [--dry-run]`.
 pub fn run_telemetry(args: TelemetryArgs) -> i32 {
-    match args.action {
-        TelemetryAction::Status => {
-            let config = Config::default();
-            println!("{}", telemetry::status(&config));
-            match telemetry::instance_id_if_exists() {
-                Some(id) => println!("instance: {id}"),
-                None => println!("instance: (not created yet - created on the first consultation)"),
-            }
-            0
-        }
+    const TOOL: &str = "codex-telemetry";
+    let status = args.status || matches!(args.action, Some(TelemetryAction::Status));
+    let forms = [status, args.backfill_ratings]
+        .iter()
+        .filter(|b| **b)
+        .count();
+    if forms != 1 {
+        println!("{TOOL}: give exactly one of -Flush, -Status, -Complain \"<text>\", -Forget, -BackfillRatings (c3 telemetry --status | --backfill-ratings).");
+        return 1;
     }
+    let tele = args.telemetry.trim().to_lowercase();
+    if !tele.is_empty() && tele != "on" && tele != "off" {
+        println!("{TOOL}: -Telemetry must be on or off (got '{tele}').");
+        return 1;
+    }
+    if args.dry_run && !args.backfill_ratings {
+        println!("{TOOL}: -DryRun goes with -BackfillRatings.");
+        return 1;
+    }
+    if args.backfill_ratings {
+        let override_ = match tele.as_str() {
+            "on" => Some(true),
+            "off" => Some(false),
+            _ => None,
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let repo_root = crate::providers::resolve_repo_root(&cwd);
+        let collab_root = crate::providers::resolve_collab_root(&repo_root, &args.collab_dir);
+        return telemetry::backfill::run(&collab_root, &telemetry::switch(override_), args.dry_run);
+    }
+    let config = Config::default();
+    println!("{}", telemetry::status(&config));
+    match telemetry::instance_id_if_exists() {
+        Some(id) => println!("instance: {id}"),
+        None => println!("instance: (not created yet - created on the first consultation)"),
+    }
+    0
 }
 
 /// Print a prompt and read a `y`/`yes` answer from stdin; anything else is no.

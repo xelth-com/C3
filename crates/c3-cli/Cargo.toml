@@ -26,3 +26,5 @@ index-surreal = ["c3/index-surreal"]
 [dev-dependencies]
 # The moved mcp_integration test drives the JSON-RPC session with serde_json.
 serde_json.workspace = true
+# telemetry_parity: the marks' `when` as UTC client times, seeded consultation times.
+chrono.workspace = true

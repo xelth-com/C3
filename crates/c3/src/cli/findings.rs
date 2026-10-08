@@ -54,6 +54,11 @@ pub struct FindingsArgs {
     /// yes | partly | no — the judge's mark for the consultation `--rate` names.
     #[arg(long, default_value = "")]
     pub useful: String,
+
+    /// (R24) on | off for this `--rate`: its ONE anonymised rating event; empty =
+    /// `CODEX_CONSULT_TELEMETRY` (unset: on). Only with `--rate`.
+    #[arg(long, default_value = "")]
+    pub telemetry: String,
 }
 
 /// Run the findings tool and return the process exit code.
