@@ -113,8 +113,10 @@ pub fn watch_bridge() {
     }
 }
 
-/// `Test-SameStartTime`: exact match on Windows; within one second elsewhere (a pid is not
-/// reused that fast, and non-Windows clocks derive the value slightly differently).
+/// `Test-SameStartTime`: exact match on Windows; elsewhere within one clock tick of the `/proc`
+/// start time (10 ms, `USER_HZ` 100 — two processes cannot share a tick on one pid, F09-3). The
+/// plugin's wider non-Windows tolerance is not needed now that both sides of the comparison come
+/// from the same `/proc` reading.
 pub fn same_start_time(a: &str, b: &str) -> bool {
     if a == b {
         return true;
@@ -126,7 +128,7 @@ pub fn same_start_time(a: &str, b: &str) -> bool {
         chrono::DateTime::parse_from_rfc3339(a),
         chrono::DateTime::parse_from_rfc3339(b),
     ) {
-        (Ok(ta), Ok(tb)) => (ta.timestamp_millis() - tb.timestamp_millis()).abs() < 1000,
+        (Ok(ta), Ok(tb)) => (ta.timestamp_millis() - tb.timestamp_millis()).abs() < 10,
         _ => false,
     }
 }
@@ -327,12 +329,19 @@ pub fn process_command_line(pid: u32) -> String {
 /// process table. Used by the non-Windows tree kill, where no `taskkill /T` exists: a reviewer
 /// launcher's own children would otherwise outlive the kill as orphans.
 pub fn descendants_of(pid: u32) -> Vec<u32> {
-    let procs = enumerate_processes();
+    descendants_in(&enumerate_processes(), pid)
+}
+
+/// [`descendants_of`] over a given process table (pure): every row is visited at most once, so
+/// the walk is bounded by the table itself and never truncates (F09-4).
+pub fn descendants_in(procs: &[ScanProc], pid: u32) -> Vec<u32> {
+    let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    seen.insert(pid);
     let mut out = Vec::new();
     let mut frontier = vec![pid];
     while let Some(parent) = frontier.pop() {
-        for p in procs.iter().filter(|p| p.ppid == parent && p.pid != parent) {
-            if !out.contains(&p.pid) && out.len() < 4096 {
+        for p in procs.iter().filter(|p| p.ppid == parent) {
+            if seen.insert(p.pid) {
                 out.push(p.pid);
                 frontier.push(p.pid);
             }
@@ -875,6 +884,41 @@ mod tests {
         assert_eq!(out.found.len(), 1);
         assert_eq!(out.found[0].pid, 2000);
         assert!(out.found[0].rule.ends_with(", task not verifiable"));
+    }
+
+    #[test]
+    fn descendants_walk_the_whole_table_without_a_cap_or_a_loop() {
+        // (F09-4) A wide tree (more than the old 4096 cap) is returned whole; a self-parented row
+        // and a cycle never loop; the root itself is not a descendant.
+        let mut procs: Vec<ScanProc> = (1..=5000).map(|i| p(100 + i, 100, "w", 1, "")).collect();
+        procs.push(p(100, 1, "root", 0, ""));
+        procs.push(p(9000, 5100, "grandchild", 2, ""));
+        procs.push(p(9001, 9000, "great", 3, ""));
+        procs.push(p(9001, 9001, "self-parented twin", 3, ""));
+        let d = descendants_in(&procs, 100);
+        assert_eq!(d.len(), 5002, "{}", d.len());
+        assert!(d.contains(&9001) && d.contains(&9000) && !d.contains(&100));
+        assert!(descendants_in(&procs, 9001).is_empty());
+    }
+
+    #[test]
+    #[cfg(not(windows))] // the tick tolerance is the non-Windows rule; Windows compares exactly
+    fn start_times_match_within_one_tick_only() {
+        // (F09-3) Two `/proc` readings of one process agree to the tick; a reused pid differs by
+        // at least one tick (10 ms) and must not compare equal.
+        assert!(same_start_time(
+            "2026-10-08T07:00:00.0000000Z",
+            "2026-10-08T07:00:00.0050000Z"
+        ));
+        assert!(!same_start_time(
+            "2026-10-08T07:00:00.0000000Z",
+            "2026-10-08T07:00:00.0100000Z"
+        ));
+        assert!(!same_start_time(
+            "2026-10-08T07:00:00.0000000Z",
+            "2026-10-08T07:00:00.5000000Z"
+        ));
+        assert!(!same_start_time("2026-10-08T07:00:00.0000000Z", ""));
     }
 
     #[test]

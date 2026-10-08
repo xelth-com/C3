@@ -149,15 +149,18 @@ impl HttpAuth {
 
 /// The hosts `C3_HTTP_AUTH_PROXY` names: split on commas, trimmed, canonicalised like a URL host
 /// (lower-cased; a Unicode name becomes its punycode form, as `HttpConfig::host()` reports it —
-/// F07-4), empties dropped. An entry that is not a valid host is kept lower-cased, so it matches
-/// nothing rather than something unintended.
+/// F07-4), empties dropped. A listed name grants the header-less mode to its whole subtree, so a
+/// single-label name (`com`, `localhost`) is dropped (F09-2): a grant must name at least a
+/// registrable domain or an IP literal. An entry that is not a valid host is kept lower-cased,
+/// so it matches nothing rather than something unintended.
 pub fn proxy_auth_hosts_from(list: &str) -> Vec<String> {
     list.split(',')
         .map(|h| h.trim().trim_end_matches('.'))
         .filter(|h| !h.is_empty())
-        .map(|h| match url::Host::parse(h) {
-            Ok(host) => host.to_string().to_ascii_lowercase(),
-            Err(_) => h.to_ascii_lowercase(),
+        .filter_map(|h| match url::Host::parse(h) {
+            Ok(url::Host::Domain(d)) if !d.contains('.') => None,
+            Ok(host) => Some(host.to_string().to_ascii_lowercase()),
+            Err(_) => Some(h.to_ascii_lowercase()),
         })
         .collect()
 }
@@ -225,26 +228,35 @@ fn is_loopback_literal(host: &str) -> bool {
 
 /// One `NO_PROXY` entry split into its host part (lower-cased, without brackets, without a
 /// leading or trailing dot) and its optional port: `host`, `host:port`, `[v6]`, `[v6]:port`.
-/// `None` for an entry that is empty after trimming.
+/// `None` for an entry that is empty after trimming, or whose port part is not a valid port
+/// (F09-1: a malformed port never widens the entry to every port — the entry is ignored).
 fn no_proxy_entry(entry: &str) -> Option<(String, Option<u16>)> {
     let e = entry.trim().to_ascii_lowercase();
     if e.is_empty() {
         return None;
     }
+    let parse_port = |p: &str| -> Option<Option<u16>> {
+        if p.is_empty() {
+            Some(None)
+        } else {
+            p.parse::<u16>().ok().map(Some)
+        }
+    };
     let (host, port) = if let Some(rest) = e.strip_prefix('[') {
         // A bracketed IPv6 literal: the address up to `]`, then an optional `:port` (F07-1).
         let (addr, after) = rest.split_once(']')?;
-        let port = after.strip_prefix(':').and_then(|p| p.parse::<u16>().ok());
+        let port = match after {
+            "" => None,
+            p => parse_port(p.strip_prefix(':')?)?,
+        };
         (addr.to_string(), port)
     } else if e.matches(':').count() > 1 {
         // A bare IPv6 literal (no brackets, so no port can be told apart).
         (e, None)
     } else {
         match e.rsplit_once(':') {
-            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
-                (h.to_string(), p.parse::<u16>().ok())
-            }
-            _ => (e, None),
+            Some((h, p)) => (h.to_string(), parse_port(p)?),
+            None => (e, None),
         }
     };
     let host = host
@@ -1437,6 +1449,16 @@ mod tests {
         assert!(!host_uses_proxy_auth("", &hosts));
         assert!(!host_uses_proxy_auth("openrouter.ai", &[]));
         assert!(proxy_auth_hosts_from("").is_empty());
+        // (F09-2) A single label would grant the header-less mode to a whole top-level domain
+        // (or every `localhost`): dropped. A registrable name and an IP literal stay.
+        assert_eq!(
+            proxy_auth_hosts_from("com, localhost, co.uk, 127.0.0.2, [::1]"),
+            vec!["co.uk", "127.0.0.2", "[::1]"]
+        );
+        assert!(!host_uses_proxy_auth(
+            "attacker.example.com",
+            &proxy_auth_hosts_from("com")
+        ));
     }
 
     #[test]
@@ -1665,10 +1687,20 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         );
         assert_eq!(no_proxy_entry("[::1]:80"), Some(("::1".into(), Some(80))));
         assert_eq!(no_proxy_entry("[::1]"), Some(("::1".into(), None)));
-        assert_eq!(
-            no_proxy_entry("example.test:abc"),
-            Some(("example.test:abc".into(), None))
-        );
+        // (F09-1) A malformed port never widens an entry to every port: the entry is ignored.
+        assert_eq!(no_proxy_entry("example.test:abc"), None);
+        assert_eq!(no_proxy_entry("example.test:65536"), None);
+        assert_eq!(no_proxy_entry("[::1]:x"), None);
+        assert_eq!(no_proxy_entry("[::1]x"), None);
+        assert!(proxy_decision(
+            "https",
+            "api.example",
+            8443,
+            p,
+            None,
+            None,
+            Some("api.example:65536")
+        ));
         assert_eq!(no_proxy_entry("  "), None);
         assert_eq!(no_proxy_entry("[::1"), None);
     }
