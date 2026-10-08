@@ -572,6 +572,8 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                 fingerprint: row
                     .map(|m| m.identity.fingerprint.clone())
                     .unwrap_or_default(),
+                // (wave 29b, E7) the members of one plan share a scheduling group
+                plan: row.map(|m| m.entry.plan.clone()).unwrap_or_default(),
             }
         })
         .collect();
@@ -1207,49 +1209,45 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                 continue;
             }
             // (wave 26b, D13) runs on this group's endpoints in OTHER repositories/panels of the
-            // machine count against the limit too (the machine-wide health file's running[]).
+            // machine count against the limit too (the machine-wide health file's running[]) -
+            // (wave 29b, E16) and the runs of the group's PLANS on any route, engine and
+            // repository (the group's limit is never above its plans' "parallel" values).
             if !dry {
                 if let Some(hp) = &machine_health_path {
-                    let fps: Vec<String> = {
-                        let mut v: Vec<String> = b
-                            .runners
-                            .iter()
-                            .filter(|ru| ru.group == grp && !ru.fingerprint.is_empty())
-                            .map(|ru| ru.fingerprint.clone())
-                            .collect();
-                        v.sort();
-                        v.dedup();
-                        v
-                    };
-                    if !fps.is_empty() {
+                    let mut fps: Vec<String> = Vec::new();
+                    let mut plans: Vec<String> = Vec::new();
+                    for ru in b.runners.iter().filter(|ru| ru.group == grp) {
+                        if !ru.fingerprint.is_empty() && !fps.contains(&ru.fingerprint) {
+                            fps.push(ru.fingerprint.clone());
+                        }
+                        if !ru.entry.plan.is_empty() && !plans.contains(&ru.entry.plan) {
+                            plans.push(ru.entry.plan.clone());
+                        }
+                    }
+                    if !fps.is_empty() || !plans.is_empty() {
                         let ext = c3_core::health::machine_running_count(
                             hp,
                             &fps,
                             &b.panel_id,
+                            &plans,
                             &|pid, st| crate::liveness::proc::pid_alive(pid, st),
                         );
                         let local = slots
                             .iter()
                             .filter(|s| s.group == grp && s.state == SlotState::Running)
                             .count() as i64;
-                        if !ext.is_empty() && local + ext.len() as i64 >= limit {
+                        if !ext.rows.is_empty() && local + ext.rows.len() as i64 >= limit {
                             if !ext_wait_shown.contains(&i) {
                                 ext_wait_shown.insert(i);
-                                let who = ext
-                                    .iter()
-                                    .map(|row| {
-                                        format!(
-                                            "{} in {} task {} handoff {} (pid {})",
-                                            row.label, row.repo, row.task, row.nn, row.pid
-                                        )
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join("; ");
                                 println!(
-                                    "  panel member {} of {} waits: {} run(s) elsewhere on this machine use its endpoint (parallel limit {limit}): {who}",
-                                    slots[i].k,
-                                    b.runners.len(),
-                                    ext.len()
+                                    "{}",
+                                    c3_core::plan::format_machine_wait(
+                                        slots[i].k,
+                                        b.runners.len(),
+                                        &ext.rows,
+                                        &ext.by_plan,
+                                        limit,
+                                    )
                                 );
                             }
                             continue;

@@ -151,23 +151,47 @@ pub fn convert_to_availability_record(
     rec.reason = v.reason.clone();
     rec.hit = v.hit;
     rec.until = v.until;
+    // (wave 29b, E5) out because its plan is out on another route: "plan zai (usage limit on ZAI
+    // until 15:00, in 3h)"; (wave 24c) a burst names itself
+    let pqv = v.plan_quota.as_ref();
     if rec.kind == "quota" {
         if let Some(until) = rec.until {
-            rec.short = format!(
+            let when = format!(
                 "until {}, {}",
                 format_local_when(until, now_utc),
                 format_relative_hint(until.with_timezone(&Utc) - now_utc)
             );
+            rec.short = match pqv {
+                Some(p) => format!("plan {} (usage limit on {} {when})", p.plan, p.label),
+                None => when,
+            };
         }
     } else if rec.kind == "quota-unknown-reset" {
         if let Some(until) = rec.until {
             let hit = rec.hit.unwrap_or(until);
-            rec.short = format!(
-                "limit hit {}, reset unknown; retry after {}, {}",
-                format_local_when(hit, now_utc),
+            let window = format!(
+                "reset unknown; retry after {}, {}",
                 format_local_when(until, now_utc),
                 format_relative_hint(until.with_timezone(&Utc) - now_utc)
             );
+            rec.short = match pqv {
+                Some(p) => format!(
+                    "plan {} ({} hit on {} {}, {window})",
+                    p.plan,
+                    if v.burst { "burst limit" } else { "limit" },
+                    p.label,
+                    format_local_when(hit, now_utc)
+                ),
+                None => format!(
+                    "{} {}, {window}",
+                    if v.burst {
+                        "burst limit hit"
+                    } else {
+                        "limit hit"
+                    },
+                    format_local_when(hit, now_utc)
+                ),
+            };
         }
     } else if rec.kind == "auth" {
         rec.short = format!(

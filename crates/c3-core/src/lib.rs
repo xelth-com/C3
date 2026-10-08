@@ -4,7 +4,8 @@
 //! builds on: the constrained Codex config scanner ([`config`]), the reviewer
 //! roster ([`roster`]), effort vocabularies ([`effort`]), reviewer lineage and
 //! identity ([`lineage`]), the recorded endpoint health ([`health`]), the preflight
-//! verdict ([`verdict`]), purposes ([`purpose`]), path normalisation ([`paths`]) and
+//! verdict ([`verdict`]), the roster plan's quota and wait rules ([`plan`]), purposes
+//! ([`purpose`]), path normalisation ([`paths`]) and
 //! the task-slug newtype ([`task_slug`]).
 //!
 //! Most of this crate is pure over its inputs: it reads no environment, spawns no
@@ -31,6 +32,7 @@ pub mod ledger;
 pub mod lineage;
 pub mod paths;
 pub mod peak;
+pub mod plan;
 pub mod ps_json;
 pub mod purpose;
 pub mod roster;

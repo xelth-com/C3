@@ -9,6 +9,13 @@
 //! time without a date (0.6.1) is placed on the day before, of or after the reference.
 //! Health is computed per endpoint fingerprint, newest by completion wins, and a later
 //! usable reply clears an earlier auth or quota failure.
+//!
+//! (C3 wave 1b, the plugin's 0.6.0 wave 29b E5/E15/E16) [`endpoint_health_set`] reads the
+//! records of SEVERAL fingerprints as one record set (the routes of one coding plan), every
+//! record carrying its fingerprint; a usable reply whose ledger entry carries
+//! `engine_run.quota_mark` also counts as that quota failure 1 ms after it; the machine-wide
+//! file keeps an endpoint record's `quota_mark` and a running row's `plan`, and
+//! [`machine_running_count`] counts the rows of a set of plans too.
 
 use chrono::{
     DateTime, Datelike, Duration, FixedOffset, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
@@ -831,6 +838,9 @@ pub fn format_offset_iso(v: DateTime<FixedOffset>) -> String {
 /// One health record.
 #[derive(Debug, Clone)]
 pub struct Record {
+    /// (wave 1b, E5) the endpoint fingerprint the record was recorded on (a plan's record set
+    /// spans several).
+    pub fingerprint: String,
     pub class: String,
     /// `"burst"` for a reset-less burst 429, else `""` (wave 24c).
     pub kind: String,
@@ -866,19 +876,74 @@ fn dto(v: &Value) -> Option<DateTime<FixedOffset>> {
     DateTime::parse_from_rfc3339(s).ok()
 }
 
+/// The bridge outcome of a quota mark read as a failure (`Get-EndpointHealth`, E15).
+const QUOTA_MARK_OUTCOME: &str =
+    "failed: quota (a rate limit rejected a request during a usable turn)";
+
+/// (wave 29b, E15) The quota failure a usable reply's `engine_run.quota_mark` stands for: an
+/// entry of its own 1 ms after the entry that carries it (by completion), so the route stays out
+/// until the mark's reset (or 60 minutes, 10 for a burst) exactly as after a failed quota turn,
+/// and a later usable reply clears it as usual. `None` without a mark of class quota.
+fn quota_mark_entry(c: &Value) -> Option<Value> {
+    let qm = &c["engine_run"]["quota_mark"];
+    if !qm.is_object() || qm["class"].as_str() != Some("quota") {
+        return None;
+    }
+    let at = dto(&c["when"])?;
+    let order = dto(&c["finished_at"]).unwrap_or_else(|| {
+        let ws = c["wall_seconds"]
+            .as_f64()
+            .or_else(|| c["wall_seconds"].as_str().and_then(|s| s.parse().ok()))
+            .unwrap_or(0.0);
+        if ws > 0.0 {
+            at + Duration::milliseconds((ws * 1000.0) as i64)
+        } else {
+            at
+        }
+    });
+    let finished =
+        (order + Duration::milliseconds(1)).to_rfc3339_opts(chrono::SecondsFormat::Millis, false);
+    Some(serde_json::json!({
+        "n": c["n"].clone(),
+        "when": c["when"].clone(),
+        "finished_at": finished,
+        "bridge_outcome": QUOTA_MARK_OUTCOME,
+        "reviewer": c["reviewer"].clone(),
+        "provider_failure": qm.clone(),
+    }))
+}
+
 /// `Get-EndpointHealth`: health of one endpoint fingerprint from all task consults.
 pub fn endpoint_health(
     consults: &[Value],
     fingerprint: &str,
     now_utc: DateTime<Utc>,
 ) -> EndpointHealth {
+    endpoint_health_set(consults, &[fingerprint.to_string()], now_utc)
+}
+
+/// `Get-EndpointHealth -Fingerprints` (wave 29b, E5): the records of every fingerprint in
+/// `fingerprints` read as ONE record set - the routes of one coding plan, of which only the
+/// quota is used ([`crate::plan::plan_quota`]). Every record carries its fingerprint.
+pub fn endpoint_health_set(
+    consults: &[Value],
+    fingerprints: &[String],
+    now_utc: DateTime<Utc>,
+) -> EndpointHealth {
     let mut h = EndpointHealth::default();
-    if fingerprint.is_empty() {
+    let fp_set: Vec<&str> = fingerprints
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if fp_set.is_empty() {
         return h;
     }
     let builtin = builtin_openai_fingerprint();
+    // (E15) the quota marks as entries of their own, after the entries that carry them
+    let marks: Vec<Value> = consults.iter().filter_map(quota_mark_entry).collect();
     let mut records: Vec<Record> = Vec::new();
-    for c in consults {
+    for c in consults.iter().chain(marks.iter()) {
         let rev = &c["reviewer"];
         let fp = if rev.is_null() {
             builtin.clone()
@@ -888,7 +953,7 @@ pub fn endpoint_health(
                 .unwrap_or("")
                 .to_string()
         };
-        if fp.is_empty() || fp != fingerprint {
+        if fp.is_empty() || !fp_set.contains(&fp.as_str()) {
             continue;
         }
         let outcome = c["bridge_outcome"].as_str().unwrap_or("");
@@ -922,6 +987,7 @@ pub fn endpoint_health(
         let ok = is_usable_outcome(outcome);
         let when = at.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
         let mut rec = Record {
+            fingerprint: fp,
             class: String::new(),
             kind: String::new(),
             code: String::new(),
@@ -986,6 +1052,11 @@ pub fn endpoint_health(
             if let Some(ra) = rec.retry_after {
                 rec.retry_after_iso = format_offset_iso(ra);
                 rec.until = ra;
+            }
+            // (wave 26c, D2 / F26-2) a machine-wide record's stored until (and a quota mark's) is
+            // its until - the tie-break of two records at the same time
+            if let Some(stored) = dto(&c["provider_failure"]["until"]) {
+                rec.until = stored;
             }
             let msg_chars: Vec<char> = rec.message.chars().collect();
             if msg_chars.len() > 100 {
@@ -1078,6 +1149,12 @@ pub struct MachineEndpoint {
     pub when: String,
     #[serde(default)]
     pub message: String,
+    /// (wave 29b, E15) on an `ok` record whose turn saw a rejecting rate-limit event: the quota
+    /// failure it stands for (`{class, kind, until, retry_after, message, when}`). C3 does not
+    /// write one yet (the claude engine, wave 4) but keeps a record's mark when it rewrites the
+    /// file, prunes by it and reads it ([`machine_endpoint_consults`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_mark: Option<Value>,
 }
 
 /// One running-member row in the machine-wide health file.
@@ -1101,6 +1178,18 @@ pub struct MachineRunning {
     pub panel: String,
     #[serde(default)]
     pub since: String,
+    /// (wave 29b, E16) the roster entry's plan - written only when the entry names one, so a
+    /// panel elsewhere counts this run against the plan's limit too ([`machine_running_count`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub plan: String,
+}
+
+/// [`machine_running_count`]'s result (`Get-MachineRunningCount`): the live rows that count, and
+/// those of them that count ONLY through their plan (their endpoint is none of the group's).
+#[derive(Clone, Debug, Default)]
+pub struct MachineRunningCount {
+    pub rows: Vec<MachineRunning>,
+    pub by_plan: Vec<MachineRunning>,
 }
 
 /// The parsed machine health file. Not the wire shape directly — `update_machine_health`
@@ -1243,6 +1332,7 @@ fn add_machine_health_record_with(
             repo: repo.to_string(),
             when: format_offset_iso(now_offset()),
             message: String::new(),
+            quota_mark: None,
         }
     } else if let Some(f) = failure {
         let class = f.class.clone();
@@ -1286,6 +1376,7 @@ fn add_machine_health_record_with(
             repo: repo.to_string(),
             when: format_offset_iso(when),
             message,
+            quota_mark: None,
         }
     } else {
         return HealthUpdate::Skipped;
@@ -1315,21 +1406,32 @@ pub fn unregister_machine_running(
 }
 
 /// `Get-MachineRunningCount`: the live running rows (per `is_alive`) whose endpoint is one of
-/// `fingerprints`, excluding `exclude_panel`'s own rows when that panel id is non-empty. Reads
-/// the file directly, not under the write lock.
+/// `fingerprints` or - (wave 29b, E16) - whose plan is one of `plans` (whatever their endpoint,
+/// engine and repository), excluding `exclude_panel`'s own rows when that panel id is non-empty.
+/// Reads the file directly, not under the write lock.
 pub fn machine_running_count(
     path: &Path,
     fingerprints: &[String],
     exclude_panel: &str,
+    plans: &[String],
     is_alive: &dyn Fn(u32, &str) -> bool,
-) -> Vec<MachineRunning> {
-    read_machine_health(path)
+) -> MachineRunningCount {
+    let rows: Vec<MachineRunning> = read_machine_health(path)
         .running
         .into_iter()
-        .filter(|r| fingerprints.iter().any(|f| f == &r.endpoint))
+        .filter(|r| {
+            (!r.endpoint.is_empty() && fingerprints.iter().any(|f| f == &r.endpoint))
+                || (!r.plan.is_empty() && plans.iter().any(|p| !p.is_empty() && p == &r.plan))
+        })
         .filter(|r| !(!exclude_panel.is_empty() && r.panel == exclude_panel))
         .filter(|r| is_alive(r.pid, &r.start_time))
-        .collect()
+        .collect();
+    let by_plan = rows
+        .iter()
+        .filter(|r| !fingerprints.iter().any(|f| f == &r.endpoint))
+        .cloned()
+        .collect();
+    MachineRunningCount { rows, by_plan }
 }
 
 /// The outcome of a machine-health update: written, skipped (nothing to record), blocked by a lock
@@ -1525,12 +1627,18 @@ fn update_machine_health(
             let recent = DateTime::parse_from_rfc3339(&e.when)
                 .map(|w| (now - w.with_timezone(&Utc)).num_hours() <= 24)
                 .unwrap_or(false);
-            let still_out = e
+            // (wave 29b, E15) an ok record stays while its quota mark still blocks
+            let until = e
                 .until
                 .as_deref()
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|u| u.with_timezone(&Utc) > now)
-                .unwrap_or(false);
+                .or_else(|| {
+                    e.quota_mark
+                        .as_ref()
+                        .and_then(|m| m["until"].as_str())
+                        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+                });
+            let still_out = until.map(|u| u.with_timezone(&Utc) > now).unwrap_or(false);
             recent || still_out
         });
         if endpoints.len() > MACHINE_HEALTH_MAX_ENDPOINTS {
@@ -1599,6 +1707,33 @@ fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Valu
             });
             if e.class == "ok" {
                 v["bridge_outcome"] = Value::String("usable reply".into());
+                // (wave 29b, E15) a usable reply with a quota mark: the mark travels as
+                // engine_run.quota_mark (its own when, reset and until when valid)
+                if let Some(mk) = e.quota_mark.as_ref().filter(|m| m.is_object()) {
+                    let valid = |k: &str| -> Value {
+                        if dto(&mk[k]).is_some() {
+                            mk[k].clone()
+                        } else {
+                            Value::Null
+                        }
+                    };
+                    let when = if dto(&mk["when"]).is_some() {
+                        mk["when"].clone()
+                    } else {
+                        Value::String(e.when.clone())
+                    };
+                    v["engine_run"] = serde_json::json!({
+                        "quota_mark": {
+                            "class": "quota",
+                            "kind": mk["kind"].as_str().unwrap_or(""),
+                            "code": "",
+                            "message": mk["message"].as_str().unwrap_or(""),
+                            "when": when,
+                            "retry_after": valid("retry_after"),
+                            "until": valid("until"),
+                        }
+                    });
+                }
             } else {
                 let msg = if !e.message.is_empty() {
                     e.message.clone()
@@ -1612,6 +1747,7 @@ fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Valu
                     "message": e.message,
                     "when": e.when,
                     "retry_after": e.retry_after,
+                    "until": e.until,
                 });
             }
             v
@@ -1869,6 +2005,7 @@ mod machine_health_tests {
             repo: "repo-a".into(),
             when: format_offset_iso(old_when),
             message: String::new(),
+            quota_mark: None,
         };
         let still_out = MachineEndpoint {
             endpoint: "fp-still-out".into(),
@@ -1879,6 +2016,7 @@ mod machine_health_tests {
             repo: "repo-a".into(),
             when: format_offset_iso(old_when),
             message: String::new(),
+            quota_mark: None,
         };
         let running_row = MachineRunning {
             endpoint: "fp-run".into(),
@@ -1890,6 +2028,7 @@ mod machine_health_tests {
             nn: "01".into(),
             panel: String::new(),
             since: format_offset_iso(now_offset()),
+            plan: String::new(),
         };
         // seed the file directly, then run one update via unregister with a no-op pid to
         // trigger the prune pass.
@@ -1910,6 +2049,151 @@ mod machine_health_tests {
         assert!(!endpoints.contains(&"fp-expired"));
         assert!(endpoints.contains(&"fp-still-out"));
         assert!(health.running.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn run_row(endpoint: &str, label: &str, pid: u32, panel: &str, plan: &str) -> MachineRunning {
+        MachineRunning {
+            endpoint: endpoint.into(),
+            label: label.into(),
+            pid,
+            start_time: "2026-10-08T10:00:00.0000000Z".into(),
+            repo: "C:\\repo-e".into(),
+            task: "t".into(),
+            nn: "01".into(),
+            panel: panel.into(),
+            since: "2026-10-08T12:00:00+02:00".into(),
+            plan: plan.into(),
+        }
+    }
+
+    // (wave 29b, E16) the running row carries the entry's plan - written only when there is one,
+    // as the plugin's Register-MachineRunning adds it - and the plan's rows count for a panel of
+    // another route, engine or repository.
+    #[test]
+    fn running_rows_carry_the_plan_and_count_by_plan() {
+        let with = serde_json::to_value(run_row("fp-a", "ZAI", 11, "", "zai")).unwrap();
+        assert_eq!(with["plan"], "zai");
+        let keys: Vec<&str> = with
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "endpoint",
+                "label",
+                "pid",
+                "start_time",
+                "repo",
+                "task",
+                "nn",
+                "panel",
+                "since",
+                "plan"
+            ]
+        );
+        let without = serde_json::to_value(run_row("fp-a", "ZAI", 11, "", "")).unwrap();
+        assert!(without.get("plan").is_none(), "no plan key without a plan");
+        let _env = health_env();
+        let path = temp_path("plan-count");
+        let seed = serde_json::json!({
+            "health_version": 1,
+            "endpoints": [],
+            "running": [
+                run_row("fp-a", "ZAI", 11, "", "zai"),
+                run_row("fp-b", "ZAI-b", 12, "p1", "zai"),
+                run_row("fp-c", "mimo", 13, "", "mimo"),
+                run_row("fp-d", "openai", 14, "", ""),
+            ],
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+        // a ZAI-b group (endpoint fp-b, plan zai) of panel p2: its endpoint row and the plan's
+        let c = machine_running_count(&path, &["fp-b".into()], "p2", &["zai".into()], &alive_true);
+        let pids: Vec<u32> = c.rows.iter().map(|r| r.pid).collect();
+        assert_eq!(pids, vec![11, 12]);
+        let by_plan: Vec<u32> = c.by_plan.iter().map(|r| r.pid).collect();
+        assert_eq!(
+            by_plan,
+            vec![11],
+            "fp-b's own row counts through its endpoint"
+        );
+        // the panel's own rows never count; dead rows never count
+        let c = machine_running_count(&path, &["fp-b".into()], "p1", &["zai".into()], &alive_true);
+        assert_eq!(c.rows.iter().map(|r| r.pid).collect::<Vec<_>>(), vec![11]);
+        let c = machine_running_count(&path, &["fp-b".into()], "p2", &["zai".into()], &alive_false);
+        assert!(c.rows.is_empty());
+        // without plans: the endpoint alone (the wave 26b rule)
+        let c = machine_running_count(&path, &["fp-a".into()], "", &[], &alive_true);
+        assert_eq!(c.rows.iter().map(|r| r.pid).collect::<Vec<_>>(), vec![11]);
+        assert!(c.by_plan.is_empty());
+        // a group with only a plan (its identities unresolved)
+        let c = machine_running_count(&path, &[], "", &["mimo".into()], &alive_true);
+        assert_eq!(
+            c.by_plan.iter().map(|r| r.pid).collect::<Vec<_>>(),
+            vec![13]
+        );
+        // a register keeps the plan of another run's row when it rewrites the file
+        assert!(register_machine_running(
+            &path,
+            run_row("fp-e", "x", 15, "", ""),
+            &alive_true
+        ));
+        let mh = read_machine_health(&path);
+        assert_eq!(mh.running.len(), 5);
+        assert_eq!(mh.running[0].plan, "zai");
+        assert!(mh.running[4].plan.is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // (wave 29b, E15) an ok record's quota_mark (written by the plugin's claude engine) survives
+    // C3's rewrite of the file, keeps the record while it blocks, and is read as a quota failure.
+    #[test]
+    fn a_quota_mark_survives_a_rewrite_and_is_read() {
+        let _env = health_env();
+        let path = temp_path("quota-mark");
+        let now = Utc::now();
+        let old_when =
+            (now - Duration::hours(30)).with_timezone(&FixedOffset::east_opt(7200).unwrap());
+        let mark_until =
+            (now + Duration::hours(2)).with_timezone(&FixedOffset::east_opt(7200).unwrap());
+        let seed = serde_json::json!({
+            "health_version": 1,
+            "endpoints": [{
+                "endpoint": "fp-claude", "class": "ok", "kind": "", "until": null,
+                "retry_after": null, "repo": "C:\\other", "when": format_offset_iso(old_when),
+                "message": "",
+                "quota_mark": {
+                    "class": "quota", "kind": "", "until": format_offset_iso(mark_until),
+                    "retry_after": format_offset_iso(mark_until), "message": "rejected",
+                    "when": format_offset_iso(old_when)
+                }
+            }],
+            "running": [],
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+        // an update (any) rewrites the file: the 30-hour-old ok record stays (its mark blocks)
+        assert!(unregister_machine_running(&path, 0, &alive_true));
+        let mh = read_machine_health(&path);
+        assert_eq!(mh.endpoints.len(), 1);
+        let mk = mh.endpoints[0]
+            .quota_mark
+            .as_ref()
+            .expect("the mark is kept");
+        assert_eq!(mk["until"], format_offset_iso(mark_until));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"quota_mark\""));
+        // read: the route is out until the mark's reset
+        let consults = machine_endpoint_consults(&path, "fp-claude");
+        let h = endpoint_health(&consults, "fp-claude", now);
+        let q = h.quota.expect("the mark reads as a quota failure");
+        assert_eq!(
+            q.retry_after.map(format_offset_iso),
+            Some(format_offset_iso(mark_until))
+        );
+        assert!(h.quota_known);
         let _ = std::fs::remove_file(&path);
     }
 }

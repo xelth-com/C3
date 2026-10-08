@@ -639,6 +639,8 @@ fn availability_record_out_quota_short() {
         hit: Some(iso("2026-09-26T13:30:00+02:00")),
         until: Some(iso("2026-09-26T15:00:00+02:00")),
         credential: None,
+        burst: false,
+        plan_quota: None,
     };
     v.reason = "usage limit until 2026-09-26T15:00:00+02:00".into();
     let r = convert_to_availability_record(1, "ZAI", "glm", "codex", 0, Some(&v), "", now);
@@ -646,4 +648,28 @@ fn availability_record_out_quota_short() {
     assert!(r.short.starts_with("until "), "{}", r.short);
     // 15:00+02:00 == 13:00 UTC; now == 12:00 UTC -> one hour out (timezone-independent).
     assert!(r.short.contains("in 1h"), "{}", r.short);
+    // (wave 1b, E5) out through its plan: the plan and the route it was recorded on
+    v.plan_quota = Some(c3_core::verdict::PlanQuotaRef {
+        plan: "zai".into(),
+        label: "ZAI".into(),
+    });
+    let r = convert_to_availability_record(2, "ZAI-b", "glm", "codex", 0, Some(&v), "", now);
+    assert!(
+        r.short.starts_with("plan zai (usage limit on ZAI until "),
+        "{}",
+        r.short
+    );
+    assert!(r.short.ends_with(", in 1h)"), "{}", r.short);
+    // (wave 24c) a reset-less burst names itself, through the plan or not
+    v.kind = "quota-unknown-reset".into();
+    v.burst = true;
+    let r = convert_to_availability_record(2, "ZAI-b", "glm", "codex", 0, Some(&v), "", now);
+    assert!(
+        r.short.starts_with("plan zai (burst limit hit on ZAI "),
+        "{}",
+        r.short
+    );
+    v.plan_quota = None;
+    let r = convert_to_availability_record(2, "ZAI-b", "glm", "codex", 0, Some(&v), "", now);
+    assert!(r.short.starts_with("burst limit hit "), "{}", r.short);
 }

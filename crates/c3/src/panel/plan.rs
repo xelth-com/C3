@@ -114,13 +114,15 @@ pub struct PanelPlan {
     pub limits: Vec<(String, i64)>,
 }
 
-/// A runner for the endpoint-group computation: its roster label (provider), position, and
-/// endpoint fingerprint (empty when the identity is unresolved).
-#[derive(Debug, Clone)]
+/// A runner for the endpoint-group computation: its roster label (provider), position,
+/// endpoint fingerprint (empty when the identity is unresolved) and (wave 1b, 0.6.0 E7) its
+/// roster entry's plan (empty without one).
+#[derive(Debug, Clone, Default)]
 pub struct Runner {
     pub position: i64,
     pub label: String,
     pub fingerprint: String,
+    pub plan: String,
 }
 
 struct EndpointGroups {
@@ -130,8 +132,11 @@ struct EndpointGroups {
     index_of_label: Vec<(String, usize)>,
 }
 
-/// `Get-EndpointGroups`: one group per provider label, merged with any label sharing its provider
-/// fingerprint, to a fixed point. Groups are numbered in first-member order.
+/// `Get-EndpointGroups -Scheduling`: one group per provider label, merged with any label sharing
+/// its provider fingerprint, to a fixed point. Groups are numbered in first-member order.
+/// (wave 29b, E7) A runner with a roster `plan` adds the key `plan:<slug>`, so the members of one
+/// plan share a group across engines and routes (the availability view does not group by plan:
+/// only a quota failure propagates over a plan, E5).
 fn endpoint_groups(runners: &[Runner]) -> EndpointGroups {
     let mut labels: Vec<String> = Vec::new();
     // label -> set of fingerprints.
@@ -145,6 +150,13 @@ fn endpoint_groups(runners: &[Runner]) -> EndpointGroups {
             let e = fps.iter_mut().find(|(l, _)| *l == m.label).unwrap();
             if !e.1.contains(&m.fingerprint) {
                 e.1.push(m.fingerprint.clone());
+            }
+        }
+        if !m.plan.is_empty() {
+            let key = format!("plan:{}", m.plan);
+            let e = fps.iter_mut().find(|(l, _)| *l == m.label).unwrap();
+            if !e.1.contains(&key) {
+                e.1.push(key);
             }
         }
     }
@@ -213,22 +225,56 @@ fn endpoint_groups(runners: &[Runner]) -> EndpointGroups {
     }
 }
 
-/// `Get-PanelPlan`: the concurrency plan. `parallel` is the roster's `parallel` map (label -> n);
-/// `cap` is `-PanelConcurrency` (0 = no cap).
+/// `Get-PanelPlan`: the concurrency plan. `parallel` is the roster's `parallel` map (label or
+/// plan -> n); `cap` is `-PanelConcurrency` (0 = no cap). (wave 29b, E7) A group that holds
+/// members of a plan is limited by the plan too: the plan's own `parallel` value (default 1)
+/// caps it, and a label without a `parallel` value of its own takes its plans' (the smallest) -
+/// so `{"parallel": {"zai": 2}}` lets two routes of plan zai run at once, and without it they
+/// run one after another.
 pub fn panel_plan(runners: &[Runner], parallel: &[(String, i64)], cap: i64) -> PanelPlan {
     let eg = endpoint_groups(runners);
     let mut effective: i64 = 0;
     let mut out: Vec<PlanGroup> = Vec::new();
+    let parallel_of =
+        |k: &str| -> Option<i64> { parallel.iter().find(|(pl, _)| pl == k).map(|(_, n)| *n) };
+    // (E7) the plans of each label among the runners, first-seen order
+    let mut plans_of: Vec<(String, Vec<String>)> = Vec::new();
+    for m in runners {
+        let idx = match plans_of.iter().position(|(l, _)| *l == m.label) {
+            Some(i) => i,
+            None => {
+                plans_of.push((m.label.clone(), Vec::new()));
+                plans_of.len() - 1
+            }
+        };
+        if !m.plan.is_empty() && !plans_of[idx].1.contains(&m.plan) {
+            plans_of[idx].1.push(m.plan.clone());
+        }
+    }
+    let plan_limit = |p: &str| -> i64 { parallel_of(p).unwrap_or(1) };
     for (labels, positions) in &eg.groups {
         let mut limit: i64 = 0;
         for l in labels {
-            let v = parallel
+            let l_plans: &[String] = plans_of
                 .iter()
-                .find(|(pl, _)| pl == l)
-                .map(|(_, n)| *n)
-                .unwrap_or(1);
+                .find(|(x, _)| x == l)
+                .map(|(_, v)| v.as_slice())
+                .unwrap_or(&[]);
+            let v = match parallel_of(l) {
+                Some(n) => n,
+                None if !l_plans.is_empty() => {
+                    l_plans.iter().map(|p| plan_limit(p)).min().unwrap_or(1)
+                }
+                None => 1,
+            };
             if limit == 0 || v < limit {
                 limit = v;
+            }
+            for p in l_plans {
+                let pv = plan_limit(p);
+                if pv < limit {
+                    limit = pv;
+                }
             }
         }
         effective += limit.min(positions.len() as i64);
@@ -827,16 +873,19 @@ mod tests {
                 position: 1,
                 label: "agy1".into(),
                 fingerprint: "google".into(),
+                plan: String::new(),
             },
             Runner {
                 position: 2,
                 label: "agy2".into(),
                 fingerprint: "google".into(),
+                plan: String::new(),
             },
             Runner {
                 position: 3,
                 label: "zai".into(),
                 fingerprint: "zaifp".into(),
+                plan: String::new(),
             },
         ];
         let plan = panel_plan(&runners, &[], 0);
@@ -854,21 +903,25 @@ mod tests {
                 position: 1,
                 label: "zai".into(),
                 fingerprint: "a".into(),
+                plan: String::new(),
             },
             Runner {
                 position: 2,
                 label: "byteplus".into(),
                 fingerprint: "b".into(),
+                plan: String::new(),
             },
             Runner {
                 position: 3,
                 label: "byteplus".into(),
                 fingerprint: "b".into(),
+                plan: String::new(),
             },
             Runner {
                 position: 4,
                 label: "byteplus".into(),
                 fingerprint: "b".into(),
+                plan: String::new(),
             },
         ];
         // byteplus raised to 3 parallel; zai default 1 => effective = 1 + min(3,3) = 4.
@@ -882,6 +935,58 @@ mod tests {
         // No parallel: byteplus is one-at-a-time => effective = 1 (zai) + 1 (byteplus) = 2.
         let plan = panel_plan(&runners, &[], 0);
         assert_eq!(plan.effective, 2);
+    }
+
+    fn runner(position: i64, label: &str, fingerprint: &str, plan: &str) -> Runner {
+        Runner {
+            position,
+            label: label.into(),
+            fingerprint: fingerprint.into(),
+            plan: plan.into(),
+        }
+    }
+
+    #[test]
+    fn a_plan_is_one_scheduling_group_across_routes() {
+        // (wave 29b, E7 - harness-claude's "E7: every plan is a scheduling group across engines",
+        // with two routes C3 runs) a ZAI member and a ZAI-b member of plan zai on two endpoints
+        // share one group beside an openai member: "at most 2 at a time".
+        let runners = vec![
+            runner(1, "ZAI", "fp-zai", "zai"),
+            runner(2, "ZAI-b", "fp-zai-b", "zai"),
+            runner(3, "openai", "fp-openai", ""),
+        ];
+        let plan = panel_plan(&runners, &[], 0);
+        assert_eq!(plan.groups.len(), 2);
+        assert_eq!(plan.groups[0].positions, vec![1, 2]);
+        assert_eq!(plan.groups[0].limit, 1);
+        assert_eq!(plan.text, "at most 2 at a time");
+        // "parallel": {"zai": 2} -> at once (both labels take their plan's value)
+        let plan = panel_plan(&runners, &[("zai".into(), 2)], 0);
+        assert_eq!(plan.groups[0].limit, 2);
+        assert_eq!(plan.text, "at once");
+        // raising both labels but not the plan keeps them one after another
+        let plan = panel_plan(&runners, &[("ZAI".into(), 2), ("ZAI-b".into(), 2)], 0);
+        assert_eq!(plan.groups[0].limit, 1);
+        assert_eq!(plan.text, "at most 2 at a time");
+        // a label's own value below the plan's wins
+        let plan = panel_plan(&runners, &[("zai".into(), 3), ("ZAI".into(), 1)], 0);
+        assert_eq!(plan.groups[0].limit, 1);
+        // without the plan they run at once (two endpoints)
+        let no_plan = vec![
+            runner(1, "ZAI", "fp-zai", ""),
+            runner(2, "ZAI-b", "fp-zai-b", ""),
+            runner(3, "openai", "fp-openai", ""),
+        ];
+        let plan = panel_plan(&no_plan, &[], 0);
+        assert_eq!(plan.groups.len(), 3);
+        assert_eq!(plan.text, "at once");
+        // two plans stay apart
+        let two = vec![
+            runner(1, "ZAI", "fp-zai", "zai"),
+            runner(2, "mimo", "fp-mimo", "mimo"),
+        ];
+        assert_eq!(panel_plan(&two, &[], 0).text, "at once");
     }
 
     #[test]

@@ -36,6 +36,7 @@ use c3_core::lineage::{
     engine_spec, format_reviewer_lineage, install_launchers, launcher_names,
     resolve_reviewer_identity, ReviewerIdentity,
 };
+use c3_core::plan::{plan_quota, plan_quota_verdict, plan_routes, PlanQuota};
 use c3_core::roster::{roster_refusal, validate_roster, Roster, RosterEntry};
 use c3_core::verdict::{verdict_pre_credential, verdict_with_credential, PreflightVerdict};
 
@@ -106,6 +107,8 @@ pub(crate) struct Ctx {
     no_network: bool,
     login_cache: RefCell<HashMap<String, CredentialResult>>,
     engine_launchers: RefCell<HashMap<String, String>>,
+    /// (wave 1b, E5) `Get-PlanQuota` per plan for this context's roster, consults and clock.
+    plan_cache: RefCell<HashMap<String, PlanQuota>>,
 }
 
 /// Everything [`run_inner`] computes before it prints, so both the printing path and
@@ -219,6 +222,7 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
         no_network: opts.no_network,
         login_cache: RefCell::new(HashMap::new()),
         engine_launchers: RefCell::new(engine_launchers),
+        plan_cache: RefCell::new(HashMap::new()),
     };
 
     // The single-run walk ("would select") and every entry's availability.
@@ -390,6 +394,7 @@ impl Ctx {
             no_network: false,
             login_cache: RefCell::new(HashMap::new()),
             engine_launchers: RefCell::new(HashMap::new()),
+            plan_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -505,6 +510,8 @@ impl Ctx {
                 e.auth == "none",
                 true,
             );
+            // (wave 29b, E5) a usage limit on another route of the entry's plan
+            let verdict = self.plan_verdict(verdict, e, &id, true);
             if verdict.state == "available" {
                 return RosterWalk {
                     entry: Some(e.clone()),
@@ -663,6 +670,8 @@ impl Ctx {
                     e.auth == "none",
                     true,
                 );
+                // (wave 29b, E5) a usage limit on another route of the entry's plan
+                let verdict = self.plan_verdict(verdict, e, &id, true);
                 if verdict.state != "available" {
                     state = "skipped".into();
                     reason = verdict.reason.clone();
@@ -947,6 +956,67 @@ impl Ctx {
         r
     }
 
+    /// `Get-PlanQuota` (wave 29b, E5) for this context: the routes of `plan` are the resolved
+    /// identities of the roster's entries that name it (one per fingerprint, the first entry's
+    /// label), read as one record set over this context's consults (the machine-wide records
+    /// included) at its clock. Cached per plan.
+    pub(crate) fn plan_quota(&self, plan: &str) -> PlanQuota {
+        if let Some(c) = self.plan_cache.borrow().get(plan) {
+            return c.clone();
+        }
+        let mut resolved: Vec<(String, String, String)> = Vec::new();
+        for e in self.roster.entries.iter().filter(|e| e.plan == plan) {
+            let eng = if e.engine.is_empty() {
+                "codex"
+            } else {
+                &e.engine
+            };
+            let lau = self.engine_launcher(eng);
+            let id = resolve_reviewer_identity(
+                &self.config,
+                &e.provider,
+                &e.model,
+                &self.openai_base_url,
+                eng,
+                &lau,
+            );
+            if id.resolved && !id.fingerprint.is_empty() {
+                resolved.push((e.plan.clone(), id.fingerprint, e.provider.clone()));
+            }
+        }
+        let routes = plan_routes(plan, &resolved);
+        let pq = plan_quota(plan, &routes, &self.consults, self.utc_now);
+        self.plan_cache
+            .borrow_mut()
+            .insert(plan.to_string(), pq.clone());
+        pq
+    }
+
+    /// `Get-PlanQuotaVerdict` (wave 29b, E5): `verdict` (the entry's own) with the plan quota of
+    /// `entry`'s plan applied - out when the plan is out on ANOTHER route. `roster_walk` drops
+    /// the `-SkipPreflight` hint from the refusal (a direct run keeps it).
+    pub(crate) fn plan_verdict(
+        &self,
+        verdict: PreflightVerdict,
+        entry: &RosterEntry,
+        id: &ReviewerIdentity,
+        roster_walk: bool,
+    ) -> PreflightVerdict {
+        if entry.plan.is_empty()
+            || !(verdict.state == "available"
+                || (verdict.state == "unknown" && verdict.kind == "unknown"))
+        {
+            return verdict;
+        }
+        let pq = self.plan_quota(&entry.plan);
+        let own = if id.resolved {
+            id.fingerprint.as_str()
+        } else {
+            ""
+        };
+        plan_quota_verdict(verdict, &entry.plan, own, &id.provider, &pq, roster_walk)
+    }
+
     fn preflight(
         &self,
         id: &ReviewerIdentity,
@@ -1047,6 +1117,8 @@ impl Ctx {
                 e.auth == "none",
                 true,
             );
+            // (wave 29b, E5) a usage limit on another route of the entry's plan
+            let verdict = self.plan_verdict(verdict, e, &id, true);
             if verdict.state == "available" {
                 return Walk {
                     entry: Some(e.clone()),
@@ -1106,13 +1178,15 @@ impl Ctx {
             };
             let block = self.engine_launch_block(entry_engine);
             let verdict = if block.is_empty() {
-                Some(self.preflight(
+                // (wave 29b, E5) with the plan quota of the entry (Select-PanelMembers -All)
+                let v = self.preflight(
                     &id,
                     health.as_ref(),
                     &entry_launcher,
                     e.auth == "none",
                     true,
-                ))
+                );
+                Some(self.plan_verdict(v, e, &id, true))
             } else {
                 None
             };
@@ -1320,6 +1394,17 @@ impl Ctx {
                 .iter()
                 .any(|e| e.provider == *name && e.auth == "none");
             let v = self.preflight(&probe, health.as_ref(), &self.launcher, anonymous, true);
+            // (wave 29b, E5) the plan of the label's first codex entry that names one: a usage
+            // limit on another route of that plan
+            let v = match self
+                .roster
+                .entries
+                .iter()
+                .find(|e| e.provider == *name && e.engine == "codex" && !e.plan.is_empty())
+            {
+                Some(pe) => self.plan_verdict(v, pe, &probe, true),
+                None => v,
+            };
             cred_text = v
                 .credential
                 .as_ref()
@@ -1402,6 +1487,11 @@ impl Ctx {
             None
         };
         let v = self.preflight(&probe, health.as_ref(), &engine_launcher, false, true);
+        // (wave 29b, E5) a usage limit on another route of the plan of the label's first entry
+        let v = match self.roster.entries.iter().find(|e| e.provider == label) {
+            Some(first) if !first.plan.is_empty() => self.plan_verdict(v, first, &probe, true),
+            _ => v,
+        };
         let cred_text = v
             .credential
             .as_ref()
@@ -1626,6 +1716,8 @@ fn synthetic_verdict(verdict: &str) -> PreflightVerdict {
         hit: None,
         until: None,
         credential: None,
+        burst: false,
+        plan_quota: None,
     }
 }
 
@@ -2910,6 +3002,140 @@ mod roster_walk_tests {
         let e = w.entry.expect("first entry taken");
         assert_eq!(e.position, 1);
         assert!(w.skipped.is_empty());
+    }
+
+    /// (wave 1b, 0.6.0 E5) Two codex routes of plan zai on two endpoints (ZAI, ZAIB) and a third
+    /// provider without a plan, every entry anonymous (no credential to set); a usage limit
+    /// recorded on ZAI's endpoint.
+    fn plan_ctx(plan_b: &str, failure_on: &str) -> (Ctx, String, String) {
+        let toml = "model = \"gpt-5.1\"\n\n[model_providers.ZAI]\nbase_url = \"https://api.z.ai/api/v1\"\nwire_api = \"responses\"\n\n[model_providers.ZAIB]\nbase_url = \"https://open.bigmodel.cn/api/v1\"\nwire_api = \"responses\"\n\n[model_providers.local]\nbase_url = \"http://localhost:8080/v1\"\nwire_api = \"responses\"\n";
+        let config = scan_config_text("", toml);
+        let fp = |p: &str| resolve_reviewer_identity(&config, p, "m", "", "codex", "").fingerprint;
+        let (fp_a, fp_b) = (fp("ZAI"), fp("ZAIB"));
+        assert!(!fp_a.is_empty() && fp_a != fp_b);
+        let now = Utc::now();
+        let iso = |d: DateTime<Utc>| {
+            format_offset_iso(d.with_timezone(&FixedOffset::east_opt(0).unwrap()))
+        };
+        let failed_fp = if failure_on == "ZAI" { &fp_a } else { &fp_b };
+        let consult = json!({
+            "n": 1,
+            "when": iso(now - chrono::Duration::minutes(10)),
+            "finished_at": iso(now - chrono::Duration::minutes(9)),
+            "bridge_outcome": "failed: provider error",
+            "reviewer": { "provider_fingerprint": failed_fp },
+            "provider_failure": {
+                "class": "quota", "code": "429",
+                "message": "usage limit reached for the 5 hour window",
+                "when": iso(now - chrono::Duration::minutes(10)),
+                "retry_after": iso(now + chrono::Duration::hours(2))
+            }
+        });
+        let anon = |pos: usize, p: &str, plan: &str| RosterEntry {
+            auth: "none".into(),
+            plan: plan.into(),
+            ..entry(pos, p, "m")
+        };
+        let ctx = Ctx::for_consult(
+            config.clone(),
+            vec![consult],
+            roster(vec![
+                anon(1, "ZAI", "zai"),
+                anon(2, "ZAIB", plan_b),
+                anon(3, "local", ""),
+            ]),
+            String::new(),
+            String::new(),
+            now,
+        );
+        (ctx, fp_a, fp_b)
+    }
+
+    #[test]
+    fn a_usage_limit_on_one_route_marks_every_route_of_its_plan_out() {
+        // (harness-claude E5, with two codex routes) the walk skips ZAI (its own limit) and ZAIB
+        // (its plan) and selects local
+        let (ctx, _, _) = plan_ctx("zai", "ZAI");
+        let w = ctx.walk_full("", "", false);
+        assert_eq!(w.entry.as_ref().map(|e| e.provider.as_str()), Some("local"));
+        assert_eq!(w.skipped.len(), 2);
+        assert!(
+            w.skipped[0].3.starts_with("usage limit until "),
+            "{}",
+            w.skipped[0].3
+        );
+        assert!(
+            w.skipped[1]
+                .3
+                .starts_with("plan zai (usage limit on ZAI until "),
+            "{}",
+            w.skipped[1].3
+        );
+        // the "would select" walk of c3 providers says the same
+        let s = ctx.select_roster_reviewer();
+        assert_eq!(s.entry.map(|e| e.provider), Some("local".to_string()));
+        assert!(s.skipped[1]
+            .3
+            .starts_with("plan zai (usage limit on ZAI until "));
+        // the panel skips both
+        let sel = ctx.panel_members("", "", "checkpoint", false, false, 0);
+        let states: Vec<(&str, &str)> = sel
+            .members
+            .iter()
+            .map(|m| (m.state.as_str(), m.skip_kind.as_str()))
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("skipped", "unavailable"),
+                ("skipped", "unavailable"),
+                ("run", "")
+            ]
+        );
+        assert!(sel.members[1]
+            .reason
+            .starts_with("plan zai (usage limit on ZAI until "));
+        // the availability view: ZAIB out through its plan
+        let recs = ctx.roster_availability();
+        assert_eq!(recs[1].state, "out");
+        assert!(
+            recs[1]
+                .short
+                .starts_with("plan zai (usage limit on ZAI until "),
+            "{}",
+            recs[1].short
+        );
+        assert_eq!(recs[2].state, "available");
+        // a direct run of the other route is refused with the -SkipPreflight hint
+        let id = resolve_reviewer_identity(&ctx.config, "ZAIB", "m", "", "codex", "");
+        let v = ctx.preflight(&id, None, "", true, false);
+        assert_eq!(v.state, "available");
+        let v = ctx.plan_verdict(v, &ctx.roster.entries[1], &id, false);
+        assert!(v
+            .refusal
+            .starts_with("provider ZAIB is not usable: its plan zai hit a usage limit on ZAI at "));
+        assert!(v
+            .refusal
+            .ends_with("; nothing was started (pass -SkipPreflight to launch anyway)"));
+    }
+
+    #[test]
+    fn the_plan_propagates_both_ways_and_not_without_a_plan() {
+        // a limit on ZAIB marks ZAI out through the plan
+        let (ctx, _, _) = plan_ctx("zai", "ZAIB");
+        let w = ctx.walk_full("", "", false);
+        assert_eq!(w.entry.map(|e| e.provider), Some("local".to_string()));
+        assert!(w.skipped[0]
+            .3
+            .starts_with("plan zai (usage limit on ZAIB until "));
+        // ZAIB without the plan: only ZAI is out, ZAIB is selected
+        let (ctx, _, _) = plan_ctx("", "ZAI");
+        let w = ctx.walk_full("", "", false);
+        assert_eq!(w.entry.map(|e| e.provider), Some("ZAIB".to_string()));
+        // another plan: no propagation either
+        let (ctx, _, _) = plan_ctx("mimo", "ZAI");
+        let w = ctx.walk_full("", "", false);
+        assert_eq!(w.entry.map(|e| e.provider), Some("ZAIB".to_string()));
     }
 
     fn weighted(pos: usize, provider: &str, model: &str, panel: &str, ctx: i64) -> RosterEntry {
