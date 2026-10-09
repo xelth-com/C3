@@ -6697,7 +6697,7 @@
                      },
                      {
                          "id":  "F32-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -6756,6 +6756,15 @@
                                              "evidence":  "",
                                              "base_commit":  "c8f099712ae2aa9127a1c7b73cc997e77441ef55",
                                              "tree_sha256":  "56d7ef6cea2eff096d51e01ffbd7c23130a37922b445c6b250b626c0568dd35f"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T13:40:40+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 4g f62ca02: the endpoint probe runs in the endpoint turn\u0027s environment without the token (F32-1); the home resolved as Claude Code\u0027s bundle does (USERPROFILE on Windows, HOME elsewhere; CLAUDE_CONFIG_DIR first), refused when it cannot be established (F32-2)",
+                                             "evidence":  "",
+                                             "base_commit":  "f62ca029f916f69481263f17b33d9064f539a977",
+                                             "tree_sha256":  "6e35e295700426e4bd347c2b946186933935be0055dac1d96ee24f45249b6cd5"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -6764,7 +6773,7 @@
                      },
                      {
                          "id":  "F32-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -6823,6 +6832,15 @@
                                              "evidence":  "",
                                              "base_commit":  "c8f099712ae2aa9127a1c7b73cc997e77441ef55",
                                              "tree_sha256":  "56d7ef6cea2eff096d51e01ffbd7c23130a37922b445c6b250b626c0568dd35f"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T13:40:43+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 4g f62ca02: the endpoint probe runs in the endpoint turn\u0027s environment without the token (F32-1); the home resolved as Claude Code\u0027s bundle does (USERPROFILE on Windows, HOME elsewhere; CLAUDE_CONFIG_DIR first), refused when it cannot be established (F32-2)",
+                                             "evidence":  "",
+                                             "base_commit":  "f62ca029f916f69481263f17b33d9064f539a977",
+                                             "tree_sha256":  "6e35e295700426e4bd347c2b946186933935be0055dac1d96ee24f45249b6cd5"
                                          }
                                      ],
                          "reviewer_checks":  [
