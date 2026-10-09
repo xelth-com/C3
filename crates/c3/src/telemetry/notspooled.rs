@@ -139,6 +139,13 @@ pub fn local_paths(dir: &Path) -> LocalPaths {
         if let Some(h) = std::env::var_os(PLUGIN_HOME_VAR).filter(|h| !h.is_empty()) {
             return LocalPaths::plugin_home(Path::new(&h), dir);
         }
+        // (wave 6) the detached sender receives the hook under the sender-hook prefix (its
+        // allow-listed environment admits no other test name)
+        if let Some(h) = c3_core::test_hooks::hook(super::sender::SENDER_PLUGIN_HOME_VAR)
+            .filter(|h| !h.is_empty())
+        {
+            return LocalPaths::plugin_home(Path::new(&h), dir);
+        }
     }
     LocalPaths::in_dir(dir)
 }

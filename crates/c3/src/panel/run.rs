@@ -1360,6 +1360,15 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
             .count() as i64;
         let usable = slots.iter().filter(|s| slot_usable(s)).count() as i64;
         patch_counts(&store, &b.task, &b.panel_id, started, usable);
+        // (wave 6, the plugin's wave 28 R17) every member put its event into the spool: ONE
+        // detached sender for the panel (not waited for; silent)
+        if started > 0
+            && crate::telemetry::is_enabled(&crate::telemetry::Config {
+                telemetry: o.telemetry,
+            })
+        {
+            crate::telemetry::start_sender_quietly();
+        }
     }
 
     // The task lock releases on drop; the temp dir is cleaned up.

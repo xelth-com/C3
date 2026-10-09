@@ -272,4 +272,7 @@ NOTSPOOLED/MARKER then run C3's count, fold and marker on the plugin's own files
 the plugin's own library functions (the harness's in-process `Add-TelemetryNotSpooled`,
 `Invoke-TelemetryFlush`): the two implementations read and write the same files. C3's outbox, salt,
 references, locks and deletion transaction stay under `<codex home>/c3/telemetry/` either way. See
-`wave3b-notspooled.md`.
+`wave3b-notspooled.md`. (wave 6) The detached sender a run starts after its commit gets an
+allow-listed environment only; it receives this hook as `CODEX_CONSULT_TEST_TELEMETRY_PLUGIN_HOME`
+(the sender-hook prefix the allow list admits in test mode), so its last flush's record lands in
+the same place (`wave6-live-diffs.md`).

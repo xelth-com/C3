@@ -1410,16 +1410,17 @@ impl Context {
     }
 }
 
-/// Run one consultation; return the exit code. Wraps [`run_inner`] with the telemetry
-/// background flush and the one-time notice (a real run only — a dry run does nothing), and
-/// joins the flush (capped at 3 s) at every exit path.
+/// Run one consultation; return the exit code. Wraps [`run_inner`] with the priors refresh and
+/// the one-time telemetry notice (a real run with telemetry on only — a dry run does nothing), and
+/// joins the refresh (capped at 3 s) at every exit path. (wave 6) The events are NOT sent here: the
+/// run starts the detached sender right after its commit (`telemetry::sender`), as the plugin does.
 pub fn run(o: Options) -> i32 {
     let cfg = telemetry::Config {
         telemetry: o.telemetry,
     };
     let real = telemetry::is_enabled(&cfg) && !o.dry_run;
     let bg = if real {
-        Some(telemetry::flush_in_background())
+        Some(crate::router::refresh_priors_in_background())
     } else {
         None
     };
@@ -6242,15 +6243,26 @@ fn finish(
     // plugin's for an event it gives up on (`- dropped`, harness-telemetry FORGET D3): C3 does not
     // retry it after the commit.
     if let Some(entry) = &entry_for_telemetry {
-        if let Err(e) = telemetry::record_consultation(
+        match telemetry::record_consultation(
             entry,
             None,
             &telemetry::Config {
                 telemetry: ctx.o.telemetry,
             },
         ) {
-            telemetry::note_not_spooled(&e.to_string());
-            println!("warning    : telemetry event not spooled ({e}) - dropped");
+            Err(e) => {
+                telemetry::note_not_spooled(&e.to_string());
+                println!("warning    : telemetry event not spooled ({e}) - dropped");
+            }
+            // (wave 6, the plugin's wave 28 R17) the event is in the spool: the detached sender
+            // starts now (not waited for) - a panel member leaves it to its panel run, a run that
+            // keeps its recovery record starts none (the next run's sender delivers). Never fails
+            // the run.
+            Ok(_) => {
+                if ctx.panel_member.is_none() && disposition == RecoveryDisposition::Remove {
+                    telemetry::start_sender_quietly();
+                }
+            }
         }
     }
 
@@ -8819,17 +8831,19 @@ fn short_hash(h: &str) -> String {
 /// the full canonical base_url with the query redacted (`(default)` when the endpoint is
 /// Codex's own default), and the wire_api label (`(default)` when the table declares none).
 pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
-    // (0.6.0, wave 29) the claude engine (`Resolve-EngineIdentity`'s Display): the engine and its
-    // launcher, and (wave 29b, E5) an endpoint route's base URL and token variable NAME
-    if id.engine == "claude" {
+    // (0.6.0, wave 29) a CLI engine (`Resolve-EngineIdentity`'s Display): `engine <name>
+    // (<launcher>)`, `<command> CLI not found` without one - (wave 6) agy and muse as claude, not
+    // the codex endpoint text - and (wave 29b, E5) a claude endpoint route's base URL and token
+    // variable NAME. The http engine (C3's own) names its provider table's endpoint below.
+    if matches!(id.engine.as_str(), "agy" | "muse" | "claude") {
         let launcher = id
             .provider_config
             .get("launcher")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "claude CLI not found".to_string());
-        let mut d = format!("engine claude ({launcher})");
+            .unwrap_or_else(|| format!("{} CLI not found", id.engine));
+        let mut d = format!("engine {} ({launcher})", id.engine);
         if id.auth == "endpoint" {
             if let Some(ep) = &id.endpoint {
                 d.push_str(&format!(
@@ -10393,5 +10407,90 @@ mod kill_record_tests {
             .kept_kill
             .as_ref()
             .is_some_and(|k| k.unverified.len() == 1));
+    }
+}
+
+#[cfg(test)]
+mod identity_display_tests {
+    //! (wave 6) The reviewer line's identity display for every engine, against the plugin's
+    //! `Resolve-EngineIdentity` Display (`engine <name> (<launcher>)`) and `$identity.Display`.
+    use super::*;
+
+    fn id(engine: &str, launcher: Option<&str>) -> ReviewerIdentity {
+        let provider_config = match launcher {
+            Some(l) => serde_json::json!({"engine": engine, "launcher": l}),
+            None => serde_json::Value::Null,
+        };
+        ReviewerIdentity {
+            provider: "p".into(),
+            provider_source: "-Provider".into(),
+            model: "m".into(),
+            model_source: "-Model".into(),
+            lineage: "p :: m".into(),
+            resolved: true,
+            note: String::new(),
+            error: String::new(),
+            fingerprint: "ab".repeat(32),
+            compat_string: String::new(),
+            host: String::new(),
+            base_url: String::new(),
+            wire_api: String::new(),
+            engine: engine.into(),
+            provider_config,
+            auth: String::new(),
+            endpoint: None,
+        }
+    }
+
+    #[test]
+    fn agy_and_muse_show_their_engine_and_launcher_as_the_plugin_does() {
+        assert_eq!(
+            identity_display(&id("agy", Some(r"C:\tools\agy.cmd"))),
+            r"engine agy (C:\tools\agy.cmd)"
+        );
+        assert_eq!(
+            identity_display(&id("muse", Some("/usr/bin/muse"))),
+            "engine muse (/usr/bin/muse)"
+        );
+        // no launcher resolved: `<command> CLI not found`
+        assert_eq!(
+            identity_display(&id("agy", Some(""))),
+            "engine agy (agy CLI not found)"
+        );
+        assert_eq!(
+            identity_display(&id("muse", None)),
+            "engine muse (muse CLI not found)"
+        );
+        // the reviewer line carries it (never the codex endpoint text)
+        let line = reviewer_line(&id("agy", Some("agy.cmd")), "agy", "h");
+        assert!(
+            line.contains("; engine agy (agy.cmd); provider fingerprint "),
+            "{line}"
+        );
+        assert!(!line.contains("wire_api"), "{line}");
+    }
+
+    #[test]
+    fn claude_and_codex_keep_their_lines() {
+        assert_eq!(
+            identity_display(&id("claude", Some("claude.exe"))),
+            "engine claude (claude.exe)"
+        );
+        assert_eq!(
+            identity_display(&id("claude", None)),
+            "engine claude (claude CLI not found)"
+        );
+        assert_eq!(
+            identity_display(&id("codex", None)),
+            "endpoint (default), wire_api: (default)"
+        );
+        // the http engine (C3's own) names its provider table's endpoint
+        let mut h = id("http", None);
+        h.base_url = "https://api.example.test/v1".into();
+        h.wire_api = "responses".into();
+        assert_eq!(
+            identity_display(&h),
+            "endpoint https://api.example.test/v1, wire_api: responses"
+        );
     }
 }

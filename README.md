@@ -189,8 +189,10 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
 * **Never blocks a run; never lost silently:** events queue in C3's own outbox
   (`<codex home>/c3/telemetry/spool.ndjson`, one `{v, kind, queued_unix, body}` line each - not
   the plugin's `telemetry-spool/`: C3 is its own app with its own salt and instance id), are sent
-  in the background in batches of at most 100 (one flush ends after 60 s, one request after 8 s),
-  retried on the next run and dropped 7 days after they were queued. The sender follows the
+  by a detached sender a run starts right after its commit (a consultation, a panel - once -, a
+  rating, a backfill; the run never waits for it, and it gets an allow-listed environment only: no
+  key, no host marker) in batches of at most 100 (one flush ends after 60 s, one request after 8 s),
+  retried by the next sender and dropped 7 days after they were queued. The sender follows the
   intake's answers as the plugin does: a 429 whose `Retry-After` is at most 60 s is waited for
   once (else the batch stays queued), a 400 naming `events[i]` drops that event and resends the
   rest (at most three per flush), a 413 halves the batch and drops an event too large alone -

@@ -149,7 +149,11 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let repo_root = resolve_repo_root(&cwd);
     let collab_root = resolve_collab_root(&repo_root, &opts.collab_dir);
-    let consults = read_all_task_consults_health(&collab_root);
+    // (wave 6) the header counts THIS repository's consultations (`codex-providers.ps1`:
+    // `Read-AllTaskConsults`); the machine-wide health records join them only for the verdicts
+    let mut consults = read_all_task_consults(&collab_root);
+    let repo_consult_count = consults.len();
+    consults.extend(machine_health_consults());
     let clock = get_consult_clock_peek()?;
     let utc_now = clock.with_timezone(&Utc);
 
@@ -202,7 +206,7 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
     }
 
     let ledger_count = count_task_ledgers(&collab_root);
-    let consult_count = consults.len();
+    let consult_count = repo_consult_count;
     let health_source = format!(
         "{} ({} task ledger{}, {} consultation{})",
         collab_root.display(),

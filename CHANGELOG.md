@@ -66,6 +66,16 @@ v0.6.1 harnesses through the shim (`docs/port/harness-shim.md`).
   The coordinator's dry-run line and the "not in the roster" console line follow the plugin's
   `Format-CoordinatorText` / `Format-CoordinatorId` (no ` [codex]` suffix, "(model not named)", an
   unresolved `#n` shown as such).
+- Wave 6 (`wave6-live-diffs.md`, the RC3 live matrix): the ledger's `coordinator` record carries
+  `host_by`, `in_roster` and `unresolved` in the plugin's order, and a rewrite of `sessions.json`
+  keeps every entry it read verbatim (key order, explicit nulls) apart from what C3 changed in it.
+- Wave 6: the `c3 providers` header counts this repository's consultations only, not the
+  machine-wide health records.
+- Wave 6: the agy and muse engines' reviewer line (dry run, reply header) is `engine <name>
+  (<launcher>)` as the plugin's, not the codex endpoint text.
+- Wave 6: telemetry is sent by a detached `c3 telemetry --flush` started right after a
+  consultation's, a panel's, a rating's or a backfill's commit (not waited for, allow-listed
+  environment), not at the start of the next run.
 
 ### Changed
 

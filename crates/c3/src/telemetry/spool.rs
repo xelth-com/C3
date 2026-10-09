@@ -60,15 +60,15 @@
 //! starts only while 1.5 s are left (1 s kept back for the rewrite that follows) - what is not sent
 //! stays. Lines queued more than 7 days ago are dropped.
 //!
-//! Never in a consultation's critical path: [`flush_in_background`] runs the sender in a thread
-//! joined with a cap at the run's end (a send still running then is cut by the process's exit: its
-//! lines stay queued - at worst a duplicate later, never a loss).
+//! Never in a consultation's critical path: (wave 6) a run starts the sender as a DETACHED process
+//! right after its commit ([`super::sender`], the plugin's `Start-TelemetrySender`) and does not
+//! wait for it; the process flushes once ([`flush_now`]) and exits. A send cut short leaves its
+//! lines queued - at worst a duplicate later, never a loss.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -1492,42 +1492,12 @@ pub(crate) fn replace_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     )))
 }
 
-/// A detached background flush that the caller joins with a cap at exit.
-pub struct BackgroundFlush {
-    done: mpsc::Receiver<()>,
-}
-
-impl BackgroundFlush {
-    /// Wait at most `cap` for the flush to finish, then return. If the send is still
-    /// running it is left to time out on its own 3 s budget (the process may exit first).
-    pub fn join_with_cap(self, cap: Duration) {
-        let _ = self.done.recv_timeout(cap);
-    }
-}
-
-/// Run the default spool's sender once, synchronously (`c3 telemetry --flush`), recording the
-/// result for `--status`.
+/// Run the default spool's sender once, synchronously (`c3 telemetry --flush` - and so the
+/// detached sender a run starts after its commit, [`super::sender`]), recording the result for
+/// `--status`.
 pub fn flush_now() -> Result<FlushReport> {
     // (wave 3b) the record and the fold of the not-spooled files, under the sender lock
     Spool::new(telemetry_dir(), default_hub()).flush_recorded()
-}
-
-/// Spawn a background flush of the default spool (a consultation's start, after a rating or a
-/// backfill). The CALLER decides the switch (a run's own `--telemetry on` wins over the
-/// environment); the priors refresh keeps its own environment gate.
-pub fn flush_in_background() -> BackgroundFlush {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = flush_now();
-        // The priors refresh runs AFTER the events are sent (M9 §3, F8): once a day at most,
-        // injected fetcher in tests. A panic or error inside it must never affect the flush, so
-        // it is isolated in catch_unwind.
-        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::router::maybe_refresh_priors();
-        }));
-        let _ = tx.send(());
-    });
-    BackgroundFlush { done: rx }
 }
 
 #[cfg(test)]

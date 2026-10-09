@@ -253,8 +253,11 @@ pub fn run(collab_root: &Path, switch: &Switch, dry_run: bool) -> i32 {
     if dry_run {
         println!("{TOOL}: dry run - nothing was spooled or written.");
     } else if t_sent > 0 {
-        crate::telemetry::flush_in_background().join_with_cap(Duration::from_secs(3));
-        println!("{TOOL}: the spool was flushed in the background - c3 telemetry --status shows what is still queued.");
+        // (wave 6) the plugin's detached sender and its two lines
+        match crate::telemetry::start_sender() {
+            Ok(()) => println!("{TOOL}: the sender started (detached) - c3 telemetry --status shows the result."),
+            Err(why) => println!("{TOOL}: the sender did not start ({why}) - the next consultation's sender, or c3 telemetry --flush, delivers the spool."),
+        }
     }
     if t_failed > 0 {
         1

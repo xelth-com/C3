@@ -1265,8 +1265,10 @@ fn mode_rate(ctx: &Ctx) -> Result<i32, String> {
             }
         }
     }
+    // (wave 6, the plugin's `Start-TelemetrySender`) the rating event is in the spool: the
+    // detached sender delivers it (not waited for)
     if spooled {
-        crate::telemetry::flush_in_background().join_with_cap(Duration::from_secs(3));
+        crate::telemetry::start_sender_quietly();
     }
     Ok(0)
 }

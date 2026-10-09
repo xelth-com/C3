@@ -167,9 +167,34 @@ pub fn load_context() -> RouterContext {
     }
 }
 
-/// Refresh the priors cache once, where the telemetry flush runs (M9 §3). Ignores every
-/// failure and never blocks a consultation; a disabling switch skips the fetch entirely.
+/// Refresh the priors cache once (M9 §3) - at the start of a telemetry-on consultation. Ignores
+/// every failure and never blocks a consultation; a disabling switch skips the fetch entirely.
 pub fn maybe_refresh_priors() {
     let outcome = download::refresh(&download::priors_dir(), Utc::now(), &download::UreqFetcher);
     crate::telemetry::debug_log(&format!("priors refresh: {outcome:?}"));
+}
+
+/// A priors refresh on a background thread that the caller joins with a cap at its end.
+pub struct BackgroundRefresh {
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+impl BackgroundRefresh {
+    /// Wait at most `cap` for the refresh to finish, then return (one still running is cut by the
+    /// process's exit; the cache is written atomically, so nothing is left half-written).
+    pub fn join_with_cap(self, cap: std::time::Duration) {
+        let _ = self.done.recv_timeout(cap);
+    }
+}
+
+/// (wave 6) The priors refresh a telemetry-on consultation starts at its beginning - what was left
+/// of the in-process flush once the events moved to the detached sender after the commit
+/// (`crate::telemetry::sender`). A panic inside the refresh never reaches the run.
+pub fn refresh_priors_in_background() -> BackgroundRefresh {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(maybe_refresh_priors));
+        let _ = tx.send(());
+    });
+    BackgroundRefresh { done: rx }
 }

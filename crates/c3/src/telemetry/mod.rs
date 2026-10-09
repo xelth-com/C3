@@ -17,6 +17,7 @@ pub mod classes;
 mod complaint;
 mod event;
 pub mod notspooled;
+pub mod sender;
 mod spool;
 
 use std::path::{Path, PathBuf};
@@ -36,10 +37,8 @@ pub use complaint::{
 pub(crate) use event::topic_slug;
 pub use event::{Details, Event, RatingDetails, RatingEvent, RatingInput};
 pub use notspooled::{local_paths, LocalPaths};
-pub use spool::{
-    flush_in_background, flush_now, sender_status, BackgroundFlush, FlushHooks, FlushReport,
-    PostAnswer, Spool,
-};
+pub use sender::{start_sender, start_sender_quietly};
+pub use spool::{flush_now, sender_status, FlushHooks, FlushReport, PostAnswer, Spool};
 
 /// The default T-hub base URL.
 const HUB_DEFAULT: &str = "https://xelth.com/T";

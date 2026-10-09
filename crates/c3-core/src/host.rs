@@ -366,12 +366,16 @@ pub fn coordinator_refusal(value: &str, why: &str) -> String {
 /// `CODEX_CONSULT_COORDINATOR` was set and parsed (source `explicit`); `None` means no value —
 /// then `source` is `inferred` when the host is known, else `none`.
 pub fn build_coordinator(host: &str, matched: Option<&CoordinatorMatch>) -> Coordinator {
+    // (wave 6) `host_by` (`Get-CoordinatorHostHint`'s By): C3 infers its one host from the markers
+    // only (no install-path hint), so `markers` for a known host, else `none`.
+    let host_by = Some(if host == "unknown" { "none" } else { "markers" }.to_string());
     match matched {
         Some(m) => Coordinator {
             provider: m.provider.clone(),
             model: m.model.clone(),
             engine: m.engine.clone(),
             host: host.to_string(),
+            host_by,
             source: "explicit".to_string(),
             // (wave 27c, D11/D12) recorded after `source`: `in_roster: false` for a coordinator no
             // reviewer can match, `unresolved: "#n"` for a position naming no seat here.
@@ -384,6 +388,7 @@ pub fn build_coordinator(host: &str, matched: Option<&CoordinatorMatch>) -> Coor
             model: None,
             engine: None,
             host: host.to_string(),
+            host_by,
             source: if host == "unknown" {
                 "none"
             } else {
@@ -446,9 +451,14 @@ pub fn format_coordinator_id(c: &Coordinator) -> String {
 /// the roster - no reviewer can match it)` for a coordinator no reviewer can match.
 pub fn format_coordinator_text(c: &Coordinator) -> String {
     let mut text = format!(
-        "{}; host {} (inferred, a hint); source {}",
+        "{}; host {} ({}); source {}",
         coordinator_lineage(c),
         c.host,
+        if c.host_by.as_deref() == Some("path") {
+            "inferred from the install path, a hint"
+        } else {
+            "inferred, a hint"
+        },
         c.source
     );
     if c.in_roster == Some(false) && c.unresolved.as_deref().is_none_or(|u| u.is_empty()) {

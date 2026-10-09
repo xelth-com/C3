@@ -327,3 +327,105 @@ fn recover_pending_is_path_bearing() {
     assert!(recovered[0].path.ends_with(".consult.pending.json"));
     assert_eq!(recovered[0].nn, None);
 }
+
+// ------------------------------------------------------------------ D. (wave 6) foreign entries
+
+/// The plugin's own 0.6.1 `sessions.json` (the RC3 interchange, step (a): one entry the plugin
+/// wrote, its coordinator `{.., host, host_by, source, in_roster: null, unresolved: null}`).
+const PLUGIN_LEDGER: &str = include_str!("fixtures/plugin-0.6.1-sessions.json");
+
+/// The bytes of `text` up to and including its last entry's closing brace (the `}` before the
+/// consults array's closing `]`).
+fn through_last_entry(text: &str) -> &str {
+    let close = text.rfind(']').unwrap();
+    let brace = text[..close].rfind('}').unwrap();
+    &text[..=brace]
+}
+
+#[test]
+fn a_plugin_entry_survives_a_c3_commit_byte_for_byte() {
+    let store = FilesStore::new(temp_collab());
+    let task = TaskSlug::new("rc3-x").unwrap();
+    let dir = store.task_dir(&task);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("sessions.json"), PLUGIN_LEDGER).unwrap();
+    // the formatter reproduces the plugin's file from its own JSON (the premise of the check)
+    let as_value: serde_json::Value = serde_json::from_str(PLUGIN_LEDGER).unwrap();
+    assert_eq!(
+        c3_core::ps_json::to_ps_json_bytes(&as_value).unwrap(),
+        PLUGIN_LEDGER.as_bytes()
+    );
+    // a read and a rewrite with nothing changed: the same bytes
+    let read = store.read_sessions(&task).unwrap().unwrap();
+    assert_eq!(read.to_bytes().unwrap(), PLUGIN_LEDGER.as_bytes());
+
+    let pending = PendingRef::single(task.clone());
+    let lock = store.take_write_lock(&task).unwrap();
+    store
+        .commit(
+            &lock,
+            CommitRequest {
+                entry: entry(2, "c3-entry"),
+                findings: FindingsDelta::default(),
+                pending: &pending,
+                disposition: RecoveryDisposition::Remove,
+                files: &[],
+                bootstrap_cwd: "/repo".into(),
+                bootstrap_tool: "codex-cli test".into(),
+                commit_pause_ms: 0,
+            },
+        )
+        .unwrap();
+    drop(lock);
+    let after = std::fs::read_to_string(dir.join("sessions.json")).unwrap();
+    // every byte of the plugin's file through its entry is unchanged; C3's entry follows it
+    let prefix = through_last_entry(PLUGIN_LEDGER);
+    assert!(
+        after.starts_with(prefix),
+        "the plugin's entry was rewritten:\n{after}"
+    );
+    assert!(after[prefix.len()..].starts_with(",\n"));
+    let v: serde_json::Value = serde_json::from_str(&after).unwrap();
+    let consults = v["codex"]["consults"].as_array().unwrap();
+    assert_eq!(consults.len(), 2);
+    assert_eq!(consults[1]["consult_id"], "c3-entry");
+    // the coordinator keeps host_by in place and the two explicit nulls
+    let co = consults[0]["coordinator"].as_object().unwrap();
+    assert_eq!(
+        co.keys().cloned().collect::<Vec<_>>().join(","),
+        "provider,model,engine,host,host_by,source,in_roster,unresolved"
+    );
+    assert!(co["in_roster"].is_null() && co["unresolved"].is_null());
+}
+
+#[test]
+fn a_changed_foreign_entry_keeps_its_shape_and_takes_only_the_change() {
+    // the panel counts' patch (`panel.started` / `panel.usable`) on an entry another writer made:
+    // its key order, its nulls and its unknown keys stay; only the changed members move
+    let text = r#"{"task_id":"t","cwd":"/r","codex":{"tool":"x","consults":[
+        {"n":1,"when":"w","zz_unknown":null,"consult_id":"a","coordinator":{"provider":null,"model":null,"engine":null,"host":"claude-code","host_by":"markers","source":"inferred","in_roster":null,"unresolved":null},
+         "panel":{"id":"p1","position":1,"of":2,"started":null,"usable":null,"later":"kept"}}]}}"#;
+    let mut s = c3_core::ledger::SessionsFile::read(text.as_bytes()).unwrap();
+    let p = s.codex.consults[0].panel.as_mut().expect("a panel record");
+    p.started = Some(Some(2));
+    p.usable = Some(Some(1));
+    let out: serde_json::Value = serde_json::from_slice(&s.to_bytes().unwrap()).unwrap();
+    let e = &out["codex"]["consults"][0];
+    assert_eq!(
+        e.as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(","),
+        "n,when,zz_unknown,consult_id,coordinator,panel"
+    );
+    assert!(e["zz_unknown"].is_null());
+    assert!(e["coordinator"]["in_roster"].is_null());
+    assert_eq!(e["panel"]["started"], 2);
+    assert_eq!(e["panel"]["usable"], 1);
+    assert_eq!(
+        serde_json::to_string(&e["panel"]).unwrap(),
+        r#"{"id":"p1","position":1,"of":2,"started":2,"usable":1,"later":"kept"}"#
+    );
+}

@@ -634,14 +634,19 @@ fn spawn_background(
     let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
     // SAFETY: a straight CreateProcessW with bInheritHandles=FALSE and DETACHED_PROCESS; every
     // pointer is to a local, NUL-terminated buffer that outlives the call.
-    unsafe { create_process_no_inherit(&comspec, &raw, cwd) }
+    unsafe { create_process_no_inherit(&comspec, &raw, cwd, None) }
 }
 
+/// `CreateProcessW` of `"<program>" <raw_args>` in `cwd` with no inherited handle
+/// (`bInheritHandles = FALSE`), hidden (`CREATE_NO_WINDOW`) and in its own process group; `env`
+/// (wave 6, the telemetry sender) replaces the environment block whole, else the child inherits
+/// this process's environment. Not waited for.
 #[cfg(windows)]
-unsafe fn create_process_no_inherit(
+pub(crate) unsafe fn create_process_no_inherit(
     program: &str,
     raw_args: &str,
     cwd: &Path,
+    env: Option<&[(String, String)]>,
 ) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     #[allow(non_snake_case)]
@@ -695,6 +700,22 @@ unsafe fn create_process_no_inherit(
     // bInheritHandles=FALSE the background still holds none of the caller's handles.
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
+
+    // The environment block: `NAME=value\0` per variable (the caller sorted them), then one more
+    // `\0`; an empty one is two NULs.
+    let mut env_block: Option<Vec<u16>> = env.map(|vars| {
+        let mut b: Vec<u16> = Vec::new();
+        for (k, v) in vars {
+            b.extend(format!("{k}={v}").encode_utf16());
+            b.push(0);
+        }
+        if b.is_empty() {
+            b.push(0);
+        }
+        b.push(0);
+        b
+    });
 
     let mut app: Vec<u16> = std::path::Path::new(program)
         .as_os_str()
@@ -716,8 +737,11 @@ unsafe fn create_process_no_inherit(
         std::ptr::null_mut(),
         std::ptr::null_mut(),
         0, // bInheritHandles = FALSE: the background holds none of our handles
-        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
-        std::ptr::null_mut(),
+        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT,
+        env_block
+            .as_mut()
+            .map(|b| b.as_mut_ptr() as *mut u8)
+            .unwrap_or(std::ptr::null_mut()),
         dir.as_ptr(),
         &mut si,
         &mut pi,

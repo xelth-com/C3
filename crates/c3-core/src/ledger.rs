@@ -77,8 +77,17 @@ pub struct LedgerBook {
     /// The Codex CLI version (`codex-cli 0.155.1`); an engine run leaves it unchanged.
     #[serde(default)]
     pub tool: String,
-    /// The ledger entries, kept sorted by `n` (`Add-LedgerEntry`, D10).
-    #[serde(default)]
+    /// The ledger entries, kept sorted by `n` (`Add-LedgerEntry`, D10). (wave 6) Read through
+    /// [`deserialize_consults`] - every entry keeps the object it was read from
+    /// ([`LedgerEntry::source_json`]) - and written through [`serialize_consults`], which writes an
+    /// entry read from disk VERBATIM (its key order, its explicit nulls, the keys C3 does not know)
+    /// and lays only what C3 changed in it onto that object; an entry built in this run is written
+    /// from its fields.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_consults",
+        serialize_with = "serialize_consults"
+    )]
     pub consults: Vec<LedgerEntry>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -368,6 +377,12 @@ pub struct LedgerEntry {
     /// Unknown members a later wave adds, preserved in place on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+    /// (wave 6) The JSON object this entry was read from (`None` for an entry built in this run).
+    /// A rewrite of `sessions.json` writes it back as it was - another writer's entry (the plugin's,
+    /// an older C3's) keeps its key order and its explicit nulls byte for byte - with only the
+    /// fields C3 changed since the read laid onto it ([`merge_onto`]). Never serialized itself.
+    #[serde(skip)]
+    pub source_json: Option<Value>,
 }
 
 /// `entry.reviewer`: identity as `Resolve-ReviewerIdentity` recorded it. Absent entirely in
@@ -400,8 +415,9 @@ pub struct Reviewer {
 }
 
 /// `entry.coordinator` (wave 27): who ran the bridge. Field order is the plugin literal
-/// `{provider, model, engine, host, source}` and MUST NOT change. `provider`/`model`/`engine`
-/// are `null` when the host was only inferred (no `CODEX_CONSULT_COORDINATOR` value); `host` is
+/// `{provider, model, engine, host, host_by, source, in_roster, unresolved}`
+/// (`Resolve-CoordinatorIdentity`) and MUST NOT change. `provider`/`model`/`engine` are `null`
+/// when the host was only inferred (no `CODEX_CONSULT_COORDINATOR` value); `host` is
 /// `codex | zcode | claude-code | unknown`; `source` is `explicit | inferred | none`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Coordinator {
@@ -413,16 +429,21 @@ pub struct Coordinator {
     pub engine: Option<String>,
     #[serde(default)]
     pub host: String,
+    /// (wave 6, the plugin's wave 27c) how the host hint was found: `markers` (the host's
+    /// environment markers), `path` (the install path - the plugin only) or `none`. A fresh record
+    /// always writes it; absent only in a record written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_by: Option<String>,
     #[serde(default)]
     pub source: String,
     /// (wave 27c, D11) `false` when the coordinator parses but no reviewer of the roster can match
-    /// it — said, not refused. Absent (skipped) when there is no roster to check or the coordinator
-    /// was only inferred, so a pre-27c entry round-trips byte-identical.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// it — said, not refused; `true` when it matches one; `null` when there is no roster to check
+    /// or no identity was given. (wave 6) Always written, as the plugin writes it.
+    #[serde(default)]
     pub in_roster: Option<bool>,
     /// (wave 27c, D12) `"#n"` when the coordinator is a roster position that names no seat here:
-    /// the run goes on with a warning. Absent otherwise.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// the run goes on with a warning; `null` otherwise. (wave 6) Always written.
+    #[serde(default)]
     pub unresolved: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -847,6 +868,108 @@ impl std::fmt::Display for AddEntryError {
 
 impl std::error::Error for AddEntryError {}
 
+/// (wave 6) `codex.consults` as read: every entry parsed from its JSON object, which it keeps
+/// ([`LedgerEntry::source_json`]) so a rewrite can write it back verbatim.
+fn deserialize_consults<'de, D>(d: D) -> Result<Vec<LedgerEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Vec<Value> = Vec::deserialize(d)?;
+    let mut out = Vec::with_capacity(raw.len());
+    for v in raw {
+        let mut e: LedgerEntry =
+            serde_json::from_value(v.clone()).map_err(serde::de::Error::custom)?;
+        e.source_json = Some(v);
+        out.push(e);
+    }
+    Ok(out)
+}
+
+/// (wave 6) `codex.consults` as written: an entry built in this run from its fields; an entry read
+/// from disk as the object it was read from, with what C3 changed in it since laid onto that object
+/// ([`entry_json`]).
+fn serialize_consults<S>(entries: &[LedgerEntry], s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use serde::ser::SerializeSeq;
+    let mut seq = s.serialize_seq(Some(entries.len()))?;
+    for e in entries {
+        match entry_json(e) {
+            Some(v) => seq.serialize_element(&v)?,
+            None => seq.serialize_element(e)?,
+        }
+    }
+    seq.end()
+}
+
+/// (wave 6) The JSON object a rewrite writes for an entry read from disk: the object as read when
+/// C3 changed nothing in the entry; else that object with C3's changes laid onto it
+/// ([`merge_onto`]). `None` for an entry built in this run (written from its fields).
+pub fn entry_json(e: &LedgerEntry) -> Option<Value> {
+    let raw = e.source_json.as_ref()?;
+    let after = serde_json::to_value(e).ok()?;
+    let before = serde_json::from_value::<LedgerEntry>(raw.clone())
+        .ok()
+        .and_then(|b| serde_json::to_value(&b).ok())?;
+    Some(merge_onto(raw, &before, &after))
+}
+
+/// (wave 6) Lay the changes C3 made to a record onto the JSON it was read from: `raw` is the object
+/// as read, `before` its typed form at the read, `after` its typed form now. Where `before` and
+/// `after` agree, `raw` is kept as it is (its key order, its explicit nulls, the keys C3 does not
+/// know); a key whose value C3 changed takes C3's value (an object merged key by key), a key C3
+/// removed goes, and a key C3 added is placed after the key that precedes it in C3's order.
+pub fn merge_onto(raw: &Value, before: &Value, after: &Value) -> Value {
+    if before == after {
+        return raw.clone();
+    }
+    let (Value::Object(r), Value::Object(b), Value::Object(a)) = (raw, before, after) else {
+        return after.clone();
+    };
+    // the keys C3 added: not in the raw object, and not a typed default C3 left alone
+    let added = |k: &str| !r.contains_key(k) && b.get(k) != a.get(k);
+    // each added key's anchor: the nearest key before it (C3's order) that the raw object has
+    let mut anchored: Vec<(Option<&str>, &str)> = Vec::new();
+    let mut anchor: Option<&str> = None;
+    for k in a.keys() {
+        if r.contains_key(k) {
+            anchor = Some(k.as_str());
+        } else if added(k) {
+            anchored.push((anchor, k.as_str()));
+        }
+    }
+    let mut out = Map::new();
+    let place = |out: &mut Map<String, Value>, at: Option<&str>| {
+        for (_, k) in anchored.iter().filter(|(an, _)| *an == at) {
+            out.insert((*k).to_string(), a[*k].clone());
+        }
+    };
+    place(&mut out, None);
+    for (k, rv) in r {
+        match (b.get(k), a.get(k)) {
+            (Some(bv), Some(av)) if bv == av => {
+                out.insert(k.clone(), rv.clone());
+            }
+            (Some(bv), Some(av)) => {
+                out.insert(k.clone(), merge_onto(rv, bv, av));
+            }
+            // C3 removed it
+            (Some(_), None) => {}
+            // the typed form skipped it at the read; C3 set it since
+            (None, Some(av)) => {
+                out.insert(k.clone(), av.clone());
+            }
+            // a key the typed form does not write: kept as read
+            (None, None) => {
+                out.insert(k.clone(), rv.clone());
+            }
+        }
+        place(&mut out, Some(k.as_str()));
+    }
+    Value::Object(out)
+}
+
 impl SessionsFile {
     /// Parse `sessions.json` bytes.
     pub fn read(bytes: &[u8]) -> Result<Self, serde_json::Error> {
@@ -932,6 +1055,55 @@ mod tests {
         assert_eq!(
             s.add_entry(entry(2, "a")),
             Err(AddEntryError::DuplicateConsultId("a".into()))
+        );
+    }
+
+    /// (wave 6) What C3 changed is laid onto the object as read; everything else stays as read.
+    #[test]
+    fn merge_onto_keeps_the_read_object_and_lays_only_the_changes() {
+        use serde_json::json;
+        let raw = json!({"a": 1, "x": null, "b": {"p": null, "q": 1}, "c": "keep"});
+        // nothing changed: the raw object, nulls and order included
+        let before = json!({"a": 1, "b": {"p": "", "q": 1}, "c": "keep"});
+        assert_eq!(
+            serde_json::to_string(&merge_onto(&raw, &before, &before)).unwrap(),
+            r#"{"a":1,"x":null,"b":{"p":null,"q":1},"c":"keep"}"#
+        );
+        // a nested change, an added key (after its predecessor in C3's order), a removed key
+        let after = json!({"a": 1, "n": true, "b": {"p": "", "q": 2}});
+        assert_eq!(
+            serde_json::to_string(&merge_onto(&raw, &before, &after)).unwrap(),
+            r#"{"a":1,"n":true,"x":null,"b":{"p":null,"q":2}}"#
+        );
+        // a key added before every key the raw object has goes first
+        let after = json!({"z": 0, "a": 1, "b": {"p": "", "q": 1}, "c": "keep"});
+        assert_eq!(
+            serde_json::to_string(&merge_onto(&raw, &before, &after)).unwrap(),
+            r#"{"z":0,"a":1,"x":null,"b":{"p":null,"q":1},"c":"keep"}"#
+        );
+    }
+
+    /// (wave 6) An entry read from disk is written back as read; one built in this run from its
+    /// fields (the coordinator's eight keys, in the plugin's order).
+    #[test]
+    fn a_read_entry_is_written_verbatim_and_a_new_one_from_its_fields() {
+        let text = br#"{"task_id":"t","cwd":"/r","codex":{"tool":"x","consults":[{"n":1,"zz":null,"coordinator":{"provider":null,"model":null,"engine":null,"host":"claude-code","host_by":"markers","source":"inferred","in_roster":null,"unresolved":null},"when":"w"}]}}"#;
+        let mut s = SessionsFile::read(text).unwrap();
+        s.add_entry(LedgerEntry {
+            n: 2,
+            coordinator: Some(crate::host::build_coordinator("unknown", None)),
+            ..Default::default()
+        })
+        .unwrap();
+        let v: Value = serde_json::from_slice(&s.to_bytes().unwrap()).unwrap();
+        let c = &v["codex"]["consults"];
+        assert_eq!(
+            serde_json::to_string(&c[0]).unwrap(),
+            r#"{"n":1,"zz":null,"coordinator":{"provider":null,"model":null,"engine":null,"host":"claude-code","host_by":"markers","source":"inferred","in_roster":null,"unresolved":null},"when":"w"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&c[1]["coordinator"]).unwrap(),
+            r#"{"provider":null,"model":null,"engine":null,"host":"unknown","host_by":"none","source":"none","in_roster":null,"unresolved":null}"#
         );
     }
 

@@ -249,6 +249,9 @@ pub fn run_telemetry(args: TelemetryArgs) -> i32 {
         return telemetry::backfill::run(&collab_root, &telemetry::switch(override_), args.dry_run);
     }
     if args.flush {
+        // TEST HOOK (test mode only): the NAMES of every variable this process inherited (never a
+        // value) - (wave 6) a run starts its sender with the allow-listed environment only
+        telemetry::sender::dump_env_names_hook();
         let sw = telemetry::switch(override_);
         if !sw.on {
             println!(
