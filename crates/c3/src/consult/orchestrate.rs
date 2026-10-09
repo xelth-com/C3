@@ -1612,6 +1612,8 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         prune: false,
         kick: false,
         member: String::new(),
+        // (wave 27) the panel run's resolved brief prefix (shown by a member's dry run)
+        brief_prefix: s("brief_prefix"),
     }
 }
 

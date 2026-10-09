@@ -129,7 +129,11 @@ param(
     [string]$Member = '',
 
     # (wave 27, R13 D5) coordinate | consult | providers: a skill's text for a host without skills.
-    [string]$Explain = ''
+    [string]$Explain = '',
+
+    # (wave 27, R13 D6; C3 wave 5) the coordinator's brief prefix - forwarded as --brief-prefix
+    # (empty: c3 reads CODEX_CONSULT_BRIEF_PREFIX, else claude).
+    [string]$BriefPrefix = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -340,6 +344,7 @@ if ($MaxModelSteps -ne 0) { $c3Args.Add('--max-model-steps'); $c3Args.Add([strin
 $c3Args.Add('--denial-retry'); $c3Args.Add([string]$DenialRetry)
 if ($DryRun) { $c3Args.Add('--dry-run') }
 if ($Telemetry) { $c3Args.Add('--telemetry'); $c3Args.Add($Telemetry) }
+if ($BriefPrefix) { $c3Args.Add('--brief-prefix'); $c3Args.Add($BriefPrefix) }
 
 # R12 flags (a run / the -Detach foreground / the -DetachId background; -Status/-Wait handled
 # above). -Id/-Prune/-WaitTimeoutSec without -Status/-Wait are forwarded so c3 refuses them.

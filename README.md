@@ -1,6 +1,9 @@
 # C3 — claude-codex-consult in Rust
 
-**Status: the full surface runs.** The parity port (milestones 1–6) is in the binary —
+**Status: parity with claude-codex-consult 0.6.1** (the compatibility release 0.2.0; measured by
+the pinned v0.6.1 harnesses through the shim - see `docs/port/harness-shim.md` and
+`docs/port/rc5-verification-2026-10-09.md` when it exists; the changes in `CHANGELOG.md`).
+The full surface runs. The parity port (milestones 1–6) is in the binary —
 `c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse`, `claude` and `http` engines),
 `c3 findings` (statuses and ratings), `c3 scoreboard`, `c3 hook`, `c3 telemetry`/`complain`/
 `forget-me`, the reviewer roster and the routed **panel** with detach/status/wait/prune/kick —
@@ -78,7 +81,11 @@ API here - decision P4 of the parity task): `claude -p --output-format stream-js
 dontAsk --model <m> [--effort <e>] [--json-schema <the schema TEXT>] [--max-turns <n>]
 [--add-dir <dir>...] (--session-id <minted uuid> | --resume <thread> [--fork-session])`, run from
 the repository root, the prompt on stdin. Replies are `handoffs/NN-claudecode-<slug>.*` (the
-prefix `claude` stays the coordinator's default brief prefix). Launcher: `--engine-exe`,
+prefix `claude` stays the coordinator's default brief prefix: `--brief-prefix <slug>`, else
+`CODEX_CONSULT_BRIEF_PREFIX`, else `claude` - the coordinator's briefs are
+`handoffs/<NN>-<prefix>-<slug>.md`; a reply prefix (`codex`, `agy`, `muse`, `claudecode`, `http`)
+or a value that is not a lowercase slug is refused before anything starts, and the dry run prints
+`brief prefix:`). Launcher: `--engine-exe`,
 `CODEX_CONSULT_CLAUDE_EXE`, `claude.exe` / `claude.cmd` / `claude` on PATH, then
 `%USERPROFILE%\.local\bin\claude.exe`.
 
@@ -182,9 +189,16 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
 * **Never blocks a run; never lost silently:** events queue in C3's own outbox
   (`<codex home>/c3/telemetry/spool.ndjson`, one `{v, kind, queued_unix, body}` line each - not
   the plugin's `telemetry-spool/`: C3 is its own app with its own salt and instance id), are sent
-  in the background with a 3 s timeout, retried on the next run and dropped 7 days after they
-  were queued. Appends and the sender are synchronised by a lock, and the sender removes only
-  the lines it delivered - an event queued while it sends stays queued. An event that cannot be
+  in the background in batches of at most 100 (one flush ends after 60 s, one request after 8 s),
+  retried on the next run and dropped 7 days after they were queued. The sender follows the
+  intake's answers as the plugin does: a 429 whose `Retry-After` is at most 60 s is waited for
+  once (else the batch stays queued), a 400 naming `events[i]` drops that event and resends the
+  rest (at most three per flush), a 413 halves the batch and drops an event too large alone -
+  each refused event is one line of the last flush's `rejected` - and a 403, another refusal or no
+  answer stops the flush with the outbox kept. Appends and the sender are synchronised by a lock,
+  and the sender removes only the lines it delivered or dropped - an event queued while it sends
+  stays queued. The sender lock's owner record (`flush.owner.json`) lets `--status` and a refused
+  sender say "sender busy since <t>", and after 30 minutes "sender stuck since <t> (pid <n>)". An event that cannot be
   spooled is said and counted (`c3 telemetry --status`); a rating's event is retried and else
   left for `c3 telemetry --backfill-ratings`.
 * **Complaints:** `c3 --complain "<text>"` prints the exact payload (your text plus the last
@@ -201,7 +215,8 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
   `c3 forget-me --local` (or `c3 telemetry --forget --local`) removes the local data only, and
   says that the intake keeps what was sent.
 * **`c3 telemetry`:** `--status` (the switch and its source, the intake, the outbox, the events
-  not spooled since the last flush, a pending deletion, the last flush, the instance id),
+  not spooled since the last flush, the sender lock's owner, a pending deletion, the last flush,
+  the instance id),
   `--flush`, `--forget`, `--backfill-ratings [--dry-run]`. The intake is
   `CODEX_CONSULT_TELEMETRY_URL` when set (https only; plain http only to a loopback host in test
   mode), else `https://xelth.com/T`.

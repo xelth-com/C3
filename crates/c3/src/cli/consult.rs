@@ -121,6 +121,11 @@ pub struct ConsultArgs {
     /// the environment decides. A panel passes it to its members.
     #[arg(long, default_value = "")]
     pub telemetry: String,
+    /// The coordinator's brief prefix: its briefs are handoffs/<NN>-<prefix>-<slug>.md (a
+    /// lowercase slug). Empty = CODEX_CONSULT_BRIEF_PREFIX, else claude. A reply prefix of the
+    /// bridge (codex, agy, muse, claudecode, http) is refused before anything starts.
+    #[arg(long, default_value = "")]
+    pub brief_prefix: String,
 
     // --- parsed-but-refused (engine scope M2d / panel M4 / detach R12) ---
     /// codex | agy | muse | http.
@@ -300,6 +305,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         prune: args.prune,
         kick: args.kick,
         member: args.member,
+        brief_prefix: args.brief_prefix,
     };
     crate::consult::run(opts)
 }

@@ -249,6 +249,9 @@ struct DetachArgs {
     roles: Vec<String>,
     #[serde(default)]
     topic: Vec<String>,
+    /// (wave 27, R13 D6) the run's `-BriefPrefix` (empty: the environment decides).
+    #[serde(default)]
+    brief_prefix: String,
 }
 
 fn minus_one() -> i64 {
@@ -329,6 +332,7 @@ impl DetachArgs {
             role: o.role.clone(),
             roles: o.roles.clone(),
             topic: o.topic.clone(),
+            brief_prefix: o.brief_prefix.clone(),
         }
     }
 
@@ -404,6 +408,7 @@ impl DetachArgs {
             prune: false,
             kick: false,
             member: String::new(),
+            brief_prefix: self.brief_prefix,
         }
     }
 

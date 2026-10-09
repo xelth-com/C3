@@ -1,6 +1,6 @@
 # c3 (Claude Code plugin)
 
-A Claude Code plugin (`c3`, version 0.1.0) — the packaging of the `c3` binary as a thin
+A Claude Code plugin (`c3`, version 0.2.0) — the packaging of the `c3` binary as a thin
 layer for Claude Code: a `SessionStart` hook and three skills (`consult`, `coordinate`,
 `setup-providers`) with brief and role templates, mirroring the
 [`codex-consult`](https://github.com/xelth-com/claude-codex-consult) plugin's own layout.

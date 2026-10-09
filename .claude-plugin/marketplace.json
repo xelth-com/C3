@@ -11,7 +11,7 @@
       "source": "./plugin",
       "displayName": "C3",
       "description": "Runs the `c3` binary as a read-only reviewer bridge from Claude Code and records each consultation as files (brief, verbatim reply, JSON ledger, findings tracked by id): a reviewer roster, a routed review panel, detached runs, member control, ratings and a scoreboard, sanitised packs, a local code index.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "xelth-com",
         "url": "https://xelth.com"

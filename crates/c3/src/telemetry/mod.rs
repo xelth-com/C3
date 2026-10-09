@@ -36,7 +36,10 @@ pub use complaint::{
 pub(crate) use event::topic_slug;
 pub use event::{Details, Event, RatingDetails, RatingEvent, RatingInput};
 pub use notspooled::{local_paths, LocalPaths};
-pub use spool::{flush_in_background, flush_now, BackgroundFlush, FlushHooks, FlushReport, Spool};
+pub use spool::{
+    flush_in_background, flush_now, sender_status, BackgroundFlush, FlushHooks, FlushReport,
+    PostAnswer, Spool,
+};
 
 /// The default T-hub base URL.
 const HUB_DEFAULT: &str = "https://xelth.com/T";

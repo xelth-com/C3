@@ -283,32 +283,21 @@ pub fn run_telemetry(args: TelemetryArgs) -> i32 {
                 }
             }
             Ok(r) => {
+                // (wave 5) the plugin's line: `codex-telemetry: <result>` - the same text the last
+                // flush's record keeps; exit 1 when the send stopped before everything was sent
                 println!(
-                    "{TOOL}: {} - delivered {}, kept {}, dropped {}{}",
-                    if r.attempted && r.sent == 0 {
-                        "not delivered"
-                    } else {
-                        "done"
-                    },
-                    r.sent,
-                    r.kept,
-                    r.dropped_stale,
+                    "{TOOL}: {}{}",
+                    r.result_text(),
                     if r.last_warning.is_empty() {
                         String::new()
                     } else {
                         format!("; warning: {}", r.last_warning)
                     }
                 );
-                if r.discarded > 0 {
-                    println!(
-                        "{TOOL}: discarded {} queued event(s) that are no closable C3 event - not sent",
-                        r.discarded
-                    );
-                }
-                if r.attempted && r.sent == 0 {
-                    1
-                } else {
+                if r.stopped.is_empty() {
                     0
+                } else {
+                    1
                 }
             }
             Err(e) => {
@@ -417,6 +406,11 @@ fn print_status() {
                 if fm.pid > 0 { format!("pid {} is gone", fm.pid) } else { "is not named".to_string() }
             );
         }
+    }
+    // (wave 5; the plugin's wave 28d D3) the sender lock as its owner record says (read only):
+    // busy, stuck (30 minutes), or a record its owner left behind
+    if let Some(line) = telemetry::sender_status(&dir) {
+        println!("sender     : {line}");
     }
     match telemetry::pending_deletion_in(&dir) {
         Some(p) if p.cleanup_due() => println!("forgetting : the local deletion of instance {} did not finish (phase {}, since {}) - nothing is spooled or sent until it is; the next flush or c3 forget-me finishes it", p.instance_id, p.phase, p.since),

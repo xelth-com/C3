@@ -397,6 +397,18 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             }
         ));
     }
+    // (wave 27, R13 D6) the coordinator's brief prefix and this reply's name
+    out.push(format!(
+        "brief prefix: {} ({}) - the coordinator's briefs are handoffs/<NN>-{}-<slug>.md, this reply {:02}-{}-{}.*",
+        ctx.r.brief_prefix,
+        ctx.r.brief_prefix_source,
+        ctx.r.brief_prefix,
+        ctx.nn,
+        c3_core::lineage::engine_spec(&ctx.engine)
+            .map(|s| s.prefix)
+            .unwrap_or("codex"),
+        ctx.reply_name
+    ));
     out.push(String::new());
     out.push("argv        :".into());
     // The argv block lists the launcher's arguments only (starting with `exec`); the launcher

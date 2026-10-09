@@ -218,6 +218,19 @@ pub fn resolve_coordinator_match(
             m.truncate(m.len() - "[1m]".len());
         }
     }
+    // (wave 27c, D10 / F30-9) only a value that cannot be PARSED is refused: the grammar above,
+    // then the shared character rule (`Get-IdentityStringProblem`) on the provider and the model.
+    if g.position.is_none() {
+        let p = g.provider.clone().unwrap_or_default();
+        if let Some(why) = crate::roster::identity_string_problem(&p) {
+            return Err(format!("the provider '{p}' {why}"));
+        }
+        if let Some(m) = &g.model {
+            if let Some(why) = crate::roster::identity_string_problem(m) {
+                return Err(format!("the model '{m}' {why}"));
+            }
+        }
+    }
     let model_of = |e: &RosterEntry| -> String {
         if !e.model.is_empty() {
             e.model.clone()
@@ -573,14 +586,27 @@ mod tests {
 
     #[test]
     fn matcher_refusals() {
+        // (wave 5, harness-host REFUSE D3) the plugin's character rule: the matcher's and the
+        // seed's delimiters are refused; interior blanks are not
         assert_eq!(
-            parse("open ai", None).unwrap_err(),
-            "the provider 'open ai' is not a provider label (letters, digits, dot, dash, underscore)"
+            parse("open::ai", None).unwrap_err(),
+            "the provider 'open::ai' must not contain '::'"
         );
         assert_eq!(
-            parse("openai :: gpt 5", None).unwrap_err(),
-            "the model 'gpt 5' contains white space"
+            parse("openai :: gpt|5", None).unwrap_err(),
+            "the model 'gpt|5' must not contain '|'"
         );
+        assert_eq!(
+            parse("open,ai :: gpt-5", None).unwrap_err(),
+            "the provider 'open,ai' must not contain ','"
+        );
+        assert_eq!(
+            parse("openai :: gpt#5", None).unwrap_err(),
+            "the model 'gpt#5' must not contain '#'"
+        );
+        let blank = parse("open ai :: gpt 5", None).unwrap();
+        assert_eq!(blank.provider.as_deref(), Some("open ai"));
+        assert_eq!(blank.model.as_deref(), Some("gpt 5"));
         assert_eq!(
             parse("openai :: gpt-5.1 [bad]", None).unwrap_err(),
             "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse, claude)"
@@ -724,10 +750,10 @@ mod tests {
                 .source,
             "none"
         );
-        let bad = resolve_coordinator_identity("open ai", None, &d, "unknown").unwrap_err();
-        assert!(
-            bad.starts_with("CODEX_CONSULT_COORDINATOR='open ai' cannot be used: "),
-            "{bad}"
+        let bad = resolve_coordinator_identity("open::ai", None, &d, "unknown").unwrap_err();
+        assert_eq!(
+            bad,
+            "CODEX_CONSULT_COORDINATOR='open::ai' cannot be used: the provider 'open::ai' must not contain '::' - give '<provider> :: <model>' (optionally ' [<engine>]'), a roster position '#<n>' or a provider label; nothing was started."
         );
     }
 

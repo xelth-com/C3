@@ -119,6 +119,9 @@ pub struct Options {
     pub kick: bool,
     /// (wave 26b, D10) `--member <NN>`: the handoff number `--kick` acts on.
     pub member: String,
+    /// (wave 27, R13 D6) `--brief-prefix <slug>`: the coordinator's brief prefix
+    /// (`handoffs/<NN>-<prefix>-<slug>.md`); empty = `CODEX_CONSULT_BRIEF_PREFIX`, else `claude`.
+    pub brief_prefix: String,
 }
 
 /// The self-contained resolutions after validation succeeds.
@@ -152,6 +155,10 @@ pub struct Resolved {
     pub role: String,
     /// (wave 26, D8) `-Roles` canonical (slugs, lower-cased, deduped).
     pub roles: Vec<String>,
+    /// (wave 27, R13 D6) The coordinator's brief prefix ([`resolve_brief_prefix`]).
+    pub brief_prefix: String,
+    /// Where it came from: `-BriefPrefix`, `CODEX_CONSULT_BRIEF_PREFIX` or `the default`.
+    pub brief_prefix_source: String,
 }
 
 impl Resolved {
@@ -380,6 +387,10 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         }
         roles = items;
     }
+    // (wave 27, R13 D6) the coordinator's brief prefix, refused before anything starts (the dry
+    // run too) when it is a reply prefix or not a lowercase slug.
+    let env_prefix = std::env::var("CODEX_CONSULT_BRIEF_PREFIX").unwrap_or_default();
+    let (brief_prefix, brief_prefix_source) = resolve_brief_prefix(&o.brief_prefix, &env_prefix)?;
 
     // -CodexConfig expansion + identity/effort-key refusal.
     let (extra_config, cfg_err) =
@@ -468,7 +479,50 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         topics,
         role,
         roles,
+        brief_prefix,
+        brief_prefix_source,
     })
+}
+
+/// The bridge's reply prefixes - every engine's handoff file prefix (`codex`, `agy`, `muse`,
+/// `claudecode`, and C3's `http`): the names `handoffs/<NN>-<prefix>-<slug>.*` of a reply.
+pub fn reply_prefixes() -> Vec<&'static str> {
+    c3_core::lineage::ALL_ENGINE_NAMES
+        .iter()
+        .filter_map(|n| c3_core::lineage::engine_spec(n).map(|s| s.prefix))
+        .collect()
+}
+
+/// (wave 27, R13 D6) The coordinator's brief prefix (`codex-consult.ps1`: `-BriefPrefix`, else
+/// `CODEX_CONSULT_BRIEF_PREFIX`, else `claude`), trimmed: `(prefix, source)`. A reply prefix of the
+/// bridge is refused (a brief named like a reply would read as the reviewer's), and so is a value
+/// that is not a lowercase slug (a letter, then letters, digits or dashes; at most 32 characters).
+/// `Err` is the plugin's `Stop-WithError` text.
+pub fn resolve_brief_prefix(flag: &str, env: &str) -> Result<(String, String), String> {
+    let mut prefix = flag.trim().to_string();
+    let mut source = "-BriefPrefix";
+    if prefix.is_empty() {
+        prefix = env.trim().to_string();
+        source = "CODEX_CONSULT_BRIEF_PREFIX";
+        if prefix.is_empty() {
+            prefix = "claude".to_string();
+            source = "the default";
+        }
+    }
+    let replies = reply_prefixes();
+    if replies.contains(&prefix.as_str()) {
+        return Err(format!(
+            "the brief prefix '{prefix}' ({source}) is a reply prefix: the bridge names its replies handoffs/<NN>-<{}>-<slug>.*; give the coordinator's briefs a prefix of their own (the default: claude); nothing was started.",
+            replies.join("|")
+        ));
+    }
+    let slug = regex::Regex::new(r"^[a-z][a-z0-9-]{0,31}$").unwrap();
+    if !slug.is_match(&prefix) {
+        return Err(format!(
+            "the brief prefix '{prefix}' ({source}) must be a lowercase slug (a letter, then letters, digits or dashes; at most 32 characters); nothing was started."
+        ));
+    }
+    Ok((prefix, source.to_string()))
 }
 
 /// A `-Range` is a two-point range (`a..b` / `a...b`) with both endpoints present.
@@ -647,6 +701,51 @@ mod tests {
             o.panel_concurrency_given = true;
         }))
         .contains("-PanelConcurrency must be 0"));
+    }
+
+    /// (wave 27, R13 D6) the brief prefix: the flag, else the variable, else `claude`; a reply
+    /// prefix (every engine's) and a non-slug refused with the plugin's texts.
+    #[test]
+    fn brief_prefix_resolution_and_refusals() {
+        assert_eq!(
+            resolve_brief_prefix("", "").unwrap(),
+            ("claude".to_string(), "the default".to_string())
+        );
+        assert_eq!(
+            resolve_brief_prefix("", " codexhost ").unwrap(),
+            (
+                "codexhost".to_string(),
+                "CODEX_CONSULT_BRIEF_PREFIX".to_string()
+            )
+        );
+        assert_eq!(
+            resolve_brief_prefix("lead-2", "codexhost").unwrap(),
+            ("lead-2".to_string(), "-BriefPrefix".to_string())
+        );
+        for p in ["codex", "agy", "muse", "claudecode", "http"] {
+            let e = resolve_brief_prefix(p, "").unwrap_err();
+            assert!(
+                e.starts_with(&format!(
+                    "the brief prefix '{p}' (-BriefPrefix) is a reply prefix: the bridge names its replies handoffs/<NN>-<codex|agy|muse|claudecode|http>-<slug>.*; give the coordinator's briefs a prefix of their own (the default: claude); nothing was started."
+                )),
+                "{e}"
+            );
+        }
+        let e = resolve_brief_prefix("", "agy").unwrap_err();
+        assert!(
+            e.contains("'agy' (CODEX_CONSULT_BRIEF_PREFIX) is a reply prefix"),
+            "{e}"
+        );
+        for bad in ["Bad_Prefix", "1abc", "a b", &"a".repeat(33)] {
+            let e = resolve_brief_prefix(bad, "").unwrap_err();
+            assert_eq!(
+                e,
+                format!("the brief prefix '{bad}' (-BriefPrefix) must be a lowercase slug (a letter, then letters, digits or dashes; at most 32 characters); nothing was started.")
+            );
+        }
+        assert!(resolve_brief_prefix(&"a".repeat(32), "").is_ok());
+        // the default is not a reply prefix (the claude engine's replies are `claudecode`)
+        assert!(!reply_prefixes().contains(&"claude"));
     }
 
     #[test]
