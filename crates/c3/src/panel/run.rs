@@ -1883,6 +1883,8 @@ fn build_spec(
         // (0.6.1 parity) a panel passes its run's `--telemetry on|off` to its members ("" = the
         // environment decides).
         "telemetry": match o.telemetry { Some(true) => "on", Some(false) => "off", None => "" },
+        // (wave 27) the panel run's resolved brief prefix (a member's dry run shows it)
+        "brief_prefix": r.brief_prefix,
     });
     MemberSpec {
         id: b.panel_id.clone(),

@@ -12,6 +12,14 @@
 //!   its REWRITE and the local deletion of `forget`. A producer waits for it at most its `wait`.
 //! - `flush.lock` - the sender lock (the same kind of lock), held for one whole flush: a second
 //!   sender that finds it busy skips (no event is posted twice by two senders at once).
+//! - `flush.owner.json` - (wave 5) the sender lock's OWNER record `{pid, start_time, start_ticks,
+//!   token, since, host}` (the plugin's `.flush.lock` record, wave 28d D3): written whole (a
+//!   temporary file renamed into place) right after the lock is taken, removed by its owner when it
+//!   releases the lock. A separate file because an OS-locked file cannot be read by another process
+//!   on Windows; the OS lock stays THE lock (never stale, never taken over) - the record only lets a
+//!   refused sender and `c3 telemetry --status` say who holds it: "sender busy since <t>", and once
+//!   the lock is 30 minutes old "sender stuck since <t> (pid <n>)" (a note in the last flush's
+//!   record, once).
 //! - `last-flush.json` - what the last flush did (`c3 telemetry --status` shows it): (wave 3b) the
 //!   plugin's `.last` shape `{time, result, delivered, kept, dropped, rejected, http,
 //!   not_spooled_seen, not_spooled_folded, notes}` - a flush that held the sender lock folds the
@@ -38,15 +46,29 @@
 //! roster's labels as typed and leaves with `other` in their place; one that cannot be closed is
 //! discarded with a local diagnostic.
 //!
+//! (wave 5) THE SEND, as the plugin's `Invoke-TelemetryFlush` against the intake as it is built:
+//! every fresh event in batches of at most 100 (`{"events": [...]}`), oldest first; delivered only
+//! for a 2xx whose body is the intake's JSON `{"ok": true}`. A 429 whose `Retry-After` is at most
+//! 60 s - and fits into what is left of the flush's deadline - is waited for and the SAME request
+//! sent once more (a longer or missing `Retry-After`, or a second 429, stops there; the batch is
+//! kept). A 400 naming `events[i]: <reason>` drops event i (one line in the record's `rejected`)
+//! and resends the rest - at most three times per flush. A 413 halves the batch; an event refused
+//! alone is dropped (`rejected`: "HTTP 413 (too large alone)"). A 403 stops the flush ("the intake
+//! refuses this app"); another 4xx, a 5xx, no answer stop it too - the spool is kept, nothing is
+//! hammered. One flush ends after 60 s in all, one request after 8 s (TEST HOOKS, test mode only:
+//! `CODEX_CONSULT_TEST_TELEMETRY_FLUSH_MS`, `CODEX_CONSULT_TEST_TELEMETRY_REQUEST_MS`): a request
+//! starts only while 1.5 s are left (1 s kept back for the rewrite that follows) - what is not sent
+//! stays. Lines queued more than 7 days ago are dropped.
+//!
 //! Never in a consultation's critical path: [`flush_in_background`] runs the sender in a thread
-//! joined with a cap; one POST of at most 100 events, a 3 s budget, no retry within a run (a
-//! 403/429/5xx keeps the spool for the next run); lines queued more than 7 days ago are dropped.
+//! joined with a cap at the run's end (a send still running then is cut by the process's exit: its
+//! lines stay queued - at worst a duplicate later, never a loss).
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Mutex};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -62,14 +84,34 @@ use crate::telemetry::{debug_log, default_hub, telemetry_dir, Error, Result};
 const MAX_BATCH: usize = 100;
 /// Drop spooled events queued longer ago than this (README: 7 days).
 const MAX_AGE_SECS: i64 = 7 * 86_400;
-/// The 3 s background-send budget (README rule 2).
-const SEND_TIMEOUT: Duration = Duration::from_secs(3);
+/// (wave 28b, D2) One flush ends after 60 s in all - the lock, the reads, every request and
+/// rewrite (`$script:TelemetryFlushMs`; TEST HOOK `CODEX_CONSULT_TEST_TELEMETRY_FLUSH_MS`).
+const FLUSH_BUDGET: Duration = Duration::from_secs(60);
+/// One request ends after 8 s (`$script:TelemetryRequestMs`; TEST HOOK
+/// `CODEX_CONSULT_TEST_TELEMETRY_REQUEST_MS`).
+const REQUEST_BUDGET: Duration = Duration::from_secs(8);
+/// The connect bound of one request.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// The intake's rate rule: a 429 whose `Retry-After` is at most this is waited for once.
+const RETRY_AFTER_MAX_SECS: i64 = 60;
+/// (wave 28b, D8) At most three per-event refusals (`400 events[i]`) are acted on per flush.
+const REJECT_ROUNDS: usize = 3;
+/// Kept back of the deadline for the rewrite that follows a send.
+const REWRITE_RESERVE: Duration = Duration::from_millis(1000);
+/// A request starts only while this much more than [`REWRITE_RESERVE`] is left.
+const REQUEST_FLOOR: Duration = Duration::from_millis(500);
+/// (wave 28d, D3) A sender lock whose owner lives this long is reported "sender stuck".
+const STUCK_LOCK_SECS: u64 = 1800;
+/// An intake answer longer than this is cut (`Invoke-TelemetryRequest`).
+const ANSWER_TEXT_MAX: usize = 65_536;
 /// How long the sender waits for the spool lock for its read and its rewrite.
 const SENDER_LOCK_WAIT: Duration = Duration::from_secs(2);
 /// The spool file, the spool lock, the sender lock and the last flush's record.
 pub(crate) const SPOOL_FILE: &str = "spool.ndjson";
 pub(crate) const SPOOL_LOCK: &str = "spool.lock";
 pub(crate) const FLUSH_LOCK: &str = "flush.lock";
+/// (wave 5) The sender lock's owner record (the module docs).
+pub(crate) const FLUSH_OWNER: &str = "flush.owner.json";
 pub(crate) const LAST_FLUSH: &str = "last-flush.json";
 /// A deletion of this instance waiting for the intake's confirmation (`complaint::forget`):
 /// while it exists nothing is spooled or sent.
@@ -158,8 +200,9 @@ pub struct Spool {
     hub: String,
     /// (wave 3b) Where the not-spooled files, the forgetting marker and the last flush's record are.
     paths: LocalPaths,
-    /// The HTTP status of the last POST (for the record's `http`).
-    http: Mutex<Option<u16>>,
+    /// (wave 5) The flush's deadline and one request's bound.
+    flush_budget: Duration,
+    request_budget: Duration,
 }
 
 /// What a [`Spool::flush`] did, for the debug log, `last-flush.json` and tests.
@@ -186,6 +229,143 @@ pub struct FlushReport {
     pub http: Option<u16>,
     /// (wave 3b, E20) The last flush's record could not be written: why - nothing was folded.
     pub last_warning: String,
+    /// (wave 5, D8) The events the intake refused one by one - dropped, never resent: one line
+    /// each, `event queued <time> refused: <reason>` (the record's `rejected`).
+    pub rejected: Vec<String>,
+    /// (wave 5) Why the send stopped before every event was delivered (`""`: it did not stop) - a
+    /// 429, a 403, another refusal, no answer, the flush's deadline.
+    pub stopped: String,
+}
+
+impl FlushReport {
+    /// Every line the flush removed without delivering it: stale or unreadable, not closable, and
+    /// refused by the intake (the record's `dropped`).
+    pub fn dropped(&self) -> usize {
+        self.dropped_stale + self.discarded + self.rejected.len()
+    }
+}
+
+/// (wave 5) One POST's answer (`Invoke-TelemetryRequest`): delivered only for a 2xx whose body is
+/// the intake's JSON object with `ok: true`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PostAnswer {
+    /// The HTTP status (`None`: no answer).
+    pub status: Option<u16>,
+    /// The intake accepted the batch.
+    pub delivered: bool,
+    /// The intake's `error` text, else the answer's text - where a 400 names `events[i]: <reason>`.
+    pub error: String,
+    /// `Retry-After` in seconds (a delta, or a date - rounded up, never negative); `None` when the
+    /// answer gave none.
+    pub retry_after: Option<i64>,
+    /// Why it was not delivered (`""` when delivered).
+    pub why: String,
+}
+
+impl PostAnswer {
+    /// The intake's `{"ok": true}` (HTTP 200).
+    pub fn ok() -> Self {
+        PostAnswer {
+            status: Some(200),
+            delivered: true,
+            ..Default::default()
+        }
+    }
+
+    /// No answer (a refused connection, a timeout): `why`.
+    pub fn none(why: impl Into<String>) -> Self {
+        PostAnswer {
+            why: why.into(),
+            ..Default::default()
+        }
+    }
+
+    /// An answer, classified as the plugin does: a 2xx JSON object with `ok: true` is delivered;
+    /// an answer that is no JSON object is "HTTP <s> (<type>) is not the intake's JSON answer";
+    /// otherwise "HTTP <s>: <error>" (or "HTTP <s> without ok: true").
+    pub fn answer(status: u16, body: &str, content_type: &str, retry_after: Option<i64>) -> Self {
+        let json = if body.trim_start().starts_with('{') {
+            serde_json::from_str::<serde_json::Value>(body)
+                .ok()
+                .filter(|v| v.is_object())
+        } else {
+            None
+        };
+        let err_field = json
+            .as_ref()
+            .and_then(|j| j.get("error"))
+            .map(|e| match e {
+                serde_json::Value::String(t) => t.clone(),
+                serde_json::Value::Null => String::new(),
+                other => other.to_string(),
+            })
+            .unwrap_or_default();
+        let ok = json
+            .as_ref()
+            .and_then(|j| j.get("ok"))
+            .and_then(|v| v.as_bool())
+            == Some(true);
+        let mut a = PostAnswer {
+            status: Some(status),
+            retry_after,
+            error: if err_field.is_empty() {
+                body.to_string()
+            } else {
+                err_field.clone()
+            },
+            ..Default::default()
+        };
+        if (200..300).contains(&status) && ok {
+            a.delivered = true;
+        } else if json.is_none() {
+            a.why = format!(
+                "HTTP {status}{} is not the intake's JSON answer",
+                if content_type.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({content_type})")
+                }
+            );
+        } else if !err_field.is_empty() {
+            a.why = format!("HTTP {status}: {}", c3_core::one_line(&err_field));
+        } else {
+            a.why = format!("HTTP {status} without ok: true");
+        }
+        a
+    }
+}
+
+/// `Retry-After`: delta seconds, or an HTTP date (seconds from now, rounded up); never negative.
+pub(crate) fn parse_retry_after(v: &str) -> Option<i64> {
+    let t = v.trim();
+    if let Ok(n) = t.parse::<i64>() {
+        return Some(n.max(0));
+    }
+    let date = DateTime::parse_from_rfc2822(t).ok()?;
+    let ms = (date.with_timezone(&Utc) - Utc::now()).num_milliseconds();
+    Some(((ms + 999).div_euclid(1000)).max(0))
+}
+
+/// A positive millisecond test hook (test mode only), else `default`.
+fn hook_duration(name: &str, default: Duration) -> Duration {
+    c3_core::test_hooks::hook(name)
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+/// How a flush posts one body within a request bound (the real POST, or a test's).
+type Post<'a> = dyn Fn(&str, Duration) -> PostAnswer + 'a;
+
+/// Seconds as the plugin prints them (`[Math]::Round(x, 1)`: `60`, `1.5`).
+fn secs_text(d: Duration) -> String {
+    let r = (d.as_secs_f64() * 10.0).round() / 10.0;
+    if r.fract() == 0.0 {
+        format!("{}", r as i64)
+    } else {
+        format!("{r:.1}")
+    }
 }
 
 /// The test seams of a flush ([`Spool::flush_hooked`]); the default is the real flush.
@@ -224,8 +404,20 @@ impl Spool {
             dir: dir.into(),
             hub: hub.into(),
             paths,
-            http: Mutex::new(None),
+            flush_budget: hook_duration("CODEX_CONSULT_TEST_TELEMETRY_FLUSH_MS", FLUSH_BUDGET),
+            request_budget: hook_duration(
+                "CODEX_CONSULT_TEST_TELEMETRY_REQUEST_MS",
+                REQUEST_BUDGET,
+            ),
         }
+    }
+
+    /// (wave 5) This spool with another flush deadline and request bound (tests; production takes
+    /// 60 s and 8 s, or the test hooks).
+    pub fn with_limits(mut self, flush: Duration, request: Duration) -> Self {
+        self.flush_budget = flush;
+        self.request_budget = request;
+        self
     }
 
     /// Where the not-spooled files, the forgetting marker and the last flush's record are.
@@ -345,14 +537,20 @@ impl Spool {
 
     /// Send the spool once (see the module docs for the rule): under the sender lock, a snapshot
     /// read under the spool lock; lines queued more than 7 days ago and unreadable lines dropped;
-    /// every event closed through the classes (F09-5); up to 100 events posted; then - under the
-    /// spool lock again - exactly the delivered and the dropped lines removed from the CURRENT file.
-    /// Never retries within the run.
+    /// every event closed through the classes (F09-5); every fresh event posted in batches of at
+    /// most 100 with the intake's answer handling (wave 5: 429, 400 `events[i]`, 413, 403, the
+    /// deadline); then - under the spool lock again - exactly the delivered and the dropped lines
+    /// removed from the CURRENT file.
     pub fn flush(&self) -> Result<FlushReport> {
-        self.flush_with(|body| self.post_events(body))
+        self.flush_inner(
+            &|body, t| self.post_events(body, t),
+            &FlushHooks::default(),
+            false,
+        )
     }
 
-    /// [`Spool::flush`] with an injected sender (tests hold the "network" while they append).
+    /// [`Spool::flush`] with an injected sender (tests hold the "network" while they append):
+    /// `true` is the intake's `{"ok": true}`, `false` no answer.
     pub fn flush_with(&self, post: impl Fn(&str) -> bool) -> Result<FlushReport> {
         self.flush_hooked(post, &FlushHooks::default())
     }
@@ -364,27 +562,50 @@ impl Spool {
         post: impl Fn(&str) -> bool,
         hooks: &FlushHooks<'_>,
     ) -> Result<FlushReport> {
-        self.flush_inner(&post, hooks, false)
+        let p = |b: &str, _t: Duration| bool_answer(post(b));
+        self.flush_inner(&p, hooks, false)
+    }
+
+    /// (wave 5) [`Spool::flush`] with an injected intake that answers each posted body.
+    pub fn flush_answered(&self, post: impl Fn(&str) -> PostAnswer) -> Result<FlushReport> {
+        let p = |b: &str, _t: Duration| post(b);
+        self.flush_inner(&p, &FlushHooks::default(), false)
     }
 
     /// THE flush of `c3 telemetry --flush` and of a consultation's background sender: the send of
     /// [`Spool::flush`], then - still under the sender lock - the last flush's record with the fold
     /// of the not-spooled files (wave 3b, [`Spool::record_flush`]).
     pub fn flush_recorded(&self) -> Result<FlushReport> {
-        self.flush_recorded_with(|body| self.post_events(body))
+        self.flush_inner(
+            &|body, t| self.post_events(body, t),
+            &FlushHooks::default(),
+            true,
+        )
     }
 
     /// [`Spool::flush_recorded`] with an injected sender.
     pub fn flush_recorded_with(&self, post: impl Fn(&str) -> bool) -> Result<FlushReport> {
-        self.flush_inner(&post, &FlushHooks::default(), true)
+        let p = |b: &str, _t: Duration| bool_answer(post(b));
+        self.flush_inner(&p, &FlushHooks::default(), true)
+    }
+
+    /// (wave 5) [`Spool::flush_recorded`] with an injected intake that answers each posted body.
+    pub fn flush_recorded_answered(
+        &self,
+        post: impl Fn(&str) -> PostAnswer,
+    ) -> Result<FlushReport> {
+        let p = |b: &str, _t: Duration| post(b);
+        self.flush_inner(&p, &FlushHooks::default(), true)
     }
 
     fn flush_inner(
         &self,
-        post: &dyn Fn(&str) -> bool,
+        post: &Post<'_>,
         hooks: &FlushHooks<'_>,
         record: bool,
     ) -> Result<FlushReport> {
+        // (wave 28c, D5) the deadline covers the WHOLE flush: the lock, the reads, every request
+        let started = Instant::now();
         let mut report = FlushReport::default();
         // a cheap early skip without any lock; NOT the decision - the deletion state is decided
         // below, under the sender lock and the spool lock (F09-2)
@@ -399,29 +620,73 @@ impl Spool {
         if let Some(after_check) = hooks.after_check {
             after_check();
         }
-        // a sender that finds the sender lock busy writes nothing: the one that holds it records
-        // its own flush
+        // a sender that finds the sender lock busy writes nothing but (wave 28d, D3) the note of a
+        // stuck one: the sender that holds it records its own flush
         let Some(_sender) = lock_within(&self.dir.join(FLUSH_LOCK), Duration::ZERO)? else {
-            report.skipped = "another flush is running (its lock is held)".into();
+            report.skipped = self.busy_sender_why();
             return Ok(report);
         };
-        let r = self.send_locked(post, hooks, report);
+        // (wave 5) the owner record, born whole; removed before the lock is released (drop order)
+        let _owner = SenderOwner::write(&self.dir.join(FLUSH_OWNER));
+        let r = self.send_locked(post, hooks, report, started);
         if record {
             return self.record_flush(r);
         }
         r
     }
 
-    /// The send, under the sender lock the caller holds (the rule of the module docs).
+    /// (wave 28d, D3) Why a sender that found the sender lock busy skips - who holds it, from the
+    /// owner record: "sender busy since <t> (pid <n> holds its lock, <s> s old)", or once the lock
+    /// is 30 minutes old "sender stuck since <t> (pid <n>)", which also goes into the last flush's
+    /// record's notes (once - a sender that holds the lock again drops it). The lock is never taken
+    /// over: the OS releases it when its holder ends.
+    fn busy_sender_why(&self) -> String {
+        match sender_owner(&self.dir) {
+            Some(o) if o.alive && o.age_secs >= STUCK_LOCK_SECS => {
+                let stuck = format!("sender stuck since {} (pid {})", o.since, o.pid);
+                if let Ok(Some(_l)) =
+                    lock_within(&self.dir.join(SPOOL_LOCK), Duration::from_secs(1))
+                {
+                    notspooled::add_last_note(&self.paths, &stuck);
+                }
+                format!(
+                    "another flush is running: {stuck} - its lock is {} min old and its owner lives: it is never taken over; stop pid {} if it hangs (the lock goes with its process)",
+                    o.age_secs / 60,
+                    o.pid
+                )
+            }
+            Some(o) if o.alive => format!(
+                "another flush is running: sender busy since {} (pid {} holds its lock, {} s old)",
+                o.since, o.pid, o.age_secs
+            ),
+            _ => "another flush is running (its lock is held)".into(),
+        }
+    }
+
+    /// The send, under the sender lock the caller holds (the rule of the module docs); `started`
+    /// is when the flush began (its deadline runs from there).
     fn send_locked(
         &self,
-        post: &dyn Fn(&str) -> bool,
+        post: &Post<'_>,
         hooks: &FlushHooks<'_>,
         mut report: FlushReport,
+        started: Instant,
     ) -> Result<FlushReport> {
+        let left = || self.flush_budget.saturating_sub(started.elapsed());
+        let deadline_text = format!(
+            "the flush's deadline ({} s) was reached",
+            secs_text(self.flush_budget)
+        );
+        // (wave 28c, D5) the read only while there is time for it and a send
+        if left() < REQUEST_FLOOR + REWRITE_RESERVE {
+            report.stopped = deadline_text;
+            report.kept = self.pending();
+            return Ok(report);
+        }
         // the snapshot, read under the spool lock
         let snapshot = {
-            let Some(_lock) = lock_within(&self.dir.join(SPOOL_LOCK), SENDER_LOCK_WAIT)? else {
+            let wait = SENDER_LOCK_WAIT.min(left().saturating_sub(REQUEST_FLOOR + REWRITE_RESERVE));
+            let Some(_lock) = lock_within(&self.dir.join(SPOOL_LOCK), wait)? else {
                 report.skipped = "the spool lock stayed busy".into();
                 return Ok(report);
             };
@@ -476,7 +741,8 @@ impl Spool {
         }
         let cutoff = Utc::now().timestamp() - MAX_AGE_SECS;
         let mut remove: Vec<&str> = Vec::new();
-        let mut fresh: Vec<(&str, String)> = Vec::new();
+        // (line, closed body, queued unix seconds), oldest first
+        let mut fresh: Vec<(&str, String, i64)> = Vec::new();
         for l in &lines {
             match parse_line(l) {
                 None => {
@@ -491,7 +757,7 @@ impl Spool {
                 // wave 2 carries the roster's labels as typed; one that cannot be closed is
                 // discarded here, with a local diagnostic, never sent
                 Some(s) if s.kind == "event" => match classes::close_event_body(&s.body) {
-                    Some(body) => fresh.push((l, body)),
+                    Some(body) => fresh.push((l, body, s.queued)),
                     None => {
                         report.discarded += 1;
                         remove.push(l);
@@ -507,29 +773,11 @@ impl Spool {
                 report.discarded
             ));
         }
-        let batch: Vec<(&str, String)> = fresh.iter().take(MAX_BATCH).cloned().collect();
-        if !batch.is_empty() {
+        if !fresh.is_empty() {
             if self.hub.trim().is_empty() {
                 report.skipped = "the configured intake is refused".into();
             } else {
-                report.attempted = true;
-                let body = format!(
-                    "{{\"events\":[{}]}}",
-                    batch
-                        .iter()
-                        .map(|(_, b)| b.as_str())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                );
-                if let Ok(mut h) = self.http.lock() {
-                    *h = None;
-                }
-                let delivered = post(&body);
-                report.http = self.http.lock().ok().and_then(|h| *h);
-                if delivered {
-                    report.sent = batch.len();
-                    remove.extend(batch.iter().map(|(l, _)| *l));
-                }
+                self.send_batches(post, fresh, &mut remove, &mut report, &left, &deadline_text);
             }
         }
         if !remove.is_empty() {
@@ -537,7 +785,10 @@ impl Spool {
                 Some(r) => r,
                 None => &|p| fs::read_to_string(p),
             };
-            self.remove_lines(&remove, reread)?;
+            // (wave 28c, D5) the lines already delivered must go: the rewrite is always attempted,
+            // waiting at most what is left of the deadline (at least 0.1 s)
+            let wait = SENDER_LOCK_WAIT.min(left()).max(Duration::from_millis(100));
+            self.remove_lines(&remove, reread, wait)?;
         }
         report.kept = self.pending();
         Ok(report)
@@ -549,8 +800,8 @@ impl Spool {
     /// replaced (a rewrite from a guess would erase the events appended while the sender posted)
     /// and the error is returned - the delivered lines are then sent once more by the next flush
     /// (at worst a duplicate, never a loss).
-    fn remove_lines(&self, lines: &[&str], reread: &Reread) -> Result<()> {
-        let Some(_lock) = lock_within(&self.dir.join(SPOOL_LOCK), SENDER_LOCK_WAIT)? else {
+    fn remove_lines(&self, lines: &[&str], reread: &Reread, wait: Duration) -> Result<()> {
+        let Some(_lock) = lock_within(&self.dir.join(SPOOL_LOCK), wait)? else {
             // not rewritten: the delivered lines are sent once more by the next flush
             return Err(Error::new("the spool lock stayed busy for the rewrite"));
         };
@@ -589,34 +840,187 @@ impl Spool {
         replace_atomic(&self.path(), keep.as_bytes())
     }
 
-    fn post_events(&self, body: &str) -> bool {
+    /// (wave 5) Post every fresh event in batches of at most 100 with the intake's answer handling
+    /// (the module docs); the delivered and the refused lines go into `remove`, the rest stays.
+    fn send_batches<'s>(
+        &self,
+        post: &Post<'_>,
+        mut events: Vec<(&'s str, String, i64)>,
+        remove: &mut Vec<&'s str>,
+        report: &mut FlushReport,
+        left: &dyn Fn() -> Duration,
+        deadline_text: &str,
+    ) {
+        let mut batch_size = MAX_BATCH;
+        let mut i = 0usize;
+        let mut rounds = 0usize;
+        while i < events.len() && report.stopped.is_empty() {
+            let l = left();
+            if l < REQUEST_FLOOR + REWRITE_RESERVE {
+                report.stopped = deadline_text.to_string();
+                break;
+            }
+            let end = (i + batch_size).min(events.len());
+            let n = end - i;
+            let body = format!(
+                "{{\"events\":[{}]}}",
+                events[i..end]
+                    .iter()
+                    .map(|(_, b, _)| b.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            report.attempted = true;
+            let a = self.send_rate_ruled(post, &body, l - REWRITE_RESERVE);
+            if a.status.is_some() {
+                report.http = a.status;
+            }
+            if a.delivered {
+                report.sent += n;
+                remove.extend(events[i..end].iter().map(|(line, _, _)| *line));
+                i = end;
+                continue;
+            }
+            let status = a.status.unwrap_or(0);
+            // (D8) 400 "events[i]: <reason>": event i is dropped - one line in `rejected` - and the
+            // rest resent; a fourth such refusal in one flush stops it
+            if status == 400 {
+                if let Some((k, reason)) = event_refusal(&a.error).filter(|(k, _)| *k < n) {
+                    if rounds >= REJECT_ROUNDS {
+                        report.stopped = format!(
+                            "HTTP 400: {} - a fourth refused event in this flush; the rest stays",
+                            c3_core::one_line(&a.error)
+                        );
+                        break;
+                    }
+                    rounds += 1;
+                    let (line, _, queued) = events.remove(i + k);
+                    remove.push(line);
+                    report.rejected.push(format!(
+                        "event queued {} refused: {}",
+                        queued_text(queued),
+                        c3_core::one_line(&reason)
+                    ));
+                    continue;
+                }
+            }
+            // 413: the batch is halved; an event refused alone is dropped
+            if status == 413 {
+                if n > 1 {
+                    batch_size = (n / 2).max(1);
+                    continue;
+                }
+                let (line, _, queued) = events.remove(i);
+                remove.push(line);
+                report.rejected.push(format!(
+                    "event queued {} refused: HTTP 413 (too large alone)",
+                    queued_text(queued)
+                ));
+                continue;
+            }
+            // 403 - the app refused; another 4xx, a 5xx, a 429 not retried, no answer: the flush
+            // stops there and the spool is kept (nothing is hammered)
+            report.stopped = if status == 403 {
+                format!(
+                    "HTTP 403 - the intake refuses this app ({}); the spool is kept",
+                    c3_core::one_line(&a.why)
+                )
+            } else if (400..500).contains(&status) && status != 429 {
+                format!("{} - the spool is kept", c3_core::one_line(&a.why))
+            } else {
+                a.why.clone()
+            };
+        }
+    }
+
+    /// `Invoke-TelemetrySend`: one POST within `budget` (each request bounded by the request budget
+    /// and what is left); a 429 whose `Retry-After` is at most 60 s - and fits into the budget with
+    /// a second to spare - is waited for and the SAME body sent once more. No other retry.
+    fn send_rate_ruled(&self, post: &Post<'_>, body: &str, budget: Duration) -> PostAnswer {
+        let watch = Instant::now();
+        let one = |left: Duration| {
+            left.min(self.request_budget)
+                .max(Duration::from_millis(100))
+        };
+        let mut a = post(body, one(budget.saturating_sub(watch.elapsed())));
+        if a.status == Some(429) {
+            let left = budget.saturating_sub(watch.elapsed());
+            a.why = match a.retry_after {
+                Some(ra)
+                    if ra <= RETRY_AFTER_MAX_SECS
+                        && Duration::from_millis(ra as u64 * 1000 + 1000) < left =>
+                {
+                    thread::sleep(Duration::from_secs(ra as u64));
+                    a = post(body, one(budget.saturating_sub(watch.elapsed())));
+                    if a.status == Some(429) {
+                        "HTTP 429 again after its Retry-After".to_string()
+                    } else {
+                        a.why.clone()
+                    }
+                }
+                Some(ra) if ra <= RETRY_AFTER_MAX_SECS => format!(
+                    "HTTP 429 (Retry-After {ra} s does not fit into the flush's deadline: not retried now)"
+                ),
+                Some(ra) => format!(
+                    "HTTP 429 (Retry-After {ra} s, more than {RETRY_AFTER_MAX_SECS} s: not retried now)"
+                ),
+                None => "HTTP 429 (Retry-After not given: not retried now)".to_string(),
+            };
+        }
+        a
+    }
+
+    /// The real POST of one batch to `<hub>/v2/events`, bounded by `timeout` (no redirect).
+    fn post_events(&self, body: &str, timeout: Duration) -> PostAnswer {
         if self.hub.trim().is_empty() {
-            return false;
+            return PostAnswer::none("the configured intake is refused");
         }
         let url = format!("{}/v2/events", self.hub.trim_end_matches('/'));
         let agent = ureq::AgentBuilder::new()
-            .timeout_connect(SEND_TIMEOUT)
-            .timeout(SEND_TIMEOUT)
+            .timeout_connect(CONNECT_TIMEOUT.min(timeout))
+            .timeout(timeout)
+            .redirects(0)
             .build();
         let answer = agent
             .post(&url)
             .set("content-type", "application/json")
+            .set("accept", "application/json")
             .send_string(body);
-        let status = match &answer {
-            Ok(r) => Some(r.status()),
-            Err(ureq::Error::Status(code, _)) => Some(*code),
-            Err(_) => None,
-        };
-        if let Ok(mut h) = self.http.lock() {
-            *h = status;
-        }
-        match answer {
-            Ok(_) => true,
+        let resp = match answer {
+            Ok(r) => r,
+            Err(ureq::Error::Status(_, r)) => r,
             Err(e) => {
-                debug_log(&format!("telemetry flush kept the spool: {e}"));
-                false
+                let m = c3_core::one_line(&e.to_string());
+                debug_log(&format!("telemetry flush kept the spool: {m}"));
+                let lower = m.to_ascii_lowercase();
+                return PostAnswer::none(
+                    if lower.contains("timed out") || lower.contains("timeout") {
+                        format!("no answer within {} s", secs_text(timeout))
+                    } else {
+                        format!("no answer ({m})")
+                    },
+                );
             }
+        };
+        let status = resp.status();
+        let ctype = resp
+            .header("content-type")
+            .map(|c| c.split(';').next().unwrap_or("").trim().to_string())
+            .unwrap_or_default();
+        let retry_after = resp.header("retry-after").and_then(parse_retry_after);
+        let mut text = resp.into_string().unwrap_or_default();
+        if text.len() > ANSWER_TEXT_MAX {
+            let mut cut = ANSWER_TEXT_MAX;
+            while !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            text.truncate(cut);
         }
+        let a = PostAnswer::answer(status, &text, &ctype, retry_after);
+        if !a.delivered {
+            debug_log(&format!("telemetry flush kept the spool: {}", a.why));
+        }
+        a
     }
 
     /// (wave 3b) Record a flush and fold the not-spooled files (the plugin's end of
@@ -680,18 +1084,21 @@ impl Spool {
                 .collect();
             (notspooled::carried_seen(before.as_ref()), kept)
         };
-        let (delivered, kept, dropped, http) = match &r {
-            // `kept`: the spool's count now (a skipped flush did not count it)
+        let (delivered, kept, dropped, rejected, http) = match &r {
+            // `kept`: the spool's count now (a skipped flush did not count it); `dropped` counts the
+            // events the intake refused too, each named in `rejected` (wave 5)
             Ok(rep) => (
                 serde_json::json!(rep.sent),
                 serde_json::json!(self.pending()),
-                serde_json::json!(rep.dropped_stale + rep.discarded),
+                serde_json::json!(rep.dropped()),
+                serde_json::json!(rep.rejected),
                 serde_json::json!(rep.http),
             ),
             Err(_) => (
                 serde_json::json!(0),
                 serde_json::Value::Null,
                 serde_json::json!(0),
+                serde_json::json!([]),
                 serde_json::Value::Null,
             ),
         };
@@ -701,7 +1108,7 @@ impl Spool {
             "delivered": delivered,
             "kept": kept,
             "dropped": dropped,
-            "rejected": [],
+            "rejected": rejected,
             "http": http,
             "not_spooled_seen": seen,
             "not_spooled_folded": notspooled::folded_value(&folded),
@@ -822,28 +1229,208 @@ impl Spool {
 
 /// The result line of a flush, for the last flush's record.
 fn result_text(report: &Result<FlushReport>) -> String {
-    let result = match report {
-        Ok(r) if !r.skipped.is_empty() => format!("skipped - {}", r.skipped),
-        Ok(r) if !r.attempted && r.sent == 0 => format!(
-            "nothing to send - dropped {}, kept {}",
-            r.dropped_stale, r.kept
-        ),
-        Ok(r) if r.sent > 0 => format!(
-            "delivered {} - dropped {}, kept {}",
-            r.sent, r.dropped_stale, r.kept
-        ),
-        Ok(r) => format!(
-            "not delivered - delivered 0, kept {}, dropped {}",
-            r.kept, r.dropped_stale
-        ),
-        Err(e) => format!("failed - {e}"),
-    };
     match report {
-        Ok(r) if r.discarded > 0 => format!(
-            "{result}; discarded {} queued event(s) that are no closable C3 event (not sent)",
-            r.discarded
-        ),
-        _ => result,
+        Ok(r) => r.result_text(),
+        Err(e) => format!("failed - {e}"),
+    }
+}
+
+impl FlushReport {
+    /// (wave 5) The result line as the plugin's `Invoke-TelemetryFlush` words it (`.last` `result`
+    /// and `codex-telemetry: <result>`): "nothing to send", "delivered <n>, kept <k>, dropped <d>
+    /// (...)", or "not delivered: <why> - delivered <n>, kept <k>, dropped <d>[, <r> refused by the
+    /// intake]"; a flush that did not reach the send says "skipped - <why>"; C3's discarded events
+    /// (no closable C3 event) are named after it.
+    pub fn result_text(&self) -> String {
+        if !self.skipped.is_empty() {
+            return format!("skipped - {}", self.skipped);
+        }
+        let rej = self.rejected.len();
+        let dropped = self.dropped();
+        let mut result = if !self.stopped.is_empty() {
+            format!(
+                "not delivered: {} - delivered {}, kept {}, dropped {}{}",
+                self.stopped,
+                self.sent,
+                self.kept,
+                dropped,
+                if rej > 0 {
+                    format!(", {rej} refused by the intake")
+                } else {
+                    String::new()
+                }
+            )
+        } else if self.sent == 0 && dropped == 0 {
+            "nothing to send".to_string()
+        } else {
+            format!(
+                "delivered {}, kept {}, dropped {}{}",
+                self.sent,
+                self.kept,
+                dropped,
+                if dropped > rej {
+                    format!(
+                        " (older than 7 days or unreadable{})",
+                        if rej > 0 { ", or refused" } else { "" }
+                    )
+                } else if rej > 0 {
+                    " (refused by the intake)".to_string()
+                } else {
+                    String::new()
+                }
+            )
+        };
+        if self.discarded > 0 {
+            result.push_str(&format!(
+                "; discarded {} queued event(s) that are no closable C3 event (not sent)",
+                self.discarded
+            ));
+        }
+        result
+    }
+}
+
+/// An injected sender's yes/no as an intake answer (`true`: `{"ok": true}`).
+fn bool_answer(delivered: bool) -> PostAnswer {
+    if delivered {
+        PostAnswer::ok()
+    } else {
+        PostAnswer::none("no answer (the injected sender did not deliver)")
+    }
+}
+
+/// The intake's per-event refusal in a 400's error: `events[<i>]: <reason>`.
+fn event_refusal(error: &str) -> Option<(usize, String)> {
+    let re = regex::Regex::new(r"events\[(\d+)\]\s*:\s*([^\r\n]*)").ok()?;
+    let c = re.captures(error)?;
+    Some((c[1].parse().ok()?, c[2].to_string()))
+}
+
+/// A queue time (unix seconds) as the plugin names a refused event: the local
+/// `yyyy-MM-ddTHH:mm:sszzz`.
+fn queued_text(queued: i64) -> String {
+    DateTime::from_timestamp(queued, 0)
+        .map(|d| {
+            d.with_timezone(&chrono::Local)
+                .format("%Y-%m-%dT%H:%M:%S%:z")
+                .to_string()
+        })
+        .unwrap_or_else(|| queued.to_string())
+}
+
+/// (wave 28d, D3) The sender lock's owner as its record says (read only): `None` without one.
+#[derive(Debug, Clone)]
+pub(crate) struct SenderOwnerInfo {
+    pub pid: u32,
+    pub since: String,
+    /// The owner process lives (or its identity cannot be confirmed).
+    pub alive: bool,
+    /// How old the record is (it is written once, when the lock is taken).
+    pub age_secs: u64,
+}
+
+/// Read the owner record of the sender lock under `dir` (`flush.owner.json`).
+pub(crate) fn sender_owner(dir: &Path) -> Option<SenderOwnerInfo> {
+    let path = dir.join(FLUSH_OWNER);
+    let m = notspooled::forgetting_owner(&path);
+    if !m.there {
+        return None;
+    }
+    let age_secs = fs::metadata(&path)
+        .and_then(|md| md.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let since = if m.since.is_empty() {
+        fs::metadata(&path)
+            .and_then(|md| md.modified())
+            .ok()
+            .map(|t| {
+                chrono::DateTime::<chrono::Local>::from(t)
+                    .format("%Y-%m-%dT%H:%M:%S%:z")
+                    .to_string()
+            })
+            .unwrap_or_else(|| "?".to_string())
+    } else {
+        m.since
+    };
+    Some(SenderOwnerInfo {
+        pid: m.pid,
+        since,
+        alive: m.alive,
+        age_secs,
+    })
+}
+
+/// (wave 28d, D3) The `--status` line of the sender lock (`sender     : ...`), read only: busy,
+/// stuck (30 minutes), or a record its owner left behind; `None` when no record is there.
+pub fn sender_status(dir: &Path) -> Option<String> {
+    let o = sender_owner(dir)?;
+    Some(if o.alive && o.age_secs >= STUCK_LOCK_SECS {
+        format!(
+            "sender stuck since {} (pid {}) - its lock is {} min old and its owner lives: it is never taken over; stop pid {} if it hangs (the lock goes with its process)",
+            o.since,
+            o.pid,
+            o.age_secs / 60,
+            o.pid
+        )
+    } else if o.alive {
+        format!(
+            "busy since {} (pid {} holds its lock, {} s old)",
+            o.since, o.pid, o.age_secs
+        )
+    } else if o.pid > 0 {
+        format!(
+            "a lock record whose owner pid {} is gone - the next sender replaces it",
+            o.pid
+        )
+    } else {
+        "a lock record that names no owner - the next sender replaces it".to_string()
+    })
+}
+
+/// The owner record a flush writes once it holds the sender lock; removed when dropped, and only
+/// while it still carries this sender's token.
+struct SenderOwner {
+    path: PathBuf,
+    token: String,
+}
+
+impl SenderOwner {
+    /// Write `{pid, start_time, start_ticks, token, since, host}` of this process, whole (a
+    /// temporary file renamed into place). `None` when it cannot be written (the flush goes on: the
+    /// OS lock is the lock; only the "who holds it" is then unknown).
+    fn write(path: &Path) -> Option<SenderOwner> {
+        let me = std::process::id();
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let ticks = notspooled::own_start_ticks();
+        let o = serde_json::json!({
+            "pid": me,
+            "start_time": crate::liveness::proc::process_start_iso(me).unwrap_or_default(),
+            "start_ticks": if ticks > 0 { serde_json::json!(ticks) } else { serde_json::Value::Null },
+            "token": token,
+            "since": notspooled::now_iso(),
+            "host": c3_core::host::machine_name(),
+        });
+        replace_atomic(path, format!("{o}\n").as_bytes()).ok()?;
+        Some(SenderOwner {
+            path: path.to_path_buf(),
+            token,
+        })
+    }
+}
+
+impl Drop for SenderOwner {
+    fn drop(&mut self) {
+        let mine = fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(String::from))
+            .is_some_and(|t| t == self.token);
+        if mine {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -941,4 +1528,79 @@ pub fn flush_in_background() -> BackgroundFlush {
         let _ = tx.send(());
     });
     BackgroundFlush { done: rx }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (wave 5) The intake's answer as the plugin classifies it.
+    #[test]
+    fn answers_are_classified_as_the_plugin_does() {
+        let ok = PostAnswer::answer(200, r#"{"ok":true,"accepted":1}"#, "application/json", None);
+        assert!(ok.delivered && ok.why.is_empty());
+        let html = PostAnswer::answer(200, "<html>T</html>", "text/html", None);
+        assert_eq!(
+            html.why,
+            "HTTP 200 (text/html) is not the intake's JSON answer"
+        );
+        let notok = PostAnswer::answer(200, r#"{"ok":false}"#, "application/json", None);
+        assert_eq!(notok.why, "HTTP 200 without ok: true");
+        let e = PostAnswer::answer(400, r#"{"ok":false,"error":"events[2]: x"}"#, "", None);
+        assert_eq!(e.why, "HTTP 400: events[2]: x");
+        assert_eq!(e.error, "events[2]: x");
+        assert_eq!(event_refusal(&e.error), Some((2, "x".to_string())));
+        assert_eq!(
+            event_refusal("events[1] : too long\nmore"),
+            Some((1, "too long".into()))
+        );
+        assert_eq!(event_refusal("no index"), None);
+        let plain = PostAnswer::answer(404, "not found", "", None);
+        assert_eq!(plain.why, "HTTP 404 is not the intake's JSON answer");
+        assert_eq!(plain.error, "not found");
+    }
+
+    #[test]
+    fn retry_after_takes_seconds_or_a_date() {
+        assert_eq!(parse_retry_after(" 2 "), Some(2));
+        assert_eq!(parse_retry_after("-5"), Some(0));
+        assert_eq!(parse_retry_after("soon"), None);
+        let date = (Utc::now() + chrono::Duration::seconds(30))
+            .format("%a, %d %b %Y %H:%M:%S GMT")
+            .to_string();
+        let s = parse_retry_after(&date).unwrap();
+        assert!((29..=31).contains(&s), "{s}");
+        assert_eq!(parse_retry_after("Sun, 06 Nov 1994 08:49:37 GMT"), Some(0));
+    }
+
+    #[test]
+    fn the_result_line_is_the_plugins() {
+        let mut r = FlushReport::default();
+        assert_eq!(r.result_text(), "nothing to send");
+        r.sent = 2;
+        r.kept = 1;
+        assert_eq!(r.result_text(), "delivered 2, kept 1, dropped 0");
+        r.dropped_stale = 1;
+        assert_eq!(
+            r.result_text(),
+            "delivered 2, kept 1, dropped 1 (older than 7 days or unreadable)"
+        );
+        r.rejected.push("event queued t refused: x".into());
+        assert_eq!(
+            r.result_text(),
+            "delivered 2, kept 1, dropped 2 (older than 7 days or unreadable, or refused)"
+        );
+        r.stopped = "HTTP 500: boom".into();
+        assert_eq!(
+            r.result_text(),
+            "not delivered: HTTP 500: boom - delivered 2, kept 1, dropped 2, 1 refused by the intake"
+        );
+        r.skipped = "another flush is running (its lock is held)".into();
+        assert_eq!(
+            r.result_text(),
+            "skipped - another flush is running (its lock is held)"
+        );
+        assert_eq!(secs_text(Duration::from_secs(60)), "60");
+        assert_eq!(secs_text(Duration::from_millis(1600)), "1.6");
+    }
 }

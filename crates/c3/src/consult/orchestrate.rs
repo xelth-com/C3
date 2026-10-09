@@ -1612,6 +1612,8 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         prune: false,
         kick: false,
         member: String::new(),
+        // (wave 27) the panel run's resolved brief prefix (shown by a member's dry run)
+        brief_prefix: s("brief_prefix"),
     }
 }
 
@@ -3707,11 +3709,18 @@ fn run_live(mut ctx: Context) -> i32 {
     // (wave 27c, D11) a coordinator that parses but matches no roster entry is SAID on the console
     // of a real run (`codex-consult.ps1:2274`), not refused; the ledger already carries
     // `coordinator.in_roster: false`.
-    if ctx.coordinator.in_roster == Some(false) {
-        let id = std::env::var("CODEX_CONSULT_COORDINATOR").unwrap_or_default();
+    // (wave 5) the RESOLVED identity (`Format-CoordinatorId`), and not for a `#n` that names no
+    // seat here (that one has its own warning)
+    if ctx.coordinator.in_roster == Some(false)
+        && ctx
+            .coordinator
+            .unresolved
+            .as_deref()
+            .is_none_or(|u| u.is_empty())
+    {
         println!(
             "coordinator: {} (not in the roster - no reviewer can match it)",
-            id.trim()
+            c3_core::host::format_coordinator_id(&ctx.coordinator)
         );
     }
     // The `-SkipPreflight` quota warning prints before the lock (never on a dry run, which

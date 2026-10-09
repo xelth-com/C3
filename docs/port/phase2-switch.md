@@ -41,7 +41,7 @@ The plugin shells out to `c3`; install it first (it is already on PATH here at
 
 ```
 cargo install --path crates/c3-cli        # from a checkout of this repo; or a release download
-c3 --version                              # expect: c3 0.1.0
+c3 --version                              # expect: c3 0.2.0
 ```
 
 Or point the plugin at a binary elsewhere with `C3_EXE=<path>` (the hook and skills honour it).

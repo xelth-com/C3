@@ -156,6 +156,21 @@ fn roster_string_problem(value: &str) -> Option<&'static str> {
         .find(|d| value.contains(d))
 }
 
+/// `Get-IdentityStringProblem` (wave 27c, D10 / F30-9): THE character rule of a provider label and
+/// a model id that the roster's validator and `CODEX_CONSULT_COORDINATOR` share - a non-empty
+/// string without surrounding blanks and without the matcher's and the seed's delimiters
+/// ([`roster_string_problem`]). Interior blanks are allowed. `None`, or why not (`is empty`,
+/// `has surrounding blanks`, `must not contain '::'`).
+pub fn identity_string_problem(value: &str) -> Option<String> {
+    if value.trim().is_empty() {
+        return Some("is empty".to_string());
+    }
+    if value != value.trim() {
+        return Some("has surrounding blanks".to_string());
+    }
+    roster_string_problem(value).map(|d| format!("must not contain '{d}'"))
+}
+
 /// `ConvertTo-TomlBasicString`: escape backslash and double quote.
 fn to_toml_basic_string(v: &str) -> String {
     v.replace('\\', "\\\\").replace('"', "\\\"")
@@ -361,17 +376,9 @@ pub fn parse_reviewer_matcher_grammar(matcher: &str) -> Result<MatcherGrammar, S
         provider = p;
         model = Some(m);
     }
-    let label_re = regex::Regex::new(r"^[A-Za-z0-9._-]+$").unwrap();
-    if !label_re.is_match(&provider) {
-        return Err(format!(
-            "the provider '{provider}' is not a provider label (letters, digits, dot, dash, underscore)"
-        ));
-    }
-    if let Some(m) = &model {
-        if m.chars().any(|c| c.is_whitespace()) {
-            return Err(format!("the model '{m}' contains white space"));
-        }
-    }
+    // (wave 5) no character rule here - `ConvertFrom-ReviewerMatcher` has none: a label or model
+    // no roster entry has simply matches nothing (-Require), and `CODEX_CONSULT_COORDINATOR`
+    // applies `identity_string_problem` after the parse (`Resolve-CoordinatorIdentity`).
     Ok(MatcherGrammar {
         position: None,
         provider: Some(provider),

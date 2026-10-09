@@ -218,6 +218,19 @@ pub fn resolve_coordinator_match(
             m.truncate(m.len() - "[1m]".len());
         }
     }
+    // (wave 27c, D10 / F30-9) only a value that cannot be PARSED is refused: the grammar above,
+    // then the shared character rule (`Get-IdentityStringProblem`) on the provider and the model.
+    if g.position.is_none() {
+        let p = g.provider.clone().unwrap_or_default();
+        if let Some(why) = crate::roster::identity_string_problem(&p) {
+            return Err(format!("the provider '{p}' {why}"));
+        }
+        if let Some(m) = &g.model {
+            if let Some(why) = crate::roster::identity_string_problem(m) {
+                return Err(format!("the model '{m}' {why}"));
+            }
+        }
+    }
     let model_of = |e: &RosterEntry| -> String {
         if !e.model.is_empty() {
             e.model.clone()
@@ -384,18 +397,25 @@ pub fn build_coordinator(host: &str, matched: Option<&CoordinatorMatch>) -> Coor
     }
 }
 
-/// The coordinator's lineage as a display string (`Format-CoordinatorText`'s identity half):
-/// `<provider> :: <model>` (+ ` [<engine>]`), or `<provider> (every model of it)`, or the
-/// no-identity note.
+/// The coordinator's identity as `Format-CoordinatorText` shows it: `<provider> :: <model>` (+
+/// ` [<engine>]` when the engine is not codex), `<provider> (model not named)`, a `#n` that names
+/// no seat here (`#n (names no roster position here)`), or the no-identity note.
 fn coordinator_lineage(c: &Coordinator) -> String {
+    if let Some(un) = c.unresolved.as_deref().filter(|u| !u.is_empty()) {
+        return format!("{un} (names no roster position here)");
+    }
     match &c.provider {
         None => "(no identity given - CODEX_CONSULT_COORDINATOR is not set)".to_string(),
         Some(p) => {
             let mut s = match &c.model {
                 Some(m) => format!("{p} :: {m}"),
-                None => format!("{p} (every model of it)"),
+                None => format!("{p} (model not named)"),
             };
-            if let Some(e) = &c.engine {
+            if let Some(e) = c
+                .engine
+                .as_deref()
+                .filter(|e| !e.eq_ignore_ascii_case("codex"))
+            {
                 s.push_str(&format!(" [{e}]"));
             }
             s
@@ -403,15 +423,38 @@ fn coordinator_lineage(c: &Coordinator) -> String {
     }
 }
 
-/// `Format-CoordinatorText`: the dry-run `coordinator :` value —
-/// `<lineage>; host <host> (inferred, a hint); source <source>`.
+/// `Format-CoordinatorId`: the coordinator's identity alone, as the console line of D11 names it -
+/// `<provider> :: <model>` or `<provider>`, ` [<engine>]` when the engine is not codex.
+pub fn format_coordinator_id(c: &Coordinator) -> String {
+    let p = c.provider.clone().unwrap_or_default();
+    let mut who = match c.model.as_deref().filter(|m| !m.is_empty()) {
+        Some(m) => format!("{p} :: {m}"),
+        None => p,
+    };
+    if let Some(e) = c
+        .engine
+        .as_deref()
+        .filter(|e| !e.eq_ignore_ascii_case("codex"))
+    {
+        who.push_str(&format!(" [{e}]"));
+    }
+    who
+}
+
+/// `Format-CoordinatorText`: the dry-run `coordinator :` value -
+/// `<identity>; host <host> (inferred, a hint); source <source>`, and (wave 27c, D11) ` (not in
+/// the roster - no reviewer can match it)` for a coordinator no reviewer can match.
 pub fn format_coordinator_text(c: &Coordinator) -> String {
-    format!(
+    let mut text = format!(
         "{}; host {} (inferred, a hint); source {}",
         coordinator_lineage(c),
         c.host,
         c.source
-    )
+    );
+    if c.in_roster == Some(false) && c.unresolved.as_deref().is_none_or(|u| u.is_empty()) {
+        text.push_str(" (not in the roster - no reviewer can match it)");
+    }
+    text
 }
 
 /// [`coordinator_reviewer_warning`] with the reviewer's roster `auth` (0.6.0, wave 29, item 9): a
@@ -573,14 +616,27 @@ mod tests {
 
     #[test]
     fn matcher_refusals() {
+        // (wave 5, harness-host REFUSE D3) the plugin's character rule: the matcher's and the
+        // seed's delimiters are refused; interior blanks are not
         assert_eq!(
-            parse("open ai", None).unwrap_err(),
-            "the provider 'open ai' is not a provider label (letters, digits, dot, dash, underscore)"
+            parse("open::ai", None).unwrap_err(),
+            "the provider 'open::ai' must not contain '::'"
         );
         assert_eq!(
-            parse("openai :: gpt 5", None).unwrap_err(),
-            "the model 'gpt 5' contains white space"
+            parse("openai :: gpt|5", None).unwrap_err(),
+            "the model 'gpt|5' must not contain '|'"
         );
+        assert_eq!(
+            parse("open,ai :: gpt-5", None).unwrap_err(),
+            "the provider 'open,ai' must not contain ','"
+        );
+        assert_eq!(
+            parse("openai :: gpt#5", None).unwrap_err(),
+            "the model 'gpt#5' must not contain '#'"
+        );
+        let blank = parse("open ai :: gpt 5", None).unwrap();
+        assert_eq!(blank.provider.as_deref(), Some("open ai"));
+        assert_eq!(blank.model.as_deref(), Some("gpt 5"));
         assert_eq!(
             parse("openai :: gpt-5.1 [bad]", None).unwrap_err(),
             "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse, claude)"
@@ -724,10 +780,10 @@ mod tests {
                 .source,
             "none"
         );
-        let bad = resolve_coordinator_identity("open ai", None, &d, "unknown").unwrap_err();
-        assert!(
-            bad.starts_with("CODEX_CONSULT_COORDINATOR='open ai' cannot be used: "),
-            "{bad}"
+        let bad = resolve_coordinator_identity("open::ai", None, &d, "unknown").unwrap_err();
+        assert_eq!(
+            bad,
+            "CODEX_CONSULT_COORDINATOR='open::ai' cannot be used: the provider 'open::ai' must not contain '::' - give '<provider> :: <model>' (optionally ' [<engine>]'), a roster position '#<n>' or a provider label; nothing was started."
         );
     }
 
@@ -841,5 +897,49 @@ mod tests {
         );
         let none = build_coordinator("unknown", None);
         assert_eq!(none.source, "none");
+        // (wave 5) the plugin's text: the engine only when it is not codex, a model-less label,
+        // an unresolved `#n`, a coordinator no reviewer can match
+        let codex = build_coordinator(
+            "unknown",
+            Some(&CoordinatorMatch {
+                provider: Some("openai".into()),
+                model: Some("gpt-5.1".into()),
+                engine: Some("codex".into()),
+                in_roster: Some(true),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            format_coordinator_text(&codex),
+            "openai :: gpt-5.1; host unknown (inferred, a hint); source explicit"
+        );
+        let agy = build_coordinator(
+            "claude-code",
+            Some(&CoordinatorMatch {
+                provider: Some("google".into()),
+                model: None,
+                engine: Some("agy".into()),
+                in_roster: Some(false),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            format_coordinator_text(&agy),
+            "google (model not named) [agy]; host claude-code (inferred, a hint); source explicit (not in the roster - no reviewer can match it)"
+        );
+        let un = build_coordinator(
+            "unknown",
+            Some(&CoordinatorMatch {
+                unresolved: Some("#5".into()),
+                in_roster: Some(false),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(
+            format_coordinator_text(&un),
+            "#5 (names no roster position here); host unknown (inferred, a hint); source explicit"
+        );
+        assert_eq!(format_coordinator_id(&codex), "openai :: gpt-5.1");
+        assert_eq!(format_coordinator_id(&agy), "google [agy]");
     }
 }

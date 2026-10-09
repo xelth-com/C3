@@ -1699,3 +1699,488 @@ fn off_switch_flag_disables() {
     });
     assert_eq!(status, "telemetry: off (--telemetry off)");
 }
+
+// --------------------------------------------------------------------------- wave 5: the sender's parity
+
+/// A scripted intake with headers: answers `(code, content type, body, headers)` in order (the last
+/// one repeats) and records every request body with the time it arrived. Returns the `.../T` base.
+type Answer = (u16, &'static str, String, Vec<(&'static str, String)>);
+type Requests = std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, String)>>>;
+fn intake(answers: Vec<Answer>) -> (String, Requests) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let log: Requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log2 = log.clone();
+    thread::spawn(move || {
+        for (k, stream) in listener.incoming().enumerate() {
+            let Ok(mut stream) = stream else { continue };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut content_length = 0usize;
+            let mut line = String::new();
+            loop {
+                line.clear();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    content_length = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut buf = vec![0u8; content_length];
+            let _ = reader.read_exact(&mut buf);
+            log2.lock().unwrap().push((
+                std::time::Instant::now(),
+                String::from_utf8_lossy(&buf).to_string(),
+            ));
+            let (code, ctype, body, headers) = &answers[k.min(answers.len() - 1)];
+            let extra: String = headers
+                .iter()
+                .map(|(n, v)| format!("{n}: {v}\r\n"))
+                .collect();
+            let resp = format!(
+                "HTTP/1.1 {code} X\r\ncontent-type: {ctype}\r\ncontent-length: {}\r\n{extra}connection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (format!("http://{addr}/T"), log)
+}
+
+const OK: &str = r#"{"ok":true,"accepted":1,"event_ids":[]}"#;
+
+fn ok_answer() -> Answer {
+    (200, "application/json", OK.to_string(), vec![])
+}
+
+fn answer_429(retry_after: &str) -> Answer {
+    (
+        429,
+        "application/json",
+        r#"{"ok":false,"error":"rate"}"#.to_string(),
+        vec![("Retry-After", retry_after.to_string())],
+    )
+}
+
+fn last_record(dir: &std::path::Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(dir.join("last-flush.json")).unwrap()).unwrap()
+}
+
+/// The purposes of a posted batch, in order.
+fn purposes(body: &str) -> Vec<String> {
+    let v: serde_json::Value = serde_json::from_str(body).unwrap();
+    v["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["details"]["purpose"].as_str().unwrap_or("").to_string())
+        .collect()
+}
+
+/// (harness-telemetry R429 #1) A 429 with `Retry-After: 1` is honoured: the SAME request is sent
+/// once more after at least that long, delivered; the spool is emptied.
+#[test]
+fn sender_429_with_a_short_retry_after_resends_the_same_batch_once() {
+    let dir = temp_dir("s429");
+    let (hub, reqs) = intake(vec![answer_429("1"), ok_answer()]);
+    let spool = Spool::new(&dir, hub);
+    enqueue_one(&spool, "framing");
+    let r = spool.flush_recorded().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2, "{r:?}");
+    assert_eq!(reqs[0].1, reqs[1].1, "the same body");
+    let gap = reqs[1].0 - reqs[0].0;
+    assert!(gap >= Duration::from_millis(950), "{gap:?}");
+    assert_eq!((r.sent, r.http, r.stopped.as_str()), (1, Some(200), ""));
+    assert_eq!(spool.pending(), 0);
+    let last = last_record(&dir);
+    assert_eq!(last["result"], "delivered 1, kept 0, dropped 0", "{last}");
+    assert_eq!(last["http"], 200);
+}
+
+/// (harness-telemetry R429 #2) A 429 whose `Retry-After` is more than 60 s (or missing) is NOT
+/// waited for: one request, not delivered, the spool byte-identical, the record names the 429.
+#[test]
+fn sender_429_with_a_long_or_no_retry_after_keeps_the_batch() {
+    for (ra, why) in [
+        (
+            Some("120"),
+            "HTTP 429 (Retry-After 120 s, more than 60 s: not retried now)",
+        ),
+        (None, "HTTP 429 (Retry-After not given: not retried now)"),
+    ] {
+        let dir = temp_dir("s429long");
+        let answer = match ra {
+            Some(v) => answer_429(v),
+            None => (
+                429,
+                "application/json",
+                r#"{"ok":false}"#.to_string(),
+                vec![],
+            ),
+        };
+        let (hub, reqs) = intake(vec![answer]);
+        let spool = Spool::new(&dir, hub);
+        enqueue_one(&spool, "framing");
+        let before = std::fs::read(dir.join("spool.ndjson")).unwrap();
+        let r = spool.flush_recorded().unwrap();
+        assert_eq!(reqs.lock().unwrap().len(), 1);
+        assert_eq!(r.stopped, why);
+        assert_eq!(r.sent, 0);
+        assert_eq!(std::fs::read(dir.join("spool.ndjson")).unwrap(), before);
+        let last = last_record(&dir);
+        assert_eq!(
+            last["result"].as_str().unwrap(),
+            format!("not delivered: {why} - delivered 0, kept 1, dropped 0")
+        );
+        assert_eq!(last["http"], 429);
+    }
+}
+
+/// A second 429 after the wait stops the flush (no third request); a `Retry-After` that does not
+/// fit into what is left of the flush's deadline is not waited for.
+#[test]
+fn sender_429_again_or_not_fitting_the_deadline_stops() {
+    let dir = temp_dir("s429again");
+    let (hub, reqs) = intake(vec![answer_429("0")]);
+    let spool = Spool::new(&dir, hub);
+    enqueue_one(&spool, "framing");
+    let r = spool.flush().unwrap();
+    assert_eq!(reqs.lock().unwrap().len(), 2);
+    assert_eq!(r.stopped, "HTTP 429 again after its Retry-After");
+    assert_eq!(spool.pending(), 1);
+
+    let dir = temp_dir("s429fit");
+    let (hub, reqs) = intake(vec![answer_429("5"), ok_answer()]);
+    let spool = Spool::new(&dir, hub).with_limits(Duration::from_secs(4), Duration::from_secs(2));
+    enqueue_one(&spool, "framing");
+    let r = spool.flush().unwrap();
+    assert_eq!(reqs.lock().unwrap().len(), 1);
+    assert_eq!(
+        r.stopped,
+        "HTTP 429 (Retry-After 5 s does not fit into the flush's deadline: not retried now)"
+    );
+    assert_eq!(spool.pending(), 1);
+}
+
+/// (D8) A 400 naming `events[1]: <reason>` drops that event (one `rejected` line, counted as
+/// dropped) and resends the rest; the spool is emptied - the refused event is never resent.
+#[test]
+fn sender_400_drops_the_named_event_and_resends_the_rest() {
+    let dir = temp_dir("s400");
+    let (hub, reqs) = intake(vec![
+        (
+            400,
+            "application/json",
+            r#"{"ok":false,"error":"events[1]: title longer than 200 characters"}"#.to_string(),
+            vec![],
+        ),
+        ok_answer(),
+    ]);
+    let spool = Spool::new(&dir, hub);
+    for p in ["framing", "decision", "checkpoint"] {
+        enqueue_one(&spool, p);
+    }
+    let r = spool.flush_recorded().unwrap();
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(purposes(&reqs[0].1), ["framing", "decision", "checkpoint"]);
+    assert_eq!(purposes(&reqs[1].1), ["framing", "checkpoint"]);
+    assert_eq!((r.sent, r.rejected.len(), r.dropped()), (2, 1, 1));
+    assert!(
+        r.rejected[0].starts_with("event queued ")
+            && r.rejected[0].ends_with(" refused: title longer than 200 characters"),
+        "{:?}",
+        r.rejected
+    );
+    assert_eq!(spool.pending(), 0);
+    let last = last_record(&dir);
+    assert_eq!(
+        last["result"],
+        "delivered 2, kept 0, dropped 1 (refused by the intake)"
+    );
+    assert_eq!(last["dropped"], 1);
+    assert_eq!(last["rejected"].as_array().unwrap().len(), 1);
+}
+
+/// (D8) At most three per-event refusals per flush: the fourth stops it, the rest stays.
+#[test]
+fn sender_400_a_fourth_refusal_in_one_flush_stops_it() {
+    let dir = temp_dir("s400four");
+    let refuse_first = (
+        400,
+        "application/json",
+        r#"{"ok":false,"error":"events[0]: bad"}"#.to_string(),
+        vec![],
+    );
+    let (hub, reqs) = intake(vec![refuse_first]);
+    let spool = Spool::new(&dir, hub);
+    for _ in 0..5 {
+        enqueue_one(&spool, "framing");
+    }
+    let r = spool.flush().unwrap();
+    assert_eq!(reqs.lock().unwrap().len(), 4);
+    assert_eq!(r.rejected.len(), 3);
+    assert_eq!(
+        r.stopped,
+        "HTTP 400: events[0]: bad - a fourth refused event in this flush; the rest stays"
+    );
+    assert_eq!(spool.pending(), 2);
+    assert!(r
+        .result_text()
+        .ends_with("- delivered 0, kept 2, dropped 3, 3 refused by the intake"));
+}
+
+/// (D8) 413: the batch is halved until it fits; an event refused alone is dropped
+/// ("HTTP 413 (too large alone)"), never resent.
+#[test]
+fn sender_413_halves_the_batch_and_drops_an_event_too_large_alone() {
+    let dir = temp_dir("s413");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    for p in ["framing", "decision", "checkpoint", "acceptance"] {
+        enqueue_one(&spool, p);
+    }
+    let sizes = std::sync::Mutex::new(Vec::new());
+    let r = spool
+        .flush_answered(|body| {
+            let ps = purposes(body);
+            sizes.lock().unwrap().push(ps.len());
+            if ps.len() > 1 || ps[0] == "decision" {
+                c3::telemetry::PostAnswer::answer(413, "", "", None)
+            } else {
+                c3::telemetry::PostAnswer::ok()
+            }
+        })
+        .unwrap();
+    assert_eq!(*sizes.lock().unwrap(), [4, 2, 1, 1, 1, 1]);
+    assert_eq!((r.sent, r.rejected.len()), (3, 1));
+    assert!(
+        r.rejected[0].ends_with("refused: HTTP 413 (too large alone)"),
+        "{:?}",
+        r.rejected
+    );
+    assert_eq!(spool.pending(), 0);
+    assert!(r.stopped.is_empty(), "{r:?}");
+}
+
+/// (harness-telemetry BATCH) Every fresh event goes, in batches of at most 100, oldest first.
+#[test]
+fn sender_sends_every_event_in_batches_of_at_most_100() {
+    let dir = temp_dir("sbatch");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    enqueue_one(&spool, "decision");
+    for _ in 1..150 {
+        enqueue_one(&spool, "framing");
+    }
+    let sizes = std::sync::Mutex::new(Vec::new());
+    let r = spool
+        .flush_answered(|body| {
+            let ps = purposes(body);
+            sizes.lock().unwrap().push((ps.len(), ps[0].clone()));
+            c3::telemetry::PostAnswer::ok()
+        })
+        .unwrap();
+    let sizes = sizes.lock().unwrap();
+    assert_eq!(sizes.len(), 2);
+    assert_eq!(sizes[0], (100, "decision".to_string()), "oldest first");
+    assert_eq!(sizes[1].0, 50);
+    assert_eq!((r.sent, spool.pending()), (150, 0));
+}
+
+/// (wave 28b, D2 / wave 28c, D5) The flush's deadline: a batch starts only while 1.5 s are left;
+/// what is not sent stays. (2.5 s: the first batch starts even on a loaded machine - up to 1 s of
+/// start-up -, the second cannot after a 1.5 s answer.)
+#[test]
+fn sender_stops_at_the_flush_deadline_and_keeps_the_rest() {
+    let dir = temp_dir("sdeadline");
+    let spool = Spool::new(&dir, "http://unused.invalid/T")
+        .with_limits(Duration::from_millis(2500), Duration::from_secs(2));
+    for _ in 0..150 {
+        enqueue_one(&spool, "framing");
+    }
+    let r = spool
+        .flush_answered(|_| {
+            thread::sleep(Duration::from_millis(1500));
+            c3::telemetry::PostAnswer::ok()
+        })
+        .unwrap();
+    assert_eq!(r.sent, 100);
+    assert_eq!(r.stopped, "the flush's deadline (2.5 s) was reached");
+    assert_eq!(spool.pending(), 50);
+}
+
+/// A 403 stops the flush ("the intake refuses this app"); an answer that is not the intake's JSON
+/// is not delivered; another 4xx says "the spool is kept"; nothing is resent in the flush.
+#[test]
+fn sender_403_non_json_and_other_refusals_stop_and_keep_the_spool() {
+    for (answer, why) in [
+        (
+            (
+                403,
+                "application/json",
+                r#"{"ok":false}"#.to_string(),
+                vec![],
+            ),
+            "HTTP 403 - the intake refuses this app (HTTP 403 without ok: true); the spool is kept",
+        ),
+        (
+            (200, "text/html", "<html>T</html>".to_string(), vec![]),
+            "HTTP 200 (text/html) is not the intake's JSON answer",
+        ),
+        (
+            (
+                404,
+                "application/json",
+                r#"{"ok":false,"error":"no route"}"#.to_string(),
+                vec![],
+            ),
+            "HTTP 404: no route - the spool is kept",
+        ),
+        (
+            (
+                500,
+                "application/json",
+                r#"{"ok":false,"error":"boom"}"#.to_string(),
+                vec![],
+            ),
+            "HTTP 500: boom",
+        ),
+    ] {
+        let dir = temp_dir("srefuse");
+        let (hub, reqs) = intake(vec![answer]);
+        let spool = Spool::new(&dir, hub);
+        enqueue_one(&spool, "framing");
+        enqueue_one(&spool, "decision");
+        let r = spool.flush().unwrap();
+        assert_eq!(reqs.lock().unwrap().len(), 1, "{why}");
+        assert_eq!(r.stopped, why);
+        assert_eq!(spool.pending(), 2);
+    }
+}
+
+/// (wave 28d, D3) The sender lock's owner record: written whole while a flush holds the lock
+/// ({pid, start_time, start_ticks, token, since, host}), gone once it is released; a second sender
+/// and `--status` say "busy since <t> (pid <n> ...)".
+#[test]
+fn sender_owner_record_lives_with_the_lock() {
+    let dir = temp_dir("sowner");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    enqueue_one(&spool, "framing");
+    let owner = dir.join("flush.owner.json");
+    let (to_test, posted) = std::sync::mpsc::channel::<String>();
+    let (to_sender, proceed) = std::sync::mpsc::channel::<()>();
+    let d2 = dir.clone();
+    let first = thread::spawn(move || {
+        Spool::new(&d2, "http://unused.invalid/T")
+            .flush_with(|_| {
+                to_test
+                    .send(std::fs::read_to_string(d2.join("flush.owner.json")).unwrap())
+                    .unwrap();
+                proceed.recv().unwrap();
+                true
+            })
+            .unwrap()
+    });
+    let rec: serde_json::Value =
+        serde_json::from_str(&posted.recv_timeout(Duration::from_secs(10)).unwrap()).unwrap();
+    let keys: Vec<&str> = rec
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        ["pid", "start_time", "start_ticks", "token", "since", "host"]
+    );
+    assert_eq!(rec["pid"], std::process::id());
+    let second = spool
+        .flush_with(|_| panic!("a second sender must not post"))
+        .unwrap();
+    assert!(
+        second.skipped.starts_with(&format!(
+            "another flush is running: sender busy since {} (pid {} holds its lock, ",
+            rec["since"].as_str().unwrap(),
+            std::process::id()
+        )),
+        "{second:?}"
+    );
+    let st = telemetry::sender_status(&dir).unwrap();
+    assert!(st.starts_with("busy since "), "{st}");
+    to_sender.send(()).unwrap();
+    assert_eq!(first.join().unwrap().sent, 1);
+    assert!(!owner.exists(), "the record goes with the lock");
+    assert!(telemetry::sender_status(&dir).is_none());
+}
+
+/// (wave 28d, D3) A lock held for 30 minutes by a living owner: the refused sender says "sender
+/// stuck since <t> (pid <n>)" and writes it into the record's notes ONCE however often it is
+/// refused; `--status` says it; once the lock is free the next flush drops the note.
+#[test]
+fn sender_stuck_for_30_minutes_is_noted_once_and_dropped_when_free() {
+    let dir = temp_dir("sstuck");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    enqueue_one(&spool, "framing");
+    // a living owner (this process) holds the sender lock; its record is 31 minutes old
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join("flush.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    let owner = dir.join("flush.owner.json");
+    std::fs::write(
+        &owner,
+        format!(
+            "{{\"pid\":{},\"start_time\":\"\",\"token\":\"t\",\"since\":\"2026-10-09T10:00:00+02:00\"}}\n",
+            std::process::id()
+        ),
+    )
+    .unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&owner)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(31 * 60))
+        .unwrap();
+    let stuck = format!(
+        "sender stuck since 2026-10-09T10:00:00+02:00 (pid {})",
+        std::process::id()
+    );
+    for _ in 0..2 {
+        let r = spool
+            .flush_recorded_with(|_| panic!("a refused sender must not post"))
+            .unwrap();
+        assert!(
+            r.skipped.starts_with(&format!(
+                "another flush is running: {stuck} - its lock is 31 min old"
+            )),
+            "{r:?}"
+        );
+    }
+    let notes: Vec<String> = last_record(&dir)["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_str().unwrap().to_string())
+        .filter(|n| n.ends_with(&format!(" {stuck}")))
+        .collect();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(telemetry::sender_status(&dir).unwrap().starts_with(&stuck));
+    drop(lock);
+    std::fs::remove_file(&owner).unwrap();
+    let r = spool.flush_recorded_with(|_| true).unwrap();
+    assert_eq!(r.sent, 1);
+    assert!(
+        !last_record(&dir)["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|n| n.as_str().unwrap().contains("sender stuck since")),
+        "{}",
+        last_record(&dir)
+    );
+}
