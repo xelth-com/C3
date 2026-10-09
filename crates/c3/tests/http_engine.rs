@@ -235,6 +235,8 @@ fn turn(continuation: Option<Continuation>) -> TurnRequest {
             output_last_message: None,
             prompt_file: None,
             max_model_steps: None,
+            new_thread: None,
+            add_dirs: Vec::new(),
         },
         consultation: ConsultationId("C-1".to_string()),
         attempt: AttemptId("A-1".to_string()),

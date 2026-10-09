@@ -28,7 +28,7 @@ use c3_core::engine::{
 };
 use c3_core::handoff::{Author, HandoffHeader, OptionalRecords, TokenReport};
 use c3_core::ledger::{FindingCounts, LedgerEntry, RangeRecord, Reviewer, Usage};
-use c3_core::lineage::{resolve_reviewer_identity, ReviewerIdentity};
+use c3_core::lineage::ReviewerIdentity;
 use c3_core::store::{
     CommitRequest, EvidenceStore, FilesStore, FindingsDelta, LockRecord, PendingRecord, PendingRef,
     PendingState, RecoveryDisposition,
@@ -277,6 +277,25 @@ struct Secondary {
     kill_warnings: Vec<String>,
     /// What a secondary turn's kill left that keeps the recovery record (the last one wins).
     kept_kill: Option<KeptKill>,
+    // --- (0.6.0, wave 29) the claude engine ---
+    /// Every claude turn that ran, in the plugin's order (main, denial retry, continuation,
+    /// repair): its events and its outcome - the ledger's `engine_run` evidence.
+    claude_turns: Vec<ClaudeRunDetail>,
+    /// (E12) `the killed turn failed its proof (class <c>: <problem>)` - no continuation.
+    claude_proof_skip: String,
+    /// (D6) the killed turn's own class (quota, auth) and failure texts - no continuation.
+    killed_adapter_class: String,
+    killed_adapter_texts: Vec<String>,
+    /// (E15) the quota mark of a usable reply whose turn saw a rejecting rate-limit event.
+    claude_quota_mark: Option<c3_core::ledger::ProviderFailure>,
+}
+
+/// (0.6.0, wave 29) One claude turn's parsed events and outcome.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ClaudeRunDetail {
+    events: crate::engines::claude::ClaudeEvents,
+    turn: crate::engines::claude::ClaudeTurn,
+    killed: bool,
 }
 
 /// (wave 28e, E1 / E18 / E23) What a tree kill left behind that keeps the recovery record (state
@@ -546,6 +565,7 @@ fn vocabulary_map(vocab: &str, requested: &str) -> Option<(&'static str, &'stati
         "kimi" => ("kimi-v1", "low", "high", "high", "max"),
         "alibaba" => ("alibaba-v1", "low", "medium", "high", "xhigh"),
         "muse" => ("muse-v1", "low", "medium", "high", "xhigh"),
+        "claude" => ("claude-v1", "low", "medium", "high", "xhigh"),
         _ => return None,
     };
     let sent = match requested {
@@ -724,7 +744,7 @@ fn resolve_preflight(
     } else if id.engine.is_empty() || id.engine == "codex" {
         providers::identity_credential(config, id, launcher, anonymous, timeout)
     } else {
-        providers::engine_consult_credential(&id.engine, launcher, health.as_ref())
+        providers::engine_consult_credential(id, launcher, health.as_ref())
     };
     // (wave 27c, D4) a launcher probe that was SKIPPED (its start-info could not be scrubbed) earns
     // a run warning naming why — the same `a launcher probe was skipped: <why>` the plugin records.
@@ -879,6 +899,23 @@ pub(crate) struct Context {
     pub(crate) sandbox_record: String,
     /// The muse `--prompt-file` path (a temp file); `None` for stdin engines.
     pub(crate) prompt_file: Option<PathBuf>,
+    /// (0.6.0, wave 29) The roster `auth` of an engine that takes one (claude: `subscription` |
+    /// `api-key` | `endpoint`; `""` for every other engine) and - auth endpoint - its endpoint.
+    pub(crate) engine_auth: String,
+    pub(crate) engine_endpoint: Option<c3_core::claude::ClaudeEndpoint>,
+    /// (wave 29, D4) The model the engine's turns send: the identity's on a new thread, the id the
+    /// parent thread resolved on resume/fork (claude), and - after the main turn - the id its init
+    /// event resolved (every secondary turn).
+    pub(crate) engine_model: String,
+    /// (wave 29, item 2) The id minted for a new thread of an engine that mints it (claude
+    /// `--session-id`); `""` otherwise.
+    pub(crate) new_thread: String,
+    /// (wave 29, item 1) The directories outside the repository the reviewer must read (claude
+    /// `--add-dir`).
+    pub(crate) add_dirs: Vec<String>,
+    /// (wave 29, D9) `""` or why the prompt is too large for the engine's stdin (a real run is
+    /// refused; the dry run says so).
+    pub(crate) prompt_bound: String,
     pub(crate) prompt_text: String,
     pub(crate) argv_display: String,
     pub(crate) argv: Vec<String>,
@@ -1135,7 +1172,10 @@ fn detach_foreground(mut o: Options, home: Option<&str>) -> i32 {
         return refuse(&msg);
     }
     // The budget (D4), the one planned member, the plan line, then spawn.
-    let denial_on = ctx.engine == "agy" && ctx.o.denial_retry == 1;
+    let denial_on = c3_core::lineage::engine_spec(&ctx.engine)
+        .map(|s| s.denial_retry)
+        .unwrap_or(false)
+        && ctx.o.denial_retry == 1;
     let budget = super::detach::single_run_budget(
         ctx.r.timeout_sec,
         ctx.r.continue_sec,
@@ -1958,13 +1998,34 @@ fn build_context(
         spec.sandbox_record.to_string()
     };
 
-    let mut identity = resolve_reviewer_identity(
+    // (0.6.0, wave 29) an engine that takes a roster `auth` (claude: subscription | api-key |
+    // endpoint) - the roster entry's, else the first; (wave 29b, E1) auth endpoint takes the
+    // entry's endpoint
+    let (engine_auth, engine_endpoint) = if spec.auth_modes.is_empty() {
+        (String::new(), None)
+    } else {
+        let a = roster_entry
+            .as_ref()
+            .filter(|e| entry_engine(e) == engine_name)
+            .map(|e| e.auth.clone())
+            .filter(|a| spec.auth_modes.contains(&a.as_str()))
+            .unwrap_or_else(|| spec.auth_modes[0].to_string());
+        let ep = if a == "endpoint" {
+            roster_entry.as_ref().and_then(|e| e.endpoint.clone())
+        } else {
+            None
+        };
+        (a, ep)
+    };
+    let mut identity = c3_core::lineage::resolve_reviewer_identity_auth(
         &config,
         &identity_provider,
         &identity_model,
         &openai_base_url,
         &engine_name,
         &engine_launcher,
+        &engine_auth,
+        engine_endpoint.as_ref(),
     );
     if !provider_source_override.is_empty() {
         identity.provider_source = provider_source_override.clone();
@@ -1976,12 +2037,17 @@ fn build_context(
     // (wave 27) The reviewer being consulted IS the coordinator's own model
     // (`Test-CoordinatorReviewer`/`Format-CoordinatorWarning`): a second opinion, not an
     // independent one. A warning, never a refusal.
-    if let Some(w) = c3_core::host::coordinator_reviewer_warning(
+    if let Some(w) = c3_core::host::coordinator_reviewer_warning_auth(
         &coordinator,
         &identity.provider,
         &identity.model,
         &engine_name,
-        &identity.lineage,
+        &c3_core::lineage::format_reviewer_lineage(
+            &identity.provider,
+            &identity.model,
+            &engine_name,
+        ),
+        &engine_auth,
     ) {
         run_warnings.push(w);
     }
@@ -2019,7 +2085,7 @@ fn build_context(
     // muse default (`new`, or `resume` with a thread) so the parent walk never forks an engine.
     let mut mode = o.mode.clone();
     if !is_codex {
-        if o.mode == "fork" {
+        if o.mode == "fork" && !spec.fork {
             return Err((
                 format!("the {engine_name} engine has no fork; use -Mode resume or new."),
                 1,
@@ -2055,7 +2121,7 @@ fn build_context(
         && !spec.transports.contains(&r.transport_override.as_str())
     {
         return Err((format!(
-            "-SchemaTransport {} is for the agy and muse engines; codex takes output-schema or prompt-only.",
+            "-SchemaTransport {} is for the agy, muse and claude engines; codex takes output-schema or prompt-only.",
             r.transport_override
         ), 1));
     }
@@ -2067,7 +2133,7 @@ fn build_context(
             o.max_model_steps = 0;
         } else {
             return Err((format!(
-                "-MaxModelSteps is for the muse engine (--max-model-steps); the {engine_name} engine has no model-step cap.",
+                "-MaxModelSteps is for an engine with a model-step cap (muse --max-model-steps, claude --max-turns); the {engine_name} engine has none.",
             ), 1));
         }
     }
@@ -2147,6 +2213,26 @@ fn build_context(
             ));
         }
     }
+    // (0.6.0, wave 29, item 8) a claude model outside the engine's table is refused (auth endpoint:
+    // the provider's own id, never an Anthropic one - E11); an alias warns that it floats
+    if engine_name == "claude" && identity.model_source != "unknown" {
+        let mp = c3_core::claude::model_problem(&identity.model, &engine_auth);
+        if !mp.is_empty() {
+            return Err((
+                format!(
+                    "the claude model '{}' {mp}; nothing was started.",
+                    identity.model
+                ),
+                1,
+            ));
+        }
+        if engine_auth != "endpoint" && c3_core::claude::is_alias(&identity.model) {
+            run_warnings.push(format!(
+                "claude model {} is an alias: the alias floats; each thread is pinned to the id it resolves to (engine_run.model_resolved)",
+                identity.model
+            ));
+        }
+    }
 
     // Preflight (M2c: credentials only, no recorded endpoint-health/24h block). openai runs
     // `codex login status`; a non-openai provider's credential check is deferred (its
@@ -2197,6 +2283,40 @@ fn build_context(
             }
             (p, refusal, String::new(), label)
         };
+
+    // (0.6.0, wave 29) the claude provider_config fields known only after the preflight - auth_method
+    // and api_provider as `claude auth status` reported them (null when it did not run)
+    if engine_name == "claude" && engine_auth != "endpoint" {
+        if let Some(info) =
+            crate::engines::claude_auth::sign_in_info(&engine_launcher, &engine_auth)
+        {
+            if let Some(pc) = identity.provider_config.as_object_mut() {
+                let v = |s: &str| {
+                    if s.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::String(s.to_string())
+                    }
+                };
+                pc.insert("auth_method".into(), v(&info.auth_method));
+                pc.insert("api_provider".into(), v(&info.api_provider));
+            }
+        }
+    }
+    // (wave 29, item 2) claude: its transcripts must not land in the repository under review
+    if engine_name == "claude" {
+        let lp =
+            crate::engines::claude_auth::launch_problem(&repo_root, &engine_launcher, &engine_auth);
+        if !lp.is_empty() {
+            if !o.dry_run {
+                return Err((
+                    format!("the claude engine is refused: {lp}; nothing was started."),
+                    1,
+                ));
+            }
+            run_warnings.push(format!("a real run is refused: {lp}"));
+        }
+    }
 
     // When a `-Thread` run's endpoint is unavailable, name the reviewer a new thread would get
     // (`codex-consult.ps1:2910`).
@@ -2573,10 +2693,69 @@ fn build_context(
         reread_line: &prompt::reread_line(context_tokens, &brief_ref, &o.prompt),
     });
 
+    // (0.6.0, wave 29, D4) the model the engine's turns send: the roster's on a new thread; on
+    // resume and fork (claude) the id the parent thread resolved - its ledger entry's
+    // engine_run.model_resolved - never the floating alias again
+    let mut engine_model = if identity.model_source == "unknown" {
+        String::new()
+    } else {
+        identity.model.clone()
+    };
+    if engine_name == "claude" && !parent_thread.is_empty() {
+        let pinned = ledger_entries
+            .iter()
+            .rfind(|e| e.thread == parent_thread)
+            .and_then(|e| e.engine_run.as_ref())
+            .and_then(|er| er.extra.get("model_resolved"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if !pinned.is_empty() {
+            engine_model = pinned;
+        }
+    }
+    // (wave 29, item 2) a new thread of an engine that mints its id (claude --session-id): known
+    // before the first byte - a turn killed before its result still has a thread
+    let new_thread = if spec.mints_thread && parent_thread.is_empty() {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        String::new()
+    };
+    // (wave 29, item 1) the directories outside the repository the reviewer must read (claude
+    // --restricted confines its file tools to the working directories): a rooted collab
+    // directory, the brief's, the artifacts'
+    let mut add_dirs: Vec<String> = Vec::new();
+    if spec.add_dirs {
+        let mut outside: Vec<PathBuf> = vec![collab_root.clone()];
+        if let Some(bp) = &brief_path {
+            if let Some(d) = bp.parent() {
+                outside.push(d.to_path_buf());
+            }
+        }
+        for a in &artifacts {
+            if let Some(d) = a.full.parent() {
+                outside.push(d.to_path_buf());
+            }
+        }
+        for od in outside {
+            let raw = od.to_string_lossy().to_string();
+            let raw = raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_string();
+            let full = raw.trim_end_matches(['\\', '/']).to_string();
+            if full.is_empty() {
+                continue;
+            }
+            if c3_core::paths::repo_relative(&repo_root, Path::new(&full)).is_none()
+                && !add_dirs.contains(&full)
+            {
+                add_dirs.push(full);
+            }
+        }
+    }
+
     // The argv (byte-identical to the core plan): build the Request and plan it for the
     // selected engine.
     let engine_kind = engine_kind_of(&engine_name);
-    let request = make_request(
+    let mut request = make_request(
         &o,
         &r,
         &identity,
@@ -2590,6 +2769,12 @@ fn build_context(
         prompt_file.as_deref(),
         &context_config,
     );
+    if engine_name == "claude" {
+        request.model = engine_model.clone();
+        request.new_thread = (!new_thread.is_empty()).then(|| new_thread.clone());
+        request.add_dirs = add_dirs.clone();
+        fix_claude_lineage(&mut request);
+    }
     let argv = match c3_core::engine::SubprocessEngine::new(engine_kind).plan(&request) {
         Ok(c3_core::engine::LaunchPlan::Subprocess(a)) => a,
         // The http engine has no subprocess argv: it sends one OpenAI-compatible request built
@@ -2602,7 +2787,32 @@ fn build_context(
         },
         Err(_) => return Err((format!("could not plan the {engine_name} argv"), 1)),
     };
-    let argv_display = argv.to_command_string();
+    // (wave 29) claude's argv is recorded as the plugin's `Format-Argv` (the one-line schema text
+    // holds blanks)
+    let argv_display = if engine_name == "claude" {
+        format!(
+            "{} {}",
+            argv.command,
+            c3_core::claude::format_argv(&argv.args)
+        )
+    } else {
+        argv.to_command_string()
+    };
+    // (wave 29, D9) an engine with a bound on its stdin prompt (claude: 1 MiB): a larger prompt is
+    // refused before anything starts (a dry run says so)
+    let mut prompt_bound = String::new();
+    if !is_codex && spec.max_prompt_bytes > 0 {
+        let bytes = prompt_text.len() as u64;
+        if bytes > spec.max_prompt_bytes {
+            prompt_bound = format!(
+                "brief too large for this engine: the prompt is {bytes} bytes, the {engine_name} engine takes at most {} bytes on stdin",
+                spec.max_prompt_bytes
+            );
+        }
+    }
+    if !prompt_bound.is_empty() && !o.dry_run {
+        return Err((format!("{prompt_bound}; nothing was started."), 1));
+    }
 
     let codex_version = get_codex_version(&launcher);
     let revision = revision::revision_info(&repo_root, Some(&collab_root));
@@ -2736,6 +2946,12 @@ fn build_context(
         harness,
         sandbox_record,
         prompt_file,
+        engine_auth,
+        engine_endpoint,
+        engine_model,
+        new_thread,
+        add_dirs,
+        prompt_bound,
         prompt_text,
         argv_display,
         argv: argv.args,
@@ -2890,6 +3106,8 @@ fn make_request(
         } else {
             None
         },
+        new_thread: None,
+        add_dirs: Vec::new(),
     }
 }
 
@@ -2898,6 +3116,7 @@ fn engine_kind_of(engine: &str) -> EngineKind {
     match engine {
         "agy" => EngineKind::Agy,
         "muse" => EngineKind::Muse,
+        "claude" => EngineKind::Claude,
         "http" => EngineKind::Http,
         _ => EngineKind::Codex,
     }
@@ -3563,6 +3782,19 @@ fn run_live(mut ctx: Context) -> i32 {
         }
     }
 
+    // (0.6.0, wave 29b, E4) a child environment that must not start (claude auth endpoint without
+    // its endpoint or its token: the CLI would fall back to the local login) - nothing starts.
+    if ctx.engine == "claude" {
+        let ce =
+            crate::engines::claude_auth::child_env(&ctx.engine_auth, ctx.engine_endpoint.as_ref());
+        if !ce.problem.is_empty() {
+            let _ = std::fs::remove_file(store_pending_path(&store, &pending));
+            return refuse(&format!(
+                "the claude run is refused before launch: the claude engine's child environment is not usable: {}; nothing was started.",
+                ce.problem
+            ));
+        }
+    }
     // The cmd.exe `%`-argument hazard (F02-14): a `.cmd`/`.bat` engine launcher with a `%` in any
     // argument would have cmd.exe expand `%VAR%`. Refuse before launch (nothing started).
     if !ctx.is_codex() {
@@ -3775,6 +4007,8 @@ struct EngineDetail {
     /// (STEP 2) The http seat's secondary turn (a format-repair replay or a timeout retry) when one
     /// ran, so the caller records `engine_turns: 2` and the `format_repair` fields. `None` otherwise.
     http_secondary: Option<crate::consult::http::HttpSecondary>,
+    /// (0.6.0, wave 29) a claude turn's events and outcome (its proof, its resolved model).
+    claude: Option<ClaudeRunDetail>,
 }
 
 /// Build the request for a live primary/secondary turn of the selected engine.
@@ -3821,6 +4055,44 @@ fn make_live_request_engine(ctx: &Context, mode: Mode) -> Request {
         } else {
             None
         },
+        new_thread: None,
+        add_dirs: Vec::new(),
+    }
+    .claude_turn(ctx)
+}
+
+/// (0.6.0, wave 29) The claude turn's own fields on a request: the model every turn sends (D4:
+/// the resolved id once known), the minted `--session-id` of a NEW thread, the `--add-dir`s.
+trait ClaudeTurnFields {
+    fn claude_turn(self, ctx: &Context) -> Self;
+}
+
+impl ClaudeTurnFields for Request {
+    fn claude_turn(mut self, ctx: &Context) -> Self {
+        if ctx.engine == "claude" {
+            if !ctx.engine_model.is_empty() {
+                self.model = ctx.engine_model.clone();
+            }
+            self.new_thread = if matches!(self.mode, Mode::New) && !ctx.new_thread.is_empty() {
+                Some(ctx.new_thread.clone())
+            } else {
+                None
+            };
+            self.add_dirs = ctx.add_dirs.clone();
+            fix_claude_lineage(&mut self);
+        }
+        self
+    }
+}
+
+/// A claude turn may send another model than the identity's (D4: the resolved id): the mode's
+/// lineage follows the request's, so the core's cross-lineage guard compares like with like (the
+/// lineage of record stays the identity's).
+fn fix_claude_lineage(r: &mut Request) {
+    let l = r.lineage();
+    match &mut r.mode {
+        Mode::Resume { lineage, .. } | Mode::Fork { lineage, .. } => *lineage = l,
+        Mode::New => {}
     }
 }
 
@@ -3881,6 +4153,22 @@ fn run_primary_turn(
             let mut d = muse_detail(&run.turn);
             d.msp_schema_version = msp;
             Ok((run.outcome, d))
+        }
+        "claude" => {
+            let eng = claude_engine(
+                ctx,
+                primary,
+                TurnFiles::default(),
+                ctx.stall_sec,
+                Some(ctx.kick_path.clone()),
+                on_running,
+            );
+            let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
+            let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
+            let run = eng
+                .run_detailed(&turn)
+                .map_err(|e| format!("the claude run could not be planned: {e:?}"))?;
+            Ok((run.outcome.clone(), claude_detail(&run)))
         }
         "http" => {
             // The http engine has no subprocess: it builds a reviewer pack, runs the billing/key
@@ -3959,6 +4247,56 @@ fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         msp_schema_version: None,
         http_provider_config: None,
         http_secondary: None,
+        claude: None,
+    }
+}
+
+/// (0.6.0, wave 29) A claude turn's engine detail.
+fn claude_detail(r: &crate::engines::claude::ClaudeRun) -> EngineDetail {
+    let t = &r.turn;
+    EngineDetail {
+        turn_outcome: t.outcome.clone(),
+        forced_class: t.class.clone(),
+        denied_empty: t.denied_empty,
+        denial_line: t.denial_line.clone(),
+        permission: String::new(),
+        tool_name: r.events.denied_action.clone(),
+        denied_action: r.events.denied_action.clone(),
+        thread_candidate: t.thread_candidate.clone(),
+        thread: t.thread.clone(),
+        reply: t.reply.clone(),
+        warnings: t.warnings.clone(),
+        msp_schema_version: None,
+        http_provider_config: None,
+        http_secondary: None,
+        claude: Some(ClaudeRunDetail {
+            events: r.events.clone(),
+            turn: r.turn.clone(),
+            killed: r.killed,
+        }),
+    }
+}
+
+/// (0.6.0, wave 29) The claude engine of a run (its launcher, auth and endpoint) with the given
+/// streams; the primary turn watches the stall and the kick.
+fn claude_engine(
+    ctx: &Context,
+    primary: TurnFiles,
+    secondary: TurnFiles,
+    stall_sec: i64,
+    kick_path: Option<PathBuf>,
+    on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+) -> crate::engines::claude::ClaudeEngine {
+    crate::engines::claude::ClaudeEngine {
+        launcher: ctx.engine_launcher.clone(),
+        cwd: ctx.repo_root.clone(),
+        primary,
+        secondary,
+        stall_sec,
+        kick_path,
+        on_running,
+        auth: ctx.engine_auth.clone(),
+        endpoint: ctx.engine_endpoint.clone(),
     }
 }
 
@@ -3978,6 +4316,7 @@ fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         msp_schema_version: None,
         http_provider_config: None,
         http_secondary: None,
+        claude: None,
     }
 }
 
@@ -4152,6 +4491,8 @@ fn make_live_request(ctx: &Context) -> Request {
         output_last_message: Some(ctx.last_msg_path.clone()),
         prompt_file: None,
         max_model_steps: None,
+        new_thread: None,
+        add_dirs: Vec::new(),
     }
 }
 
@@ -4577,6 +4918,53 @@ fn finish(
     // `resume <thread>` turn that converts a prose reply into the object). Both run under the
     // same task lock and recovery record, at most once.
     let mut sec = Secondary::default();
+    // (0.6.0, wave 29) the claude main turn: its resolved model is what every later turn sends
+    // (D4); a KILLED turn is judged by its init and model like any turn (E12) - a proof problem is
+    // the outcome's reason (the stop said after it) and no continuation resumes the session; a
+    // rejecting rate-limit event before the kill makes the class quota (D6, no continuation).
+    if ctx.engine == "claude" {
+        if let Some(cm) = detail.claude.clone() {
+            if !cm.turn.model_resolved.is_empty() {
+                ctx.engine_model = cm.turn.model_resolved.clone();
+            }
+            if cm.killed && register_failure_text.is_none() {
+                let pf_of = |t: &crate::engines::claude::ClaudeTurn| {
+                    let (code, message) = crate::engines::claude::failure_evidence(&t.texts);
+                    c3_core::ledger::ProviderFailure {
+                        class: t.class.clone(),
+                        code,
+                        message,
+                        ..Default::default()
+                    }
+                };
+                if !cm.turn.proof_problem.is_empty() {
+                    let stopped = c3_core::one_line(
+                        bridge_outcome
+                            .strip_prefix("failed: ")
+                            .unwrap_or(&bridge_outcome),
+                    );
+                    bridge_outcome = format!(
+                        "failed: {} (the turn was also stopped: {stopped})",
+                        cm.turn.proof_problem
+                    );
+                    let mut t = cm.turn.clone();
+                    t.texts
+                        .push(bridge_outcome.trim_start_matches("failed: ").to_string());
+                    engine_pf = Some(pf_of(&t));
+                    sec.claude_proof_skip = format!(
+                        "the killed turn failed its proof (class {}: {})",
+                        cm.turn.class,
+                        c3_core::one_line(&cm.turn.proof_problem)
+                    );
+                } else if !cm.turn.class.is_empty() {
+                    engine_pf = Some(pf_of(&cm.turn));
+                    sec.killed_adapter_class = cm.turn.class.clone();
+                    sec.killed_adapter_texts = cm.turn.texts.clone();
+                }
+            }
+            sec.claude_turns.push(cm);
+        }
+    }
     let main_events_text = std::fs::read_to_string(&ctx.events_path).unwrap_or_default();
     // (wave 26b, D15) a codex run that failed mid-run still emitted `thread.started`; take that
     // thread so the salvage footer can name it for a resume.
@@ -4679,8 +5067,15 @@ fn finish(
         // (wave 27c, D2) the continuation turn registers its own child in the pending record, so a
         // concurrent `--kick` during it finds a live child of this run.
         let cont_on_running = continuation_on_running(&store, &pending, &base_record);
+        // (wave 29) a claude killed turn's session is a candidate: the continuation resumes it
+        let continue_candidate = if ctx.engine == "claude" {
+            thread_candidate.clone()
+        } else {
+            String::new()
+        };
         run_timeout_continuation(
             &ctx,
+            &continue_candidate,
             &drift,
             &timeout_survivors,
             kill_unconfirmed.as_ref(),
@@ -4744,6 +5139,8 @@ fn finish(
             "kick: the operator stopped the format repair (-Kick); the first reply stands, not converted".to_string(),
         );
     }
+    // (0.6.0, wave 29, item 9) the coordinator rule again, with the model the run resolved
+    claude_coordinator_recheck(&ctx, &mut sec);
 
     // (F04-11) Preserve the raw reply as `.reply.json` at the handoff path BEFORE the write lock
     // (README "Write order": `.reply.json` first), so a crash during the commit still leaves the
@@ -4987,6 +5384,33 @@ fn finish(
         }
     };
 
+    // (0.6.0, wave 29b, E15) a usable reply whose turn saw a REJECTING rate-limit event: the route's
+    // health gets the mark a failed quota turn would get - the same classifier on the same quota
+    // text (a usage window with its reset, a burst 10 minutes) -, kept in engine_run.quota_mark and
+    // in the machine-wide record; every reader takes it as a quota failure right after the reply.
+    if ctx.engine == "claude" && usable {
+        if let Some(mark_text) = sec
+            .claude_turns
+            .iter()
+            .map(|c| c.turn.quota_mark.clone())
+            .find(|m| !m.is_empty())
+        {
+            let (code, message) = c3_core::health::convert_from_provider_error_text(&mark_text);
+            let kind = c3_core::health::failure_kind("quota", &format!("{code} {message}"));
+            let retry_after =
+                c3_core::health::retry_after_in(&message, parse_reference(), &chrono::Local)
+                    .map(c3_core::health::format_offset_iso);
+            sec.claude_quota_mark = Some(finalize_pf(c3_core::ledger::ProviderFailure {
+                class: "quota".into(),
+                kind: Some(kind),
+                code,
+                message: message.chars().take(200).collect(),
+                retry_after,
+                ..Default::default()
+            }));
+        }
+    }
+
     // Render the handoff markdown (and the salvaged partial file, when a turn was killed).
     let (handoff_md, partial_md) = render_handoff(
         &ctx,
@@ -5201,11 +5625,22 @@ fn finish(
                 retry_after: pf.retry_after.clone(),
                 message: pf.message.clone(),
             });
-        c3_core::health::new_machine_health_record(
+        let mark = sec
+            .claude_quota_mark
+            .as_ref()
+            .map(|m| c3_core::health::MachineFailure {
+                class: m.class.clone(),
+                kind: m.kind.clone().unwrap_or_default(),
+                when: m.when.clone(),
+                retry_after: m.retry_after.clone(),
+                message: m.message.clone(),
+            });
+        c3_core::health::new_machine_health_record_marked(
             &ctx.identity.fingerprint,
             &bridge_outcome,
             failure.as_ref(),
             &health_repo,
+            mark.as_ref(),
         )
     });
     let health_alive = |pid: u32, st: &str| crate::liveness::proc::pid_alive(pid, st);
@@ -5681,7 +6116,7 @@ fn run_codex_secondary(
     stderr_path: &Path,
     timeout_sec: f64,
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
-) -> (AttemptOutcome, f64, String) {
+) -> (AttemptOutcome, f64, String, Option<ClaudeRunDetail>) {
     let engine = engine_kind_of(&ctx.engine);
     // muse takes its prompt through a fresh `--prompt-file` per turn (distinct from the main one).
     let prompt_file = if ctx.prompt_file.is_some() {
@@ -5725,6 +6160,8 @@ fn run_codex_secondary(
         } else {
             None
         },
+        new_thread: None,
+        add_dirs: Vec::new(),
     };
     // The resume must carry the request's own lineage (the core refuses a cross-lineage resume).
     let lineage = request.lineage();
@@ -5732,6 +6169,7 @@ fn run_codex_secondary(
         thread: thread.to_string(),
         lineage,
     };
+    let request = request.claude_turn(ctx);
     let files = TurnFiles {
         events: events_path.to_path_buf(),
         stderr: stderr_path.to_path_buf(),
@@ -5761,7 +6199,29 @@ fn run_codex_secondary(
     };
     // `engine_outcome` is the engine turn's own framed outcome text (`AgyTurn`/`MuseTurn`
     // `.outcome`), used to frame an engine repair/continuation failure exactly; empty for codex.
+    let mut claude_run: Option<ClaudeRunDetail> = None;
     let (outcome, engine_outcome) = match ctx.engine.as_str() {
+        "claude" => {
+            let eng = claude_engine(
+                ctx,
+                TurnFiles::default(),
+                files,
+                0,
+                secondary_kick.clone(),
+                on_running,
+            );
+            match eng.run_detailed(&turn) {
+                Ok(r) => {
+                    claude_run = Some(ClaudeRunDetail {
+                        events: r.events.clone(),
+                        turn: r.turn.clone(),
+                        killed: r.killed,
+                    });
+                    (r.outcome, r.turn.outcome)
+                }
+                Err(e) => (plan_err(e), String::new()),
+            }
+        }
         "agy" => {
             let eng = crate::engines::agy::AgyEngine {
                 launcher: ctx.engine_launcher.clone(),
@@ -5812,6 +6272,7 @@ fn run_codex_secondary(
         outcome,
         round1(start.elapsed().as_secs_f64()),
         engine_outcome,
+        claude_run,
     )
 }
 
@@ -5821,6 +6282,9 @@ fn run_codex_secondary(
 #[allow(clippy::too_many_arguments)]
 fn run_timeout_continuation(
     ctx: &Context,
+    // (0.6.0, wave 29) the claude killed turn's session (its minted id the init confirmed) when the
+    // run has no verified thread; `""` for every other engine.
+    candidate: &str,
     drift: &Drift,
     survivors: &[u32],
     // (wave 27c, D16) `Some((pid, why))` when the main turn's tree kill could not be confirmed:
@@ -5844,7 +6308,11 @@ fn run_timeout_continuation(
     // run — the main turn's child was killed at the timeout.
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
 ) {
-    let continue_thread = thread.clone();
+    let continue_thread = if thread.is_empty() && !candidate.is_empty() {
+        candidate.to_string()
+    } else {
+        thread.clone()
+    };
     sec.continue_thread = continue_thread.clone();
     let continue_events_rel = ctx.hf("continue.events.jsonl");
     let continue_events_path = ctx.hpath("continue.events.jsonl");
@@ -5859,6 +6327,9 @@ fn run_timeout_continuation(
         );
     } else if ctx.r.continue_sec <= 0 {
         skip = "-ContinueSec 0".to_string();
+    } else if !sec.claude_proof_skip.is_empty() {
+        // (0.6.0, wave 29b, E12) a continuation would resume a session that ran outside the proof
+        skip = sec.claude_proof_skip.clone();
     } else if continue_thread.is_empty() {
         skip = "the thread of the killed turn is not known".to_string();
     } else if !survivors.is_empty() {
@@ -5877,6 +6348,24 @@ fn run_timeout_continuation(
         if !moved.is_empty() {
             skip = format!("files changed during the run ({})", moved.join(", "));
         }
+    }
+    if skip.is_empty()
+        && (sec.killed_adapter_class == "quota" || sec.killed_adapter_class == "auth")
+    {
+        // (wave 29, D6) the adapter's class of the killed turn (claude: a rejecting rate-limit
+        // event before the kill) - `Get-KilledTurnFailure -AdapterClass`
+        let text = sec
+            .killed_adapter_texts
+            .iter()
+            .find(|t| !t.trim().is_empty())
+            .map(|t| c3_core::one_line(t))
+            .unwrap_or_else(|| {
+                format!("the {} class of the turn's rules", sec.killed_adapter_class)
+            });
+        skip = format!(
+            "the killed turn reported a {} failure ({text})",
+            sec.killed_adapter_class
+        );
     }
     if skip.is_empty() {
         if let Some((class, text)) =
@@ -5958,7 +6447,7 @@ fn run_timeout_continuation(
     // The continuation event stream is a further turn (added before the run, like the plugin).
     sec.continue_events_rel = Some(continue_events_rel.clone());
 
-    let (outcome, wall, engine_outcome) = run_codex_secondary(
+    let (outcome, wall, engine_outcome, claude_run) = run_codex_secondary(
         ctx,
         TurnKind::TimeoutContinuation,
         &sandbox_label(&ctx.o),
@@ -5974,6 +6463,7 @@ fn run_timeout_continuation(
     );
     let is_engine = !ctx.is_codex();
     sec.continue_wall = wall;
+    sec.claude_turns.extend(claude_run);
     let events_field = if continue_events_path.is_file() {
         Some(continue_events_rel.clone())
     } else {
@@ -6195,7 +6685,7 @@ fn run_format_repair(
 
     let repair_prompt = format_repair_prompt(&ctx.consult_id);
 
-    let (outcome, wall, engine_outcome) = run_codex_secondary(
+    let (outcome, wall, engine_outcome, claude_run) = run_codex_secondary(
         ctx,
         TurnKind::FormatRepair,
         "read-only",
@@ -6210,6 +6700,7 @@ fn run_format_repair(
         Some(on_running),
     );
 
+    sec.claude_turns.extend(claude_run);
     let mut repair_problem = String::new();
     let mut repair_usage: Option<Usage> = None;
     let mut repair_thread = String::new();
@@ -6412,6 +6903,9 @@ fn engine_tree_note(engine: &str) -> String {
         "http" => {
             "the http reviewer received only a pack and never touched the machine (the change is not the reviewer's)".to_string()
         }
+        "claude" => {
+            "claude ran with --restricted and read tools only, but managed settings and their hooks still apply".to_string()
+        }
         other => format!("{other}'s sandbox does not block writes"),
     }
 }
@@ -6597,6 +7091,19 @@ fn run_engine_secondary(
     };
     let start = std::time::Instant::now();
     let (outcome, detail) = match ctx.engine.as_str() {
+        "claude" => {
+            let eng = claude_engine(ctx, TurnFiles::default(), files, 0, None, None);
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome.clone(), claude_detail(&r)),
+                Err(e) => (
+                    AttemptOutcome::LaunchFailed {
+                        child_exists: false,
+                        message: format!("{e:?}"),
+                    },
+                    EngineDetail::default(),
+                ),
+            }
+        }
         "agy" => {
             let eng = crate::engines::agy::AgyEngine {
                 launcher: ctx.engine_launcher.clone(),
@@ -6737,6 +7244,7 @@ fn run_engine_denial_retry(
         timeout as f64,
     );
     sec.engine_turns += 1;
+    sec.claude_turns.extend(det.claude.clone());
 
     let mut succeeded = false;
     // Default to the failure thread (the turn's observed thread); a usable retry overrides it.
@@ -6956,7 +7464,7 @@ fn build_partial_reply(
         } else {
             "it ended by itself".to_string()
         },
-        salvage: super::secondary::read_codex_salvage(main_events_text),
+        salvage: turn_salvage(&ctx.engine, main_events_text),
     });
     if run_kicked {
         killed_at.push(format!("{} s (the main turn)", fmt_wall(main_wall)));
@@ -6989,7 +7497,7 @@ fn build_partial_reply(
         turns.push(super::secondary::PartialTurn {
             label: format!("Turn {} - the timeout continuation", turns.len() + 1),
             note,
-            salvage: super::secondary::read_codex_salvage(&cont_text),
+            salvage: turn_salvage(&ctx.engine, &cont_text),
         });
         if sec.continue_killed {
             killed_at.push(format!(
@@ -7083,6 +7591,60 @@ fn build_partial_reply(
         sec.partial_footer = format!(
             "{ended_text}; the thread of the {which} turn is not known - no resume is possible (start again with -Mode new)"
         );
+    }
+}
+
+/// (0.6.0, wave 29, item 9) The coordinator compared again with the model a claude run resolved:
+/// an alias the warning was given on may have resolved elsewhere (or the other way round) - a warning
+/// in the run's engine warnings (`codex-consult.ps1`, after the engine_run record).
+fn claude_coordinator_recheck(ctx: &Context, sec: &mut Secondary) {
+    if ctx.engine == "claude"
+        && !ctx.engine_model.is_empty()
+        && ctx.engine_model != ctx.identity.model
+    {
+        let kind = |m: &str| {
+            c3_core::host::coordinator_match_kind_auth(
+                &ctx.coordinator,
+                &ctx.identity.provider,
+                m,
+                &ctx.engine,
+                &ctx.engine_auth,
+            )
+        };
+        let (before, after) = (kind(&ctx.identity.model), kind(&ctx.engine_model));
+        let shown = c3_core::lineage::format_reviewer_lineage(
+            &ctx.identity.provider,
+            &ctx.identity.model,
+            &ctx.engine,
+        );
+        if !after.is_empty() && after != before {
+            if let Some(w) = c3_core::host::coordinator_reviewer_warning_auth(
+                &ctx.coordinator,
+                &ctx.identity.provider,
+                &ctx.engine_model,
+                &ctx.engine,
+                &format!("{shown} (resolved {})", ctx.engine_model),
+                &ctx.engine_auth,
+            ) {
+                sec.engine_warnings.push(w);
+            }
+        } else if after.is_empty() && !before.is_empty() {
+            sec.engine_warnings.push(format!(
+            "coordinator: {shown} resolved to {} - not the coordinator's own model ({}) after all; the warning above was given before the run",
+            ctx.engine_model,
+            ctx.coordinator.model.clone().unwrap_or_default()
+        ));
+        }
+    }
+}
+
+/// `Read-TurnSalvage`: the engine's salvage reader (claude: its stream-json assistant events;
+/// every other engine the codex reader, as before).
+fn turn_salvage(engine: &str, events_text: &str) -> super::secondary::Salvage {
+    if engine == "claude" {
+        crate::engines::claude::claude_salvage(events_text)
+    } else {
+        super::secondary::read_codex_salvage(events_text)
     }
 }
 
@@ -7337,8 +7899,38 @@ fn render_handoff(
         if ctx.engine == "muse" {
             l.push_str(" (each one a Muse Code subscription prompt)");
         }
+        if ctx.engine == "claude" {
+            // (wave 29) the auth, the resolved model, the init tools and the denials
+            let x = claude_engine_run_extra(ctx, sec);
+            let tools: Vec<String> = x["init_tools"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            l.push_str(&format!(
+                " (claude -p, auth {}{}; init tools {}; permission denials {})",
+                ctx.engine_auth,
+                x["model_resolved"]
+                    .as_str()
+                    .map(|m| format!("; model {m}"))
+                    .unwrap_or_default(),
+                if tools.is_empty() {
+                    "(none seen)".to_string()
+                } else {
+                    tools.join(", ")
+                },
+                x["permission_denials"].as_i64().unwrap_or(0)
+            ));
+        }
         if ctx.o.max_model_steps > 0 {
-            l.push_str(&format!("; --max-model-steps {}", ctx.o.max_model_steps));
+            let flag = c3_core::lineage::engine_spec(&ctx.engine)
+                .map(|s| s.steps_flag)
+                .filter(|f| !f.is_empty())
+                .unwrap_or("--max-model-steps");
+            l.push_str(&format!("; {flag} {}", ctx.o.max_model_steps));
         }
         if let Some(v) = sec.msp_version {
             l.push_str(&format!("; MSP schema_version {v}"));
@@ -7744,6 +8336,27 @@ fn short_hash(h: &str) -> String {
 /// the full canonical base_url with the query redacted (`(default)` when the endpoint is
 /// Codex's own default), and the wire_api label (`(default)` when the table declares none).
 pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
+    // (0.6.0, wave 29) the claude engine (`Resolve-EngineIdentity`'s Display): the engine and its
+    // launcher, and (wave 29b, E5) an endpoint route's base URL and token variable NAME
+    if id.engine == "claude" {
+        let launcher = id
+            .provider_config
+            .get("launcher")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| "claude CLI not found".to_string());
+        let mut d = format!("engine claude ({launcher})");
+        if id.auth == "endpoint" {
+            if let Some(ep) = &id.endpoint {
+                d.push_str(&format!(
+                    ", endpoint {} (token from env {})",
+                    ep.base_url, ep.env_key
+                ));
+            }
+        }
+        return d;
+    }
     // The built-in openai endpoint honouring OPENAI_BASE_URL (no user table): the plugin's
     // Display is `endpoint builtin:openai via OPENAI_BASE_URL <audit>` (no wire_api clause).
     if !id.base_url.trim().is_empty() && id.provider_config.get("builtin").is_some() {
@@ -7945,7 +8558,11 @@ fn build_entry(
                     None
                 },
                 msp_schema_version: sec.msp_version,
-                ..Default::default()
+                extra: if ctx.engine == "claude" {
+                    claude_engine_run_extra(ctx, sec)
+                } else {
+                    Default::default()
+                },
             })
         },
         range: ctx.range_record.clone(),
@@ -8029,6 +8646,150 @@ fn build_entry(
         }))
     };
     e
+}
+
+/// (0.6.0, wave 29) The claude engine's evidence per run, over the turns that ran
+/// (`engine_run` after `msp_schema_version`): the auth, the init events' tools (the union), MCP
+/// servers (the most any turn listed), the first init's permission mode and apiKeySource, the
+/// resolved model (D4) and the other models a turn named, the permission denials (count and
+/// tools), the most severe rate_limit_event as the CLI wrote it (D6), the quota mark (E15), the
+/// notional cost, the names of the child environment (D2 - never a value) and what R22 switched
+/// off.
+fn claude_engine_run_extra(
+    ctx: &Context,
+    sec: &Secondary,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::Value;
+    let inits: Vec<&ClaudeRunDetail> = sec
+        .claude_turns
+        .iter()
+        .filter(|c| c.events.init_count > 0)
+        .collect();
+    let resolved = sec
+        .claude_turns
+        .iter()
+        .map(|c| c.turn.model_resolved.clone())
+        .rfind(|m| !m.is_empty())
+        .unwrap_or_default();
+    let mut tools: Vec<String> = Vec::new();
+    for c in &inits {
+        for t in &c.events.init_tools {
+            if !t.is_empty() && !tools.contains(t) {
+                tools.push(t.clone());
+            }
+        }
+    }
+    let mut other: Vec<String> = Vec::new();
+    for c in &sec.claude_turns {
+        for m in &c.turn.other_models {
+            if !m.is_empty() && !other.contains(m) {
+                other.push(m.clone());
+            }
+        }
+    }
+    let denials: Vec<&(String, String)> = sec
+        .claude_turns
+        .iter()
+        .flat_map(|c| c.events.denials.iter())
+        .collect();
+    let mut denied_tools: Vec<String> = Vec::new();
+    for (t, _) in &denials {
+        if !t.is_empty() && !denied_tools.contains(t) {
+            denied_tools.push(t.clone());
+        }
+    }
+    let mut rate: Option<Value> = None;
+    for c in sec
+        .claude_turns
+        .iter()
+        .filter(|c| c.events.rate_limit.is_some())
+    {
+        if rate.is_none() || c.events.rate_limit_rejected {
+            rate = c.events.rate_limit.clone();
+        }
+    }
+    let mut cost: Option<f64> = None;
+    for c in &sec.claude_turns {
+        if let Some(v) = c.events.cost_usd {
+            cost = Some(cost.unwrap_or(0.0) + v);
+        }
+    }
+    let first = inits.first();
+    let tok = |s: &str| c3_core::claude::token(Some(&Value::String(s.to_string())));
+    let names =
+        crate::engines::claude_auth::child_env(&ctx.engine_auth, ctx.engine_endpoint.as_ref())
+            .names;
+    let strs = |v: &[String]| Value::Array(v.iter().map(|s| Value::String(s.clone())).collect());
+    let mut m = serde_json::Map::new();
+    m.insert("auth".into(), Value::String(ctx.engine_auth.clone()));
+    m.insert("init_tools".into(), strs(&tools));
+    m.insert(
+        "mcp_servers".into(),
+        if inits.is_empty() {
+            Value::Null
+        } else {
+            Value::from(
+                inits
+                    .iter()
+                    .map(|c| c.events.init_mcp.len())
+                    .max()
+                    .unwrap_or(0) as i64,
+            )
+        },
+    );
+    m.insert(
+        "permission_mode".into(),
+        first
+            .and_then(|c| c.events.init_modes.first())
+            .map(|s| Value::String(tok(s)))
+            .unwrap_or(Value::Null),
+    );
+    m.insert(
+        "api_key_source".into(),
+        first
+            .and_then(|c| c.events.init_key_sources.first())
+            .map(|s| Value::String(tok(s)))
+            .unwrap_or(Value::Null),
+    );
+    m.insert(
+        "model_resolved".into(),
+        if resolved.is_empty() {
+            Value::Null
+        } else {
+            Value::String(resolved)
+        },
+    );
+    m.insert("other_models".into(), strs(&other));
+    m.insert(
+        "permission_denials".into(),
+        Value::from(denials.len() as i64),
+    );
+    m.insert("denied_tools".into(), strs(&denied_tools));
+    m.insert("rate_limit".into(), rate.unwrap_or(Value::Null));
+    m.insert(
+        "quota_mark".into(),
+        sec.claude_quota_mark
+            .as_ref()
+            .and_then(|q| serde_json::to_value(q).ok())
+            .unwrap_or(Value::Null),
+    );
+    m.insert(
+        "cost_usd".into(),
+        cost.and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+    );
+    m.insert("child_env_allowed".into(), strs(&names));
+    m.insert(
+        "switched_off".into(),
+        Value::Array(
+            c3_core::claude::CLAUDE_SWITCHED_OFF
+                .iter()
+                .map(|s| Value::String(s.to_string()))
+                .collect(),
+        ),
+    );
+    m
 }
 
 pub(crate) fn build_reviewer(id: &ReviewerIdentity, harness: &str) -> Reviewer {
@@ -8364,7 +9125,7 @@ mod member_tests {
             Err(e) => e,
         };
         assert!(
-            err.0.starts_with("-MaxModelSteps is for the muse engine"),
+            err.0.starts_with("-MaxModelSteps is for an engine with a model-step cap (muse --max-model-steps, claude --max-turns); the codex engine has none."),
             "{}",
             err.0
         );
@@ -8552,6 +9313,8 @@ mod parent_walk_tests {
             wire_api: String::new(),
             engine: "codex".into(),
             provider_config: serde_json::Value::Null,
+            auth: String::new(),
+            endpoint: None,
         }
     }
 

@@ -9,12 +9,15 @@
 //! http at milestone 7.
 
 pub mod agy;
+pub mod claude;
+pub mod claude_auth;
 pub mod codex;
 pub mod muse;
 pub mod subprocess;
 pub mod tree_check;
 
 pub use agy::AgyEngine;
+pub use claude::ClaudeEngine;
 pub use codex::CodexEngine;
 pub use muse::MuseEngine;
 

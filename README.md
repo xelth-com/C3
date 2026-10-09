@@ -1,7 +1,7 @@
 # C3 — claude-codex-consult in Rust
 
 **Status: the full surface runs.** The parity port (milestones 1–6) is in the binary —
-`c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse` and `http` engines),
+`c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse`, `claude` and `http` engines),
 `c3 findings` (statuses and ratings), `c3 scoreboard`, `c3 hook`, `c3 telemetry`/`complain`/
 `forget-me`, the reviewer roster and the routed **panel** with detach/status/wait/prune/kick —
 and so are the heavy subsystems after it: **packs and the `http` engine** (milestone 7,
@@ -30,7 +30,9 @@ verify and move yourself), and a **panel** runs several reviewers in parallel an
 reconciles them. Reviewers are subscriptions the user already has: the ChatGPT plan through
 the Codex CLI, z.ai GLM, Xiaomi MiMo or any Responses-API provider through a
 `[model_providers.<name>]` table, Gemini through Google's Antigravity CLI `agy`, Meta Muse
-through the Muse Code CLI. The bridge never creates, prints, stores or commits a key. C3 adds
+through the Muse Code CLI, Claude through Claude Code headless (`claude -p`; the subscription,
+an API key, or a coding plan's Anthropic-compatible endpoint). The bridge never creates, prints,
+stores or commits a key. C3 adds
 one API path for people who will not juggle subscriptions - OpenRouter (or any
 OpenAI-compatible endpoint) through a native `http` engine that reads its key from the
 environment and sends the reviewer a prepared pack instead of tools - and, on top of the
@@ -67,6 +69,62 @@ Steps 1-6 are the parity port. The heavy subsystems are explicit milestones afte
 9. **Router** — panel thickness (`shadow` / `council` / `consilium`) and a versioned,
    auditable draw from the scoreboard with priors distributed by the maintainer's server.
 10. **MCP server** — read-and-record tools for Claude Code without the plugin.
+
+## The `claude` engine (plugin 0.6.0; C3 wave 4)
+
+Claude Code headless as a reviewer, SPAWNED exactly as the plugin spawns it (no native Messages
+API here - decision P4 of the parity task): `claude -p --output-format stream-json --verbose
+--restricted --strict-mcp-config --disable-slash-commands --tools Read,Grep,Glob --permission-mode
+dontAsk --model <m> [--effort <e>] [--json-schema <the schema TEXT>] [--max-turns <n>]
+[--add-dir <dir>...] (--session-id <minted uuid> | --resume <thread> [--fork-session])`, run from
+the repository root, the prompt on stdin. Replies are `handoffs/NN-claudecode-<slug>.*` (the
+prefix `claude` stays the coordinator's default brief prefix). Launcher: `--engine-exe`,
+`CODEX_CONSULT_CLAUDE_EXE`, `claude.exe` / `claude.cmd` / `claude` on PATH, then
+`%USERPROFILE%\.local\bin\claude.exe`.
+
+- **Roster entry:** `{"provider": "anthropic", "engine": "claude", "model": "claude-opus-5-5",
+  "auth": "subscription"}` (or `--engine claude --model sonnet`; the label defaults to
+  `anthropic`). `model` is REQUIRED and one of the closed table: `opus`, `sonnet`, `haiku`,
+  `fable`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
+  `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5-5`, `claude-sonnet-5`,
+  `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5`, each optionally ending in `[1m]`.
+  An alias floats: every thread is pinned to the id its first init event resolved
+  (`engine_run.model_resolved`), and every later turn of it sends that id.
+- **Three auth modes.** `subscription` (the default): the claude.ai login, checked by
+  `claude auth status` (local, free; `ok: signed in (claude.ai subscription)`), and every turn's
+  init event must name `apiKeySource none`. `api-key`: `ANTHROPIC_API_KEY` must be set NOW (a
+  local check no ledger evidence replaces) and the init must name it. `endpoint`: a third-party
+  Anthropic-compatible endpoint spelled out in the entry - `"endpoint": {"base_url":
+  "https://api.z.ai/api/anthropic", "env_key": "ZAI_API_KEY", "timeout_ms": 3000000}` plus an
+  optional `"plan": "zai"`; the model is the provider's own id (`glm-5.3`, never an Anthropic
+  one - only a model the subscription cannot serve proves the billing), the preflight is local
+  (`ok: env ZAI_API_KEY set`, no `claude auth status`, no live request), and the child gets
+  `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (the value of the variable `env_key` names, read at
+  the launch, never logged) and `API_TIMEOUT_MS` - and nothing else of `ANTHROPIC_*`.
+- **The child environment is an ALLOW list** (system, locale, proxy and trust variables,
+  `CLAUDE_CONFIG_DIR`; `DISABLE_AUTOUPDATER=1` set): every host marker, test-mode variable,
+  inherited gateway, model override and operator variable is absent - for every turn, the sign-in
+  check and the version probe alike. The ledger records the names only
+  (`engine_run.child_env_allowed`).
+- **Read-only by evidence:** every init event (a killed turn's too) must list no tool outside
+  Read, Grep, Glob, StructuredOutput, no MCP server and the permission mode `dontAsk`; the model
+  every assistant message names must be the pinned one; and the strict tree check fails a run
+  that changed the working tree or the collab directory (managed settings and their hooks still
+  apply). A turn killed on its timeout whose init failed that proof is failed with that reason
+  and never continued.
+- **Rate limits:** a rejecting `rate_limit_event` beside a successful result keeps the reply
+  usable, warns, and records `engine_run.quota_mark` - the route (and its plan) is out until the
+  reset, in this repository's ledger and in the machine-wide health file.
+- **Panels:** the claude members of a panel run one at a time (one scheduling group) unless
+  `"parallel": {"<label>": n}` raises their labels; a `plan` makes the plan's codex and claude
+  routes one group, and a panel member waits for a run of its plan elsewhere on the machine.
+
+The endpoint route stays where the plugin's comparison kept it: "**Decided 2026-10-08 (wave 29c,
+12 pairs per plan, handoff 40 of `.collab/claude-engine-2026-09-30/`): the route STAYS for z.ai
+(credits 0.27x, wall 0.46x, structured 12/12 on both routes, blind marks 4.33 vs 4.08) and for
+MiMo (credits 0.17x, wall 1.16x - no faster than codex on that plan, structured 12/12 both, blind
+marks 5.0 vs 3.08).**" (plugin README, "Engines (wave 29)", "Endpoint mode"). Ported in
+`docs/port/wave4-claude.md`; setup text in `plugin/skills/setup-providers/SKILL.md` section 4c.
 
 ## Telemetry (on by default, off with one line)
 

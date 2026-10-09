@@ -20,6 +20,7 @@
 //! byte-for-byte.
 
 pub mod availability;
+pub mod claude;
 pub mod config;
 pub mod credential;
 pub mod effort;

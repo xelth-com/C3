@@ -12,8 +12,12 @@
 //!
 //! 0.6.0 (wave 29b, E5/E7 - C3 wave 1b): the per-entry `plan` (a slug naming the coding plan
 //! whose quota the entry's route spends, on an entry of ANY engine - [`PLAN_SLUG_RE`]) and the
-//! key `endpoint` (accepted by name, refused on every entry: it belongs to the claude engine's
-//! auth `endpoint`, which C3 does not run yet); a `parallel` key may name a plan.
+//! key `endpoint`; a `parallel` key may name a plan.
+//!
+//! 0.6.0 (wave 29 / 29b - C3 wave 4): the `claude` engine - `auth` `subscription` (the default) |
+//! `api-key` | `endpoint`, a model of the engine's closed table (`[1m]` allowed) or, with auth
+//! `endpoint`, the provider's own id (never an Anthropic one, E11), and the `endpoint` object
+//! `{base_url, env_key, timeout_ms}` (required with auth `endpoint`, refused everywhere else).
 
 use serde_json::Value;
 
@@ -38,6 +42,15 @@ pub const PLAN_SLUG_RE: &str = r"^[a-z][a-z0-9-]{1,31}$";
 /// Whether `value` is a plan slug ([`PLAN_SLUG_RE`]).
 pub fn is_plan_slug(value: &str) -> bool {
     regex::Regex::new(PLAN_SLUG_RE).unwrap().is_match(value)
+}
+
+/// (0.6.0, wave 29) A claude model's 1M-context suffix `[1m]` (any case) stripped - the rest of the
+/// name obeys the roster's string rules.
+fn strip_1m_suffix(v: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| regex::Regex::new(r"(?i)\[1m\]$").unwrap())
+        .replace(v, "")
+        .to_string()
 }
 
 /// The refusal `why` of a `plan` value that is not a slug (`at` is `entry <n>`; `got` the
@@ -80,6 +93,9 @@ pub struct RosterEntry {
     /// [`PLAN_SLUG_RE`]); `""` when the entry names none. Every entry of one plan shares its
     /// quota (a usage limit on one route marks the others out) and its scheduling group.
     pub plan: String,
+    /// (0.6.0, wave 29b E1) The claude entry's endpoint (auth `endpoint` only; its `plan` is the
+    /// entry's).
+    pub endpoint: Option<crate::claude::ClaudeEndpoint>,
 }
 
 /// The roster (`Read-ReviewerRoster`'s result).
@@ -470,10 +486,19 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             }
             // (wave 26b, D3 / F22-2, F22-4) the matcher's and the seed's delimiters never
             // inside a provider label, a model or an engine: '::', '[', ']', '|', ',', '#'.
+            // (0.6.0, wave 29) a claude model may end with the 1M-context suffix [1m] - the rest
+            // obeys the rule.
+            let is_claude_item = iobj.get("engine").and_then(|v| v.as_str()) == Some("claude");
+            let strip_1m = strip_1m_suffix;
             let mut d3_bad = false;
             for sk in ["provider", "model", "engine"] {
                 if let Some(sv) = iobj.get(sk).and_then(|v| v.as_str()) {
-                    if let Some(bad) = roster_string_problem(sv) {
+                    let sv = if sk == "model" && is_claude_item {
+                        strip_1m(sv)
+                    } else {
+                        sv.to_string()
+                    };
+                    if let Some(bad) = roster_string_problem(&sv) {
                         why = format!("roster entry #{pos}: {sk} must not contain '{bad}'");
                         d3_bad = true;
                         break;
@@ -600,8 +625,18 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             // model
             let mut model = String::new();
             if let Some(mv) = iobj.get("model") {
-                match mv.as_str() {
-                    Some(s) if !s.trim().is_empty() && s == s.trim() => model = s.to_string(),
+                // (wave 29) a claude model is checked without its [1m] suffix
+                let checked = mv.as_str().map(|s| {
+                    if is_claude_item {
+                        strip_1m(s)
+                    } else {
+                        s.to_string()
+                    }
+                });
+                match (mv.as_str(), checked) {
+                    (Some(s), Some(c)) if !c.trim().is_empty() && c == c.trim() => {
+                        model = s.to_string()
+                    }
                     _ => {
                         why = format!("{at}: model must be a non-empty string without surrounding blanks (omit it to use the Codex config's model)");
                         break;
@@ -633,14 +668,30 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 }
                 cfg_items = parsed;
             }
-            // auth
+            // auth - (0.6.0, wave 29) claude takes subscription | api-key | endpoint (checked below
+            // once the engine is known)
             let mut auth = String::new();
             if let Some(av) = iobj.get("auth") {
-                if av.as_str() != Some("none") {
-                    why = format!("{at}: auth may only be \"none\" (an endpoint that needs no credential; omit it otherwise)");
-                    break;
+                if is_claude_item {
+                    match av.as_str() {
+                        Some(a) if crate::claude::CLAUDE_AUTH_MODES.contains(&a) => {
+                            auth = a.to_string()
+                        }
+                        _ => {
+                            why = format!(
+                                "{at}: auth of engine claude must be \"subscription\" (the claude.ai login, the default) or \"api-key\" (ANTHROPIC_API_KEY) or \"endpoint\" (a third-party Anthropic-compatible endpoint named by the entry's \"endpoint\") (got {})",
+                                compact(av)
+                            );
+                            break;
+                        }
+                    }
+                } else {
+                    if av.as_str() != Some("none") {
+                        why = format!("{at}: auth may only be \"none\" (an endpoint that needs no credential; omit it otherwise)");
+                        break;
+                    }
+                    auth = "none".into();
                 }
-                auth = "none".into();
             }
             // panel
             let mut panel = "always".to_string();
@@ -689,19 +740,48 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                     why = format!("{at}: codex_config does not apply to engine {engine} (it configures codex exec)");
                     break;
                 }
-                if iobj.contains_key("auth") {
+                if iobj.contains_key("auth") && engine != "claude" {
                     why = format!("{at}: auth does not apply to engine {engine} (the {engine} CLI keeps its own sign-in)");
                     break;
                 }
             }
-            // (0.6.0, wave 29b E1) the endpoint block belongs to engine claude with auth
-            // "endpoint" only - an engine C3 does not run yet (wave 4), so every entry C3 accepts
-            // refuses it with the plugin's text.
-            if iobj.contains_key("endpoint") {
+            // (0.6.0, wave 29, item 8, D4) a claude entry: a model of the engine's table; auth
+            // defaults to subscription. (wave 29b, E1, E2) auth endpoint: the `endpoint` object is
+            // REQUIRED (and refused with every other auth and engine), the model the open id pattern.
+            let mut entry_endpoint: Option<crate::claude::ClaudeEndpoint> = None;
+            if engine == "claude" {
+                if auth.is_empty() {
+                    auth = "subscription".into();
+                }
+                let mp = crate::claude::model_problem(&model, &auth);
+                if !mp.is_empty() {
+                    why = format!("{at}: the claude model '{model}' {mp}");
+                    break;
+                }
+            }
+            if iobj.contains_key("endpoint") && !(engine == "claude" && auth == "endpoint") {
                 why = format!(
-                    "{at}: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine {engine})"
+                    "{at}: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine {engine}{})",
+                    if engine == "claude" {
+                        format!(", auth {auth}")
+                    } else {
+                        String::new()
+                    }
                 );
                 break;
+            }
+            if engine == "claude" && auth == "endpoint" {
+                let Some(ev) = iobj.get("endpoint") else {
+                    why = format!("{at}: auth \"endpoint\" needs an \"endpoint\" object {{\"base_url\": \"https://...\", \"env_key\": \"<VARIABLE NAME>\"}} - the Anthropic-compatible endpoint and the variable that holds its token");
+                    break;
+                };
+                match crate::claude::endpoint_from_value(ev, &plan) {
+                    Ok(ep) => entry_endpoint = Some(ep),
+                    Err(e) => {
+                        why = format!("{at}: {e}");
+                        break;
+                    }
+                }
             }
             if let Some(other) = entries
                 .iter()
@@ -743,6 +823,7 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 stall_sec,
                 context_tokens,
                 plan,
+                endpoint: entry_endpoint,
             });
         }
     }
@@ -1232,5 +1313,41 @@ mod tests {
             ),
             "parallel.zai must be an integer >= 1 (got 0)"
         );
+    }
+
+    #[test]
+    fn the_claude_engine_keys() {
+        // (0.6.0, wave 29 / 29b) the claude entry: the model table ([1m] allowed), auth
+        // subscription (default) | api-key | endpoint, the endpoint block and its refusals
+        let r = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-opus-5-5[1m]","auth":"subscription","panel":"weighty"},{"provider":"anthropic","engine":"claude","model":"sonnet","auth":"api-key"},{"provider":"anthropic","engine":"claude","model":"haiku"},{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"ZAI_KEY"},"plan":"zai"}],"parallel":{"anthropic":2,"zai":2}}"##,
+        );
+        assert_eq!(r.entries[0].model, "claude-opus-5-5[1m]");
+        assert_eq!(r.entries[0].auth, "subscription");
+        assert_eq!(r.entries[1].auth, "api-key");
+        assert_eq!(r.entries[2].auth, "subscription");
+        let ep = r.entries[3].endpoint.as_ref().unwrap();
+        assert_eq!(ep.env_key, "ZAI_KEY");
+        assert_eq!(ep.timeout_ms, 3_000_000);
+        assert_eq!(ep.plan, "zai");
+        assert!(r.entries[2].endpoint.is_none());
+        let cases = [
+            (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"opus","auth":"key"}]}"##, "entry 1: auth of engine claude must be \"subscription\" (the claude.ai login, the default) or \"api-key\" (ANTHROPIC_API_KEY) or \"endpoint\" (a third-party Anthropic-compatible endpoint named by the entry's \"endpoint\") (got \"key\")"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-opus-9"}]}"##, "entry 1: the claude model 'claude-opus-9' is not in the claude engine's model table (opus, sonnet, haiku, fable, claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-5-5, claude-sonnet-5, claude-sonnet-4-6, claude-haiku-5-5, claude-haiku-4-5; each may end with [1m])"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude"}]}"##, "entry 1: engine claude needs a model (the full model id, e.g. claude-sonnet-5-5)"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"opus","codex_config":["a=b"]}]}"##, "entry 1: codex_config does not apply to engine claude (it configures codex exec)"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"g","engine":"agy","model":"gemini-3.8-flash-high","auth":"api-key"}]}"##, "entry 1: auth may only be \"none\" (an endpoint that needs no credential; omit it otherwise)"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-5.1[1m]"}]}"##, "roster entry #1: model must not contain '['"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"glm-5.3","auth":"endpoint"}]}"##, "entry 1: auth \"endpoint\" needs an \"endpoint\" object {\"base_url\": \"https://...\", \"env_key\": \"<VARIABLE NAME>\"} - the Anthropic-compatible endpoint and the variable that holds its token"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"sonnet","auth":"api-key","endpoint":{"base_url":"https://a.example/v","env_key":"ABC"}}]}"##, "entry 1: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine claude, auth api-key)"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"FABLE","auth":"endpoint","endpoint":{"base_url":"https://a.example/v","env_key":"ABC"}}]}"##, "entry 1: the claude model 'FABLE' is an Anthropic model id, which the endpoint route cannot carry"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://user:SECRETPW@api.z.ai/x","env_key":"ABC"}}]}"##, "entry 1: endpoint.base_url must be an absolute https URL without credentials, query or fragment"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"ZAI","model":"glm-5.3","plan":"zai"},{"provider":"ZAI","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"ABC"},"plan":"zai"}]}"##, "entries 1 and 2 use the provider label 'ZAI' with two engines (codex, claude); a label names one engine"),
+        ];
+        for (json, want) in cases {
+            let w = why(json);
+            assert!(w.contains(want), "{json}\n{w}");
+            assert!(!w.contains("SECRETPW"));
+        }
     }
 }

@@ -64,6 +64,8 @@ fn on_running_fires_with_child_pid_and_timeout_kills() {
         kick_path: None,
         tool_flight: None,
         on_running: Some(&cb),
+        env: None,
+        crt_quote: false,
     };
     let result = run_turn(&req);
 
@@ -111,6 +113,8 @@ fn survivor_hook_adds_a_live_pid_to_the_kill() {
         kick_path: None,
         tool_flight: None,
         on_running: None,
+        env: None,
+        crt_quote: false,
     };
     let result = run_turn(&req);
 

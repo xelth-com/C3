@@ -184,6 +184,8 @@ impl MuseEngine {
                 .on_running
                 .as_ref()
                 .map(|a| a.as_ref() as &dyn Fn(u32, String)),
+            env: None,
+            crt_quote: false,
         };
         let result = run_turn(&spawn);
 

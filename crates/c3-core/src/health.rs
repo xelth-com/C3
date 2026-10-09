@@ -1370,10 +1370,50 @@ pub fn new_machine_health_record(
     failure: Option<&MachineFailure>,
     repo: &str,
 ) -> Option<MachineEndpoint> {
+    new_machine_health_record_marked(fingerprint, outcome, failure, repo, None)
+}
+
+/// `New-MachineHealthRecord -QuotaMark` (wave 29b, E15): as [`new_machine_health_record`], and a
+/// usable reply whose turn saw a REJECTING rate-limit event (the claude engine) carries the quota
+/// failure it stands for in its `ok` record - `quota_mark {class quota, kind, until, retry_after,
+/// message, when}` (`until` = the reset, else 60 minutes after it, 10 for a burst) - which every
+/// reader takes as that quota failure right after the reply.
+pub fn new_machine_health_record_marked(
+    fingerprint: &str,
+    outcome: &str,
+    failure: Option<&MachineFailure>,
+    repo: &str,
+    quota_mark: Option<&MachineFailure>,
+) -> Option<MachineEndpoint> {
     if fingerprint.is_empty() {
         return None;
     }
     if is_usable_outcome(outcome) {
+        let now = now_offset();
+        let mark = quota_mark.filter(|m| m.class == "quota").map(|m| {
+            let m_when = DateTime::parse_from_rfc3339(&m.when).unwrap_or(now);
+            let ra = m
+                .retry_after
+                .as_deref()
+                .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
+            let until = ra.unwrap_or_else(|| {
+                m_when
+                    + Duration::minutes(if m.kind == "burst" {
+                        BURST_OUT_MINUTES
+                    } else {
+                        QUOTA_OUT_MINUTES
+                    })
+            });
+            let msg: String = m.message.chars().take(200).collect();
+            serde_json::json!({
+                "class": "quota",
+                "kind": m.kind,
+                "until": format_offset_iso(until),
+                "retry_after": ra.map(format_offset_iso),
+                "message": msg,
+                "when": format_offset_iso(m_when),
+            })
+        });
         return Some(MachineEndpoint {
             endpoint: fingerprint.to_string(),
             class: "ok".into(),
@@ -1381,9 +1421,9 @@ pub fn new_machine_health_record(
             until: None,
             retry_after: None,
             repo: repo.to_string(),
-            when: format_offset_iso(now_offset()),
+            when: format_offset_iso(now),
             message: String::new(),
-            quota_mark: None,
+            quota_mark: mark,
         });
     }
     let f = failure?;
@@ -2803,6 +2843,41 @@ mod machine_health_tests {
         assert_eq!(mh.running[0].plan, "zai");
         assert!(mh.running[4].plan.is_empty());
         let _ = std::fs::remove_file(&path);
+    }
+
+    // (wave 29b, E15 - C3 wave 4) the claude engine's quota mark on a usable reply's ok record:
+    // `{class quota, kind, until (the reset), retry_after, message, when}`; without a reset 60 minutes
+    // after it; a failure is recorded as before (the mark is for usable replies only).
+    #[test]
+    fn a_usable_reply_carries_its_quota_mark() {
+        let mark = MachineFailure {
+            class: "quota".into(),
+            kind: String::new(),
+            when: "2026-10-09T10:00:00+00:00".into(),
+            retry_after: Some("2026-10-09T13:00:00+00:00".into()),
+            message: "usage limit reached (claude rate_limit_event rejected, five_hour); resets at 2026-10-09T13:00:00Z".into(),
+        };
+        let r = new_machine_health_record_marked("fp", "usable reply", None, "C:/r", Some(&mark))
+            .unwrap();
+        assert_eq!(r.class, "ok");
+        let qm = r.quota_mark.unwrap();
+        assert_eq!(qm["class"], "quota");
+        assert_eq!(qm["until"], "2026-10-09T13:00:00+00:00");
+        assert_eq!(qm["retry_after"], "2026-10-09T13:00:00+00:00");
+        let no_reset = MachineFailure {
+            retry_after: None,
+            ..mark.clone()
+        };
+        let r2 =
+            new_machine_health_record_marked("fp", "usable reply", None, "C:/r", Some(&no_reset))
+                .unwrap();
+        assert_eq!(r2.quota_mark.unwrap()["until"], "2026-10-09T11:00:00+00:00");
+        assert!(
+            new_machine_health_record("fp", "usable reply", None, "C:/r")
+                .unwrap()
+                .quota_mark
+                .is_none()
+        );
     }
 
     // (wave 29b, E15) an ok record's quota_mark (written by the plugin's claude engine) survives

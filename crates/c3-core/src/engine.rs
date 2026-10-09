@@ -33,13 +33,16 @@ use serde_json::{Map, Value};
 use crate::ledger::{ProviderFailure, Usage};
 use crate::lineage::format_reviewer_lineage;
 
-/// The four engines (DESIGN §4). `codex` is the default.
+/// The engines (DESIGN §4; 0.6.0 adds `claude`). `codex` is the default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EngineKind {
     Codex,
     Agy,
     Muse,
+    /// (0.6.0, wave 29) Claude Code headless: `claude -p --output-format stream-json`, the prompt
+    /// on stdin, the schema TEXT in `--json-schema`, a minted `--session-id` for a new thread.
+    Claude,
     Http,
 }
 
@@ -125,6 +128,18 @@ pub fn capabilities(kind: EngineKind) -> Capabilities {
             sandbox: true,
             file_prefix: "muse",
         },
+        EngineKind::Claude => Capabilities {
+            threads: true,
+            fork: true,
+            resume: true,
+            prompt_delivery: PromptDelivery::Stdin,
+            schema_transport: vec![SchemaTransport::Native, SchemaTransport::PromptOnly],
+            effort_vocabulary: "claude",
+            // --restricted --tools Read,Grep,Glob, proven by every init event; the bridge's tree
+            // check fails a run that changed anything (D1).
+            sandbox: true,
+            file_prefix: "claudecode",
+        },
         EngineKind::Http => Capabilities {
             threads: false,
             fork: false,
@@ -198,8 +213,14 @@ pub struct Request {
     pub output_last_message: Option<PathBuf>,
     /// muse `--prompt-file <path>`: the prompt file.
     pub prompt_file: Option<PathBuf>,
-    /// muse `--max-model-steps <n>`.
+    /// muse `--max-model-steps <n>`; (0.6.0) claude `--max-turns <n>`.
     pub max_model_steps: Option<u32>,
+    /// (0.6.0, wave 29, item 2) claude: the id the bridge minted for a NEW thread
+    /// (`--session-id`), known before the first byte; `None` for every other engine and turn.
+    pub new_thread: Option<String>,
+    /// (wave 29, item 1) claude: the directories outside the repository the reviewer must read
+    /// (`--add-dir`).
+    pub add_dirs: Vec<String>,
 }
 
 impl Request {
@@ -218,6 +239,7 @@ fn engine_token(kind: EngineKind) -> &'static str {
         EngineKind::Codex => "codex",
         EngineKind::Agy => "agy",
         EngineKind::Muse => "muse",
+        EngineKind::Claude => "claude",
         EngineKind::Http => "http",
     }
 }
@@ -1170,6 +1192,38 @@ impl SubprocessEngine {
         })
     }
 
+    /// (0.6.0, wave 29) `Get-ClaudeArgs`: the read-only, restricted print-mode turn - the model,
+    /// `--effort`, the schema TEXT (`--json-schema`, read from `schema_path`), `--max-turns`,
+    /// `--add-dir`, then the session: `--session-id <minted>` (new), `--resume <t>` (resume),
+    /// `--resume <p> --fork-session` (fork).
+    fn plan_claude(&self, r: &Request) -> Result<Argv, EngineError> {
+        if r.model.is_empty() {
+            return Err(EngineError::MissingField("model"));
+        }
+        let (thread, fork) = match &r.mode {
+            Mode::New => (String::new(), false),
+            Mode::Resume { thread, .. } => (thread.clone(), false),
+            Mode::Fork { thread, .. } => (thread.clone(), true),
+        };
+        let args = crate::claude::claude_args(&crate::claude::ClaudeArgs {
+            model: r.model.clone(),
+            effort: r.effort.clone(),
+            schema_text: r
+                .schema_path
+                .as_ref()
+                .map(|p| crate::claude::schema_text_of_file(p)),
+            max_turns: r.max_model_steps.unwrap_or(0),
+            add_dirs: r.add_dirs.clone(),
+            thread,
+            fork,
+            new_thread: r.new_thread.clone().unwrap_or_default(),
+        });
+        Ok(Argv {
+            command: "claude".into(),
+            args,
+        })
+    }
+
     fn plan_http(&self, r: &Request) -> Result<HttpPlan, EngineError> {
         if r.model.is_empty() {
             return Err(EngineError::MissingField("model"));
@@ -1195,6 +1249,7 @@ impl Engine for SubprocessEngine {
             EngineKind::Codex => Ok(LaunchPlan::Subprocess(self.plan_codex(request)?)),
             EngineKind::Agy => Ok(LaunchPlan::Subprocess(self.plan_agy(request)?)),
             EngineKind::Muse => Ok(LaunchPlan::Subprocess(self.plan_muse(request)?)),
+            EngineKind::Claude => Ok(LaunchPlan::Subprocess(self.plan_claude(request)?)),
             EngineKind::Http => Ok(LaunchPlan::Http(self.plan_http(request)?)),
         }
     }
@@ -1249,6 +1304,8 @@ mod tests {
             output_last_message: Some(PathBuf::from("last.md")),
             prompt_file: None,
             max_model_steps: None,
+            new_thread: None,
+            add_dirs: Vec::new(),
         }
     }
 
@@ -1378,6 +1435,30 @@ mod tests {
         assert_eq!(muse.args[0], "exec");
         assert!(muse.args.contains(&"--disable-shell".to_string()));
         assert!(muse.args.contains(&"--max-model-steps".to_string()));
+    }
+
+    #[test]
+    fn claude_argv_new_resume_fork() {
+        let mut r = base_request();
+        r.engine = EngineKind::Claude;
+        r.model = "sonnet".into();
+        r.schema_path = None;
+        r.output_last_message = None;
+        r.new_thread = Some("11111111-2222-3333-4444-555555555555".into());
+        r.max_model_steps = Some(7);
+        let a = subprocess_argv(EngineKind::Claude, &r);
+        assert_eq!(a.command, "claude");
+        assert_eq!(
+            a.to_command_string(),
+            "claude -p --output-format stream-json --verbose --restricted --strict-mcp-config --disable-slash-commands --tools Read,Grep,Glob --permission-mode dontAsk --model sonnet --effort high --max-turns 7 --session-id 11111111-2222-3333-4444-555555555555"
+        );
+        r.mode = Mode::Fork {
+            thread: "p".into(),
+            lineage: r.lineage(),
+        };
+        let f = subprocess_argv(EngineKind::Claude, &r);
+        assert!(f.to_command_string().ends_with("--resume p --fork-session"));
+        assert_eq!(capabilities(EngineKind::Claude).file_prefix, "claudecode");
     }
 
     #[test]

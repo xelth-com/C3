@@ -268,6 +268,13 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
                 "launch      : a real run is refused before launch - {hazard}"
             ));
         }
+        // (0.6.0, wave 29, D9) the prompt is larger than the engine's stdin bound
+        if !ctx.prompt_bound.is_empty() {
+            out.push(format!(
+                "launch      : a real run is refused before launch - {}",
+                ctx.prompt_bound
+            ));
+        }
     }
     out.push(format!("mode        : {}", ctx.effective_mode));
     // The parent-thread note (`Select-ParentThread`'s note): why this run is a new thread, or
@@ -346,17 +353,50 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         "coordinator : {}{coordinator_note}",
         c3_core::host::format_coordinator_text(&ctx.coordinator)
     ));
-    out.push(format!(
-        "child env   : {}",
-        if ctx.child_env_scrubbed.is_empty() {
-            "no host marker set - the environment is passed as it is".to_string()
+    if ctx.engine == "claude" {
+        // (0.6.0, wave 29, D2) the claude child's ALLOW-listed environment; (wave 29b, E4) auth
+        // endpoint: the route's base URL, the token variable's NAME (never its value), the plan
+        let ce =
+            crate::engines::claude_auth::child_env(&ctx.engine_auth, ctx.engine_endpoint.as_ref());
+        if ctx.engine_auth == "endpoint" {
+            out.push(format!(
+                "child env   : an allow list (auth endpoint): {} - every other variable (the host markers, ANTHROPIC_* but ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN, CLAUDE_* but CLAUDE_CONFIG_DIR) is left out{}",
+                ce.names.join(", "),
+                if ce.problem.is_empty() {
+                    String::new()
+                } else {
+                    format!("; a real run is refused: {}", ce.problem)
+                }
+            ));
+            if let Some(ep) = &ctx.engine_endpoint {
+                out.push(format!(
+                    "endpoint    : {} (ANTHROPIC_BASE_URL); token from env {} (ANTHROPIC_AUTH_TOKEN - the value is never shown); API_TIMEOUT_MS {}; plan {}; no claude auth status - the model the init event names is the proof",
+                    ep.base_url,
+                    ep.env_key,
+                    ep.timeout_ms,
+                    if ep.plan.is_empty() { "(none)" } else { ep.plan.as_str() }
+                ));
+            }
         } else {
-            format!(
-                "without the host markers {} (every other variable is kept)",
-                ctx.child_env_scrubbed.join(", ")
-            )
+            out.push(format!(
+                "child env   : an allow list (auth {}): {} - every other variable (the host markers, ANTHROPIC_*, CLAUDE_* but CLAUDE_CONFIG_DIR) is left out",
+                ctx.engine_auth,
+                ce.names.join(", ")
+            ));
         }
-    ));
+    } else {
+        out.push(format!(
+            "child env   : {}",
+            if ctx.child_env_scrubbed.is_empty() {
+                "no host marker set - the environment is passed as it is".to_string()
+            } else {
+                format!(
+                    "without the host markers {} (every other variable is kept)",
+                    ctx.child_env_scrubbed.join(", ")
+                )
+            }
+        ));
+    }
     out.push(String::new());
     out.push("argv        :".into());
     // The argv block lists the launcher's arguments only (starting with `exec`); the launcher
@@ -376,9 +416,14 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         out.push(format!("prompt (--prompt-file, {prompt_chars} chars):"));
     } else {
         if !is_codex {
-            let stdin_len = crate::engines::agy::convert_to_agy_stdin(&ctx.prompt_text)
-                .chars()
-                .count();
+            // (the plugin prints this line for every stdin engine; claude's stdin is the prompt)
+            let stdin_len = if ctx.engine == "claude" {
+                ctx.prompt_text.encode_utf16().count()
+            } else {
+                crate::engines::agy::convert_to_agy_stdin(&ctx.prompt_text)
+                    .chars()
+                    .count()
+            };
             out.push(format!(
                 "stdin       : one NDJSON line {{\"event\":\"user\",\"message\":{{\"content\":<the prompt>}}}} ({stdin_len} chars, UTF-8, LF)"
             ));
@@ -643,6 +688,32 @@ fn preview_usage(ctx: &Context) -> Value {
 fn preview_engine_run(ctx: &Context) -> Value {
     if ctx.engine == "codex" {
         return Value::Null;
+    }
+    if ctx.engine == "claude" {
+        // (0.6.0, wave 29) the claude engine's evidence fields, the placeholders the plugin writes
+        let names =
+            crate::engines::claude_auth::child_env(&ctx.engine_auth, ctx.engine_endpoint.as_ref())
+                .names;
+        let endpoint = ctx.engine_auth == "endpoint";
+        return json!({
+            "turns": "<the turns started: 1, + a denial retry, + a format repair>",
+            "max_model_steps": if ctx.o.max_model_steps > 0 { json!(ctx.o.max_model_steps) } else { Value::Null },
+            "msp_schema_version": Value::Null,
+            "auth": ctx.engine_auth,
+            "init_tools": "<the tools the init events listed: Glob, Grep, Read, StructuredOutput>",
+            "mcp_servers": "<0>",
+            "permission_mode": "<dontAsk>",
+            "api_key_source": if ctx.engine_auth == "api-key" { "<ANTHROPIC_API_KEY>" } else if endpoint { "<none (recorded raw; ANTHROPIC_API_KEY fails the turn)>" } else { "<none>" },
+            "model_resolved": if endpoint { "<the model id the init event names - it must equal the pinned id>" } else { "<the model id the init event resolved>" },
+            "other_models": "<[] or the other models a turn named>",
+            "permission_denials": "<n>",
+            "denied_tools": "<[] or the tools denied>",
+            "rate_limit": "<null, or the most severe rate_limit_event as the CLI wrote it>",
+            "quota_mark": "<null, or {class quota, kind, code, message, when, retry_after, hint}: a usable reply whose turn saw a rejecting rate_limit_event - the route is out as after a failed quota turn>",
+            "cost_usd": "<the notional total_cost_usd>",
+            "child_env_allowed": names,
+            "switched_off": c3_core::claude::CLAUDE_SWITCHED_OFF,
+        });
     }
     let spec = c3_core::lineage::engine_spec(&ctx.engine);
     let max_steps = if ctx.o.max_model_steps > 0 {

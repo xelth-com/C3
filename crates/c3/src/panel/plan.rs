@@ -30,6 +30,12 @@ const LAB_VENDORS: &[(&str, &str)] = &[
     ("gemini", "google"),
     ("muse", "meta"),
     ("gpt", "openai"),
+    // (0.6.0, wave 29) the claude engine's ids and aliases
+    ("claude", "anthropic"),
+    ("opus", "anthropic"),
+    ("sonnet", "anthropic"),
+    ("haiku", "anthropic"),
+    ("fable", "anthropic"),
 ];
 
 /// `Get-PanelDefaultSize` (D6): the default seats for a purpose (`0` = every eligible member).
@@ -123,6 +129,9 @@ pub struct Runner {
     pub label: String,
     pub fingerprint: String,
     pub plan: String,
+    /// (0.6.0, wave 29, D5) `engine:<name>` for an engine whose members share ONE scheduling
+    /// group (claude: `ParallelScope 'engine'`), `""` otherwise.
+    pub scope: String,
 }
 
 struct EndpointGroups {
@@ -157,6 +166,13 @@ fn endpoint_groups(runners: &[Runner]) -> EndpointGroups {
             let e = fps.iter_mut().find(|(l, _)| *l == m.label).unwrap();
             if !e.1.contains(&key) {
                 e.1.push(key);
+            }
+        }
+        // (0.6.0, wave 29, D5) the members of a ParallelScope-engine engine share one group
+        if !m.scope.is_empty() {
+            let e = fps.iter_mut().find(|(l, _)| *l == m.label).unwrap();
+            if !e.1.contains(&m.scope) {
+                e.1.push(m.scope.clone());
             }
         }
     }
@@ -558,7 +574,18 @@ pub fn select_panel_routing_with(
             "codex".into()
         };
         let lineage = format_reviewer_lineage(&m.provider, &m.model, &engine);
-        let (lab, lab_source) = entry_lab(&m.entry.lab, &m.model, &lineage);
+        // (0.6.0, wave 29b, E5) a claude endpoint entry: the lab of its base URL's host first
+        let host_lab = match (&m.entry.endpoint, m.entry.lab.is_empty()) {
+            (Some(ep), true) if m.entry.auth == "endpoint" => {
+                c3_core::claude::lab_of_host(&ep.host_name)
+            }
+            _ => "",
+        };
+        let (lab, lab_source) = if !host_lab.is_empty() {
+            (host_lab.to_string(), LabSource::Vendor)
+        } else {
+            entry_lab(&m.entry.lab, &m.model, &lineage)
+        };
         let scored = router::score(
             ratings,
             router::Lineage {
@@ -874,18 +901,21 @@ mod tests {
                 label: "agy1".into(),
                 fingerprint: "google".into(),
                 plan: String::new(),
+                scope: String::new(),
             },
             Runner {
                 position: 2,
                 label: "agy2".into(),
                 fingerprint: "google".into(),
                 plan: String::new(),
+                scope: String::new(),
             },
             Runner {
                 position: 3,
                 label: "zai".into(),
                 fingerprint: "zaifp".into(),
                 plan: String::new(),
+                scope: String::new(),
             },
         ];
         let plan = panel_plan(&runners, &[], 0);
@@ -904,24 +934,28 @@ mod tests {
                 label: "zai".into(),
                 fingerprint: "a".into(),
                 plan: String::new(),
+                scope: String::new(),
             },
             Runner {
                 position: 2,
                 label: "byteplus".into(),
                 fingerprint: "b".into(),
                 plan: String::new(),
+                scope: String::new(),
             },
             Runner {
                 position: 3,
                 label: "byteplus".into(),
                 fingerprint: "b".into(),
                 plan: String::new(),
+                scope: String::new(),
             },
             Runner {
                 position: 4,
                 label: "byteplus".into(),
                 fingerprint: "b".into(),
                 plan: String::new(),
+                scope: String::new(),
             },
         ];
         // byteplus raised to 3 parallel; zai default 1 => effective = 1 + min(3,3) = 4.
@@ -943,6 +977,7 @@ mod tests {
             label: label.into(),
             fingerprint: fingerprint.into(),
             plan: plan.into(),
+            scope: String::new(),
         }
     }
 

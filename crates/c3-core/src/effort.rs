@@ -148,6 +148,14 @@ pub fn caps(key: &str) -> Option<Caps> {
             models: Models::List(MUSE_MODELS),
             schema_transport: "native",
         },
+        // (0.6.0, wave 29) the claude engine: vocabulary claude (mapping claude-v1) for any model
+        // of the engine's table - low medium high xhigh as is, sent as --effort <v> (max only
+        // through -NativeEffort); the schema TEXT travels natively (--json-schema).
+        "engine:claude" => Caps {
+            vocabulary: "claude",
+            models: Models::Any,
+            schema_transport: "native",
+        },
         // (M7b-b) The http engine (OpenRouter / OpenAI-compatible): the OpenAI effort vocabulary
         // (low/medium/high/xhigh), any model, and prompt-only transport (the schema travels in the
         // pack; JSON mode is requested via `response_format`).

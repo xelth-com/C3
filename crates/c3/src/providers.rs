@@ -428,14 +428,7 @@ impl Ctx {
                 continue;
             }
             let entry_launcher = self.engine_launcher(entry_engine);
-            let id = resolve_reviewer_identity(
-                &self.config,
-                &e.provider,
-                &e.model,
-                &self.openai_base_url,
-                entry_engine,
-                &entry_launcher,
-            );
+            let id = self.entry_identity(e, entry_engine, &entry_launcher);
             if !model.is_empty() && id.model != *model {
                 continue;
             }
@@ -685,14 +678,7 @@ impl Ctx {
                 continue;
             }
             let entry_launcher = self.engine_launcher(entry_engine);
-            let id = resolve_reviewer_identity(
-                &self.config,
-                &e.provider,
-                &e.model,
-                &self.openai_base_url,
-                entry_engine,
-                &entry_launcher,
-            );
+            let id = self.entry_identity(e, entry_engine, &entry_launcher);
             if !model.is_empty() && id.model != *model {
                 continue;
             }
@@ -857,6 +843,31 @@ pub(crate) fn stand_in_light_members(members: &mut [PanelMemberRow]) {
 }
 
 impl Ctx {
+    /// `Resolve-ReviewerIdentity` of a roster entry: (0.6.0, wave 29) with its `auth` and - auth
+    /// endpoint - its `endpoint` (the claude engine; every other engine ignores both).
+    pub(crate) fn entry_identity(
+        &self,
+        e: &RosterEntry,
+        engine: &str,
+        launcher: &str,
+    ) -> ReviewerIdentity {
+        let auth = if engine == "claude" {
+            e.auth.as_str()
+        } else {
+            ""
+        };
+        c3_core::lineage::resolve_reviewer_identity_auth(
+            &self.config,
+            &e.provider,
+            &e.model,
+            &self.openai_base_url,
+            engine,
+            launcher,
+            auth,
+            e.endpoint.as_ref(),
+        )
+    }
+
     fn engine_launch_block(&self, engine: &str) -> String {
         if engine == "muse" {
             get_muse_launch_block()
@@ -1026,14 +1037,7 @@ impl Ctx {
                 &e.engine
             };
             let lau = self.engine_launcher(eng);
-            let id = resolve_reviewer_identity(
-                &self.config,
-                &e.provider,
-                &e.model,
-                &self.openai_base_url,
-                eng,
-                &lau,
-            );
+            let id = self.entry_identity(e, eng, &lau);
             if id.resolved && !id.fingerprint.is_empty() {
                 resolved.push((e.plan.clone(), id.fingerprint, e.provider.clone()));
             }
@@ -1089,6 +1093,14 @@ impl Ctx {
         };
         let cred = if engine == "http" {
             self.http_credential(id, health)
+        } else if engine == "claude" {
+            crate::engines::claude_auth::engine_credential(
+                launcher,
+                &id.auth,
+                id.endpoint.as_ref(),
+                health,
+                self.no_network,
+            )
         } else if engine != "codex" {
             self.engine_credential(engine, launcher, health)
         } else {
@@ -1137,14 +1149,7 @@ impl Ctx {
                 &e.engine
             };
             let entry_launcher = self.engine_launcher(entry_engine);
-            let id = resolve_reviewer_identity(
-                &self.config,
-                &e.provider,
-                &e.model,
-                &self.openai_base_url,
-                entry_engine,
-                &entry_launcher,
-            );
+            let id = self.entry_identity(e, entry_engine, &entry_launcher);
             let block = self.engine_launch_block(entry_engine);
             if !block.is_empty() {
                 skipped.push((
@@ -1213,14 +1218,7 @@ impl Ctx {
                 &e.engine
             };
             let entry_launcher = self.engine_launcher(entry_engine);
-            let id = resolve_reviewer_identity(
-                &self.config,
-                &e.provider,
-                &e.model,
-                &self.openai_base_url,
-                entry_engine,
-                &entry_launcher,
-            );
+            let id = self.entry_identity(e, entry_engine, &entry_launcher);
             let health = if id.resolved {
                 Some(endpoint_health(
                     &self.consults,
@@ -1522,15 +1520,32 @@ impl Ctx {
         health_source: &str,
     ) -> (Row, RowVerdict) {
         let engine_launcher = self.engine_launcher(engine);
-        let model = self
+        // (0.6.0, wave 29) the label's first entry: its model, and its auth and endpoint (claude)
+        let first_entry = self
             .roster
             .entries
             .iter()
             .find(|e| e.provider == label)
-            .map(|e| e.model.clone())
-            .unwrap_or_default();
-        let probe =
-            resolve_reviewer_identity(&self.config, label, &model, "", engine, &engine_launcher);
+            .cloned();
+        let probe = match &first_entry {
+            Some(e) => c3_core::lineage::resolve_reviewer_identity_auth(
+                &self.config,
+                label,
+                &e.model,
+                "",
+                engine,
+                &engine_launcher,
+                if engine == "claude" {
+                    e.auth.as_str()
+                } else {
+                    ""
+                },
+                e.endpoint.as_ref(),
+            ),
+            None => {
+                resolve_reviewer_identity(&self.config, label, "", "", engine, &engine_launcher)
+            }
+        };
         let health = if probe.resolved {
             Some(endpoint_health(
                 &self.consults,
@@ -1601,8 +1616,17 @@ impl Ctx {
                 .unwrap_or_else(|| c3_core::roster_ext::DEFAULT_BASE_URL.to_string());
             format!("http ({base})")
         } else {
+            // (wave 29b, E3) a claude endpoint row names its base URL
+            let route = match &first_entry {
+                Some(e) if engine == "claude" && e.auth == "endpoint" => e
+                    .endpoint
+                    .as_ref()
+                    .map(|ep| format!(" endpoint {}", ep.base_url))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
             format!(
-                "{engine} ({})",
+                "{engine}{route} ({})",
                 if !engine_launcher.is_empty() {
                     engine_launcher.clone()
                 } else {
@@ -2848,10 +2872,22 @@ pub(crate) fn get_muse_launch_block() -> String {
 /// still applies): a recorded usable reply on this endpoint answers without a network check;
 /// muse reads `auth.json`; agy runs `agy models` (45 s, or `CODEX_CONSULT_TEST_LOGIN_TIMEOUT`).
 pub(crate) fn engine_consult_credential(
-    engine: &str,
+    id: &ReviewerIdentity,
     launcher: &str,
     health: Option<&EndpointHealth>,
 ) -> CredentialResult {
+    let engine = id.engine.as_str();
+    // (0.6.0, wave 29) the claude engine: its auth's checks (`claude auth status`, the API key, the
+    // endpoint's token variable)
+    if engine == "claude" {
+        return crate::engines::claude_auth::engine_credential(
+            launcher,
+            &id.auth,
+            id.endpoint.as_ref(),
+            health,
+            false,
+        );
+    }
     let spec = match engine_spec(engine) {
         Some(s) => s,
         None => {
@@ -2890,6 +2926,10 @@ pub(crate) fn engine_consult_credential(
 pub(crate) fn engine_harness(engine: &str, launcher: &str) -> String {
     if engine == "muse" {
         return get_muse_harness(launcher);
+    }
+    // (0.6.0, wave 29) claude: `<launcher> --version` in the child environment (`Get-ClaudeHarness`)
+    if engine == "claude" {
+        return crate::engines::claude_auth::harness(launcher);
     }
     // agy (and any other CLI engine): the launcher file's ProductVersion, else version unknown.
     let ver = launcher_file_version(launcher);

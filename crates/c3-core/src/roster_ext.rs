@@ -361,6 +361,7 @@ impl HttpReviewer {
             stall_sec: -1,
             context_tokens: 0,
             plan: self.plan.clone(),
+            endpoint: None,
         }
     }
 }

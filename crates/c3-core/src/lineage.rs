@@ -15,12 +15,12 @@ use crate::sha256_hex;
 /// deliberately the *subprocess* subset: `http` has no launcher, so it is not here (roster
 /// validation and launcher discovery iterate this list), but it does have a lineage row -
 /// see [`ALL_ENGINE_NAMES`] and [`engine_spec`], which know `http` too (F03-8, F08-7).
-pub const ENGINE_NAMES: &[&str] = &["codex", "agy", "muse"];
+pub const ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude"];
 
 /// Every engine kind that has an identity/lineage row, including the non-subprocess `http`
 /// engine. The single source that keeps `engine.rs`'s `EngineKind` (four) and the lineage
 /// table (previously three) in agreement (F08-7).
-pub const ALL_ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "http"];
+pub const ALL_ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "http"];
 
 /// A row of the engine table (the fields providers/preflight need).
 #[derive(Debug, Clone)]
@@ -67,6 +67,25 @@ pub struct EngineSpec {
     pub transports: &'static [&'static str],
     /// The default mode when `-Mode` is empty and no thread applies (`new` for engines).
     pub default_mode: &'static str,
+    /// (0.6.0, wave 29) The engine forks a thread (`Modes` holds `fork`: codex, claude).
+    pub fork: bool,
+    /// (wave 29) The roster `auth` modes the engine takes (`AuthModes`; the first is the default;
+    /// empty for an engine without one).
+    pub auth_modes: &'static [&'static str],
+    /// (wave 29, item 2) A new thread's id is minted by the bridge (`MintsThread`: claude
+    /// `--session-id`).
+    pub mints_thread: bool,
+    /// (wave 29, D9) The largest prompt the engine takes on stdin (`MaxPromptBytes`; 0 = no bound).
+    pub max_prompt_bytes: u64,
+    /// (wave 29, D5) The members of the engine share ONE scheduling group in a panel
+    /// (`ParallelScope 'engine'`).
+    pub parallel_scope_engine: bool,
+    /// (wave 29, item 1) The directories outside the repository the reviewer must read go to
+    /// `--add-dir` (`AddDirs`).
+    pub add_dirs: bool,
+    /// (wave 29) The argv is quoted by the C runtime rules (`ArgQuote 'crt'`: the schema TEXT
+    /// travels in argv).
+    pub crt_quote: bool,
 }
 
 /// The engine's launcher basenames to look up on PATH, in order (platform-aware).
@@ -94,16 +113,27 @@ pub fn launcher_names(engine: &str) -> Vec<&'static str> {
                 vec!["muse"]
             }
         }
+        "claude" => {
+            if win {
+                vec!["claude.exe", "claude.cmd", "claude"]
+            } else {
+                vec!["claude"]
+            }
+        }
         _ => vec![],
     }
 }
 
-/// Vendor install locations tried after PATH: (env var, relative path). muse only.
+/// Vendor install locations tried after PATH: (env var, relative path). muse: the vendor's
+/// `%LOCALAPPDATA%\Programs\muse\muse.cmd`; (wave 29) claude: the native installer's
+/// `%USERPROFILE%\.local\bin\claude.exe` (`$HOME/.local/bin/claude` elsewhere) - a bridge
+/// started before the install may not see it on PATH.
 pub fn install_launchers(engine: &str) -> Vec<(&'static str, &'static str)> {
-    if engine == "muse" && cfg!(windows) {
-        vec![("LOCALAPPDATA", "Programs\\muse\\muse.cmd")]
-    } else {
-        vec![]
+    match engine {
+        "muse" if cfg!(windows) => vec![("LOCALAPPDATA", "Programs\\muse\\muse.cmd")],
+        "claude" if cfg!(windows) => vec![("USERPROFILE", ".local\\bin\\claude.exe")],
+        "claude" => vec![("HOME", ".local/bin/claude")],
+        _ => vec![],
     }
 }
 
@@ -133,6 +163,13 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             prompt_by_file: false,
             transports: &["output-schema", "prompt-only"],
             default_mode: "",
+            fork: true,
+            auth_modes: &[],
+            mints_thread: false,
+            max_prompt_bytes: 0,
+            parallel_scope_engine: false,
+            add_dirs: false,
+            crt_quote: false,
         }),
         "agy" => Some(EngineSpec {
             name: "agy",
@@ -158,6 +195,13 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             prompt_by_file: false,
             transports: &["native", "prompt-only"],
             default_mode: "new",
+            fork: false,
+            auth_modes: &[],
+            mints_thread: false,
+            max_prompt_bytes: 0,
+            parallel_scope_engine: false,
+            add_dirs: false,
+            crt_quote: false,
         }),
         "muse" => Some(EngineSpec {
             name: "muse",
@@ -183,6 +227,48 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             prompt_by_file: true,
             transports: &["native", "prompt-only"],
             default_mode: "new",
+            fork: false,
+            auth_modes: &[],
+            mints_thread: false,
+            max_prompt_bytes: 0,
+            parallel_scope_engine: false,
+            add_dirs: false,
+            crt_quote: false,
+        }),
+        // (0.6.0, wave 29) Claude Code headless (`claude -p`): the subscription, an API key or a
+        // third-party Anthropic-compatible endpoint (wave 29b). Its replies are
+        // `NN-claudecode-<slug>.*` - the prefix `claude` stays the coordinator's brief prefix.
+        "claude" => Some(EngineSpec {
+            name: "claude",
+            command: "claude",
+            exe_env: "CODEX_CONSULT_CLAUDE_EXE",
+            host_name: "engine:claude",
+            compat_string: "cc-engine-v1|claude",
+            default_provider: "anthropic",
+            model_example: "claude-sonnet-5-5",
+            local_sign_in: false,
+            label: "Claude (claude)",
+            prefix: "claudecode",
+            schema_flag: "--json-schema",
+            reply_source: "the result event's structured_output (else its result text)",
+            thread_flag: "--resume",
+            thread_noun: "session",
+            read_only_note: "claude runs with --restricted and the read tools only (Read, Grep, Glob), each turn's init event must prove it, and the bridge's tree check fails a run that changed anything",
+            sandbox_record: "read-only (requested; claude --restricted --tools Read,Grep,Glob --permission-mode dontAsk --strict-mcp-config, proven by each turn's init event; checked by evidence for tracked and untracked files and the collab directory, not for gitignored paths, submodules or files outside the repository; managed settings and their hooks still apply)",
+            tools_line: "Tools: you may read files of the repository (Read, Grep, Glob); no shell, web or write tool exists in this consultation; make NO file changes; a check that needs a command belongs under `## Requested checks`.",
+            steps_flag: "--max-turns",
+            denial_retry: true,
+            has_usage: true,
+            prompt_by_file: false,
+            transports: &["native", "prompt-only"],
+            default_mode: "new",
+            fork: true,
+            auth_modes: crate::claude::CLAUDE_AUTH_MODES,
+            mints_thread: true,
+            max_prompt_bytes: crate::claude::MAX_PROMPT_BYTES,
+            parallel_scope_engine: true,
+            add_dirs: true,
+            crt_quote: true,
         }),
         // The `http` engine has a lineage row but no launcher: it sends an
         // OpenAI-compatible request (M7), so `command`/`exe_env` are empty and it never
@@ -213,6 +299,13 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             prompt_by_file: false,
             transports: &["output-schema", "prompt-only"],
             default_mode: "new",
+            fork: false,
+            auth_modes: &[],
+            mints_thread: false,
+            max_prompt_bytes: 0,
+            parallel_scope_engine: false,
+            add_dirs: false,
+            crt_quote: false,
         }),
         _ => None,
     }
@@ -253,6 +346,11 @@ pub struct ReviewerIdentity {
     /// `base_url`/`base_url_source` when `OPENAI_BASE_URL` is set), or the raw provider-table
     /// echo for a user table (`Get-ProviderEndpoint`'s `Config`). `Null` until resolved.
     pub provider_config: serde_json::Value,
+    /// (0.6.0, wave 29) The roster `auth` of an engine that takes one (claude: `subscription` |
+    /// `api-key` | `endpoint`; the first is the default); `""` for every other engine.
+    pub auth: String,
+    /// (wave 29b, E1) The claude entry's endpoint (auth `endpoint` only).
+    pub endpoint: Option<crate::claude::ClaudeEndpoint>,
 }
 
 impl ReviewerIdentity {
@@ -274,6 +372,8 @@ impl ReviewerIdentity {
             wire_api: String::new(),
             engine: "codex".into(),
             provider_config: serde_json::Value::Null,
+            auth: String::new(),
+            endpoint: None,
         }
     }
 }
@@ -287,9 +387,35 @@ pub fn resolve_reviewer_identity(
     engine: &str,
     launcher: &str,
 ) -> ReviewerIdentity {
+    resolve_reviewer_identity_auth(
+        config,
+        provider,
+        model,
+        openai_base_url,
+        engine,
+        launcher,
+        "",
+        None,
+    )
+}
+
+/// `Resolve-ReviewerIdentity -Auth -Endpoint` (0.6.0, wave 29/29b): the identity of an engine that
+/// takes a roster `auth` (claude) - `auth` `""` takes the engine's default (subscription), and
+/// auth `endpoint` takes the roster entry's `endpoint`. Every other engine ignores both.
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_reviewer_identity_auth(
+    config: &CodexConfig,
+    provider: &str,
+    model: &str,
+    openai_base_url: &str,
+    engine: &str,
+    launcher: &str,
+    auth: &str,
+    endpoint: Option<&crate::claude::ClaudeEndpoint>,
+) -> ReviewerIdentity {
     let mut id = ReviewerIdentity::blank(&config.path);
     if !engine.is_empty() && engine != "codex" {
-        return resolve_engine_identity(id, engine, provider, model, launcher);
+        return resolve_engine_identity(id, engine, provider, model, launcher, auth, endpoint);
     }
     let mut notes: Vec<String> = Vec::new();
     let mut infos: Vec<String> = Vec::new();
@@ -514,6 +640,8 @@ fn resolve_engine_identity(
     provider: &str,
     model: &str,
     launcher: &str,
+    auth: &str,
+    endpoint: Option<&crate::claude::ClaudeEndpoint>,
 ) -> ReviewerIdentity {
     id.engine = engine.to_string();
     let spec = match engine_spec(engine) {
@@ -527,6 +655,28 @@ fn resolve_engine_identity(
             return id;
         }
     };
+    // (wave 29) an engine that takes a roster `auth` (claude): kept on the identity - the default
+    // its first mode; (wave 29b, E5) auth endpoint takes the entry's endpoint (an error without one)
+    if !spec.auth_modes.is_empty() {
+        if !auth.is_empty() && !spec.auth_modes.contains(&auth) {
+            id.error = format!(
+                "the {engine} engine takes auth {} (got '{auth}')",
+                spec.auth_modes.join(" or ")
+            );
+        }
+        id.auth = if spec.auth_modes.contains(&auth) {
+            auth.to_string()
+        } else {
+            spec.auth_modes[0].to_string()
+        };
+        if id.auth == "endpoint" {
+            id.endpoint = endpoint.cloned();
+            let why = crate::claude::endpoint_problem(endpoint);
+            if !why.is_empty() && id.error.is_empty() {
+                id.error = format!("the {engine} engine's auth endpoint is not usable: {why}");
+            }
+        }
+    }
     if !provider.is_empty() {
         id.provider = provider.to_string();
         id.provider_source = "-Provider".into();
@@ -570,6 +720,43 @@ fn resolve_engine_identity(
         }
         id.provider_config = serde_json::Value::Object(pc);
     }
+    // (wave 29, item 6) claude: `credential_mechanism` = the roster's auth, `auth_method` and
+    // `api_provider` as `claude auth status` reported them (null here: the runtime fills them in
+    // after its preflight, `Get-ClaudeIdentityConfig`); (wave 29b, E5) auth endpoint:
+    // `credential_mechanism endpoint`, `base_url` (as written), `env_key` (the NAME) and `plan` (null
+    // without one) - never the token.
+    if engine == "claude" {
+        let mut pc = serde_json::Map::new();
+        pc.insert(
+            "engine".into(),
+            serde_json::Value::String(engine.to_string()),
+        );
+        pc.insert(
+            "launcher".into(),
+            serde_json::Value::String(launcher.to_string()),
+        );
+        pc.insert(
+            "credential_mechanism".into(),
+            serde_json::Value::String(id.auth.clone()),
+        );
+        if id.auth == "endpoint" {
+            let ep = id.endpoint.as_ref();
+            let s = |v: Option<String>| {
+                v.map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null)
+            };
+            pc.insert("base_url".into(), s(ep.map(|e| e.base_url.clone())));
+            pc.insert("env_key".into(), s(ep.map(|e| e.env_key.clone())));
+            pc.insert(
+                "plan".into(),
+                s(ep.map(|e| e.plan.clone()).filter(|p| !p.is_empty())),
+            );
+        } else {
+            pc.insert("auth_method".into(), serde_json::Value::Null);
+            pc.insert("api_provider".into(), serde_json::Value::Null);
+        }
+        id.provider_config = serde_json::Value::Object(pc);
+    }
     if id.error.is_empty() {
         id.resolved = true;
         // The http engine's endpoint is a provider, so its fingerprint must distinguish one
@@ -577,6 +764,29 @@ fn resolve_engine_identity(
         // itself), so their compat string is fixed.
         let compat = if engine == "http" {
             format!("{}|provider={}", spec.compat_string, id.provider)
+        } else if !spec.auth_modes.is_empty() && id.auth == "endpoint" {
+            // (wave 29b, E5) the ROUTE: the canonical base URL and the token variable's NAME
+            let ep = id.endpoint.as_ref();
+            format!(
+                "{}|endpoint|{}|{}",
+                spec.compat_string,
+                ep.map(|e| e.canonical.as_str()).unwrap_or(""),
+                ep.map(|e| e.env_key.as_str()).unwrap_or("")
+            )
+        } else if !spec.auth_modes.is_empty() {
+            // (D7) the engine + the auth mode + the model family (an Opus limit never marks
+            // Sonnet or the API key out)
+            let family = crate::claude::model_family(&id.model);
+            format!(
+                "{}|{}|{}",
+                spec.compat_string,
+                id.auth,
+                if family.is_empty() {
+                    crate::claude::model_base(&id.model)
+                } else {
+                    family
+                }
+            )
         } else {
             spec.compat_string.to_string()
         };

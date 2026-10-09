@@ -414,6 +414,79 @@ pub fn format_coordinator_text(c: &Coordinator) -> String {
     )
 }
 
+/// [`coordinator_reviewer_warning`] with the reviewer's roster `auth` (0.6.0, wave 29, item 9): a
+/// reviewer of the claude engine (auth subscription or api-key) - the ENGINE fixes the vendor: the
+/// coordinator's provider is compared with `anthropic` (any case) whatever the roster's label, its
+/// engine may be unnamed / codex or claude, and the models after normalising
+/// ([`crate::claude::model_match`]: `[1m]` stripped, an alias equal to any id of its family).
+/// (wave 29b, E5) An endpoint entry is compared as a codex entry is (its label and its model).
+pub fn coordinator_reviewer_warning_auth(
+    c: &Coordinator,
+    reviewer_provider: &str,
+    reviewer_model: &str,
+    reviewer_engine: &str,
+    reviewer_lineage: &str,
+    auth: &str,
+) -> Option<String> {
+    if reviewer_engine == "claude" && auth != "endpoint" {
+        if c.source != "explicit" {
+            return None;
+        }
+        let p = c.provider.as_deref()?;
+        if !p.eq_ignore_ascii_case("anthropic") {
+            return None;
+        }
+        if let Some(e) = &c.engine {
+            if !e.is_empty()
+                && !e.eq_ignore_ascii_case("codex")
+                && !e.eq_ignore_ascii_case("claude")
+            {
+                return None;
+            }
+        }
+        return match &c.model {
+            Some(m) if crate::claude::model_match(m, reviewer_model, false) => Some(format!(
+                "coordinator: {reviewer_lineage} is the coordinator's own model (CODEX_CONSULT_COORDINATOR) - a second opinion from the coordinator's own model, not an independent one"
+            )),
+            Some(_) => None,
+            None => Some(format!(
+                "coordinator: {reviewer_lineage} is a reviewer from the coordinator's own provider (model not named) (CODEX_CONSULT_COORDINATOR) - CODEX_CONSULT_COORDINATOR named the provider but not the model"
+            )),
+        };
+    }
+    coordinator_reviewer_warning(
+        c,
+        reviewer_provider,
+        reviewer_model,
+        reviewer_engine,
+        reviewer_lineage,
+    )
+}
+
+/// `Get-CoordinatorMatch` (the kind only): `own`, `provider` or `""` for a seated reviewer with
+/// its roster `auth` - the claude rule of [`coordinator_reviewer_warning_auth`], else the generic
+/// rule of [`coordinator_reviewer_warning`].
+pub fn coordinator_match_kind_auth(
+    c: &Coordinator,
+    reviewer_provider: &str,
+    reviewer_model: &str,
+    reviewer_engine: &str,
+    auth: &str,
+) -> &'static str {
+    match coordinator_reviewer_warning_auth(
+        c,
+        reviewer_provider,
+        reviewer_model,
+        reviewer_engine,
+        "",
+        auth,
+    ) {
+        Some(w) if w.contains("is the coordinator's own model") => "own",
+        Some(_) => "provider",
+        None => "",
+    }
+}
+
 /// `Format-CoordinatorWarning`: the "the reviewer is the coordinator's own model" warning body
 /// (without the `coordinator: ` prefix conventions of the caller), or `None` when the coordinator
 /// is not an explicit reviewer identity that matches the reviewer being consulted.
@@ -510,7 +583,7 @@ mod tests {
         );
         assert_eq!(
             parse("openai :: gpt-5.1 [bad]", None).unwrap_err(),
-            "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse)"
+            "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse, claude)"
         );
         let ok = parse("openai :: gpt-5.1", None).unwrap();
         assert_eq!(ok.provider.as_deref(), Some("openai"));

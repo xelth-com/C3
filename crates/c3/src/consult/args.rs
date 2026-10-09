@@ -392,7 +392,7 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
     let raw = o.raw || o.purpose == "chore";
 
     // -SchemaTransport value + -Raw exclusion. `native` is a valid value here (the agy/muse
-    // engines take it; the "for the agy and muse engines" refusal for codex, and the
+    // engines take it; the "for the agy, muse and claude engines" refusal for codex, and the
     // "output-schema is refused" refusal for an engine, live in `orchestrate::build_context`,
     // which knows the selected engine). `codex-consult.ps1:1754`.
     let transport_override = o.schema_transport.trim().to_lowercase();

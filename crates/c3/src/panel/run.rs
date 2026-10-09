@@ -540,7 +540,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         })
     {
         return Err((
-            "-MaxModelSteps applies to the muse members of a panel (--max-model-steps); no member of this panel runs the muse engine.".into(),
+            "-MaxModelSteps applies to the members of a panel whose engine has a model-step cap (muse --max-model-steps, claude --max-turns); no member of this panel runs such an engine.".into(),
             1,
         ));
     }
@@ -562,6 +562,15 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                     .unwrap_or_default(),
                 // (wave 29b, E7) the members of one plan share a scheduling group
                 plan: row.map(|m| m.entry.plan.clone()).unwrap_or_default(),
+                // (wave 29, D5) the claude members share one scheduling group
+                scope: row
+                    .map(|m| m.entry.engine.clone())
+                    .and_then(|e| {
+                        c3_core::lineage::engine_spec(&e)
+                            .filter(|s| s.parallel_scope_engine)
+                            .map(|_| format!("engine:{e}"))
+                    })
+                    .unwrap_or_default(),
             }
         })
         .collect();
@@ -668,12 +677,14 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
             })
             .unwrap_or_else(|| "codex".into());
         if let Some(m) = m {
-            if let Some(w) = c3_core::host::coordinator_reviewer_warning(
+            // (0.6.0, wave 29, item 9) a claude seat: the engine fixes the vendor (anthropic)
+            if let Some(w) = c3_core::host::coordinator_reviewer_warning_auth(
                 &coordinator,
                 &m.entry.provider,
                 &m.identity.model,
                 &engine,
                 &p.lineage,
+                &m.identity.auth,
             ) {
                 coordinator_warnings.push(w);
             }

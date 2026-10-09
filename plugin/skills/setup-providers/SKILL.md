@@ -174,8 +174,8 @@ any endpoint that speaks the same wire shape.
 (e.g. `OPENROUTER_API_KEY`); you never ask for it, print it, echo it, log it, read it
 back, or write it to any file. You only ever confirm it is *set* through `c3 providers`.
 
-The plugin's roster validator knows only `codex`/`agy`/`muse` and refuses the whole file
-on any other engine, so an `http` reviewer does **not** go in `reviewers[]`. It goes under
+The plugin's roster validator knows only `codex`/`agy`/`muse`/`claude` and refuses the whole
+file on any other engine, so an `http` reviewer does **not** go in `reviewers[]`. It goes under
 the top-level `ext.c3.reviewers` array, which the plugin validates as an object and
 ignores — C3 reads and validates it and appends the reviewer after the plugin's entries:
 
@@ -237,6 +237,52 @@ c3 consult --task <t> --brief <brief.md> --artifact <file-to-review> \
 `--base-url <https url>` and `--key-env <NAME>` override the defaults; the key itself is
 never a flag. The `http` reviewer receives only the sanitized pack, so the run needs a
 `--brief` and at least one `--artifact` (the files to review, shown in full).
+
+## 4c. Claude through the `claude` engine (Claude Code headless)
+
+The `claude` engine drives Claude Code headless (`claude -p`) as a reviewer - the Claude
+subscription works only through Anthropic's own CLI signed in by the user; c3 never calls the
+API itself for this engine. Full contract: the README, "The `claude` engine".
+
+1. **Install** (ask the user): Claude Code - the native installer puts `claude.exe` into
+   `%USERPROFILE%\.local\bin` (`~/.local/bin/claude` elsewhere), or `npm`. c3 finds it by
+   itself (PATH names `claude.exe`, `claude.cmd`, `claude`, then that native location);
+   otherwise `--engine-exe <path>` or `CODEX_CONSULT_CLAUDE_EXE`. Check: `claude --version`.
+2. **Sign in - the USER does it:** `claude auth login` in their own terminal, or `/login` in
+   an interactive Claude Code session. You never handle a login, a token or a credential.
+3. **Auth - ask the user:** `subscription` (the default: the signed-in Claude subscription;
+   every turn must prove that no API key was used), `api-key` (per-token billing: the USER
+   sets `ANTHROPIC_API_KEY` as a user variable; you never create, print or paste it) or
+   `endpoint` (a coding plan, step 6). An INHERITED `ANTHROPIC_BASE_URL`, Bedrock, Vertex or
+   Foundry setup is out of scope and never reaches the reviewer.
+4. **The model - the USER decides:** required, one of the engine's table: `opus`, `sonnet`,
+   `haiku`, `fable`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
+   `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5-5`,
+   `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5` - each may
+   end with `[1m]`. An alias floats; c3 pins each thread to the id its first turn resolved.
+5. **Roster entry:** `{ "provider": "anthropic", "engine": "claude", "model": "claude-opus-5-5",
+   "auth": "subscription", "panel": "weighty" }` - `codex_config` is refused, `auth` is never
+   `none`. The claude members of one panel run one at a time; `"parallel": {"anthropic": 2}`
+   raises it.
+6. **A coding plan's Anthropic-compatible endpoint (auth `endpoint`):** `{ "provider":
+   "ZAI-claude", "engine": "claude", "model": "glm-5.3", "auth": "endpoint", "endpoint": {
+   "base_url": "https://api.z.ai/api/anthropic", "env_key": "ZAI_API_KEY" }, "plan": "zai" }`.
+   `endpoint` is required with this auth and refused with the others; `env_key` is the NAME
+   of the variable the USER sets; `timeout_ms` is optional (default 3000000). The model is the
+   provider's own id - an Anthropic id (`sonnet`, any `claude-*`) is refused, because only a
+   model the subscription cannot serve proves that the endpoint was billed. Examples: z.ai
+   `https://api.z.ai/api/anthropic` + `glm-5.3`; Xiaomi MiMo
+   `https://token-plan-ams.xiaomimimo.com/anthropic` + `mimo-v2.6-pro`; Kimi Code
+   `https://api.kimi.ai/coding/` + `k3`. Entries that share a `plan` share its quota and run
+   as one scheduling group across engines.
+7. **Check:** `c3 providers` shows the claude row `engine claude` with `ok: signed in
+   (claude.ai subscription)` (an endpoint row: `ok: env ZAI_API_KEY set` - no `claude auth
+   status`, no live request). Then a dry run: `c3 consult --task setup-check --prompt ping
+   --dry-run --engine claude --model sonnet` - its `preflight :`, `child env :` and `command :`
+   lines; an endpoint entry adds an `endpoint    :` line.
+8. **Read-only:** the reviewer has Read, Grep and Glob only; c3 FAILS a claude run when the
+   working tree or the collab directory changed during it. Tell the user not to edit the
+   repository while a claude consultation runs.
 
 ## 5. Verify
 

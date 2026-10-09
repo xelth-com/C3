@@ -140,6 +140,8 @@ mod tree_kills {
             kick_path: None,
             tool_flight: None,
             on_running: Some(&cb),
+            env: None,
+            crt_quote: false,
         };
         let result = run_turn(&req);
         assert!(matches!(result.stop, TurnStop::Timeout), "{tag}: timed out");

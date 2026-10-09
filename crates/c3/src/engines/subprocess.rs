@@ -56,6 +56,14 @@ pub struct SpawnRequest<'a> {
     /// orchestrator uses it to flip the recovery record `launching` -> `running` while the
     /// child is live (`codex-consult.ps1:3330-3339`).
     pub on_running: Option<&'a dyn Fn(u32, String)>,
+    /// (0.6.0, wave 29, D2) The child's WHOLE environment (an allow list: claude) - the inherited
+    /// environment is cleared and only these variables are set; `None` inherits this process's
+    /// environment minus the host markers and the test-mode variables.
+    pub env: Option<&'a [(String, String)]>,
+    /// (wave 29) Quote the argv by the C runtime rules (`ConvertTo-CrtArg`): the claude schema
+    /// TEXT travels in argv - on a batch launcher every argument goes through
+    /// [`c3_core::claude::crt_arg`] verbatim.
+    pub crt_quote: bool,
 }
 
 /// Why [`run_turn`] stopped watching the child.
@@ -416,8 +424,22 @@ pub fn batch_args(argv: &[String]) -> Vec<BatchArg> {
 /// `kill_tree`/`on_running` are unchanged); the arguments follow [`batch_args`]. An `.exe`
 /// launcher's escaping is untouched.
 pub fn apply_launcher_args(cmd: &mut Command, launcher: &str, argv: &[String]) {
+    apply_launcher_args_quoted(cmd, launcher, argv, false)
+}
+
+/// [`apply_launcher_args`] with the C runtime quoting of a claude turn (`crt`): a batch launcher
+/// gets every argument as `ConvertTo-CrtArg` writes it (the plugin's `Start-Process` argument
+/// string), an `.exe` Rust std's own MSVC quoting - which is the C runtime's.
+pub fn apply_launcher_args_quoted(cmd: &mut Command, launcher: &str, argv: &[String], crt: bool) {
     #[cfg(windows)]
     {
+        if crt && is_batch_launcher(launcher) {
+            use std::os::windows::process::CommandExt;
+            for a in argv {
+                cmd.raw_arg(c3_core::claude::crt_arg(a));
+            }
+            return;
+        }
         if is_batch_launcher(launcher) {
             use std::os::windows::process::CommandExt;
             for a in batch_args(argv) {
@@ -450,11 +472,18 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
 
     let program = req.launcher.to_string();
     let mut cmd = Command::new(&program);
-    apply_launcher_args(&mut cmd, req.launcher, req.argv);
+    apply_launcher_args_quoted(&mut cmd, req.launcher, req.argv, req.crt_quote);
     cmd.current_dir(req.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
+    // (wave 29, D2) an allow-listed environment replaces the inherited one
+    if let Some(env) = req.env {
+        cmd.env_clear();
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+    }
     // (wave 27 / 27b) the reviewer CLI never inherits the coordinator's host markers.
     super::scrub_host_markers(&mut cmd);
 
