@@ -112,6 +112,14 @@
                                                      "note":  "Locked removal from the current spool preserves concurrent appends; reread failure now also avoids replacement.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -334,6 +342,14 @@
                                                      "note":  "Failed DELETE retains the saved identity and proof in the pending transaction.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -457,6 +473,14 @@
                                                      "note":  "Retains the earlier closure for the implementation coverage map and telemetry shim; aggregate harness passes are not full behavioral certification.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -571,6 +595,14 @@
                                                      "note":  "Retains the earlier correction acknowledging commit-before-spool ordering.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -690,6 +722,14 @@
                                                      "note":  "The inline re-read anchor was not revalidated in this review.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -813,6 +853,14 @@
                                                      "note":  "Full cross-engine and cross-repository plan behavior is outside this review.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -919,6 +967,14 @@
                                                      "note":  "The plan continues to treat native Messages as a separately benchmarked candidate rather than inheriting the measured savings.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1039,6 +1095,14 @@
                                                      "note":  "The process-name Unicode fix was not revalidated.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1163,6 +1227,14 @@
                                                      "note":  "Windows local-zone boundary parsing was not revalidated.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1292,6 +1364,14 @@
                                                      "note":  "Required-light execution and ledger metadata were not revalidated.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1405,6 +1485,14 @@
                                                      "note":  "The reported historical Samoa fix belongs to another change and was not inspected here.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1500,6 +1588,14 @@
                                                      "note":  "Configuration items are split at \u0027=\u0027 before comparing keys; the exact Unicode regression fixture is present.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1595,6 +1691,14 @@
                                                      "note":  "Flush rechecks deletion state under both locks, and forget holds both locks. Finding #1 concerns the separate complaint sender.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1690,6 +1794,14 @@
                                                      "note":  "The original premature-marker-removal and salt-before-spool ordering are repaired. Finding #2 identifies a separate identity-read failure during cleanup.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1780,6 +1892,14 @@
                                                      "note":  "A failed current-spool reread returns an error without replacing the file; NotFound also performs no replacement.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1875,6 +1995,14 @@
                                                      "note":  "Ordinary legacy event labels are rebuilt through closed classes. Finding #3 concerns duplicate-key raw bytes, which normal constructors do not emit.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -1974,6 +2102,14 @@
                                                      "note":  "Ledger coordinators and rating actors use the shared resolver with unique-model inference and Codex defaults; targeted fixtures cover the reported cases.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -2074,6 +2210,14 @@
                                                      "note":  "The brief assigns the implemented journal fix to the separate wave-2b follow-up review.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The read/rewrite byte-loss paths are fixed and covered by the two RC1 journal-fault tests; the retained-replay invariant is tracked by finding #1.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -2170,6 +2314,14 @@
                                                      "note":  "The implemented requirement-launcher fix is outside the requested patch set.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The single-run requirement check now seeds the resolved `--engine-exe` launcher and has an end-to-end fixture.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -2262,6 +2414,14 @@
                                                      "note":  "The implemented requirement-plan fix is outside the requested patch set.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The requirement check retains the full roster for plan quota evaluation and has a sibling-route outage fixture.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -2353,6 +2513,14 @@
                                                      "note":  "The implemented PowerShell pointer fix is outside the requested patch set.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The default hook pointer uses the PowerShell call operator and has Windows PowerShell/pwsh coverage.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -2445,6 +2613,14 @@
                                                      "note":  "The implemented AGY tool-flight fix is outside the requested patch set.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "AGY tool steps now open and close shared tool-flight tracking with the doubled quiet bound and named stalls.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -2538,6 +2714,14 @@
                                                      "note":  "Commit 5c9f8a0 writes the fresh local-only cleaning transaction before cleanup and removes nothing if that write fails; interruption and write-failure fixtures are present.",
                                                      "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                                      "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                                 },
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                                  }
                                              ]
                      },
@@ -2672,7 +2856,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                                 }
                                              ]
                      },
                      {
@@ -2743,7 +2934,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                                 }
                                              ]
                      },
                      {
@@ -2803,6 +3001,93 @@
                                              "evidence":  "",
                                              "base_commit":  "a2059bf8b8cd709fea3a4a1505089a5e589d2ac1",
                                              "tree_sha256":  "bac511c8e7e2f66772cd1aa89652ab2bb5ce8655dd8a0edc8e030569491d37ea"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  12,
+                                                     "when":  "2026-10-09T08:49:43+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside dc905dc..4b51226; not reviewed in this consultation.",
+                                                     "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                                     "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F22-1",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  1563
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  1915
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  1942
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  1960
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  2028
+                                           }
+                                       ],
+                         "claim":  "After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false.",
+                         "trigger":  "Make `\u003cjournal\u003e.bad` unwritable so the whole journal remains, apply a valid journal record, then let normal updates age it out or reach the 500-endpoint cap before another replay.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/health.rs:1915-1931",
+                                              "observation":  "Journal records are deduplicated only against keys currently present in `endpoints`."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/health.rs:1941-1963",
+                                              "observation":  "Every update prunes records older than 24 hours and drains the oldest entries above 500 before writing."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/health.rs:2028-2035",
+                                              "observation":  "On `.bad` archival failure the journal is intentionally retained whole and replayed on a later update."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "replay sequence across updates",
+                                              "observation":  "Once the applied key is removed by age or cap, the retained journal line is no longer recognized as already applied and can alter the next written endpoint set."
+                                          }
+                                      ],
+                         "verification":  "Add a deterministic test with an unwritable `.bad` path, one recent journal record, and 500 newer endpoint records; run two updates and assert the journal record is neither resurrected nor allowed to displace another endpoint.",
+                         "remedy":  "Persist a monotonic journal applied-sequence marker or equivalent durable consumed state, and truncate the journal by that sequence independently of endpoint retention; do not use the mutable endpoint set as the only replay ledger.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  12,
+                                        "reply":  "handoffs/22-codex-wave2b-round2-mimo.md",
+                                        "thread":  "01a11f5c-bb07-7bd0-b5fe-55b02fbe4c10",
+                                        "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                        "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T08:49:43+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                             "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
                                          }
                                      ],
                          "reviewer_checks":  [

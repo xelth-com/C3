@@ -1,0 +1,204 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "HOLD — finding #1 is a blocker: the F11-1 replay invariant is not harmless after retention or cap eviction.",
+  "reply_markdown": "**Q1.** Yes, narrowly. `update_machine_health` deduplicates against the current endpoint keys, then applies 24-hour retention and the 500-record cap. If `.bad` archival fails and the journal remains, an applied record that is later evicted can be replayed as new, changing the final endpoint set and displacing another record; if it is already stale at replay it is parsed but pruned before the write. Byte preservation is fixed, but the claimed harmless/once replay is not durable.\n\n**Q2.** No case under the stated shared-plan contract. `panel_members_of(Some(required))` judges only required rows, while `plan_quota` sees every route because a quota on any route is supposed to block the plan. A wrong refusal would require a misassigned `plan` or stale/colliding fingerprint, which is configuration or identity error rather than a defect in keeping the full roster.\n\n**Q3.** HOLD. F11-2 through F11-5 and the F11-1 byte-loss paths are fixed, but finding #1 leaves the F11-1 replay invariant false in the retained-journal eviction case.\n\n## Requested checks\n`RC1` (finding #1) — In `C:\\Users\\Dmytro\\C3`, with workspace-write, add a focused `c3-core` test that makes `<journal>.bad` unwritable, applies one recent journal record, adds 500 newer endpoints to force cap eviction, then runs `apply_machine_health_journal` again; run `cargo test -p c3-core machine_health_tests`. Observe whether the evicted record is resurrected and another endpoint displaced; budget 20 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1563
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1915
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1942
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1960
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2028
+        }
+      ],
+      "claim": "After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false.",
+      "trigger": "Make `<journal>.bad` unwritable so the whole journal remains, apply a valid journal record, then let normal updates age it out or reach the 500-endpoint cap before another replay.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1915-1931",
+          "observation": "Journal records are deduplicated only against keys currently present in `endpoints`."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1941-1963",
+          "observation": "Every update prunes records older than 24 hours and drains the oldest entries above 500 before writing."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:2028-2035",
+          "observation": "On `.bad` archival failure the journal is intentionally retained whole and replayed on a later update."
+        },
+        {
+          "kind": "inferred",
+          "reference": "replay sequence across updates",
+          "observation": "Once the applied key is removed by age or cap, the retained journal line is no longer recognized as already applied and can alter the next written endpoint set."
+        }
+      ],
+      "verification": "Add a deterministic test with an unwritable `.bad` path, one recent journal record, and 500 newer endpoint records; run two updates and assert the journal record is neither resurrected nor allowed to displace another endpoint.",
+      "remedy": "Persist a monotonic journal applied-sequence marker or equivalent durable consumed state, and truncate the journal by that sequence independently of endpoint retention; do not use the mutable endpoint set as the only replay ledger.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F11-1",
+      "status": "fixed",
+      "note": "The read/rewrite byte-loss paths are fixed and covered by the two RC1 journal-fault tests; the retained-replay invariant is tracked by finding #1."
+    },
+    {
+      "id": "F11-2",
+      "status": "fixed",
+      "note": "The single-run requirement check now seeds the resolved `--engine-exe` launcher and has an end-to-end fixture."
+    },
+    {
+      "id": "F11-3",
+      "status": "fixed",
+      "note": "The requirement check retains the full roster for plan quota evaluation and has a sibling-route outage fixture."
+    },
+    {
+      "id": "F11-4",
+      "status": "fixed",
+      "note": "The default hook pointer uses the PowerShell call operator and has Windows PowerShell/pwsh coverage."
+    },
+    {
+      "id": "F11-5",
+      "status": "fixed",
+      "note": "AGY tool steps now open and close shared tool-flight tracking with the doubled quiet bound and named stalls."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Outside dc905dc..4b51226; not reviewed in this consultation."
+    }
+  ],
+  "unproven": [
+    "No tests or harnesses were executed in this read-only consultation; the 611-test and harness results are inherited from the handoff.",
+    "The retention/cap eviction replay counterexample was deduced from code and has not yet been reproduced.",
+    "The Q2 conclusion assumes truthful plan assignments and stable route fingerprints; independent quotas hidden behind a shared plan label were not tested.",
+    "PowerShell 5.1/pwsh execution and AGY timing behavior were read but not independently run here."
+  ],
+  "first_run_checklist": [
+    "Run `cargo test --workspace -j 2` from `C:\\Users\\Dmytro\\C3` with workspace-write and require exit 0 with 611 tests.",
+    "Run the five wave-2e end-to-end fixtures for required reviewers, hook pointer execution, and AGY tool stalls; require all to pass.",
+    "Run the two RC1 journal-fault tests and observe failure results, byte-for-byte journal preservation, and one subsequent replay.",
+    "Before believing acceptance, run the RC1 retention/cap replay fixture and observe that a retained journal record cannot resurrect or displace an endpoint."
+  ]
+}

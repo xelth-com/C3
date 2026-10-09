@@ -2022,6 +2022,452 @@
                                        "wall_seconds":  209.8,
                                        "finished_at":  "2026-10-09T08:26:03+02:00",
                                        "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  11,
+                                       "when":  "2026-10-09T08:28:17+02:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "6ef7f5f5-0d31-4260-99aa-c6a4b48569c6",
+                                       "consult_ref":  "3f4446a5-2b35-47c9-b428-9d1c925064d0",
+                                       "reviewer":  {
+                                                        "provider":  "kimi",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "k3",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "codex",
+                                                        "harness":  "codex-cli 0.155.1",
+                                                        "provider_fingerprint":  "8f7901d404b5b5b2de84f2eb7f01cb71862a7125210fdebca1e70b53e1d19575",
+                                                        "provider_config":  {
+                                                                                "base_url":  "https://api.kimi.ai/coding/v1",
+                                                                                "name":  "Kimi Code membership (Moonshot, overseas)",
+                                                                                "wire_api":  "responses"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "kimi :: k3",
+                                       "coordinator":  {
+                                                           "provider":  "anthropic",
+                                                           "model":  "claude-fable-5-1",
+                                                           "engine":  "codex",
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "explicit",
+                                                           "in_roster":  false,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: env KIMI_API_KEY set",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json",
+                                                      "position":  8,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "01a11f59-2817-7241-a06a-e91fc8754c6b",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  {
+                                                             "from":  "fork",
+                                                             "to":  "new",
+                                                             "reason":  "the fork thread 01a11e8d-d63f-72f2-945d-71e9a6088e76 last carried 3392137 tokens; with this prompt (est. 7036) that exceeds 80% of the reviewer\u0027s context window (256000 tokens)"
+                                                         },
+                                       "command":  "codex exec --sandbox read-only --color never --json -m k3 -c model_reasoning_effort=\"high\" -c model_provider=\"kimi\" -c model_context_window=256000 -c model_auto_compact_token_limit=204800 -o C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-last-6e2cdafd704a4a5385c9bf49b285341e.md -",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/parity-0.6.1-2026-10-08/handoffs/16-claude-wave2b-round2.md",
+                                       "range":  {
+                                                     "spec":  "dc905dc..4b51226",
+                                                     "files":  8,
+                                                     "insertions":  951,
+                                                     "deletions":  45,
+                                                     "lines":  996
+                                                 },
+                                       "prompt_chars":  24090,
+                                       "reply":  "handoffs/21-codex-wave2b-round2-kimi.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/21-codex-wave2b-round2-kimi.events.jsonl",
+                                       "partial_reply":  "handoffs/21-codex-wave2b-round2-kimi.partial.md",
+                                       "model":  "k3",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "kimi-v1",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  {
+                                                              "tokens":  256000,
+                                                              "auto_compact_limit":  204800,
+                                                              "items":  [
+                                                                            "model_context_window=256000",
+                                                                            "model_auto_compact_token_limit=204800"
+                                                                        ]
+                                                          },
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-09T08:28:17+02:00",
+                                       "structured":  false,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                       "reviewed_revision":  "a2943d8",
+                                       "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0",
+                                       "tree_sha256_after":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "13516d04f7c27e13950607f51cd4f765c3c893829bb0b5e5704e709c4e37e388",
+                                       "brief_sha256_after":  "13516d04f7c27e13950607f51cd4f765c3c893829bb0b5e5704e709c4e37e388",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (2 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  null,
+                                       "bridge_outcome":  "failed: codex exit 1 - unexpected status 403 Forbidden: You\u0027ve reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends. To continue now, purchase extra usage or upgrade your plan: https://www.kimi.com/membership/subscription?tab=quota, url: https://api.kimi.ai/coding/v1/responses, cf-ray: a47b5728dd61cee6-FRA",
+                                       "provider_failure":  {
+                                                                "class":  "quota",
+                                                                "kind":  "",
+                                                                "code":  "",
+                                                                "message":  "unexpected status 403 Forbidden: You\u0027ve reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends. To continue now, purchase extra usage or upgrade your plan: https://",
+                                                                "when":  "2026-10-09T08:31:10+02:00",
+                                                                "retry_after":  "2026-10-09T13:31:10+02:00",
+                                                                "hint":  ""
+                                                            },
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  "unknown",
+                                       "engine_run":  null,
+                                       "wall_seconds":  172,
+                                       "finished_at":  "2026-10-09T08:31:11+02:00",
+                                       "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  12,
+                                       "when":  "2026-10-09T08:32:12+02:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "596390dd-2cc7-45ea-9253-e8a170b3fc3d",
+                                       "consult_ref":  "fda6b6e8-a9bd-437d-9e4d-63aec9ae21b2",
+                                       "reviewer":  {
+                                                        "provider":  "mimo",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "mimo-v2.6-pro",
+                                                        "model_source":  "roster",
+                                                        "engine":  "codex",
+                                                        "harness":  "codex-cli 0.155.1",
+                                                        "provider_fingerprint":  "47cd6ee7e4ff9e9edca22c003d603d4c7fd722e8b85c63b4d02ef69f97ed8051",
+                                                        "provider_config":  {
+                                                                                "base_url":  "https://token-plan-ams.xiaomimimo.com/v1",
+                                                                                "name":  "Xiaomi MiMo Token Plan",
+                                                                                "wire_api":  "responses"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "mimo :: mimo-v2.6-pro",
+                                       "coordinator":  {
+                                                           "provider":  "anthropic",
+                                                           "model":  "claude-fable-5-1",
+                                                           "engine":  "codex",
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "explicit",
+                                                           "in_roster":  false,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: env MIMO_API_KEY set",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json",
+                                                      "position":  3,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model",
+                                                                      "codex_config"
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "01a11f5c-bb07-7bd0-b5fe-55b02fbe4c10",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "codex exec --sandbox read-only --color never --json -m mimo-v2.6-pro -c model_reasoning_effort=\"high\" -c model_provider=\"mimo\" -c model_catalog_json=\"C:/Users/Dmytro/.codex/model-catalogs.json\" -o C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-last-d9cfd2c0ee6b4f67814ea20812252953.md -",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/parity-0.6.1-2026-10-08/handoffs/16-claude-wave2b-round2.md",
+                                       "range":  {
+                                                     "spec":  "dc905dc..4b51226",
+                                                     "files":  8,
+                                                     "insertions":  951,
+                                                     "deletions":  45,
+                                                     "lines":  996
+                                                 },
+                                       "prompt_chars":  23611,
+                                       "reply":  "handoffs/22-codex-wave2b-round2-mimo.md",
+                                       "reply_json":  "handoffs/22-codex-wave2b-round2-mimo.reply.json",
+                                       "events":  "handoffs/22-codex-wave2b-round2-mimo.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "mimo-v2.6-pro",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "mimo-v1",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+                                                            "model_catalog_json=\"C:/Users/Dmytro/.codex/model-catalogs.json\""
+                                                        ],
+                                       "extra_config_source":  "roster",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-09T08:32:12+02:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
+                                       "reviewed_revision":  "a2943d8",
+                                       "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0",
+                                       "tree_sha256_after":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "13516d04f7c27e13950607f51cd4f765c3c893829bb0b5e5704e709c4e37e388",
+                                       "brief_sha256_after":  "13516d04f7c27e13950607f51cd4f765c3c893829bb0b5e5704e709c4e37e388",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (8 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  null,
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "HOLD",
+                                       "verdict_reason":  "HOLD — finding #1 is a blocker: the F11-1 replay invariant is not harmless after retention or cap eviction.",
+                                       "findings":  {
+                                                        "blocker":  1,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+                                                           "F22-1"
+                                                       ],
+                                       "prior_findings":  [
+                                                              {
+                                                                  "id":  "F02-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-6",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-7",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-8",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F06-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-6",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-1",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-2",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-3",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-4",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-5",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F14-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F19-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F19-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F19-3",
+                                                                  "status":  "not-checked"
+                                                              }
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  {
+                                                     "input_tokens":  1156796,
+                                                     "cached_input_tokens":  147456,
+                                                     "output_tokens":  19873,
+                                                     "reasoning_output_tokens":  15627
+                                                 },
+                                       "compactions":  null,
+                                       "engine_run":  null,
+                                       "wall_seconds":  1049.6,
+                                       "finished_at":  "2026-10-09T08:49:43+02:00",
+                                       "commit_wait_ms":  0
                                    }
                                ]
               }

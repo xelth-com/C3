@@ -1,0 +1,84 @@
+# Handoff 22 - Codex: wave2b-round2-mimo
+
+Date: 2026-10-09 08:32 local. Author: Codex (model mimo-v2.6-pro, effort high), Codex CLI 0.155.1.
+Reviewer: mimo :: mimo-v2.6-pro (provider from -Provider, model from roster; endpoint https://token-plan-ams.xiaomimimo.com/v1, wire_api: responses; provider fingerprint 47cd6ee7e4ff; harness codex-cli 0.155.1).
+Preflight: ok: env MIMO_API_KEY set.
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 3 of 12 for -Provider mimo (model, codex_config applied).
+Effort: high sent (requested high, mapping mimo-v1, by caps-v1: token-plan-ams.xiaomimimo.com, mimo-v2.6-pro; not confirmed by the provider). Consultation id: 596390dd-2cc7-45ea-9253-e8a170b3fc3d.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only, purpose: diff-review). Argv: `codex exec --sandbox read-only --color never --json -m mimo-v2.6-pro -c model_reasoning_effort="high" -c model_provider="mimo" -c model_catalog_json="C:/Users/Dmytro/.codex/model-catalogs.json" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-d9cfd2c0ee6b4f67814ea20812252953.md -` (prompt on stdin).
+Parent thread: (none - new thread; no thread of lineage mimo :: mimo-v2.6-pro in this task's ledger; other lineage(s): kimi :: k3, openai :: gpt-6-astra). Result thread: `01a11f5c-bb07-7bd0-b5fe-55b02fbe4c10` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/16-claude-wave2b-round2.md` (sha256 13516d04f7c2). Reviewed: a2943d8, base a2943d8a447c643d25fca481351693f6493508ab, tree sha256 1ac9e910cd6a, 0 changed files.
+Bridge outcome: usable reply. Wall time: 1049.6 s. Tokens: in 1156796 (cached 147456), out 19873, reasoning 15627.
+Timeout: 2400 s (the default of purpose diff-review); continuation after a timeout kill: up to 900 s. Range: `dc905dc..4b51226` - the range changes 8 files, 996 lines (951 insertions, 45 deletions).
+Verdict: HOLD - HOLD — finding #1 is a blocker: the F11-1 replay invariant is not harmless after retention or cap eviction. Findings: 1 blocker, 0 major, 0 minor, 0 note (F22-1, tracked in `findings.json`). Structured reply (prompt-only transport): `handoffs/22-codex-wave2b-round2-mimo.reply.json`.
+Raw event stream: `handoffs/22-codex-wave2b-round2-mimo.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+**Q1.** Yes, narrowly. `update_machine_health` deduplicates against the current endpoint keys, then applies 24-hour retention and the 500-record cap. If `.bad` archival fails and the journal remains, an applied record that is later evicted can be replayed as new, changing the final endpoint set and displacing another record; if it is already stale at replay it is parsed but pruned before the write. Byte preservation is fixed, but the claimed harmless/once replay is not durable.
+
+**Q2.** No case under the stated shared-plan contract. `panel_members_of(Some(required))` judges only required rows, while `plan_quota` sees every route because a quota on any route is supposed to block the plan. A wrong refusal would require a misassigned `plan` or stale/colliding fingerprint, which is configuration or identity error rather than a defect in keeping the full roster.
+
+**Q3.** HOLD. F11-2 through F11-5 and the F11-1 byte-loss paths are fixed, but finding #1 leaves the F11-1 replay invariant false in the retained-journal eviction case.
+
+## Requested checks
+`RC1` (finding #1) — In `C:\Users\Dmytro\C3`, with workspace-write, add a focused `c3-core` test that makes `<journal>.bad` unwritable, applies one recent journal record, adds 500 newer endpoints to force cap eviction, then runs `apply_machine_health_journal` again; run `cargo test -p c3-core machine_health_tests`. Observe whether the evicted record is resurrected and another endpoint displaced; budget 20 minutes.
+
+---
+
+### Findings
+
+- **F22-1** [blocker] `crates/c3-core/src/health.rs:1563`, `crates/c3-core/src/health.rs:1915`, `crates/c3-core/src/health.rs:1942`, `crates/c3-core/src/health.rs:1960`, `crates/c3-core/src/health.rs:2028` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false. Trigger: Make `<journal>.bad` unwritable so the whole journal remains, apply a valid journal record, then let normal updates age it out or reach the 500-endpoint cap before another replay. Evidence: read-code: Journal records are deduplicated only against keys currently present in `endpoints`.; read-code: Every update prunes records older than 24 hours and drains the oldest entries above 500 before writing.; read-code: On `.bad` archival failure the journal is intentionally retained whole and replayed on a later update.; inferred: Once the applied key is removed by age or cap, the retained journal line is no longer recognized as already applied and can alter the next written endpoint set. Verify: Add a deterministic test with an unwritable `.bad` path, one recent journal record, and 500 newer endpoint records; run two updates and assert the journal record is neither resurrected nor allowed to displace another endpoint. Remedy: Persist a monotonic journal applied-sequence marker or equivalent durable consumed state, and truncate the journal by that sequence independently of endpoint retention; do not use the mutable endpoint set as the only replay ledger.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F02-3 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F02-4 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F02-5 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F02-6 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F02-7 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F02-8 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F04-1 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F04-2 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F04-3 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F06-1 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F09-1 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F09-2 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F09-3 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F09-4 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F09-5 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F09-6 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F11-1 - fixed - The read/rewrite byte-loss paths are fixed and covered by the two RC1 journal-fault tests; the retained-replay invariant is tracked by finding #1.
+- F11-2 - fixed - The single-run requirement check now seeds the resolved `--engine-exe` launcher and has an end-to-end fixture.
+- F11-3 - fixed - The requirement check retains the full roster for plan quota evaluation and has a sibling-route outage fixture.
+- F11-4 - fixed - The default hook pointer uses the PowerShell call operator and has Windows PowerShell/pwsh coverage.
+- F11-5 - fixed - AGY tool steps now open and close shared tool-flight tracking with the doubled quiet bound and named stalls.
+- F14-1 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F19-1 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F19-2 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+- F19-3 - not-checked - Outside dc905dc..4b51226; not reviewed in this consultation.
+
+## Verdict: HOLD
+
+HOLD — finding #1 is a blocker: the F11-1 replay invariant is not harmless after retention or cap eviction.
+
+### Blockers
+
+- **F22-1** `crates/c3-core/src/health.rs:1563`, `crates/c3-core/src/health.rs:1915`, `crates/c3-core/src/health.rs:1942`, `crates/c3-core/src/health.rs:1960`, `crates/c3-core/src/health.rs:2028` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false. Verify: Add a deterministic test with an unwritable `.bad` path, one recent journal record, and 500 newer endpoint records; run two updates and assert the journal record is neither resurrected nor allowed to displace another endpoint. Remedy: Persist a monotonic journal applied-sequence marker or equivalent durable consumed state, and truncate the journal by that sequence independently of endpoint retention; do not use the mutable endpoint set as the only replay ledger.
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542`, `crates/c3/src/telemetry/complaint.rs:240`, `crates/c3/src/telemetry/complaint.rs:673` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending'). Verify: Add a test: forget_with with ForgetRequest{public_ref: None, local: true, yes: true} and an injected remove failing on spool.ndjson; assert whether forget-pending.json exists and whether a subsequent flush posts the retained events. Remedy: In the None arm, persist the transaction (phase cleaning) via write_transaction before calling finish_cleanup (or pass phase confirmed so run_local_cleanup writes it), so an interruption leaves the blocking, resumable record the docs and the CLI message promise.
+
+### Unproven scenarios
+
+- No tests or harnesses were executed in this read-only consultation; the 611-test and harness results are inherited from the handoff.
+- The retention/cap eviction replay counterexample was deduced from code and has not yet been reproduced.
+- The Q2 conclusion assumes truthful plan assignments and stable route fingerprints; independent quotas hidden behind a shared plan label were not tested.
+- PowerShell 5.1/pwsh execution and AGY timing behavior were read but not independently run here.
+
+### First-run checklist (observable)
+
+- [ ] Run `cargo test --workspace -j 2` from `C:\Users\Dmytro\C3` with workspace-write and require exit 0 with 611 tests.
+- [ ] Run the five wave-2e end-to-end fixtures for required reviewers, hook pointer execution, and AGY tool stalls; require all to pass.
+- [ ] Run the two RC1 journal-fault tests and observe failure results, byte-for-byte journal preservation, and one subsequent replay.
+- [ ] Before believing acceptance, run the RC1 retention/cap replay fixture and observe that a retained journal record cannot resurrect or displace an endpoint.
