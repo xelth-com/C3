@@ -832,18 +832,18 @@ fn is_instance_id(v: &str) -> bool {
 /// `other`, `unknown` kept); the purpose, the outcome, the mark, the judge, `os` and the versions
 /// through their own closed sets; ids only of their own shapes (`consult_ref` a guid, the instance
 /// a SHA-256). An event C3 queued before wave 2 (the raw event, its labels as typed) leaves with
-/// `other` where its labels were; an event of the current constructors closes to itself and is sent
-/// with its exact bytes. `None` - the event is discarded, with a local diagnostic - for a body that
-/// is no C3 consultation or rating event, or that has no instance id or no time of this client's
-/// shape (nothing could attribute it).
+/// `other` where its labels were; an event of the current constructors closes to itself. `None` -
+/// the event is discarded, with a local diagnostic - for a body that is no C3 consultation or rating
+/// event, or that has no instance id or no time of this client's shape (nothing could attribute it).
+///
+/// (wave 2g, F19-3) What leaves is ALWAYS the serialised reconstruction, never the queued bytes: a
+/// body can hide a value the parse dropped - a duplicate key (`"title":"customer-acme"` before the
+/// real `title`: the parse keeps the last one), whitespace, escapes - so even a body whose parsed
+/// value equals its reconstruction is re-serialised. The reconstruction keeps the constructors' key
+/// order (`preserve_order`), so a current event still leaves byte for byte as it was built.
 pub(crate) fn close_event_body(body: &str) -> Option<String> {
     let v: Value = serde_json::from_str(body).ok()?;
-    let closed = close_event(&v)?;
-    if closed == v {
-        Some(body.to_string())
-    } else {
-        Some(closed.to_string())
-    }
+    close_event(&v).map(|closed| closed.to_string())
 }
 
 fn close_event(v: &Value) -> Option<Value> {
@@ -1269,7 +1269,9 @@ mod tests {
 
     /// (F09-5) Closing is the identity on what the current constructors build: a queued event of
     /// this build is sent with its EXACT bytes (consultations usable and failed, an OpenRouter
-    /// model, no model, no purpose; ratings with every judge source).
+    /// model, no model, no purpose; ratings with every judge source). (wave 2g, F19-3) Those bytes
+    /// are the SERIALISED reconstruction, not the queued body - the comparison checks the parsed
+    /// value and the constructors' key order at once.
     #[test]
     fn a_current_event_closes_to_its_exact_bytes() {
         use crate::telemetry::{Event, RatingEvent, RatingInput};
@@ -1325,11 +1327,45 @@ mod tests {
         }
         for b in &bodies {
             assert_eq!(close_event_body(b).as_deref(), Some(b.as_str()), "{b}");
+            // the same event in other bytes (whitespace) leaves as the constructors built it
+            let spaced = serde_json::to_string_pretty(
+                &serde_json::from_str::<serde_json::Value>(b).unwrap(),
+            )
+            .unwrap();
+            assert_ne!(&spaced, b);
+            assert_eq!(
+                close_event_body(&spaced).as_deref(),
+                Some(b.as_str()),
+                "{b}"
+            );
         }
         // what cannot be attributed is discarded: another app, no instance id, no time
         assert!(close_event_body(&bodies[0].replace("\"c3\"", "\"other-app\"")).is_none());
         assert!(close_event_body(&bodies[0].replace(&iid, "testinstance")).is_none());
         assert!(close_event_body(r#"{"app_id":"c3","instance_id":"x"}"#).is_none());
         assert!(close_event_body("not json").is_none());
+    }
+
+    /// (wave 2g, F19-3) A duplicate key hides a private value from the parse (the last one wins):
+    /// a current event with `"title":"customer-acme",` inserted before its real title closes to the
+    /// event without it - the queued bytes never leave.
+    #[test]
+    fn a_duplicate_key_never_carries_its_hidden_value_out() {
+        use crate::telemetry::Event;
+        let mut e = LedgerEntry {
+            purpose: "diff-review".into(),
+            bridge_outcome: "usable reply".into(),
+            ..Default::default()
+        };
+        e.reviewer.engine = "codex".into();
+        let body =
+            serde_json::to_string(&Event::from_ledger(&e, Some(2), &"ab".repeat(32))).unwrap();
+        let forged = body.replacen("\"title\":", "\"title\":\"customer-acme\",\"title\":", 1);
+        assert!(forged.contains("customer-acme"));
+        let parsed: Value = serde_json::from_str(&forged).unwrap();
+        assert_eq!(parsed, serde_json::from_str::<Value>(&body).unwrap());
+        let closed = close_event_body(&forged).expect("a valid event");
+        assert!(!closed.contains("customer-acme"), "{closed}");
+        assert_eq!(closed, body);
     }
 }

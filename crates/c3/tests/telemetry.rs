@@ -1387,6 +1387,302 @@ fn legacy_queued_events_never_send_a_private_label_rc4() {
     assert_eq!(evs[2]["details"]["outcome"], "usable");
 }
 
+// --------------------------------------------------------------------------- wave 2g (F19-1..F19-3)
+
+/// A complaint in a thread whose confirmation callback is a barrier: it hands over the payload it
+/// shows, then waits for the answer (`true`: confirmed).
+fn complaint_at_barrier(
+    hub: &str,
+    dir: &std::path::Path,
+) -> (
+    thread::JoinHandle<telemetry::Result<Option<String>>>,
+    Receiver<String>,
+    std::sync::mpsc::Sender<bool>,
+) {
+    let (shown, payload) = channel::<String>();
+    let (answer, answered) = channel::<bool>();
+    let (h, d) = (hub.to_string(), dir.to_path_buf());
+    let complaint = thread::spawn(move || {
+        telemetry::complain_to(&h, &d, "the panel hung on peak windows", None, |p| {
+            shown.send(p.to_string()).unwrap();
+            answered.recv().unwrap()
+        })
+    });
+    (complaint, payload, answer)
+}
+
+/// (F19-1 / RC1) A complaint shows the payload of instance A and waits in its confirmation (a
+/// barrier); meanwhile a forget is CONFIRMED by the intake and removes A locally; then the user
+/// confirms: nothing is posted under A, no reference is written into the cleared directory and no
+/// new instance is made. Again with a forget whose DELETE fails (a pending deletion): refused, no
+/// POST, no reference added. A complaint begun while a transaction exists (pending, or a cleanup
+/// not finished) is refused before its question.
+#[test]
+fn a_complaint_confirmed_after_a_forget_never_posts_the_old_instance_rc1() {
+    // schedule 1: a successful remote-plus-local forget while the complaint waits
+    let (dir, iid, _spool) = local_state("rc1-complaint-forget");
+    let (hub, log) = scripted_mock(vec![(
+        200,
+        r#"{"ok":true,"deleted":3,"public_ref":"T-LEAK-0001"}"#,
+    )]);
+    let (complaint, payload, answer) = complaint_at_barrier(&hub, &dir);
+    let shown = payload.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(shown.contains(&iid), "{shown}");
+    let out = telemetry::forget_at(
+        &hub_at(&hub),
+        &dir,
+        &forget_req(Some("CC-7Q"), true),
+        |_| true,
+    );
+    assert!(out.server_deleted && out.exit == 0, "{:?}", out.lines);
+    assert!(!dir.join("salt").exists() && !dir.join("refs.ndjson").exists());
+    answer.send(true).unwrap();
+    let e = complaint
+        .join()
+        .unwrap()
+        .expect_err("a complaint of a forgotten instance is refused")
+        .to_string();
+    assert!(
+        e.contains(&format!("names instance {iid}"))
+            && e.contains("is gone")
+            && e.contains("nothing was sent"),
+        "{e}"
+    );
+    assert_eq!(
+        log.lock().unwrap().clone(),
+        [format!("DELETE /T/v2/instances/{iid}?public_ref=CC-7Q")],
+        "no POST under the forgotten identity"
+    );
+    assert!(
+        !dir.join("refs.ndjson").exists(),
+        "no reference written into the cleared directory"
+    );
+    assert!(!dir.join("salt").exists(), "the refusal makes no instance");
+    assert!(telemetry::pending_deletion_in(&dir).is_none());
+
+    // schedule 2: the forget's DELETE fails while the complaint waits - a pending deletion
+    let (dir, iid, spool) = local_state("rc1-complaint-pending");
+    let (hub, log) = scripted_mock(vec![(
+        503,
+        r#"{"ok":false,"error":"maintenance","public_ref":"T-LEAK-0002"}"#,
+    )]);
+    let (complaint, payload, answer) = complaint_at_barrier(&hub, &dir);
+    let shown = payload.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(shown.contains(&iid), "{shown}");
+    let out = telemetry::forget_at(
+        &hub_at(&hub),
+        &dir,
+        &forget_req(Some("CC-7Q"), true),
+        |_| true,
+    );
+    assert_eq!(out.exit, 3, "{:?}", out.lines);
+    answer.send(true).unwrap();
+    let e = complaint
+        .join()
+        .unwrap()
+        .expect_err("a complaint during a pending deletion is refused")
+        .to_string();
+    assert!(
+        e.contains("pending at the intake (it began while the complaint waited")
+            && e.contains("nothing was sent"),
+        "{e}"
+    );
+    let delete = format!("DELETE /T/v2/instances/{iid}?public_ref=CC-7Q");
+    assert_eq!(*log.lock().unwrap(), std::slice::from_ref(&delete));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("refs.ndjson")).unwrap(),
+        "{\"public_ref\":\"CC-7Q\"}\n",
+        "no reference added"
+    );
+    assert_eq!(spool.pending(), 1, "the pending deletion keeps the outbox");
+
+    // schedule 3: begun while a transaction exists - refused before the question
+    for phase in ["pending", "cleaning"] {
+        let record = serde_json::json!({"instance_id": iid, "public_ref": "CC-7Q", "since": "2026-10-09T10:00:00Z", "attempts": 1, "last_error": "", "phase": phase});
+        std::fs::write(dir.join("forget-pending.json"), record.to_string()).unwrap();
+        let e = telemetry::complain_to(&hub, &dir, "text", None, |_| {
+            panic!("asked during a deletion ({phase})")
+        })
+        .expect_err("refused")
+        .to_string();
+        let why = if phase == "pending" {
+            "pending at the intake ("
+        } else {
+            "is not finished ("
+        };
+        assert!(e.contains(why) && e.contains("nothing was sent"), "{e}");
+    }
+    assert_eq!(
+        log.lock().unwrap().clone(),
+        [delete],
+        "still only the DELETE"
+    );
+}
+
+/// A handle that denies every other reader of a file while its metadata stays visible: on Windows
+/// the file held open with share mode 0 (RC2's case), elsewhere its permissions `0o000` (restored
+/// on drop).
+struct DenyRead {
+    #[cfg(windows)]
+    _file: std::fs::File,
+    #[cfg(not(windows))]
+    path: PathBuf,
+}
+
+#[cfg(not(windows))]
+impl Drop for DenyRead {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600));
+    }
+}
+
+/// Deny reading `path` ([`DenyRead`]); `None` when it can still be read (a privileged user off
+/// Windows).
+fn deny_reading(path: &std::path::Path) -> Option<DenyRead> {
+    #[cfg(windows)]
+    let held = {
+        use std::os::windows::fs::OpenOptionsExt;
+        DenyRead {
+            _file: std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(path)
+                .unwrap(),
+        }
+    };
+    #[cfg(not(windows))]
+    let held = {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        DenyRead {
+            path: path.to_path_buf(),
+        }
+    };
+    std::fs::read(path).is_err().then_some(held)
+}
+
+/// (F19-2 / RC2) A confirmed deletion's cleanup resumed while another handle denies reading the
+/// salt (its metadata visible): the salt is neither removed nor kept as "another instance" - the
+/// cleanup FAILS and the transaction stays (spooling and sending blocked), by the sender and by a
+/// forget alike; a local-only forget begun then is refused before it records or removes anything.
+/// Once the handle is released the cleanup removes the old salt - the record still blocking - and
+/// only then the record; the next event is a new instance.
+#[test]
+fn a_cleanup_never_clears_its_transaction_while_the_salt_cannot_be_read_rc2() {
+    let (dir, iid, spool) = local_state("rc2-unreadable-salt");
+    let salt = dir.join("salt");
+    let Some(handle) = deny_reading(&salt) else {
+        eprintln!("skipped: this user reads a file whose permissions deny it");
+        return;
+    };
+    assert!(salt.exists(), "the salt's metadata stays visible");
+    let nowhere = hub_at("http://unused.invalid/T");
+    // a local-only forget cannot name the instance now: refused, nothing recorded or removed
+    let out = telemetry::forget_at(&nowhere, &dir, &forget_req(None, true), |_| true);
+    assert_eq!(out.exit, 1, "{:?}", out.lines);
+    assert!(
+        out.lines.join("\n").contains("exists but cannot be read"),
+        "{:?}",
+        out.lines
+    );
+    assert!(telemetry::pending_deletion_in(&dir).is_none());
+    assert_eq!(spool.pending(), 1);
+    // the intake confirmed the deletion of this instance; its local cleanup is due
+    let record = serde_json::json!({"instance_id": iid, "public_ref": "CC-7Q", "since": "2026-10-09T10:00:00Z", "attempts": 1, "last_error": "", "phase": "confirmed"});
+    std::fs::write(dir.join("forget-pending.json"), record.to_string()).unwrap();
+    // resumed by the sender: the cleanup fails at the salt, nothing is posted, the record stays
+    let r = Spool::new(&dir, "http://unused.invalid/T")
+        .flush_with(|b| panic!("posted during a deletion: {b}"))
+        .unwrap();
+    assert!(!r.attempted, "{r:?}");
+    assert!(
+        r.skipped.contains(&format!(
+            "the local deletion of instance {iid} is not finished"
+        )) && r.skipped.contains("cannot be read"),
+        "{r:?}"
+    );
+    let txn = telemetry::pending_deletion_in(&dir).expect("the transaction is retained");
+    assert_eq!(txn.phase, telemetry::PHASE_CLEANING);
+    assert_eq!(txn.instance_id, iid);
+    assert!(salt.exists(), "an unreadable salt is not removed");
+    assert_eq!(spool.pending(), 0, "the queued data went first");
+    assert!(spool.enqueue(&consultation_of(&iid, "decision")).is_err());
+    // resumed by a forget: the same
+    let out = telemetry::forget_at(&nowhere, &dir, &forget_req(None, false), |_| {
+        panic!("a cleanup that is due asks nothing")
+    });
+    assert_eq!(out.exit, 1, "{:?}", out.lines);
+    let t = out.lines.join("\n");
+    assert!(
+        t.contains("cannot be read") && t.contains(&format!("keeps instance {iid}")),
+        "{t}"
+    );
+    assert!(!t.contains("the salt names another instance"), "{t}");
+    assert!(telemetry::pending_deletion_in(&dir).is_some());
+    // the handle released: the old salt goes while the record still blocks, then the record
+    drop(handle);
+    let removals = std::sync::Mutex::new(Vec::<(String, bool)>::new());
+    let pending_path = dir.join("forget-pending.json");
+    let out = telemetry::forget_with(
+        &nowhere,
+        &dir,
+        &forget_req(None, false),
+        |_| panic!("a cleanup that is due asks nothing"),
+        &|p: &std::path::Path| {
+            removals.lock().unwrap().push((
+                p.file_name().unwrap().to_string_lossy().to_string(),
+                pending_path.exists(),
+            ));
+            std::fs::remove_file(p)
+        },
+    );
+    assert_eq!(out.exit, 0, "{:?}", out.lines);
+    assert_eq!(
+        removals.lock().unwrap().last().cloned(),
+        Some(("salt".to_string(), true)),
+        "the salt is removed before the record that blocks telemetry"
+    );
+    assert!(!salt.exists() && !pending_path.exists());
+    // unblocked: the next event is a new instance
+    let new_iid = telemetry::instance_id_in(&dir);
+    assert_ne!(new_iid, iid);
+    spool
+        .enqueue(&consultation_of(&new_iid, "decision"))
+        .unwrap();
+}
+
+/// (F19-3 / RC3) A current valid event in the outbox with `"title":"customer-acme",` inserted
+/// before its real title (a duplicate key: the parse keeps the last one): what `flush_with` sends
+/// never carries the private string - the event leaves as its serialised reconstruction, byte for
+/// byte the event as it was built.
+#[test]
+fn a_duplicate_private_title_never_leaves_the_outbox_rc3() {
+    let dir = temp_dir("rc3-duplicate-key");
+    let iid = telemetry::instance_id_in(&dir);
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    spool.enqueue(&consultation_of(&iid, "framing")).unwrap();
+    let path = dir.join("spool.ndjson");
+    let mut line: serde_json::Value =
+        serde_json::from_str(std::fs::read_to_string(&path).unwrap().trim()).unwrap();
+    let body = line["body"].as_str().unwrap().to_string();
+    let forged = body.replacen("\"title\":", "\"title\":\"customer-acme\",\"title\":", 1);
+    assert!(forged != body && forged.contains("customer-acme"));
+    line["body"] = serde_json::json!(forged);
+    std::fs::write(&path, format!("{line}\n")).unwrap();
+    let sent = std::sync::Mutex::new(String::new());
+    let r = spool
+        .flush_with(|b| {
+            *sent.lock().unwrap() = b.to_string();
+            true
+        })
+        .unwrap();
+    let out = sent.lock().unwrap().clone();
+    assert!(!out.contains("customer-acme"), "{out}");
+    assert_eq!(r.sent, 1, "{r:?}");
+    assert_eq!(out, format!("{{\"events\":[{body}]}}"));
+}
+
 // --------------------------------------------------------------------------- off switch
 
 #[test]

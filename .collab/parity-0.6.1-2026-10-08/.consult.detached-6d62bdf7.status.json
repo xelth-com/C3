@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "6d62bdf7-9acd-44be-903f-efe09d88f87f",
+    "id8":  "6d62bdf7",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-09T08:32:05+02:00",
+    "updated":  "2026-10-09T08:49:44+02:00",
+    "finished":  "2026-10-09T08:49:44+02:00",
+    "wall_seconds":  1059.3,
+    "pid":  6700,
+    "start_time":  "2026-10-09T06:32:06.5239556Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave2b-round2-mimo",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\16-claude-wave2b-round2.md",
+    "members":  [
+                    {
+                        "position":  3,
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  1049.6,
+                        "n":  12,
+                        "handoff":  "22",
+                        "reply":  "handoffs/22-codex-wave2b-round2-mimo.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - mimo :: mimo-v2.6-pro, mode new, thread 01a11f5c-bb07-7bd0-b5fe-55b02fbe4c10 (source: events), wall 1049.6 s\nverdict    : HOLD - HOLD — finding #1 is a blocker: the F11-1 replay invariant is not harmless after retention or cap eviction.\nfindings   : 1 blocker, 0 major, 0 minor, 0 note -\u003e F22-1 in findings.json\nprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 fixed, F11-2 fixed, F11-3 fixed, F11-4 fixed, F11-5 fixed, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\22-codex-wave2b-round2-mimo.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\22-codex-wave2b-round2-mimo.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\22-codex-wave2b-round2-mimo.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-6d62bdf7.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

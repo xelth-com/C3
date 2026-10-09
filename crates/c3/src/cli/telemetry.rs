@@ -75,7 +75,11 @@ pub struct TelemetryArgs {
     pub telemetry: String,
 
     /// THE sender, once: deliver the spool (the outbox rule - delivered lines removed, lines
-    /// appended meanwhile kept).
+    /// appended meanwhile kept) and write the last flush's record `last-flush.json` {time, result,
+    /// delivered, kept, dropped, rejected, http, not_spooled_seen, not_spooled_folded, notes} -
+    /// folding the not-spooled files of gone producers into one of its notes (the record saved
+    /// BEFORE the files are deleted; not_spooled_folded {name, bytes} names the files a fold
+    /// covers; a legacy file is first staged as telemetry-not-spooled-legacy-<utc ticks>.ndjson).
     #[arg(long)]
     pub flush: bool,
 
@@ -271,7 +275,7 @@ pub fn run_telemetry(args: TelemetryArgs) -> i32 {
             }
             Ok(r) => {
                 println!(
-                    "{TOOL}: {} - delivered {}, kept {}, dropped {}",
+                    "{TOOL}: {} - delivered {}, kept {}, dropped {}{}",
                     if r.attempted && r.sent == 0 {
                         "not delivered"
                     } else {
@@ -279,7 +283,12 @@ pub fn run_telemetry(args: TelemetryArgs) -> i32 {
                     },
                     r.sent,
                     r.kept,
-                    r.dropped_stale
+                    r.dropped_stale,
+                    if r.last_warning.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; warning: {}", r.last_warning)
+                    }
                 );
                 if r.discarded > 0 {
                     println!(
@@ -362,19 +371,43 @@ fn print_status() {
             String::new()
         }
     );
-    let ns: Vec<serde_json::Value> = std::fs::read_to_string(dir.join("not-spooled.ndjson"))
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|l| serde_json::from_str(l).ok())
-        .collect();
-    match ns.last() {
-        None => println!("not spooled: none since the last flush"),
-        Some(last) => println!(
-            "not spooled: {} event(s) since the last flush - the latest {}: {}",
-            ns.len(),
-            last.get("time").and_then(|v| v.as_str()).unwrap_or("?"),
-            last.get("why").and_then(|v| v.as_str()).unwrap_or("?")
-        ),
+    // (wave 3b, E2) the events not spooled since the last flush, summed over every producer's file
+    // and the legacy files
+    let paths = telemetry::local_paths(&dir);
+    let ns = telemetry::notspooled::count(&paths, false);
+    let files_text = if ns.files > 0 {
+        format!(
+            " ({} line(s) in {} file(s), one per producer - a flush folds those of gone producers into the last flush's record)",
+            ns.total, ns.files
+        )
+    } else {
+        String::new()
+    };
+    if ns.count > 0 {
+        println!(
+            "not spooled: {} event(s) since the last flush - the latest {}: {}{files_text}",
+            ns.count, ns.when, ns.last
+        );
+    } else {
+        println!("not spooled: none since the last flush{files_text}");
+    }
+    // (wave 3b, E3) a local deletion that runs, or that died halfway: its marker and its owner
+    let fm = telemetry::notspooled::forgetting_owner(&paths.marker);
+    if fm.there {
+        if fm.alive {
+            println!(
+                "forgetting : the marker {} is there - its owner pid {} lives (a -Forget -Local runs now{}): events are dropped until it finishes",
+                paths.marker.display(),
+                fm.pid,
+                if fm.since.is_empty() { String::new() } else { format!(", since {}", fm.since) }
+            );
+        } else {
+            println!(
+                "forgetting : the marker {} is there - its owner {} (a -Forget -Local that did not finish): the next event or sender removes it; run c3 telemetry --forget --local again to finish the deletion",
+                paths.marker.display(),
+                if fm.pid > 0 { format!("pid {} is gone", fm.pid) } else { "is not named".to_string() }
+            );
+        }
     }
     match telemetry::pending_deletion_in(&dir) {
         Some(p) if p.cleanup_due() => println!("forgetting : the local deletion of instance {} did not finish (phase {}, since {}) - nothing is spooled or sent until it is; the next flush or c3 forget-me finishes it", p.instance_id, p.phase, p.since),
@@ -382,16 +415,38 @@ fn print_status() {
         None if dir.join("forget-pending.json").exists() => println!("forgetting : the deletion record {} cannot be read - nothing is spooled or sent until it is removed or a forget rewrites it", dir.join("forget-pending.json").display()),
         None => {}
     }
-    let last = std::fs::read_to_string(dir.join("last-flush.json"))
+    let last = std::fs::read_to_string(&paths.last)
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-    match last {
-        Some(v) => println!(
-            "last flush : {} - {}",
-            v.get("time").and_then(|x| x.as_str()).unwrap_or("?"),
-            v.get("result").and_then(|x| x.as_str()).unwrap_or("?")
-        ),
-        None => println!("last flush : never"),
+    let result = last
+        .as_ref()
+        .and_then(|v| v.get("result"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("");
+    if result.is_empty() {
+        println!("last flush : never");
+    } else {
+        println!(
+            "last flush : {} - {result}",
+            last.as_ref()
+                .and_then(|v| v.get("time"))
+                .and_then(|x| x.as_str())
+                .unwrap_or("?")
+        );
+    }
+    // (wave 3b) what the telemetry client did or saw on its own (the record's notes)
+    let notes = last
+        .as_ref()
+        .and_then(|v| v.get("notes"))
+        .and_then(|n| n.as_array())
+        .cloned()
+        .unwrap_or_default();
+    for n in notes
+        .iter()
+        .filter_map(|n| n.as_str())
+        .filter(|n| !n.is_empty())
+    {
+        println!("note       : {n}");
     }
     match telemetry::instance_id_if_exists() {
         Some(id) => println!(

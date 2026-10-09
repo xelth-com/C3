@@ -12,7 +12,12 @@
 //!   its REWRITE and the local deletion of `forget`. A producer waits for it at most its `wait`.
 //! - `flush.lock` - the sender lock (the same kind of lock), held for one whole flush: a second
 //!   sender that finds it busy skips (no event is posted twice by two senders at once).
-//! - `last-flush.json` - what the last flush did (`c3 telemetry --status` shows it).
+//! - `last-flush.json` - what the last flush did (`c3 telemetry --status` shows it): (wave 3b) the
+//!   plugin's `.last` shape `{time, result, delivered, kept, dropped, rejected, http,
+//!   not_spooled_seen, not_spooled_folded, notes}` - a flush that held the sender lock folds the
+//!   not-spooled files of gone producers into one of its notes (`notspooled`, E2/E20/E24/E26).
+//! - `telemetry-not-spooled-<pid>-<start ticks>.ndjson` - one per producer process: the events it
+//!   could not spool (`notspooled`); `telemetry-forgetting` - the marker a local deletion holds (E3).
 //!
 //! THE RULE (F02-1): the sender reads a snapshot under the spool lock, releases it, posts, and
 //! then - under the spool lock again - re-reads the CURRENT file and removes exactly the lines it
@@ -41,7 +46,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -50,6 +55,7 @@ use chrono::{DateTime, Utc};
 use crate::telemetry::classes;
 use crate::telemetry::complaint::{deletion_state, run_local_cleanup, DeletionState};
 use crate::telemetry::event::Event;
+use crate::telemetry::notspooled::{self, LocalPaths};
 use crate::telemetry::{debug_log, default_hub, telemetry_dir, Error, Result};
 
 /// Maximum events per POST (README: `≤ 100`).
@@ -101,11 +107,59 @@ pub(crate) fn lock_within(path: &Path, wait: Duration) -> std::io::Result<Option
     }
 }
 
+/// How a [`lock_within_checked`] wait ended.
+pub(crate) enum LockWait {
+    /// The lock is held.
+    Got(FileLock),
+    /// It stayed busy for the whole wait.
+    Busy,
+    /// The check refused while waiting (its why).
+    Refused(String),
+}
+
+/// [`lock_within`] that asks `check` before every attempt: a `Some(why)` ends the wait at once (a
+/// producer meets the marker of a living forget - the plugin's `Enter-TelemetryLock` loop).
+pub(crate) fn lock_within_checked(
+    path: &Path,
+    wait: Duration,
+    check: &dyn Fn() -> Option<String>,
+) -> std::io::Result<LockWait> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    let started = Instant::now();
+    loop {
+        if let Some(why) = check() {
+            return Ok(LockWait::Refused(why));
+        }
+        match file.try_lock() {
+            Ok(()) => return Ok(LockWait::Got(FileLock { _file: file })),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if started.elapsed() >= wait {
+                    return Ok(LockWait::Busy);
+                }
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(std::fs::TryLockError::Error(e)) => return Err(e),
+        }
+    }
+}
+
 /// The outbox at a directory, posting to a hub base URL (`.../T`; empty = the configured intake
 /// is refused, nothing is sent).
 pub struct Spool {
     dir: PathBuf,
     hub: String,
+    /// (wave 3b) Where the not-spooled files, the forgetting marker and the last flush's record are.
+    paths: LocalPaths,
+    /// The HTTP status of the last POST (for the record's `http`).
+    http: Mutex<Option<u16>>,
 }
 
 /// What a [`Spool::flush`] did, for the debug log, `last-flush.json` and tests.
@@ -128,6 +182,10 @@ pub struct FlushReport {
     /// (F09-5) Queued events discarded unsent: no C3 consultation or rating event, or without an
     /// instance id or a time of this client's shape (a local diagnostic says so).
     pub discarded: usize,
+    /// (wave 3b) The intake's HTTP status of the POST, when one was answered.
+    pub http: Option<u16>,
+    /// (wave 3b, E20) The last flush's record could not be written: why - nothing was folded.
+    pub last_warning: String,
 }
 
 /// The test seams of a flush ([`Spool::flush_hooked`]); the default is the real flush.
@@ -155,10 +213,24 @@ struct SpoolLine {
 impl Spool {
     /// A spool at `dir` posting to `hub` (the T base, e.g. `https://xelth.com/T`).
     pub fn new(dir: impl Into<PathBuf>, hub: impl Into<String>) -> Self {
+        let dir = dir.into();
+        let paths = notspooled::local_paths(&dir);
+        Spool::with_paths(dir, hub, paths)
+    }
+
+    /// A spool whose not-spooled files, marker and last flush's record are at `paths`.
+    pub fn with_paths(dir: impl Into<PathBuf>, hub: impl Into<String>, paths: LocalPaths) -> Self {
         Spool {
             dir: dir.into(),
             hub: hub.into(),
+            paths,
+            http: Mutex::new(None),
         }
+    }
+
+    /// Where the not-spooled files, the forgetting marker and the last flush's record are.
+    pub fn local_paths(&self) -> &LocalPaths {
+        &self.paths
     }
 
     fn path(&self) -> PathBuf {
@@ -203,13 +275,24 @@ impl Spool {
         build: impl FnOnce() -> Result<String>,
     ) -> Result<()> {
         let lock_path = self.dir.join(SPOOL_LOCK);
-        let _lock = lock_within(&lock_path, wait)?.ok_or_else(|| {
-            Error::new(format!(
-                "the spool lock {} stayed busy for {:.1} s",
-                lock_path.display(),
-                wait.as_secs_f64()
-            ))
-        })?;
+        // (wave 3b, E3) a forgetting marker whose owner lives refuses at once - that local deletion
+        // holds this lock while it deletes
+        let marker = self.paths.marker.clone();
+        let alive_marker = move || {
+            let m = notspooled::forgetting_owner(&marker);
+            (m.there && m.alive).then_some(m.why)
+        };
+        let _lock = match lock_within_checked(&lock_path, wait, &alive_marker)? {
+            LockWait::Got(l) => l,
+            LockWait::Refused(why) => return Err(Error::new(why)),
+            LockWait::Busy => {
+                return Err(Error::new(format!(
+                    "the spool lock {} stayed busy for {:.1} s",
+                    lock_path.display(),
+                    wait.as_secs_f64()
+                )))
+            }
+        };
         // a deletion transaction in ANY phase (or an unreadable one) refuses: pending at the
         // intake, or confirmed with its local cleanup not finished (F09-3)
         match deletion_state(&self.dir) {
@@ -227,6 +310,10 @@ impl Spool {
                 )))
             }
         }
+        // (wave 3b, E3) the marker again, under the lock: one whose owner is gone (or that names
+        // none) is removed - a note in the last flush's record - and the producer goes on; one
+        // whose owner lives refuses
+        notspooled::resolve_forgetting(&self.paths).map_err(Error::new)?;
         let line = serde_json::json!({
             "v": 1,
             "kind": "event",
@@ -277,20 +364,61 @@ impl Spool {
         post: impl Fn(&str) -> bool,
         hooks: &FlushHooks<'_>,
     ) -> Result<FlushReport> {
+        self.flush_inner(&post, hooks, false)
+    }
+
+    /// THE flush of `c3 telemetry --flush` and of a consultation's background sender: the send of
+    /// [`Spool::flush`], then - still under the sender lock - the last flush's record with the fold
+    /// of the not-spooled files (wave 3b, [`Spool::record_flush`]).
+    pub fn flush_recorded(&self) -> Result<FlushReport> {
+        self.flush_recorded_with(|body| self.post_events(body))
+    }
+
+    /// [`Spool::flush_recorded`] with an injected sender.
+    pub fn flush_recorded_with(&self, post: impl Fn(&str) -> bool) -> Result<FlushReport> {
+        self.flush_inner(&post, &FlushHooks::default(), true)
+    }
+
+    fn flush_inner(
+        &self,
+        post: &dyn Fn(&str) -> bool,
+        hooks: &FlushHooks<'_>,
+        record: bool,
+    ) -> Result<FlushReport> {
         let mut report = FlushReport::default();
         // a cheap early skip without any lock; NOT the decision - the deletion state is decided
         // below, under the sender lock and the spool lock (F09-2)
         if matches!(deletion_state(&self.dir), DeletionState::Pending) {
             report.skipped = "a deletion of this instance is pending at the intake".into();
-            return Ok(report);
+            let r = Ok(report);
+            if record {
+                self.record_skip(&r);
+            }
+            return r;
         }
         if let Some(after_check) = hooks.after_check {
             after_check();
         }
+        // a sender that finds the sender lock busy writes nothing: the one that holds it records
+        // its own flush
         let Some(_sender) = lock_within(&self.dir.join(FLUSH_LOCK), Duration::ZERO)? else {
             report.skipped = "another flush is running (its lock is held)".into();
             return Ok(report);
         };
+        let r = self.send_locked(post, hooks, report);
+        if record {
+            return self.record_flush(r);
+        }
+        r
+    }
+
+    /// The send, under the sender lock the caller holds (the rule of the module docs).
+    fn send_locked(
+        &self,
+        post: &dyn Fn(&str) -> bool,
+        hooks: &FlushHooks<'_>,
+        mut report: FlushReport,
+    ) -> Result<FlushReport> {
         // the snapshot, read under the spool lock
         let snapshot = {
             let Some(_lock) = lock_within(&self.dir.join(SPOOL_LOCK), SENDER_LOCK_WAIT)? else {
@@ -324,6 +452,13 @@ impl Spool {
                     };
                     return Ok(report);
                 }
+            }
+            // (wave 3b, E3) the forgetting marker: one whose owner is gone is removed (a note in
+            // the last flush's record); one whose owner lives stops this flush - nothing is sent
+            // while a local deletion runs
+            if let Err(why) = notspooled::resolve_forgetting(&self.paths) {
+                report.skipped = why;
+                return Ok(report);
             }
             match fs::read_to_string(self.path()) {
                 Ok(t) => t,
@@ -386,7 +521,12 @@ impl Spool {
                         .collect::<Vec<_>>()
                         .join(",")
                 );
-                if post(&body) {
+                if let Ok(mut h) = self.http.lock() {
+                    *h = None;
+                }
+                let delivered = post(&body);
+                report.http = self.http.lock().ok().and_then(|h| *h);
+                if delivered {
                     report.sent = batch.len();
                     remove.extend(batch.iter().map(|(l, _)| *l));
                 }
@@ -458,11 +598,19 @@ impl Spool {
             .timeout_connect(SEND_TIMEOUT)
             .timeout(SEND_TIMEOUT)
             .build();
-        match agent
+        let answer = agent
             .post(&url)
             .set("content-type", "application/json")
-            .send_string(body)
-        {
+            .send_string(body);
+        let status = match &answer {
+            Ok(r) => Some(r.status()),
+            Err(ureq::Error::Status(code, _)) => Some(*code),
+            Err(_) => None,
+        };
+        if let Ok(mut h) = self.http.lock() {
+            *h = status;
+        }
+        match answer {
             Ok(_) => true,
             Err(e) => {
                 debug_log(&format!("telemetry flush kept the spool: {e}"));
@@ -471,37 +619,160 @@ impl Spool {
         }
     }
 
-    /// Record what a flush did (`last-flush.json`), for `c3 telemetry --status`.
-    fn write_last(&self, report: &Result<FlushReport>) {
-        let result = match report {
-            Ok(r) if !r.skipped.is_empty() => format!("skipped - {}", r.skipped),
-            Ok(r) if !r.attempted && r.sent == 0 => format!(
-                "nothing to send - dropped {}, kept {}",
-                r.dropped_stale, r.kept
-            ),
-            Ok(r) if r.sent > 0 => format!(
-                "delivered {} - dropped {}, kept {}",
-                r.sent, r.dropped_stale, r.kept
-            ),
-            Ok(r) => format!(
-                "not delivered - delivered 0, kept {}, dropped {}",
-                r.kept, r.dropped_stale
-            ),
-            Err(e) => format!("failed - {e}"),
+    /// (wave 3b) Record a flush and fold the not-spooled files (the plugin's end of
+    /// `Invoke-TelemetryFlush`, E2/E20/E24/E26), under the sender lock the caller holds and the
+    /// spool lock (every writer of the record holds it): the record's notes carried on, the files of
+    /// gone producers and the legacy files counted ([`notspooled::merge`] - nothing deleted yet),
+    /// the record SAVED - its note `folded <n> not-spooled line(s) of <m> gone producer(s)`, the new
+    /// `not_spooled_seen` (the lines of the files kept) and `not_spooled_folded[]` ({name, bytes} of
+    /// the files the fold covers) -, ONLY THEN the files deleted under the handles the fold holds,
+    /// then the record written once more without the names of the files now gone. A record that
+    /// cannot be saved folds nothing (`last_warning`). The spool lock busy for 1 s: nothing is folded
+    /// and the record says every line (but the legacy files') was seen, as the plugin's flush
+    /// without its telemetry lock.
+    ///
+    /// TEST HOOK (test mode only): `CODEX_CONSULT_TEST_FOLD_CRASH=1` - the process exits (87)
+    /// between the save of the record and the deletes, as a crash would; `=2` - it exits (88) between
+    /// the deletes and the rewrite that drops their names.
+    fn record_flush(&self, r: Result<FlushReport>) -> Result<FlushReport> {
+        let p = &self.paths;
+        let result = result_text(&r);
+        let lock = lock_within(&self.dir.join(SPOOL_LOCK), Duration::from_secs(1))
+            .ok()
+            .flatten();
+        let before = notspooled::read_last(&p.last);
+        let mut notes: Vec<String> = notspooled::notes_of(before.as_ref())
+            .into_iter()
+            .filter(|n| !is_stuck_note(n))
+            .collect();
+        let folded_before = notspooled::folded_map(before.as_ref());
+        let mut fold = None;
+        let (seen, folded) = if lock.is_some() {
+            let f = notspooled::merge(p, &folded_before);
+            if f.producers > 0 {
+                notes.push(format!(
+                    "{} folded {} not-spooled line(s) of {} gone producer(s)",
+                    notspooled::now_iso(),
+                    f.lines,
+                    f.producers
+                ));
+            }
+            for n in &f.notes {
+                notes.push(format!("{} {n}", notspooled::now_iso()));
+            }
+            let sf = (f.seen, f.folded.clone());
+            fold = Some(f);
+            sf
+        } else {
+            // (E26) the legacy files' lines are never seen: they count until a fold stages them
+            let all = notspooled::count(p, true);
+            let kept: Vec<notspooled::FoldedEntry> = folded_before
+                .values()
+                .filter(|e| p.ns_dir.join(&e.name).exists())
+                .cloned()
+                .collect();
+            (all.total.saturating_sub(all.legacy_lines), kept)
         };
-        let result = match report {
-            Ok(r) if r.discarded > 0 => format!(
-                "{result}; discarded {} queued event(s) that are no closable C3 event (not sent)",
-                r.discarded
+        let (delivered, kept, dropped, http) = match &r {
+            // `kept`: the spool's count now (a skipped flush did not count it)
+            Ok(rep) => (
+                serde_json::json!(rep.sent),
+                serde_json::json!(self.pending()),
+                serde_json::json!(rep.dropped_stale + rep.discarded),
+                serde_json::json!(rep.http),
             ),
-            _ => result,
+            Err(_) => (
+                serde_json::json!(0),
+                serde_json::Value::Null,
+                serde_json::json!(0),
+                serde_json::Value::Null,
+            ),
         };
-        let v = serde_json::json!({
-            "time": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        let mut last = serde_json::json!({
+            "time": notspooled::now_iso(),
             "result": result,
+            "delivered": delivered,
+            "kept": kept,
+            "dropped": dropped,
+            "rejected": [],
+            "http": http,
+            "not_spooled_seen": seen,
+            "not_spooled_folded": notspooled::folded_value(&folded),
+            "notes": notspooled::last_notes(notes),
         });
-        let _ = fs::create_dir_all(&self.dir);
-        let _ = replace_atomic(&self.dir.join(LAST_FLUSH), v.to_string().as_bytes());
+        let mut warning = String::new();
+        match notspooled::write_last(&p.last, &last) {
+            Err(e) => {
+                warning = format!(
+                    "{} could not be written ({e}) - nothing was folded: the not-spooled files and the last baseline stay, the next flush counts them",
+                    p.last.display()
+                );
+            }
+            Ok(()) => {
+                if let Some(f) = fold.as_mut().filter(|f| !f.folded.is_empty()) {
+                    let crash = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_FOLD_CRASH")
+                        .unwrap_or_default();
+                    if crash.trim() == "1" {
+                        std::process::exit(87);
+                    }
+                    let left = f.complete(true);
+                    if crash.trim() == "2" {
+                        std::process::exit(88);
+                    }
+                    if left.len() != folded.len() {
+                        last["not_spooled_folded"] = notspooled::folded_value(&left);
+                        let _ = notspooled::write_last(&p.last, &last);
+                    }
+                }
+            }
+        }
+        // every handle the fold still holds is closed (nothing deleted without a saved record)
+        if let Some(f) = fold.as_mut() {
+            let _ = f.complete(false);
+        }
+        drop(lock);
+        match r {
+            Ok(mut rep) => {
+                rep.last_warning = warning;
+                Ok(rep)
+            }
+            Err(e) if !warning.is_empty() => Err(Error::new(format!("{e}; warning: {warning}"))),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Record a flush that did not reach the sender lock's work (a deletion pending at the
+    /// intake): its result, the fold's fields and the notes carried on; under the spool lock (1 s,
+    /// else nothing is written).
+    fn record_skip(&self, r: &Result<FlushReport>) {
+        let p = &self.paths;
+        let Some(_lock) = lock_within(&self.dir.join(SPOOL_LOCK), Duration::from_secs(1))
+            .ok()
+            .flatten()
+        else {
+            return;
+        };
+        let before = notspooled::read_last(&p.last);
+        let field = |k: &str, d: serde_json::Value| {
+            before.as_ref().and_then(|b| b.get(k)).cloned().unwrap_or(d)
+        };
+        let kept = match r {
+            Ok(_) => serde_json::json!(self.pending()),
+            Err(_) => serde_json::Value::Null,
+        };
+        let last = serde_json::json!({
+            "time": notspooled::now_iso(),
+            "result": result_text(r),
+            "delivered": 0,
+            "kept": kept,
+            "dropped": 0,
+            "rejected": [],
+            "http": serde_json::Value::Null,
+            "not_spooled_seen": field("not_spooled_seen", serde_json::json!(0)),
+            "not_spooled_folded": field("not_spooled_folded", serde_json::json!([])),
+            "notes": notspooled::notes_of(before.as_ref()),
+        });
+        let _ = notspooled::write_last(&p.last, &last);
     }
 
     /// The items queued, by kind, and the oldest queue time (unix seconds): `(events, other,
@@ -524,6 +795,40 @@ impl Spool {
         }
         (ev, other, bad, oldest)
     }
+}
+
+/// The result line of a flush, for the last flush's record.
+fn result_text(report: &Result<FlushReport>) -> String {
+    let result = match report {
+        Ok(r) if !r.skipped.is_empty() => format!("skipped - {}", r.skipped),
+        Ok(r) if !r.attempted && r.sent == 0 => format!(
+            "nothing to send - dropped {}, kept {}",
+            r.dropped_stale, r.kept
+        ),
+        Ok(r) if r.sent > 0 => format!(
+            "delivered {} - dropped {}, kept {}",
+            r.sent, r.dropped_stale, r.kept
+        ),
+        Ok(r) => format!(
+            "not delivered - delivered 0, kept {}, dropped {}",
+            r.kept, r.dropped_stale
+        ),
+        Err(e) => format!("failed - {e}"),
+    };
+    match report {
+        Ok(r) if r.discarded > 0 => format!(
+            "{result}; discarded {} queued event(s) that are no closable C3 event (not sent)",
+            r.discarded
+        ),
+        _ => result,
+    }
+}
+
+/// A plugin sender's "sender stuck since" note (`^\S+ sender stuck since `): a flush that holds
+/// the sender lock drops it, as the plugin's does.
+fn is_stuck_note(n: &str) -> bool {
+    n.split_once(' ')
+        .is_some_and(|(t, rest)| !t.is_empty() && rest.starts_with("sender stuck since "))
 }
 
 /// One spool line: the plugin's `{v, kind, queued_unix, body}`, or - a line C3 wrote before
@@ -593,16 +898,8 @@ impl BackgroundFlush {
 /// Run the default spool's sender once, synchronously (`c3 telemetry --flush`), recording the
 /// result for `--status`.
 pub fn flush_now() -> Result<FlushReport> {
-    let dir = telemetry_dir();
-    let spool = Spool::new(&dir, default_hub());
-    let r = spool.flush();
-    spool.write_last(&r);
-    // the events not spooled are counted since the last flush that ran (the plugin's per-producer
-    // files and their `.last` fold are wave 3)
-    if matches!(&r, Ok(rep) if rep.skipped.is_empty()) {
-        let _ = fs::remove_file(dir.join("not-spooled.ndjson"));
-    }
-    r
+    // (wave 3b) the record and the fold of the not-spooled files, under the sender lock
+    Spool::new(telemetry_dir(), default_hub()).flush_recorded()
 }
 
 /// Spawn a background flush of the default spool (a consultation's start, after a rating or a

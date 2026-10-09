@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "60e72353-93bf-49be-bcf4-55cc18c7b889",
+    "id8":  "60e72353",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-09T08:16:48+02:00",
+    "updated":  "2026-10-09T08:21:24+02:00",
+    "finished":  "2026-10-09T08:21:24+02:00",
+    "wall_seconds":  276.8,
+    "pid":  19432,
+    "start_time":  "2026-10-09T06:16:49.0818055Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave2-round2-astra",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\15-claude-wave2-round2-astra.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  265.3,
+                        "n":  9,
+                        "handoff":  "19",
+                        "reply":  "handoffs/19-codex-wave2-round2-astra.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode fork, thread 01a11f4e-c543-7333-acce-00c506ea18c3 (source: events), wall 265.3 s\nverdict    : HOLD - The original fixes are present, but complaints bypass the deletion interlock and cleanup can clear its transaction while the old salt remains unreadable.\nfindings   : 0 blocker, 2 major, 1 minor, 0 note -\u003e F19-1..F19-3 in findings.json\nprior      : F02-1 fixed, F02-3 fixed, F02-4 fixed, F02-5 fixed, F02-6 not-checked, F02-7 not-checked, F02-8 fixed, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 fixed, F09-2 fixed, F09-3 fixed, F09-4 fixed, F09-5 fixed, F09-6 fixed, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 fixed\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\19-codex-wave2-round2-astra.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\19-codex-wave2-round2-astra.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\19-codex-wave2-round2-astra.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-60e72353.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

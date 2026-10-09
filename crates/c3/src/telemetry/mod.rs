@@ -16,6 +16,7 @@ pub mod backfill;
 pub mod classes;
 mod complaint;
 mod event;
+pub mod notspooled;
 mod spool;
 
 use std::path::{Path, PathBuf};
@@ -34,6 +35,7 @@ pub use complaint::{
 };
 pub(crate) use event::topic_slug;
 pub use event::{Details, Event, RatingDetails, RatingEvent, RatingInput};
+pub use notspooled::{local_paths, LocalPaths};
 pub use spool::{flush_in_background, flush_now, BackgroundFlush, FlushHooks, FlushReport, Spool};
 
 /// The default T-hub base URL.
@@ -261,25 +263,18 @@ pub fn parse_mark_when(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>>
     event::parse_when(s)
 }
 
-/// Count an event that could not be spooled (`Add-TelemetryNotSpooled`): one NDJSON line `{time,
-/// why}` appended to `<telemetry dir>/not-spooled.ndjson`; `c3 telemetry --status` counts them.
-/// Never fails the caller. (The plugin's per-producer files and the `.last` fold are wave 3.)
+/// Count an event that could not be spooled (`Add-TelemetryNotSpooled`; wave 3b, E2): one NDJSON
+/// line `{time, why}` appended - without any lock - to THIS process's own file
+/// `<telemetry dir>/telemetry-not-spooled-<pid>-<start ticks>.ndjson`; `c3 telemetry --status`
+/// sums every producer's file, a flush folds the files of gone producers into the last flush's
+/// record. Never fails the caller ([`note_not_spooled_checked`] says why a line was not written).
 pub fn note_not_spooled(why: &str) {
-    let dir = telemetry_dir();
-    let line = serde_json::json!({
-        "time": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
-        "why": c3_core::one_line(why),
-    })
-    .to_string();
-    let _ = std::fs::create_dir_all(&dir);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("not-spooled.ndjson"))
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{line}");
-    }
+    let _ = note_not_spooled_checked(why);
+}
+
+/// [`note_not_spooled`], `Err(why)` when the line could not be written.
+pub fn note_not_spooled_checked(why: &str) -> std::result::Result<(), String> {
+    notspooled::append(&local_paths(&telemetry_dir()), why)
 }
 
 // --------------------------------------------------------------------------- instance id
@@ -293,12 +288,45 @@ pub fn instance_id() -> String {
 /// [`instance_id`] with an explicit directory (for tests): stable across calls in the same
 /// directory, different for a different salt or machine.
 pub fn instance_id_in(dir: &Path) -> String {
-    let salt = read_or_create_salt(dir);
+    instance_of_salt(&read_or_create_salt(dir))
+}
+
+/// The instance id a salt names on this machine.
+fn instance_of_salt(salt: &str) -> String {
     let host = machine_name();
     let mut hasher = Sha256::new();
     hasher.update(salt.as_bytes());
     hasher.update(host.as_bytes());
     to_hex(&hasher.finalize())
+}
+
+/// What the salt file says about this installation's identity, read without creating anything
+/// (wave 2g, F19-2): a deletion and a complaint must tell a salt that is not there from one that is
+/// there but cannot be read - the second may still name the deleted instance.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SaltIdentity {
+    /// No salt file.
+    Missing,
+    /// A salt file that names no instance (empty, or not UTF-8): a producer replaces it with a new
+    /// salt, so no identity can come back from it.
+    Blank,
+    /// The salt file exists but could not be read (another handle denies sharing, permissions,
+    /// ...): its identity is UNKNOWN - neither absent nor another instance. The why, one line.
+    Unreadable(String),
+    /// The instance id the salt names.
+    Id(String),
+}
+
+/// The [`SaltIdentity`] of `dir`'s salt.
+pub(crate) fn salt_identity_in(dir: &Path) -> SaltIdentity {
+    match std::fs::read(dir.join("salt")) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SaltIdentity::Missing,
+        Err(e) => SaltIdentity::Unreadable(c3_core::one_line(&e.to_string())),
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) if !s.trim().is_empty() => SaltIdentity::Id(instance_of_salt(s.trim())),
+            _ => SaltIdentity::Blank,
+        },
+    }
 }
 
 /// The stable, anonymous installation id if it has already been created, without creating
@@ -309,17 +337,13 @@ pub fn instance_id_if_exists() -> Option<String> {
 }
 
 /// [`instance_id_if_exists`] with an explicit directory (for tests).
+/// `None` also for a salt that cannot be read: a caller that must tell that one from a missing salt
+/// reads `salt_identity_in` (F19-2).
 pub fn instance_id_if_exists_in(dir: &Path) -> Option<String> {
-    let existing = std::fs::read_to_string(dir.join("salt")).ok()?;
-    let salt = existing.trim();
-    if salt.is_empty() {
-        return None;
+    match salt_identity_in(dir) {
+        SaltIdentity::Id(id) => Some(id),
+        _ => None,
     }
-    let host = machine_name();
-    let mut hasher = Sha256::new();
-    hasher.update(salt.as_bytes());
-    hasher.update(host.as_bytes());
-    Some(to_hex(&hasher.finalize()))
 }
 
 /// Read the 64-hex-char salt, creating it (32 random bytes) once.

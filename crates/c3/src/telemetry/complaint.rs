@@ -18,6 +18,12 @@
 //! last). Every write of it holds the sender lock and the spool lock, and the sender decides on it
 //! under the same two; a `confirmed`/`cleaning` record left by an interrupted cleanup blocks
 //! spooling and sending and is finished - with its own identity - by the next flush or forget.
+//!
+//! (wave 2g, F19-1, F19-2) A complaint takes part in the same protocol: refused while a transaction
+//! exists, and after the user's confirmation decided again under both locks - sent only while the
+//! salt still names the instance of the payload the user approved, its reference stored under the
+//! sender lock. A cleanup keeps a salt as another instance's only when it READ that salt's identity
+//! and it differs; a salt that exists but cannot be read stops the cleanup with its record kept.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -28,10 +34,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::telemetry::event::APP_VERSION;
+use crate::telemetry::notspooled::{self, ForgettingMarker};
 use crate::telemetry::spool::{
     lock_within, replace_atomic, FLUSH_LOCK, FORGET_PENDING, LAST_FLUSH, SPOOL_FILE, SPOOL_LOCK,
 };
-use crate::telemetry::{default_hub, instance_id_in, telemetry_dir, Error, Result};
+use crate::telemetry::{
+    default_hub, instance_id_in, salt_identity_in, telemetry_dir, Error, Result, SaltIdentity,
+};
 
 /// Complaint text cap (README: `≤ 8 KiB`).
 const MAX_TEXT: usize = 8 * 1024;
@@ -49,6 +58,18 @@ pub fn complain(
 }
 
 /// [`complain`] against an explicit hub base and directory (for tests).
+///
+/// (wave 2g, F19-1) A complaint takes part in the deletion protocol. Before the question - under the
+/// spool lock, where a producer makes its salt - it is refused while a deletion transaction exists
+/// (pending at the intake, or a local cleanup not finished) and its identity is read (made when
+/// there is no salt; a salt that exists but cannot be read refuses). After the confirmation it
+/// takes the sender lock and the spool lock - the two every write of the transaction and every
+/// local deletion hold -, is refused again while a transaction exists, and re-reads the identity:
+/// when the salt no longer names the instance of the payload the user approved (a forget ran while
+/// they read it), nothing is sent. The POST and the store of the returned reference run under the
+/// sender lock (the spool lock is released after the decision, so producers do not wait for the
+/// intake): no forget begins, and no cleanup removes the salt or the references, until the
+/// reference is stored.
 pub fn complain_to(
     hub: &str,
     dir: &Path,
@@ -57,6 +78,38 @@ pub fn complain_to(
     confirm: impl Fn(&str) -> bool,
 ) -> Result<Option<String>> {
     let text: String = text.chars().take(MAX_TEXT).collect();
+    let salt = dir.join("salt");
+    let instance_id = {
+        let Some(_spool) = lock_within(&dir.join(SPOOL_LOCK), Duration::from_secs(5))? else {
+            return Err(Error::new(format!(
+                "the spool lock {} stayed busy for 5 s; nothing was sent - try again",
+                dir.join(SPOOL_LOCK).display()
+            )));
+        };
+        refuse_during_deletion(dir, false)?;
+        match salt_identity_in(dir) {
+            SaltIdentity::Id(id) => id,
+            SaltIdentity::Unreadable(why) => {
+                return Err(Error::new(format!(
+                    "the salt {} exists but cannot be read ({why}): the complaint cannot name this instance; nothing was sent",
+                    salt.display()
+                )))
+            }
+            SaltIdentity::Missing | SaltIdentity::Blank => {
+                // no instance yet: made here, under the spool lock, as a producer makes it
+                let made = instance_id_in(dir);
+                match salt_identity_in(dir) {
+                    SaltIdentity::Id(id) if id == made => id,
+                    _ => {
+                        return Err(Error::new(format!(
+                            "the salt {} could not be made: the complaint cannot name this instance; nothing was sent",
+                            salt.display()
+                        )))
+                    }
+                }
+            }
+        }
+    };
     let mut context = serde_json::Map::new();
     if let Some(s) = last_run {
         context.insert("last_run".to_string(), json!(s));
@@ -64,13 +117,43 @@ pub fn complain_to(
     let body = json!({
         "app_id": "c3",
         "app_version": APP_VERSION,
-        "instance_id": instance_id_in(dir),
+        "instance_id": instance_id,
         "text": text,
         "context": Value::Object(context),
     });
     let pretty = serde_json::to_string_pretty(&body)?;
     if !confirm(&pretty) {
         return Ok(None);
+    }
+    // (F19-1) confirmed: the deletion protocol decides again, under both locks - the user may have
+    // read the payload for minutes, and a forget may have run meanwhile
+    let Some(_sender) = lock_within(&dir.join(FLUSH_LOCK), Duration::from_secs(10))? else {
+        return Err(Error::new(format!(
+            "the sender lock {} stayed busy for 10 s (a flush or a forget runs); nothing was sent - run c3 complain again",
+            dir.join(FLUSH_LOCK).display()
+        )));
+    };
+    {
+        let Some(_spool) = lock_within(&dir.join(SPOOL_LOCK), Duration::from_secs(5))? else {
+            return Err(Error::new(format!(
+                "the spool lock {} stayed busy for 5 s; nothing was sent - run c3 complain again",
+                dir.join(SPOOL_LOCK).display()
+            )));
+        };
+        refuse_during_deletion(dir, true)?;
+        let now = match salt_identity_in(dir) {
+            SaltIdentity::Id(id) if id == instance_id => None,
+            SaltIdentity::Id(id) => Some(format!("names another instance ({id})")),
+            SaltIdentity::Missing => Some("is gone".to_string()),
+            SaltIdentity::Blank => Some("names no instance".to_string()),
+            SaltIdentity::Unreadable(why) => Some(format!("cannot be read ({why})")),
+        };
+        if let Some(now) = now {
+            return Err(Error::new(format!(
+                "the payload you confirmed names instance {instance_id}, but the salt {} now {now} - a forget ran while the complaint waited for its confirmation; a complaint goes only under the instance it showed, so nothing was sent (run c3 complain again to see the payload of the current instance)",
+                salt.display()
+            )));
+        }
     }
     let url = format!("{}/v2/complaints", hub.trim_end_matches('/'));
     let agent = ureq::AgentBuilder::new().timeout(REQUEST_TIMEOUT).build();
@@ -89,6 +172,39 @@ pub fn complain_to(
         store_ref(dir, r)?;
     }
     Ok(reference)
+}
+
+/// (F19-1) A complaint is refused while a deletion transaction exists - pending at the intake (or a
+/// record that cannot be read), or a local cleanup not finished - or while a living forget holds
+/// its forgetting marker. `waited`: the check after the confirmation (the deletion began while the
+/// user read the payload).
+fn refuse_during_deletion(dir: &Path, waited: bool) -> Result<()> {
+    let began = if waited {
+        " (it began while the complaint waited for its confirmation)"
+    } else {
+        ""
+    };
+    match deletion_state(dir) {
+        DeletionState::None => {}
+        DeletionState::Pending => {
+            return Err(Error::new(format!(
+                "a deletion of this instance is pending at the intake{began} ({}): no complaint is sent until it is confirmed - c3 forget-me retries it; nothing was sent",
+                dir.join(FORGET_PENDING).display()
+            )))
+        }
+        DeletionState::Cleanup(t) => {
+            return Err(Error::new(format!(
+                "the local deletion of {} is not finished{began} ({}): no complaint is sent until the next flush or c3 forget-me finishes it; nothing was sent",
+                instance_label(&t.instance_id),
+                dir.join(FORGET_PENDING).display()
+            )))
+        }
+    }
+    let m = notspooled::forgetting_owner(&notspooled::local_paths(dir).marker);
+    if m.there && m.alive {
+        return Err(Error::new(format!("{}; nothing was sent", m.why)));
+    }
+    Ok(())
 }
 
 /// What a forget asks for (`codex-telemetry.ps1 -Forget`): the intake's deletion of this
@@ -225,9 +341,11 @@ pub(crate) struct Cleanup {
 /// the spool lock (F09-3). The QUEUED data goes first - the spool, a rewrite's leftover temporary
 /// copies, the not-spooled counts, the last flush -, then the proof (the references), the identity
 /// (the salt) LAST, and only when it is still `txn`'s instance (a salt made after the deletion began
-/// is another instance and stays). `own_record`: the transaction is this cleanup's (confirmed, or a
-/// local-only deletion) - it is set to `cleaning` before the first removal and removed after the
-/// last, so an interruption leaves a record that blocks spooling and sending and that the next flush
+/// is another instance and stays - only when its identity was READ and differs; a salt that exists
+/// but cannot be read stops the cleanup with the record kept, F19-2). `own_record`: the transaction
+/// is this cleanup's (confirmed, or a local-only deletion) - it is set to `cleaning` before the
+/// first removal and removed after the last, so an interruption leaves a record that blocks
+/// spooling and sending and that the next flush
 /// or forget resumes (a `cleaning` `txn` is on disk already: a resumed cleanup's, or a local-only
 /// deletion's, which its forget records before calling here - F14-1); `false`: a PENDING
 /// deletion's record (the retry's identity) is left as it is.
@@ -265,11 +383,21 @@ pub(crate) fn run_local_cleanup(
         tmps.sort();
         targets.extend(tmps);
     }
-    targets.extend(
-        ["not-spooled.ndjson", LAST_FLUSH, "refs.ndjson"]
-            .iter()
-            .map(|n| dir.join(n)),
-    );
+    // (wave 3b, E2) every not-spooled file - each producer's, the legacy files and their staged
+    // generations - and the last flush's record (C3's places, and the plugin's under the test hook)
+    let paths = notspooled::local_paths(dir);
+    let mut ns_dirs = vec![paths.ns_dir.clone()];
+    if paths.ns_dir != dir {
+        ns_dirs.push(dir.to_path_buf());
+    }
+    for d in &ns_dirs {
+        targets.extend(notspooled::list_files(d).into_iter().map(|f| f.path));
+    }
+    targets.push(paths.last.clone());
+    if paths.last != dir.join(LAST_FLUSH) {
+        targets.push(dir.join(LAST_FLUSH));
+    }
+    targets.push(dir.join("refs.ndjson"));
     for p in targets {
         if !p.exists() {
             continue;
@@ -289,34 +417,44 @@ pub(crate) fn run_local_cleanup(
                 .to_string(),
         );
     }
+    // (wave 2g, F19-2) the salt is kept as ANOTHER instance's only when its identity was read and
+    // differs; a salt that exists but cannot be read may still be the deleted instance - the cleanup
+    // stops there and the record stays (it blocks spooling and sending) until it can be read
     let salt = dir.join("salt");
-    if salt.exists() {
-        let current = crate::telemetry::instance_id_if_exists_in(dir).unwrap_or_default();
-        if current == txn.instance_id {
-            if let Err(e) = remove(&salt) {
-                c.error = Some(format!(
-                    "{}: {}",
-                    salt.display(),
-                    c3_core::one_line(&e.to_string())
-                ));
-                return c;
-            }
-            c.removed.push("salt".to_string());
-        } else {
+    let delete_salt = match salt_identity_in(dir) {
+        SaltIdentity::Missing => false,
+        SaltIdentity::Unreadable(why) => {
+            c.error = Some(format!(
+                "the salt {} exists but cannot be read ({why}) - whether it still names {} is unknown, so it is neither removed nor kept as another instance",
+                salt.display(),
+                instance_label(&txn.instance_id)
+            ));
+            return c;
+        }
+        SaltIdentity::Id(current) if current != txn.instance_id => {
             c.kept = Some(format!(
-                "the salt names another instance ({}) made after the deletion of {} began: kept",
-                if current.is_empty() {
-                    "unreadable"
-                } else {
-                    current.as_str()
-                },
+                "the salt names another instance ({current}) made after the deletion of {} began: kept",
                 if txn.instance_id.is_empty() {
                     "this machine's data"
                 } else {
                     txn.instance_id.as_str()
                 }
             ));
+            false
         }
+        // the transaction's instance - or a salt that names none (empty, not UTF-8)
+        SaltIdentity::Id(_) | SaltIdentity::Blank => true,
+    };
+    if delete_salt {
+        if let Err(e) = remove(&salt) {
+            c.error = Some(format!(
+                "{}: {}",
+                salt.display(),
+                c3_core::one_line(&e.to_string())
+            ));
+            return c;
+        }
+        c.removed.push("salt".to_string());
     }
     if own_record {
         match fs::remove_file(dir.join(FORGET_PENDING)) {
@@ -498,6 +636,27 @@ pub fn forget_with(
     };
     // the transaction as it is NOW
     let current = pending_deletion_in(dir);
+    // (wave 3b, E3) a forget that may delete local data holds the forgetting marker `{pid,
+    // start_time, start_ticks, since}` from here to its end (dropped - removed - on every path): a
+    // producer that meets it while its owner lives drops its event at once; one a killed forget
+    // left (its owner gone) is removed by the next producer or sender
+    let _marker = if req.local || resume || current.as_ref().is_some_and(|t| t.cleanup_due()) {
+        let marker = notspooled::local_paths(dir).marker;
+        match ForgettingMarker::write(&marker) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                out.exit = 1;
+                out.lines.push(format!(
+                    "{P}: {nothing} - the marker {} could not be written ({}).",
+                    marker.display(),
+                    c3_core::one_line(&e.to_string())
+                ));
+                return out;
+            }
+        }
+    } else {
+        None
+    };
     if let Some(txn) = current.as_ref().filter(|t| t.cleanup_due()) {
         // (F09-3) a confirmed deletion whose local cleanup did not finish: only that is left
         out.instance_id = txn.instance_id.clone();
@@ -524,11 +683,24 @@ pub fn forget_with(
     }
     // the identity: the pending deletion's (the one already asked for), else this salt's
     let reference = explicit.or_else(|| pending_ref(&current));
-    let instance_id = current
-        .as_ref()
-        .map(|p| p.instance_id.clone())
-        .or_else(|| crate::telemetry::instance_id_if_exists_in(dir))
-        .unwrap_or_default();
+    // (wave 2g, F19-2) a salt that exists but cannot be read names an UNKNOWN instance - not "no
+    // instance" (a local-only deletion would record an empty identity and later keep that salt as
+    // another instance), and nothing the intake can be asked about: refused, nothing written
+    let instance_id = match current.as_ref() {
+        Some(p) => p.instance_id.clone(),
+        None => match salt_identity_in(dir) {
+            SaltIdentity::Id(id) => id,
+            SaltIdentity::Missing | SaltIdentity::Blank => String::new(),
+            SaltIdentity::Unreadable(why) => {
+                out.exit = 1;
+                out.lines.push(format!(
+                    "{P}: {nothing} - the salt {} exists but cannot be read ({why}): the instance to delete cannot be named; try again when it can be read.",
+                    dir.join("salt").display()
+                ));
+                return out;
+            }
+        },
+    };
     out.instance_id = instance_id.clone();
     out.public_ref = reference.clone();
     let Some(r) = reference else {
