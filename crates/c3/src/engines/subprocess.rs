@@ -258,21 +258,85 @@ fn confirm_kick(kick_path: &Path, result: &str) {
     let _ = std::fs::remove_file(kick_path);
 }
 
-/// Build `(program, args)` for the launcher spawn.
-///
-/// The launcher path is always the program and the caller's `argv` are always the args —
-/// including for a Windows `.cmd`/`.bat` launcher. We deliberately do **not** wrap a batch
-/// launcher in an explicit `cmd /c`: doing so makes `cmd.exe` the program (an `.exe`), so
-/// Rust escapes the embedded quotes in each arg the MSVC way (`model_provider=\"ZAI\"`),
-/// which is not what a batch file's `%*` expander produces. Handing the `.cmd`/`.bat` path
-/// straight to `Command` lets Rust std's own batch-file handling run it: it invokes the file
-/// through `cmd.exe` with the plugin's quote-doubling (`model_provider=""ZAI""`) and refuses
-/// (a spawn `io::Error`) any argument it cannot escape safely (newlines, `%`, unbalanced
-/// quotes) — matching the plugin's own launch rule and the fake codex's `%*` matching. The
-/// child pid is still `cmd.exe`'s (std spawns it), so `kill_tree`/`on_running` are unchanged.
-/// `.exe` launcher escaping is untouched.
-fn program_and_args(launcher: &str, argv: &[String]) -> (String, Vec<String>) {
-    (launcher.to_string(), argv.to_vec())
+/// Whether a launcher is a Windows batch file (`.cmd` / `.bat`, any case).
+pub fn is_batch_launcher(launcher: &str) -> bool {
+    Path::new(launcher)
+        .extension()
+        .map(|e| {
+            let e = e.to_string_lossy().to_ascii_lowercase();
+            e == "cmd" || e == "bat"
+        })
+        .unwrap_or(false)
+}
+
+/// `ConvertTo-ProcArg`'s bare-token rule: `-` alone, or letters, digits and `_ . - : \ / =` only.
+/// The plugin hands such an argument to the launcher as it is (no quotes).
+pub fn is_bare_proc_arg(arg: &str) -> bool {
+    arg == "-"
+        || (!arg.is_empty()
+            && arg.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-' | ':' | '\\' | '/' | '=')
+            }))
+}
+
+/// How one argument reaches a batch launcher's command line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchArg {
+    /// Appended verbatim (`CommandExt::raw_arg`): a bare token by the plugin's rule.
+    Raw(String),
+    /// Left to Rust std's batch-file escaping (quoted, `"` doubled, `%` neutralised, a line break
+    /// refused).
+    Std(String),
+}
+
+/// (wave 2b, the launcher quoting) The arguments of a batch launcher (`codex.cmd`, an npm shim, the
+/// harness fakes) as the plugin's `Start-Process -ArgumentList` hands them over
+/// (`ConvertTo-ProcArg`): a bare token (`-c`, `model_context_window=256000`, `-p=`, a plain path)
+/// goes as it is - Rust std's own batch escaping would quote every argument holding `=`
+/// (`"model_context_window=256000"`, `"-p="`), which a launcher matching its `%*` text then does
+/// not see. Everything else (spaces, quotes, `%`, other symbols) keeps std's escaping: quoted with
+/// every `"` doubled - the plugin's form - plus std's guards against `%VAR%` expansion and line
+/// breaks, which the plugin lacks.
+pub fn batch_args(argv: &[String]) -> Vec<BatchArg> {
+    argv.iter()
+        .map(|a| {
+            if is_bare_proc_arg(a) {
+                BatchArg::Raw(a.clone())
+            } else {
+                BatchArg::Std(a.clone())
+            }
+        })
+        .collect()
+}
+
+/// Put `argv` on the launcher's command. The launcher path is always the program and the caller's
+/// `argv` are always the args - including for a Windows `.cmd`/`.bat` launcher. We deliberately do
+/// **not** wrap a batch launcher in an explicit `cmd /c`: doing so makes `cmd.exe` the program (an
+/// `.exe`), so Rust escapes the embedded quotes in each arg the MSVC way (`model_provider=\"ZAI\"`),
+/// which is not what a batch file's `%*` expander produces. Handing the `.cmd`/`.bat` path straight
+/// to `Command` lets Rust std run it through `cmd.exe` (the child pid is still `cmd.exe`'s, so
+/// `kill_tree`/`on_running` are unchanged); the arguments follow [`batch_args`]. An `.exe`
+/// launcher's escaping is untouched.
+pub fn apply_launcher_args(cmd: &mut Command, launcher: &str, argv: &[String]) {
+    #[cfg(windows)]
+    {
+        if is_batch_launcher(launcher) {
+            use std::os::windows::process::CommandExt;
+            for a in batch_args(argv) {
+                match a {
+                    BatchArg::Raw(v) => {
+                        cmd.raw_arg(v);
+                    }
+                    BatchArg::Std(v) => {
+                        cmd.arg(v);
+                    }
+                }
+            }
+            return;
+        }
+    }
+    let _ = launcher;
+    cmd.args(argv);
 }
 
 /// Run one subprocess turn (spawn, feed stdin, capture streams, wait with a timeout kill).
@@ -286,10 +350,10 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         Err(e) => return TurnResult::not_started(format!("could not open the stderr file: {e}")),
     };
 
-    let (program, args) = program_and_args(req.launcher, req.argv);
+    let program = req.launcher.to_string();
     let mut cmd = Command::new(&program);
-    cmd.args(&args)
-        .current_dir(req.cwd)
+    apply_launcher_args(&mut cmd, req.launcher, req.argv);
+    cmd.current_dir(req.cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout_file))
         .stderr(Stdio::from(stderr_file));
@@ -814,6 +878,87 @@ mod tests {
         assert_eq!(
             open, 1,
             "the tool-call line after the discard is still parsed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 2b) the launcher quoting: a plain argument (the plugin's bare-token set, `=` included)
+    // reaches a batch launcher as it is; anything else keeps std's batch escaping.
+    #[test]
+    fn batch_args_keep_plain_arguments_plain() {
+        let argv: Vec<String> = [
+            "exec",
+            "-c",
+            "model_context_window=256000",
+            "-p=",
+            "-",
+            r"C:\dir\file.md",
+            "a b",
+            r#"model_provider="ZAI""#,
+            "%PATH%",
+            "x+y",
+            "",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let got = batch_args(&argv);
+        let raw = |v: &str| BatchArg::Raw(v.to_string());
+        let std_ = |v: &str| BatchArg::Std(v.to_string());
+        assert_eq!(
+            got,
+            vec![
+                raw("exec"),
+                raw("-c"),
+                raw("model_context_window=256000"),
+                raw("-p="),
+                raw("-"),
+                raw(r"C:\dir\file.md"),
+                std_("a b"),
+                std_(r#"model_provider="ZAI""#),
+                std_("%PATH%"),
+                std_("x+y"),
+                std_(""),
+            ]
+        );
+        assert!(is_batch_launcher(r"C:\x\codex.CMD"));
+        assert!(is_batch_launcher("run.bat"));
+        assert!(!is_batch_launcher(r"C:\x\codex.exe"));
+    }
+
+    // (wave 2b) what a batch launcher's `%*` really sees (Windows): a plain `k=v` unquoted, a
+    // value with spaces and quotes quoted with every `"` doubled.
+    #[cfg(windows)]
+    #[test]
+    fn a_batch_launcher_sees_the_plugin_argv() {
+        let dir = std::env::temp_dir().join(format!("c3-batch-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let bat = dir.join("echo-args.cmd");
+        let out = dir.join("args.txt");
+        std::fs::write(
+            &bat,
+            format!("@echo off\r\n>\"{}\" echo %*\r\n", out.display()),
+        )
+        .unwrap();
+        let argv: Vec<String> = [
+            "-c",
+            "model_context_window=256000",
+            "-p=",
+            "a b",
+            r#"k="v w""#,
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let launcher = bat.to_string_lossy().to_string();
+        let mut cmd = Command::new(&launcher);
+        apply_launcher_args(&mut cmd, &launcher, &argv);
+        let st = cmd.status().unwrap();
+        assert!(st.success());
+        let seen = std::fs::read_to_string(&out).unwrap();
+        assert_eq!(
+            seen.trim_end(),
+            r#"-c model_context_window=256000 -p= "a b" "k=""v w""""#
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

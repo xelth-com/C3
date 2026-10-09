@@ -1319,11 +1319,45 @@ fn add_machine_health_record_with(
     is_alive: &dyn Fn(u32, &str) -> bool,
     budget: LockBudget,
 ) -> HealthUpdate {
-    if fingerprint.is_empty() {
-        return HealthUpdate::Skipped;
+    match new_machine_health_record(fingerprint, outcome, failure, repo) {
+        Some(record) => update_machine_health(path, Some(record), None, 0, is_alive, budget),
+        None => HealthUpdate::Skipped,
     }
-    let record = if is_usable_outcome(outcome) {
-        MachineEndpoint {
+}
+
+/// (wave 28b, D13) `Add-MachineHealthRecord -Record`: merge a record built ONCE by
+/// [`new_machine_health_record`] (the one a run journals at its commit and retries after it - the
+/// same `when`, so applying it twice adds it once) with the full lock budget.
+pub fn add_machine_health_endpoint(
+    path: &Path,
+    record: &MachineEndpoint,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> HealthUpdate {
+    update_machine_health(
+        path,
+        Some(record.clone()),
+        None,
+        0,
+        is_alive,
+        LockBudget::full(),
+    )
+}
+
+/// (wave 28b, D13) `New-MachineHealthRecord`: the endpoint record of a run's outcome - class `ok`
+/// for a usable reply, else its provider failure (class `operator` excepted) - or `None` when there
+/// is nothing to record (no fingerprint, an operator-class failure, neither a usable outcome nor a
+/// failure). Its `when` is fixed here, so the journaled record and the retried one are the same.
+pub fn new_machine_health_record(
+    fingerprint: &str,
+    outcome: &str,
+    failure: Option<&MachineFailure>,
+    repo: &str,
+) -> Option<MachineEndpoint> {
+    if fingerprint.is_empty() {
+        return None;
+    }
+    if is_usable_outcome(outcome) {
+        return Some(MachineEndpoint {
             endpoint: fingerprint.to_string(),
             class: "ok".into(),
             kind: String::new(),
@@ -1333,55 +1367,202 @@ fn add_machine_health_record_with(
             when: format_offset_iso(now_offset()),
             message: String::new(),
             quota_mark: None,
-        }
-    } else if let Some(f) = failure {
-        let class = f.class.clone();
-        if class.is_empty() || class == "operator" {
-            return HealthUpdate::Skipped;
-        }
-        let when = DateTime::parse_from_rfc3339(&f.when).unwrap_or_else(|_| now_offset());
-        let kind = f.kind.clone();
-        let (until, retry_after) = if class == "quota" {
-            let ra = f
-                .retry_after
-                .as_deref()
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
-            match ra {
-                Some(r) => (Some(r), Some(r)),
-                None => {
-                    let mins = if kind == "burst" {
-                        BURST_OUT_MINUTES
-                    } else {
-                        QUOTA_OUT_MINUTES
-                    };
-                    (Some(when + Duration::minutes(mins)), None)
-                }
+        });
+    }
+    let f = failure?;
+    let class = f.class.clone();
+    if class.is_empty() || class == "operator" {
+        return None;
+    }
+    let when = DateTime::parse_from_rfc3339(&f.when).unwrap_or_else(|_| now_offset());
+    let kind = f.kind.clone();
+    let (until, retry_after) = if class == "quota" {
+        let ra = f
+            .retry_after
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
+        match ra {
+            Some(r) => (Some(r), Some(r)),
+            None => {
+                let mins = if kind == "burst" {
+                    BURST_OUT_MINUTES
+                } else {
+                    QUOTA_OUT_MINUTES
+                };
+                (Some(when + Duration::minutes(mins)), None)
             }
-        } else if class == "auth" {
-            (Some(when + Duration::hours(24)), None)
-        } else {
-            (None, None)
-        };
-        let mut message = f.message.clone();
-        let chars: Vec<char> = message.chars().collect();
-        if chars.len() > 200 {
-            message = chars[..200].iter().collect();
         }
-        MachineEndpoint {
-            endpoint: fingerprint.to_string(),
-            class,
-            kind,
-            until: until.map(format_offset_iso),
-            retry_after: retry_after.map(format_offset_iso),
-            repo: repo.to_string(),
-            when: format_offset_iso(when),
-            message,
-            quota_mark: None,
-        }
+    } else if class == "auth" {
+        (Some(when + Duration::hours(24)), None)
     } else {
-        return HealthUpdate::Skipped;
+        (None, None)
     };
-    update_machine_health(path, Some(record), None, 0, is_alive, budget)
+    let mut message = f.message.clone();
+    let chars: Vec<char> = message.chars().collect();
+    if chars.len() > 200 {
+        message = chars[..200].iter().collect();
+    }
+    Some(MachineEndpoint {
+        endpoint: fingerprint.to_string(),
+        class,
+        kind,
+        until: until.map(format_offset_iso),
+        retry_after: retry_after.map(format_offset_iso),
+        repo: repo.to_string(),
+        when: format_offset_iso(when),
+        message,
+        quota_mark: None,
+    })
+}
+
+// ----------------------------------------------------------------------------- the journal
+//
+// (wave 28b, D13 / F36-6, F37-1) THE JOURNAL beside the health file: `<health file>.journal`,
+// append-only NDJSON, one endpoint record per line. A run whose health update failed before its
+// ledger commit appends its record there INSIDE the commit (a local append - no wait for the health
+// lock; [`add_machine_health_journal`]); every health update (the retry after the commit, the next
+// run of ANY repository - its registration, its outcome) applies the journal under the health lock
+// and empties it once the health file is written. Applying is idempotent: a record already in
+// `endpoints[]` (the same endpoint, class, kind, when and repository - and quota mark) is not added
+// again. (wave 28c, D10) A line that does not parse is moved to `<health file>.journal.bad`
+// (appended: the time, a tab, the line's bytes) and counted in a note; the journal loses only what
+// was applied or moved. The plugin and C3 share the health file and its journal.
+
+/// `Get-MachineHealthJournalPath`: `<health file>.journal`.
+pub fn machine_health_journal_path(path: &Path) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(".journal");
+    PathBuf::from(os)
+}
+
+/// (wave 28c, D10) The notes of the journal's apply in this process ("health journal: <n>
+/// unreadable line(s) kept in <file>"), taken by [`take_machine_health_journal_notes`].
+static JOURNAL_NOTES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// `Get-MachineHealthJournalNotes`: the notes so far, and the list starts again - the run puts them
+/// into its `warnings[]` (before the commit) or its summary (after it).
+pub fn take_machine_health_journal_notes() -> Vec<String> {
+    match JOURNAL_NOTES.lock() {
+        Ok(mut g) => std::mem::take(&mut *g),
+        Err(e) => std::mem::take(&mut *e.into_inner()),
+    }
+}
+
+fn push_journal_note(note: String) {
+    match JOURNAL_NOTES.lock() {
+        Ok(mut g) => g.push(note),
+        Err(e) => e.into_inner().push(note),
+    }
+}
+
+/// Open a file for exclusive use (Windows: share mode none; elsewhere an advisory `flock`).
+#[cfg(windows)]
+fn open_exclusive(path: &Path, append: bool, create: bool) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let mut o = OpenOptions::new();
+    if append {
+        o.append(true);
+    } else {
+        o.read(true).write(true);
+    }
+    o.create(create).share_mode(0).open(path)
+}
+
+#[cfg(not(windows))]
+fn open_exclusive(path: &Path, append: bool, create: bool) -> std::io::Result<std::fs::File> {
+    let mut o = OpenOptions::new();
+    if append {
+        o.append(true);
+    } else {
+        o.read(true).write(true);
+    }
+    let f = o.create(create).open(path)?;
+    match f.try_lock() {
+        Ok(()) => Ok(f),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            Err(std::io::Error::from(std::io::ErrorKind::WouldBlock))
+        }
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
+}
+
+/// `Add-MachineHealthJournal`: append one endpoint record to the journal (exclusive open, retried up
+/// to 2 s). `Err(why)` when it was not written; never panics.
+pub fn add_machine_health_journal(path: &Path, record: &MachineEndpoint) -> Result<(), String> {
+    use std::io::Write;
+    let j = machine_health_journal_path(path);
+    if let Some(dir) = j.parent() {
+        if !dir.as_os_str().is_empty() && !dir.is_dir() {
+            return Err(format!("the directory {} does not exist", dir.display()));
+        }
+    }
+    let mut line = serde_json::to_vec(record).map_err(|e| crate::one_line(&e.to_string()))?;
+    line.push(b'\n');
+    let started = std::time::Instant::now();
+    loop {
+        match open_exclusive(&j, true, true) {
+            Ok(mut f) => {
+                return f
+                    .write_all(&line)
+                    .and_then(|_| f.sync_all())
+                    .map_err(|e| crate::one_line(&e.to_string()));
+            }
+            Err(e) => {
+                // a sharing violation (32), a lock violation (33), a held flock: busy - wait
+                let busy = matches!(
+                    e.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::WouldBlock
+                ) || matches!(e.raw_os_error(), Some(32) | Some(33));
+                if !busy {
+                    return Err(crate::one_line(&e.to_string()));
+                }
+                if started.elapsed() >= std::time::Duration::from_secs(2) {
+                    return Err(format!("the journal {} stayed busy", j.display()));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+/// .NET ticks (100 ns since 0001-01-01 UTC) of an ISO time, `""` when it does not parse.
+fn utc_ticks(iso: &str) -> String {
+    match DateTime::parse_from_rfc3339(iso.trim()) {
+        Ok(d) => {
+            let d = d.with_timezone(&Utc);
+            const UNIX_EPOCH_TICKS: i128 = 621_355_968_000_000_000;
+            let t = UNIX_EPOCH_TICKS
+                + d.timestamp() as i128 * 10_000_000
+                + (d.timestamp_subsec_nanos() / 100) as i128;
+            t.to_string()
+        }
+        Err(_) => String::new(),
+    }
+}
+
+/// `Get-MachineHealthRecordKey`: the identity of an endpoint record for the journal's idempotent
+/// apply - endpoint, class, kind, repository and the instant of `when`; (wave 29b, A6) a record that
+/// carries a quota mark adds the mark's `until`.
+fn machine_record_key(e: &MachineEndpoint) -> String {
+    let mut k = format!(
+        "{}|{}|{}|{}|{}",
+        e.endpoint,
+        e.class,
+        e.kind,
+        e.repo,
+        utc_ticks(&e.when)
+    );
+    if let Some(m) = &e.quota_mark {
+        k.push_str("|mark:");
+        k.push_str(&utc_ticks(m["until"].as_str().unwrap_or("")));
+    }
+    k
+}
+
+/// One unreadable journal line: its byte range (the line end included when there is one).
+struct BadLine {
+    start: usize,
+    end: usize,
 }
 
 /// `Register-MachineRunning`: removes any existing row for `row.pid`, then adds it.
@@ -1579,9 +1760,16 @@ fn acquire_machine_lock(lock_path: &Path, budget: LockBudget) -> Option<std::fs:
     None
 }
 
-/// Read-modify-write the machine health file under the `<path>.lock` exclusive lock: apply
-/// `add_endpoint`/`add_running`/`remove_pid`, prune stale endpoints and dead running rows, cap
-/// endpoints to the last 500, and write atomically. Never panics; any failure returns `false`.
+/// (wave 28b, D13) The test hook `CODEX_CONSULT_TEST_HEALTH_FAIL_FIRST=1` (test mode only) has been
+/// used in this process.
+static HEALTH_FAIL_FIRST_DONE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Read-modify-write the machine health file under the `<path>.lock` exclusive lock: apply the
+/// journal (wave 28b, D13), then `add_endpoint`/`add_running`/`remove_pid`, prune stale endpoints and
+/// dead running rows, cap endpoints to the last 500, and write atomically; then move the journal's
+/// unreadable lines to `<journal>.bad` and empty the journal by what was applied or moved. Never
+/// panics; a failure is named.
 fn update_machine_health(
     path: &Path,
     add_endpoint: Option<MachineEndpoint>,
@@ -1590,11 +1778,24 @@ fn update_machine_health(
     is_alive: &dyn Fn(u32, &str) -> bool,
     budget: LockBudget,
 ) -> HealthUpdate {
+    // (wave 28b, D13) TEST HOOK (test mode only): CODEX_CONSULT_TEST_HEALTH_FAIL_FIRST=1 - the FIRST
+    // update of this process that adds an endpoint record fails (a lock timeout): the run's own
+    // record before the commit, so the journal and the retry after the commit can be watched.
+    if add_endpoint.is_some()
+        && crate::test_hooks::hook("CODEX_CONSULT_TEST_HEALTH_FAIL_FIRST")
+            .map(|v| v.trim() == "1")
+            .unwrap_or(false)
+        && !HEALTH_FAIL_FIRST_DONE.swap(true, std::sync::atomic::Ordering::SeqCst)
+    {
+        return HealthUpdate::Failed(
+            "lock timeout (test hook CODEX_CONSULT_TEST_HEALTH_FAIL_FIRST)".to_string(),
+        );
+    }
     // (wave 27c, D7) a failure that is NOT a lock timeout is named by its cause. A missing parent
     // directory is checked first (the plugin's `[IO.Directory]::Exists` guard) so it is not
     // mistaken for a lock timeout when the `.lock` cannot be created.
     if let Some(dir) = path.parent() {
-        if !dir.is_dir() {
+        if !dir.as_os_str().is_empty() && !dir.is_dir() {
             return HealthUpdate::Failed(format!("the directory {} does not exist", dir.display()));
         }
     }
@@ -1608,11 +1809,68 @@ fn update_machine_health(
         None => return HealthUpdate::LockTimeout,
     };
 
-    let result = (|| -> bool {
+    let result = (|| -> Result<(), String> {
+        use std::io::{Read, Seek, SeekFrom, Write};
         let current = read_machine_health(path);
         let mut endpoints = current.endpoints;
+        let mut keys: std::collections::HashSet<String> =
+            endpoints.iter().map(machine_record_key).collect();
+
+        // (wave 28b, D13) the journal: held exclusively until the file is written, then emptied
+        // (busy: left for the next update). (wave 28c, D10 / F42-6, F44-1) read as BYTES, line by
+        // line: a line that parses is applied; one that does not (a torn append of a writer that
+        // died) is MOVED to <journal>.bad after the write.
+        let journal_path = machine_health_journal_path(path);
+        let mut journal: Option<std::fs::File> = None;
+        let mut j_bytes: Vec<u8> = Vec::new();
+        let mut j_bad: Vec<BadLine> = Vec::new();
+        if journal_path.is_file() {
+            for _ in 0..20 {
+                match open_exclusive(&journal_path, false, false) {
+                    Ok(f) => {
+                        journal = Some(f);
+                        break;
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
+                }
+            }
+            if let Some(f) = journal.as_mut() {
+                let _ = f.seek(SeekFrom::Start(0));
+                let _ = f.read_to_end(&mut j_bytes);
+                let mut pos = 0usize;
+                while pos < j_bytes.len() {
+                    let end = match j_bytes[pos..].iter().position(|b| *b == b'\n') {
+                        Some(i) => pos + i + 1,
+                        None => j_bytes.len(),
+                    };
+                    let line = String::from_utf8_lossy(&j_bytes[pos..end]);
+                    let t = line.trim().trim_start_matches('\u{feff}');
+                    if !t.is_empty() {
+                        let rec = serde_json::from_str::<Value>(t)
+                            .ok()
+                            .filter(|v| {
+                                v.is_object()
+                                    && v["endpoint"].as_str().is_some_and(|e| !e.is_empty())
+                            })
+                            .and_then(|v| serde_json::from_value::<MachineEndpoint>(v).ok());
+                        match rec {
+                            Some(r) => {
+                                if keys.insert(machine_record_key(&r)) {
+                                    endpoints.push(r);
+                                }
+                            }
+                            None => j_bad.push(BadLine { start: pos, end }),
+                        }
+                    }
+                    pos = end;
+                }
+            }
+        }
+
         if let Some(e) = add_endpoint {
-            endpoints.push(e);
+            if keys.insert(machine_record_key(&e)) {
+                endpoints.push(e);
+            }
         }
         let mut running = current.running;
         if remove_pid > 0 {
@@ -1656,11 +1914,66 @@ fn update_machine_health(
         // plugin uses (`ps_json`), not serde pretty: both tools rewrite the same file, so its bytes
         // must not flip with the last writer. The plugin writes it with `Write-TextAtomic` (no
         // CRLF->LF pass), so the on-disk form is CRLF between lines + a trailing LF.
-        let bytes = match crate::ps_json::to_ps_json_crlf_bytes(&out) {
-            Ok(b) => b,
-            Err(_) => return false,
-        };
-        crate::store::write_text_atomic(path, &bytes).is_ok()
+        let bytes = crate::ps_json::to_ps_json_crlf_bytes(&out)
+            .map_err(|e| format!("write failed: {}", crate::one_line(&e.to_string())))?;
+        crate::store::write_text_atomic(path, &bytes)
+            .map_err(|e| format!("write failed: {}", crate::one_line(&e.to_string())))?;
+
+        // (D13) applied: the journal is emptied (a crash before this applies it again - no
+        // double); (wave 28c, D10) first the unreadable lines go to <journal>.bad (with the time),
+        // then the journal loses exactly the prefix that was applied or moved.
+        if let Some(f) = journal.as_mut() {
+            let mut consumed = j_bytes.len();
+            if !j_bad.is_empty() {
+                let mut bad_os = journal_path.as_os_str().to_os_string();
+                bad_os.push(".bad");
+                let bad_path = PathBuf::from(bad_os);
+                let moved = (|| -> std::io::Result<()> {
+                    let mut b = open_exclusive(&bad_path, true, true)?;
+                    for bl in &j_bad {
+                        let mut len = bl.end - bl.start;
+                        if len > 0 && j_bytes[bl.end - 1] == b'\n' {
+                            len -= 1;
+                        }
+                        let head = format!(
+                            "{}\t",
+                            chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z")
+                        );
+                        b.write_all(head.as_bytes())?;
+                        b.write_all(&j_bytes[bl.start..bl.start + len])?;
+                        b.write_all(b"\n")?;
+                    }
+                    b.sync_all()
+                })()
+                .is_ok();
+                if moved {
+                    push_journal_note(format!(
+                        "health journal: {} unreadable line(s) kept in {}",
+                        j_bad.len(),
+                        bad_path.display()
+                    ));
+                } else {
+                    // not moved: they stay in the journal - with everything from the first on
+                    consumed = j_bad[0].start;
+                    push_journal_note(format!(
+                        "health journal: {} unreadable line(s) could not be moved to {} - kept in {}",
+                        j_bad.len(),
+                        bad_path.display(),
+                        journal_path.display()
+                    ));
+                }
+            }
+            let rest = j_bytes.len() - consumed;
+            if rest == 0 {
+                let _ = f.set_len(0);
+            } else {
+                let _ = f.seek(SeekFrom::Start(0));
+                let _ = f.write_all(&j_bytes[consumed..]);
+                let _ = f.set_len(rest as u64);
+            }
+            let _ = f.flush();
+        }
+        Ok(())
     })();
 
     // Release and remove the lock file we acquired (both platforms), so a waiter never inherits a
@@ -1671,13 +1984,21 @@ fn update_machine_health(
     #[cfg(windows)]
     let _ = std::fs::remove_file(&lock_path);
 
-    if result {
-        HealthUpdate::Written
-    } else {
+    match result {
+        Ok(()) => HealthUpdate::Written,
         // (wave 27c, D7) the lock was held but the read-modify-write failed: a named failure, not a
         // silent skip, so the caller sets the retry flag and warns.
-        HealthUpdate::Failed("the health file could not be written".to_string())
+        Err(why) => HealthUpdate::Failed(why),
     }
+}
+
+/// (wave 28b, D13) An update that only applies the journal (and prunes) - what every later update
+/// does first; for the tests and a caller with nothing else to add.
+pub fn apply_machine_health_journal(
+    path: &Path,
+    is_alive: &dyn Fn(u32, &str) -> bool,
+) -> HealthUpdate {
+    update_machine_health(path, None, None, 0, is_alive, LockBudget::full())
 }
 
 /// `Get-MachineEndpointConsults`: synthesizes a "consult" `Value` per machine-health record
@@ -1758,6 +2079,155 @@ fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Valu
 #[cfg(test)]
 mod machine_health_tests {
     use super::*;
+
+    fn journal_scratch(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "c3-journal-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn ok_record(fp: &str, repo: &str) -> MachineEndpoint {
+        new_machine_health_record(fp, "usable reply", None, repo).unwrap()
+    }
+
+    fn endpoints_of(path: &Path, fp: &str) -> usize {
+        read_machine_health(path)
+            .endpoints
+            .iter()
+            .filter(|e| e.endpoint == fp)
+            .count()
+    }
+
+    // (wave 28b, D13) the journal beside the health file: any later update applies it and empties
+    // it; the same record again (journal + direct) adds nothing.
+    #[test]
+    fn the_journal_is_applied_once_and_emptied() {
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("apply");
+        let hp = dir.join("health.json");
+        let rec = ok_record("fp-28b", "C:\\repo-a");
+        add_machine_health_journal(&hp, &rec).unwrap();
+        let jp = machine_health_journal_path(&hp);
+        assert_eq!(jp, dir.join("health.json.journal"));
+        assert_eq!(std::fs::read_to_string(&jp).unwrap().lines().count(), 1);
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-28b"), 1);
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        add_machine_health_journal(&hp, &rec).unwrap();
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &rec, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-28b"), 1);
+        // a missing directory is named, for the journal as for the file
+        let missing = dir.join("no-such").join("health.json");
+        let e = add_machine_health_journal(&missing, &rec).unwrap_err();
+        assert!(
+            e.starts_with("the directory ") && e.ends_with(" does not exist"),
+            "{e}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 28c, D10) torn lines go to <journal>.bad ("<time>\t<bytes>"), the good ones are
+    // applied, the journal is emptied by what was applied or moved; a .bad that cannot be written
+    // keeps the unreadable line and everything after it in the journal.
+    #[test]
+    fn torn_journal_lines_are_moved_aside_never_dropped() {
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("torn");
+        let hp = dir.join("health-j.json");
+        let jp = machine_health_journal_path(&hp);
+        let bad_path = PathBuf::from(format!("{}.bad", jp.display()));
+        let a = serde_json::to_string(&ok_record("fp-a", "C:\\repo-a")).unwrap();
+        let b = serde_json::to_string(&ok_record("fp-b", "C:\\repo-b")).unwrap();
+        let torn1 = r#"{"endpoint":"fp-torn","cla"#;
+        let torn2 = r#"{"endpoint":"fp-tail"#;
+        std::fs::write(&jp, format!("{a}\n{torn1}\n{b}\n{torn2}")).unwrap();
+        let _ = take_machine_health_journal_notes();
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        let notes = take_machine_health_journal_notes();
+        assert_eq!(endpoints_of(&hp, "fp-a"), 1);
+        assert_eq!(endpoints_of(&hp, "fp-b"), 1);
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        let bad = std::fs::read_to_string(&bad_path).unwrap();
+        let bl: Vec<&str> = bad.lines().collect();
+        assert_eq!(bl.len(), 2, "{bad}");
+        assert!(
+            bl[0].contains('\t') && bl[0].ends_with(&format!("\t{torn1}")),
+            "{bad}"
+        );
+        assert!(bl[1].ends_with(&format!("\t{torn2}")), "{bad}");
+        assert_eq!(
+            notes,
+            vec![format!(
+                "health journal: 2 unreadable line(s) kept in {}",
+                bad_path.display()
+            )]
+        );
+        // the .bad cannot be written (a directory is in its place)
+        std::fs::remove_file(&bad_path).unwrap();
+        std::fs::create_dir_all(&bad_path).unwrap();
+        let c = serde_json::to_string(&ok_record("fp-c", "C:\\repo-c")).unwrap();
+        let d = serde_json::to_string(&ok_record("fp-d", "C:\\repo-d")).unwrap();
+        std::fs::write(&jp, format!("{c}\ngarbage-line\n{d}\n")).unwrap();
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        let notes2 = take_machine_health_journal_notes().join("|");
+        assert_eq!(
+            std::fs::read_to_string(&jp).unwrap(),
+            format!("garbage-line\n{d}\n")
+        );
+        assert!(
+            notes2.contains("could not be moved to") && notes2.contains(" - kept in "),
+            "{notes2}"
+        );
+        assert_eq!(endpoints_of(&hp, "fp-c"), 1);
+        std::fs::remove_dir_all(&bad_path).unwrap();
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        assert_eq!(endpoints_of(&hp, "fp-d"), 1);
+        assert_eq!(
+            take_machine_health_journal_notes(),
+            vec![format!(
+                "health journal: 1 unreadable line(s) kept in {}",
+                bad_path.display()
+            )]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 28b, D13) the record key: the same instant in another offset is the same record; a
+    // quota mark makes another record.
+    #[test]
+    fn the_record_key_is_the_instant_and_the_mark() {
+        let mut a = ok_record("fp", "r");
+        a.when = "2026-10-09T10:00:00+00:00".into();
+        let mut b = a.clone();
+        b.when = "2026-10-09T12:00:00+02:00".into();
+        assert_eq!(machine_record_key(&a), machine_record_key(&b));
+        let mut m = a.clone();
+        m.quota_mark = Some(serde_json::json!({"until": "2026-10-09T11:00:00+00:00"}));
+        assert_ne!(machine_record_key(&a), machine_record_key(&m));
+    }
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);

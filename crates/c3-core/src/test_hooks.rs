@@ -13,6 +13,26 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// The gate variable name.
 pub const MODE_VAR: &str = "CODEX_CONSULT_TEST_MODE";
 
+/// (wave 28b, D10) The line every run in test mode says - on the console and once in the ledger's
+/// `warnings[]` (`$script:TestModeWarning`), so test mode never goes unnoticed.
+pub const TEST_MODE_WARNING: &str = "test mode is ON: test hooks are honoured";
+
+/// (wave 28b, D10) `Test-TestVarName`: a test-mode variable (`CODEX_CONSULT_TEST_*`, the mode gate
+/// included; any case). An engine child or a launcher probe never inherits one - only the bridge's
+/// own processes (a panel member, the detached background) keep them.
+pub fn is_test_var(name: &str) -> bool {
+    name.to_ascii_uppercase().starts_with("CODEX_CONSULT_TEST_")
+}
+
+/// The test-mode warning when test mode is on (`None` otherwise).
+pub fn test_mode_warning() -> Option<&'static str> {
+    if mode_on() {
+        Some(TEST_MODE_WARNING)
+    } else {
+        None
+    }
+}
+
 /// One warning per run when a hook was seen without the mode (`Warn-TestHookIgnored`).
 static WARNED_IGNORED: AtomicBool = AtomicBool::new(false);
 
@@ -127,6 +147,19 @@ mod tests {
         assert_eq!(ignored_hooks_warning(), "");
         std::env::remove_var("CODEX_CONSULT_TEST_PANEL_SEED");
         std::env::remove_var(MODE_VAR);
+    }
+
+    #[test]
+    fn test_vars_and_the_mode_line() {
+        let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(is_test_var("CODEX_CONSULT_TEST_MODE"));
+        assert!(is_test_var("codex_consult_test_xyz"));
+        assert!(!is_test_var("CODEX_CONSULT_NOW"));
+        assert!(!is_test_var("CODEX_CONSULT_TELEMETRY"));
+        std::env::set_var(MODE_VAR, "1");
+        assert_eq!(test_mode_warning(), Some(TEST_MODE_WARNING));
+        std::env::remove_var(MODE_VAR);
+        assert_eq!(test_mode_warning(), None);
     }
 
     #[test]

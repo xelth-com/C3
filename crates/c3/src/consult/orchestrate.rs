@@ -922,11 +922,14 @@ fn detach_foreground(o: Options, home: Option<&str>) -> i32 {
         .as_ref()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let warnings: Vec<String> = if ctx.preflight_warning.is_empty() {
-        Vec::new()
-    } else {
-        vec![ctx.preflight_warning.clone()]
-    };
+    // The run's warnings, the preflight's and the peak window's (`$detachWarnings`); the
+    // test-mode line among them is printed after the detach lines (wave 28b, D10).
+    let mut warnings: Vec<String> = ctx.run_warnings.clone();
+    for w in [&ctx.preflight_warning, &ctx.peak_warning] {
+        if !w.is_empty() {
+            warnings.push(w.clone());
+        }
+    }
     super::detach::start_detached_run(&o, "run", &members, budget, &plan, &brief_full, &warnings)
 }
 
@@ -1361,6 +1364,13 @@ fn build_context(
     let ignored_hooks_warning = c3_core::test_hooks::ignored_hooks_warning();
     if !ignored_hooks_warning.is_empty() {
         run_warnings.push(ignored_hooks_warning);
+    }
+    // (wave 28b, D10 / F36-5) test mode never goes unnoticed: a run that finds
+    // CODEX_CONSULT_TEST_MODE=1 says so on the console (a real run with its output, a dry run with
+    // its warnings) and once in warnings[]; no engine child gets the test-mode variables
+    // (`engines::scrub_host_markers`).
+    if let Some(w) = c3_core::test_hooks::test_mode_warning() {
+        run_warnings.push(w.to_string());
     }
     // (wave 27c, D11/D12) a coordinator that parses but names no seat is SAID, not refused: a
     // roster position with no seat here warns and the run goes on; a coordinator no reviewer can
@@ -4790,6 +4800,54 @@ fn finish(
         }
         let _ = store.write_pending(&pending, &committing_record);
     }
+    // (wave 26b, D13; 26c, D2; 27c, D7; 28b, D13 / F36-6, F37-1) the run's outcome on its endpoint
+    // into the machine-wide health file (a usable reply clears the endpoint - class ok -, a provider
+    // failure marks it, class operator excepted) - now, BEFORE the write lock, with the full budget
+    // (3 x 5 s). The record is built ONCE: the same record goes into the journal at the commit and
+    // into the retry after it (applying is idempotent). ANY failure is retried after the commit, its
+    // cause named; the ledger keeps the truth either way. Disabled with CODEX_CONSULT_HEALTH=none.
+    let health_repo = ctx.repo_root.to_string_lossy().to_string();
+    let health_path = if ctx.identity.resolved {
+        c3_core::health::machine_health_path(&providers::get_codex_home())
+    } else {
+        None
+    };
+    let health_record = health_path.as_ref().and_then(|_| {
+        let failure = provider_failure
+            .as_ref()
+            .map(|pf| c3_core::health::MachineFailure {
+                class: pf.class.clone(),
+                kind: pf.kind.clone().unwrap_or_default(),
+                when: pf.when.clone(),
+                retry_after: pf.retry_after.clone(),
+                message: pf.message.clone(),
+            });
+        c3_core::health::new_machine_health_record(
+            &ctx.identity.fingerprint,
+            &bridge_outcome,
+            failure.as_ref(),
+            &health_repo,
+        )
+    });
+    let health_alive = |pid: u32, st: &str| crate::liveness::proc::pid_alive(pid, st);
+    let mut health_retry_cause: Option<String> = None;
+    if let (Some(hp), Some(rec)) = (&health_path, &health_record) {
+        let res = c3_core::health::add_machine_health_endpoint(hp, rec, &health_alive);
+        if res.failed() {
+            health_retry_cause = Some(res.cause().unwrap_or_default());
+        }
+    }
+    // (wave 28c, D10 / F42-6, F44-1) a journal line that could not be applied was moved aside, never
+    // dropped silently: said in warnings[] and the summary (this run's updates so far - its
+    // registration, its outcome).
+    let mut health_summary_warnings: Vec<String> = Vec::new();
+    for note in c3_core::health::take_machine_health_journal_notes() {
+        let v = serde_json::Value::String(note.clone());
+        if !entry.warnings.contains(&v) {
+            entry.warnings.push(v);
+            health_summary_warnings.push(note);
+        }
+    }
     // TEST HOOK: CODEX_CONSULT_TEST_COMMIT_PAUSE_MS=<ms> | <model>=<ms>[|...] — a pause held INSIDE
     // the commit, between findings.json and sessions.json (the ORPHAN window a kill can hit; the
     // write-lock contention window), applied by the store (`codex-consult.ps1:5176`).
@@ -4822,50 +4880,26 @@ fn finish(
         }
         Err(e) => return refuse(&format!("could not take the write lock: {e}")),
     };
-    // (wave 26c, D2) record this run's outcome on its endpoint in the machine-wide health file
-    // BEFORE the ledger entry: a usable reply clears the endpoint (class ok), a provider failure
-    // marks it (class operator excepted). A lock timeout is retried once here at the commit and, if
-    // it still fails, recorded as the warning `machine-wide health not updated (lock timeout)` in
-    // `warnings[]` and printed as a `warning    :` summary line (the ledger keeps the truth either
-    // way). A failed update never fails the run; disabled with CODEX_CONSULT_HEALTH=none.
-    // (wave 27c, D7/D8) inside the task write lock only ONE bounded attempt (≤1 s) is made, so the
-    // health retry never extends the hold on the commit lock; every failure class sets the retry
-    // flag and the ledger warning names the real cause. The FULL retry (3×5 s) runs after the lock
-    // is released (below). A failed update never fails the run; disabled with CODEX_CONSULT_HEALTH=none.
-    let mut health_warn_cause: Option<String> = None;
-    let mut health_retry: Option<(std::path::PathBuf, Option<c3_core::health::MachineFailure>)> =
-        None;
-    let health_fingerprint = ctx.identity.fingerprint.clone();
-    let health_outcome_text = bridge_outcome.clone();
-    let health_repo = ctx.repo_root.to_string_lossy().to_string();
-    if ctx.identity.resolved {
-        if let Some(hp) = c3_core::health::machine_health_path(&providers::get_codex_home()) {
-            let failure = provider_failure
-                .as_ref()
-                .map(|pf| c3_core::health::MachineFailure {
-                    class: pf.class.clone(),
-                    kind: pf.kind.clone().unwrap_or_default(),
-                    when: pf.when.clone(),
-                    retry_after: pf.retry_after.clone(),
-                    message: pf.message.clone(),
-                });
-            let res = c3_core::health::add_machine_health_record_bounded(
-                &hp,
-                &health_fingerprint,
-                &health_outcome_text,
-                failure.as_ref(),
-                &health_repo,
-                &|pid, st| crate::liveness::proc::pid_alive(pid, st),
-            );
-            if res.failed() {
-                let cause = res.cause().unwrap_or_default();
-                entry.warnings.push(serde_json::Value::String(format!(
-                    "machine-wide health not updated at the commit ({cause}); retried after it"
-                )));
-                health_warn_cause = Some(cause);
-                health_retry = Some((hp, failure));
+    // (wave 26c, D2 / 28b, D13) the machine-wide health update that failed before the commit: its
+    // record goes into the JOURNAL beside the health file now, inside the write lock (a local append -
+    // no wait for the health lock, so the hold on this task's lock does not grow); this entry's
+    // warning says a retry follows the commit; the retry after the lock is released - or the next
+    // run of any repository, should this one die first - applies the journal and empties it.
+    let mut health_journal_failed = false;
+    if let (Some(cause), Some(hp), Some(rec)) = (&health_retry_cause, &health_path, &health_record)
+    {
+        let mid = match c3_core::health::add_machine_health_journal(hp, rec) {
+            Ok(()) => "the record is kept in the journal; ".to_string(),
+            Err(why) => {
+                health_journal_failed = true;
+                format!("the journal could not be written ({why}); ")
             }
-        }
+        };
+        let w = format!(
+            "machine-wide health not updated at the commit ({cause}); {mid}a retry follows the commit"
+        );
+        entry.warnings.push(serde_json::Value::String(w.clone()));
+        health_summary_warnings.push(w);
     }
 
     // The write-lock wait (`commit_wait_ms`): 0 when the first attempt won it, else the measured
@@ -4889,18 +4923,37 @@ fn finish(
     drop(write_lock);
     let _ = receipt;
 
-    // (wave 27c, D8) the FULL machine-health retry (3×5 s), now that the task write lock is
-    // released, so the earlier bounded attempt never held up the commit. Best-effort; never fails
-    // the run — the ledger already carries the truth either way.
-    if let Some((hp, failure)) = health_retry.take() {
-        let _ = c3_core::health::add_machine_health_record(
-            &hp,
-            &health_fingerprint,
-            &health_outcome_text,
-            failure.as_ref(),
-            &health_repo,
-            &|pid, st| crate::liveness::proc::pid_alive(pid, st),
-        );
+    // (wave 27c, D8 / 28b, D13) the FULL machine-health retry (3 x 5 s), outside the write lock: it
+    // applies the journal (this run's record and any other) and empties it; its OUTCOME, either way,
+    // is in the summary (the console, and a detached run's status record). Never fails the run.
+    let mut health_lines: Vec<String> = Vec::new();
+    if let (Some(cause), Some(hp), Some(rec)) = (&health_retry_cause, &health_path, &health_record)
+    {
+        let res = c3_core::health::add_machine_health_endpoint(hp, rec, &health_alive);
+        if res == c3_core::health::HealthUpdate::Written {
+            health_lines.push(
+                "health     : machine-wide health updated by the retry after the commit (the journal applied)"
+                    .to_string(),
+            );
+        } else {
+            let why = res.cause().unwrap_or_else(|| cause.clone());
+            let waits = if health_journal_failed {
+                String::new()
+            } else {
+                format!(
+                    " - the record waits in {} for the next run",
+                    c3_core::health::machine_health_journal_path(hp).display()
+                )
+            };
+            health_lines.push(format!(
+                "warning    : machine-wide health not updated by the retry after the commit ({why}){waits}"
+            ));
+        }
+    }
+    // (wave 28c, D10) the journal's unreadable lines found by the updates after the commit: the
+    // summary
+    for note in c3_core::health::take_machine_health_journal_notes() {
+        health_lines.push(format!("warning    : {note}"));
     }
 
     // Telemetry: record this consultation to the spool (errors ignored) - after the commit, so an
@@ -5089,14 +5142,19 @@ fn finish(
         reply_body,
         section,
         engine_warnings: {
-            // (wave 26c D2 / 27c D7) a failed machine-health update prints as a `warning    :`
-            // summary line naming the cause, after any engine-turn warnings.
+            // (wave 26c D2 / 28b D13 / 28c D10) the machine-health warnings of warnings[] (the
+            // update at the commit, the journal's unreadable lines) print as `warning    :` summary
+            // lines too, after any engine-turn warnings.
             let mut w = sec.engine_warnings.clone();
-            if let Some(cause) = &health_warn_cause {
-                w.push(format!("machine-wide health not updated ({cause})"));
+            for hw in &health_summary_warnings {
+                if !w.contains(hw) {
+                    w.push(hw.clone());
+                }
             }
             w
         },
+        health_lines,
+
         denial_retry_line: sec.denial_console.clone(),
         ..Default::default()
     };
@@ -6831,13 +6889,16 @@ fn render_handoff(
             drift.artifacts_changed_paths.join(", ")
         ));
     }
-    // The handoff `Warnings:` line: engine turn warnings for an engine run (denial notices,
-    // engine stderr warnings), else the run warnings.
-    let warn_source: &[String] = if !ctx.is_codex() {
-        &sec.engine_warnings
-    } else {
-        &ctx.run_warnings
-    };
+    // The handoff `Warnings:` line: the run warnings, then an engine run's turn warnings (denial
+    // notices, engine stderr warnings) - the ledger's `warnings[]`.
+    let mut warn_source: Vec<String> = ctx.run_warnings.clone();
+    if !ctx.is_codex() {
+        for ew in &sec.engine_warnings {
+            if !warn_source.contains(ew) {
+                warn_source.push(ew.clone());
+            }
+        }
+    }
     if !warn_source.is_empty() {
         records.warnings = Some(format!(
             "Warnings: {}.",
@@ -7466,18 +7527,19 @@ fn build_entry(
             })
         },
         range: ctx.range_record.clone(),
-        // An engine run records its engine turn warnings (denial notices etc.); a codex run
-        // records the run warnings (range size, roster ambiguity, semantics).
-        warnings: if ctx.is_codex() {
-            ctx.run_warnings
-                .iter()
-                .map(|w| serde_json::Value::String(w.clone()))
-                .collect()
-        } else {
-            sec.engine_warnings
-                .iter()
-                .map(|w| serde_json::Value::String(w.clone()))
-                .collect()
+        // The run warnings (range size, roster ambiguity, test mode, semantics) for EVERY engine
+        // (`foreach ($rw in $runWarnings) { $engineWarnings.Add($rw) }`), then an engine run's turn
+        // warnings (denial notices etc.).
+        warnings: {
+            let mut w: Vec<String> = ctx.run_warnings.clone();
+            if !ctx.is_codex() {
+                for ew in &sec.engine_warnings {
+                    if !w.contains(ew) {
+                        w.push(ew.clone());
+                    }
+                }
+            }
+            w.into_iter().map(serde_json::Value::String).collect()
         },
         base_commit: ctx.revision.base_commit.clone(),
         reviewed_revision: ctx.revision.reviewed_revision.clone(),

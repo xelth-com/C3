@@ -394,9 +394,9 @@ fn context_window_reaches_codex_and_compactions_are_recorded() {
         ],
     );
     assert_eq!(x.status.code(), Some(0), "{}", text(&x));
-    // (Rust std quotes a batch launcher's argument that holds `=`: `-c "k=v"`; codex receives the
-    // same argv either way)
-    let args = std::fs::read_to_string(&log).unwrap().replace('"', "");
+    // (wave 2b) a batch launcher gets a plain `k=v` as it is, as the plugin passes it (Rust std
+    // alone would quote it: `-c "k=v"`) - the fake's raw `%*` text, unquoted
+    let args = std::fs::read_to_string(&log).unwrap();
     assert!(args.contains(" -c model_context_window=256000 "), "{args}");
     assert!(
         args.contains(" -c model_auto_compact_token_limit=204800 "),

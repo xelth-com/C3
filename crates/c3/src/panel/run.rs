@@ -1005,6 +1005,10 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     for w in &b.coordinator_warnings {
         println!("WARNING: {w}");
     }
+    // (wave 28b, D10) the panel run says it too (each member's warnings[] carries it).
+    if let Some(w) = c3_core::test_hooks::test_mode_warning() {
+        println!("WARNING: {w}");
+    }
     println!("{}", concurrency_line(&o, &b.concurrency));
     println!("{}", timeout_line(&r, &b.timeout_exceptions));
     if !b.range_line.is_empty() {
