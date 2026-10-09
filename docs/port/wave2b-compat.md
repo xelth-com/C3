@@ -88,17 +88,20 @@ share the health file AND its journal:
   of `when` (+ a quota mark's `until`), so the same record from the journal and directly is one
   record. (wave 2e, F11-1) A journal read or seek error fails the update before anything is
   written (`journal read failed: <why> (the journal <path> is kept)`); a failure to empty it fails
-  the update too (`journal not emptied: <why> (the journal <path> is kept; its records are listed
-  as applied in <journal>.applied)`) - section 7.
+  the update too (`journal not emptied: <why> (the journal <path> is kept; its records are marked
+  as applied)`) - section 7.
 - A line that does not parse (a torn append) is moved to `<journal>.bad` as `<local time><TAB><the
   exact bytes>` and counted: `health journal: <n> unreadable line(s) kept in <journal>.bad`. When the
   `.bad` cannot be written the WHOLE journal stays (wave 2e, F11-1: the plugin keeps the line and
   everything after it by rewriting the journal in place; C3 never rewrites it) and the note says
   `... could not be moved to <bad> - kept in <journal>`.
-- (wave 2h, F22-1) A journal that is KEPT (either case above) lists the keys of every record it
-  holds in `<health file>.journal.applied`, written after the health file; a listed record is never
-  applied again (from the journal or directly), whatever the endpoint list still holds; the list is
-  removed when the journal is emptied. C3 only - section 7.
+- (wave 2i, F29-1; was wave 2h's `<health file>.journal.applied` list, retired) The applied state
+  lives IN the journal, as appended copies of a record with one more member - the plugin's parser
+  ignores it and its writer keeps it: `"applying":"<sha256 of the health file before the write>"`
+  before the write of an update that finds a record without one, `"applied":true` after it when
+  the journal is KEPT (either case above). A
+  record so marked is never applied again (from the journal or directly), whatever the endpoint
+  list still holds - section 7.
 - The run (`orchestrate`): the record is built ONCE (`new_machine_health_record`, its `when` fixed)
   and written BEFORE the write lock with the full budget (3 x 5 s; it was one bounded attempt inside
   the lock). Its failure (any cause) puts the record into the journal INSIDE the write lock (a local
@@ -212,8 +215,8 @@ five defects; branch `wave2e-fixes` fixes them:
   journal is only ever emptied WHOLE, never rewritten in place: when an unreadable line cannot be
   moved to `.bad`, the whole journal stays (its applied records apply again next time - the record
   key makes that a no-op; NOT durable once retention or the cap removed the key: wave 2h, F22-1
-  below); when emptying it fails, the update fails (`journal not emptied: <why> (the journal <path>
-  is kept; ...)`, the tail since wave 2h below). Decided differently from the
+  and wave 2i, F29-1 below); when emptying it fails, the update fails (`journal not emptied: <why>
+  (the journal <path> is kept; ...)`, the tail since wave 2i below). Decided differently from the
   plugin, which keeps only the unreadable line and what follows (an in-place rewrite that a
   half-done write would corrupt); the plugin's harness checks of that suffix run the plugin's own
   function, so no C3 harness check changes. RC1 fixtures (thread-local fault injection, test builds
@@ -275,6 +278,7 @@ update, deduplicated only against the keys of the endpoint list - and the 500-re
 keys from it. A record applied, then evicted by the cap, came back as a NEW record on the next
 replay and displaced the oldest newer one. (The 24-hour retention alone cannot resurrect: its rule
 is monotonic in time, so a record it pruned is pruned again on its replay - parsed, never visible.)
+(Superseded by wave 2i below - the list is retired; kept here as the record of wave 2h.)
 Branch `wave2h-journal` (`c3-core/src/health.rs`) adds a durable replay ledger independent of the
 endpoint list - **the applied-key list `<health file>.journal.applied`**
 (`{"applied_version":1,"keys":[<record key>, ...]}`, written atomically):
@@ -322,6 +326,96 @@ the file the replay does not bring it back), `the_applied_key_list_failures_are_
 `a_failed_journal_rewrite_keeps_every_byte` expects the new `journal not emptied` text and the list.
 With the list check removed, the two eviction fixtures fail (the record comes back).
 
+### Wave 2i: F29-1 - the applied state inside the journal (handoff 29, mimo, HOLD)
+
+Handoff 29 (`.collab/parity-0.6.1-2026-10-08/handoffs/29-codex-wave2b-round3-mimo.md`) superseded
+F22-1: the applied-key list was only a C3-local replay guard - read as empty when missing or
+malformed, and the plugin, which shares the health file and its journal on the machine, neither
+reads nor keeps it; after the plugin's journal rewrite (or with the list lost) an applied record
+whose key the cap evicted applied again. A missing list cannot be made fail-closed either: every
+run that journals a record leaves a non-empty journal without one. Branch `wave2i-journal-durable`
+(`c3-core/src/health.rs`) retires the list and keeps the applied state IN the journal, where the
+plugin keeps it too.
+
+What the plugin's journal code does (v0.6.1 `Update-MachineHealth`, read and run): a line is a
+record when `ConvertFrom-Json` makes a JSON object of it with a non-empty `endpoint` - every other
+member is ignored; a record whose key is not in the file is added as parsed (its other members go
+into the file with it); then the journal is emptied, or - when an unreadable line cannot be moved to
+`.bad` - the bytes from the first such line on are written back verbatim at offset 0, the prefix
+before it dropped. A journal record older than the 24-hour retention (no `until` or quota mark
+still ahead) is parsed, added and pruned in the same update: a no-op, in both tools (the
+retention rule is monotonic - only the cap can resurrect).
+
+The rule:
+
+- **Marks are members of an appended copy.** C3 never edits a journal line: it appends copies of a
+  record with one more member, and otherwise only empties the journal whole (F11-1 stands).
+- **`applying` before the write.** Every record of the journal that has no `applied` copy and no
+  `applying` copy naming the current bytes gets a copy with `"applying":"<sha256 of the health
+  file's bytes before this write>"` (`none` with no file, `unreadable`), flushed to disk BEFORE the
+  health file is written.
+- **`applied` after it, when kept.** A journal that is kept (its unreadable lines could not be
+  moved, or emptying it failed) gets a copy with `"applied":true` of every record that has none. A
+  kept journal whose records are all marked does not grow.
+- **Judged fail-closed.** A record (its key) is applied - never applied again, from the journal or
+  directly (the run's retry), whatever the endpoint list holds - when any line of it carries
+  `applied` (any value but false/null), or `applying` that names other bytes than the file's now or
+  is not a string. `applying` naming the file's current bytes: the write it announced never
+  happened - the record is applied as usual (a crash before the write loses nothing).
+- **Why it survives the plugin.** A copy always follows its original, and the plugin keeps only a
+  suffix, verbatim: whatever of a record the plugin keeps, its marks are kept with it. The plugin's
+  write of the health file changes its bytes, so an `applying` copy then says applied as well.
+- **Crashes.** Before the `applying` copies: as before (the endpoint keys stop a double). Between
+  them and the write: the copies still name the file - applied once, next time. After the write:
+  the copies no longer name the file - applied, never again, also after a plugin update evicted the
+  record by the cap and kept the journal (handoff 29's crash-and-eviction schedule). A torn copy is
+  an unreadable line like any other; a journal whose last line is torn gets a line end before the
+  copies, so the torn bytes stay one unreadable line.
+- **Failures, named:** the `applying` copies not written fail the update before anything is
+  written (`journal not marked: <why> (the journal <journal> is kept; nothing applied)`); a kept
+  journal whose `applied` copies fail fails it after the file (`journal not marked as applied: <why>
+  (the journal <journal> is kept; its records keep their applying marks)`); emptying failed:
+  `journal not emptied: <why> (the journal <journal> is kept; its records are marked as applied)`
+  (or `...; its records not marked as applied either: <why> - their applying marks stand)`).
+- **The one residual of the fingerprint:** an `applying` copy read when the file has returned to
+  exactly the bytes it names counts as unwritten. That needs the file's content of before the write
+  after a write that added the record - the cap only drops records from the front, so the same 500
+  records in the same order cannot come back once the record was appended; a record that retention
+  pruned in the same write is a no-op on any replay.
+- **The list is retired:** `<health file>.journal.applied` is neither read nor written (wave 2h
+  never shipped; no such file exists on this machine).
+
+What the plugin itself still gets wrong (for its TECH_DEBT - C3 cannot fix it from outside):
+
+- **The plugin ignores the applied state (proposed T14).** It applies every journal line that has
+  an `endpoint`, marked or not: after a cap eviction its own next update re-adds a record C3 marked
+  (run against v0.6.1: the second plugin update added the evicted record back, with its `applying`
+  member, into the health file) - F22-1 inside the plugin. And it marks nothing it applies, so a
+  record that only the plugin applied, kept in its suffix, is replayed by C3 against the endpoint
+  keys alone (C3 marks it at its next update; the window is a cap eviction in between). The fix
+  belongs in the plugin: judge `applied`/`applying` by the rule above and append the same copies.
+- **(F11-1, unchanged)** its in-place suffix rewrite (`Write` at offset 0, then `SetLength`) tears
+  the journal when a crash interrupts it.
+
+Fixtures (`machine_health_tests`): `an_evicted_record_stays_out_after_the_plugins_journal_rewrite`
+(handoff 29's fixture; `plugin_update` ports the plugin's update line for line - its parser, its
+cap, its writer with a `.bad` that cannot be written: C3 applies a record and keeps the journal;
+the plugin's update evicts the record by the cap and writes the journal back its way, the original
+dropped, the torn line and the marks verbatim; C3's next update does not apply it again, the oldest
+newer record stays, the same record directly stays out - once after a finished update, once after a
+crash right after the health file, only the `applying` copy written),
+`a_crash_before_the_health_write_loses_nothing` (applied once next time; with the plugin's update
+first, nothing added twice and nothing resurrected after the cap),
+`the_journal_marks_are_judged_fail_closed` and `the_journal_mark_failures_are_named` (replaces
+`the_applied_key_list_failures_are_named`); the
+wave 2h and 2e fixtures assert the marks instead of the list and a kept journal's bytes as a
+prefix. With the marks ignored on apply, the eviction and the mixed fixtures fail; without the
+`applying` copies, the crash fixtures fail. The plugin's own code was run against such a journal
+(Windows PowerShell 5.1, the tag's `codex-consult-common.ps1` dot-sourced, a scratch health file
+with 500 records, `.bad` a directory): the marked lines parse as records (one unreadable line - the
+torn one), its cap evicts the record, the suffix stays byte for byte - and its next update re-adds
+the record (the plugin's T14 above).
+
 ## Tests
 
 Rust: `crates/c3-cli/tests/compat_wave2b.rs` (the real binary against a fake codex `.cmd`: TESTMODE
@@ -338,7 +432,11 @@ pointer command in PowerShell; the two RC1 fixtures in `c3_core::health`; `agy` 
 classifier), `hook` (the default command) and `engines::subprocess` (the RC3 matrix and its helper).
 The workspace: 611 tests, clippy and fmt clean. Wave 2h (section 7, F22-1) adds 3 in
 `c3_core::health` (the cap-eviction replay, the crash between the apply and the clearing, the list's
-failures); the workspace on `wave2h-journal`: 665 tests, clippy and fmt clean.
+failures); the workspace on `wave2h-journal`: 665 tests, clippy and fmt clean. Wave 2i (section 7,
+F29-1) adds 3 in `c3_core::health` (the mixed C3/plugin schedule, the crash before the health
+write, the judgement of the marks; the list's failures fixture became the marks' failures); the
+workspace on `wave2i-journal-durable`: 719 tests (`index::embed` loopback failed once under the
+machine's load and passes alone - outside this change), clippy and fmt clean.
 
 ## Harnesses through the shim (pinned v0.6.1, 2026-10-09)
 
@@ -421,3 +519,17 @@ The same staging (a fresh copy of the tag's tree and the shims), `C3_EXE` a copy
 | fixes26b | 51 / 0 | 51 / 0 | - |
 
 No regression (HEALTH D7/D8/D13, JOURNAL D10 and HEALTHLOCK pass with the applied-key list).
+
+### Wave 2i rerun (branch `wave2i-journal-durable`, 2026-10-09)
+
+The same staging (a fresh copy of the tag's tree and the shims), `C3_EXE` a copy of the
+`wave2i-journal-durable` build, one harness at a time under `HARNESS.lock`, Windows PowerShell 5.1:
+
+| harness | wave 2h | wave 2i | the failures |
+|---|---|---|---|
+| fixes27c | 34 / 2 | 34 / 2 | POINTER D15 (shim artifact), ZCODE D20/D21 (not applicable) |
+| fixes28b | 20 / 0 | 20 / 0 | - |
+| fixes28c | 14 / 1 | 14 / 1 | IDENTITY D8 (wave 3) |
+| fixes26b | 51 / 0 | 51 / 0 | - |
+
+No regression (HEALTH D7/D8/D13, JOURNAL D10 and HEALTHLOCK pass with the journal's marks).
