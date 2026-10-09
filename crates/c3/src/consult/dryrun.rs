@@ -340,17 +340,10 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
     }
     // (wave 27) the coordinator, the scrubbed child environment and the brief prefix.
     // (wave 27c, D11/D12) a coordinator that parses but names no seat is said on the line, not
-    // refused: `not in the roster` for a value no reviewer can match, `names no roster position
-    // here` for a `#n` with no seat.
-    let coordinator_note = if let Some(pos) = &ctx.coordinator.unresolved {
-        format!(" ({pos} names no roster position here)")
-    } else if ctx.coordinator.in_roster == Some(false) {
-        " (not in the roster - no reviewer can match it)".to_string()
-    } else {
-        String::new()
-    };
+    // refused: `not in the roster` for a value no reviewer can match, `#n (names no roster position
+    // here)` for a `#n` with no seat (`Format-CoordinatorText`).
     out.push(format!(
-        "coordinator : {}{coordinator_note}",
+        "coordinator : {}",
         c3_core::host::format_coordinator_text(&ctx.coordinator)
     ));
     if ctx.engine == "claude" {

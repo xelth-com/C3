@@ -257,7 +257,7 @@ fn an_unparseable_coordinator_is_refused_with_the_plugins_wording() {
     );
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     assert!(
-        text(&o).contains("coordinator : open ai :: gpt 5 [codex]; host "),
+        text(&o).contains("coordinator : open ai :: gpt 5; host "),
         "{}",
         text(&o)
     );
@@ -326,4 +326,83 @@ fn the_coordinators_own_model_seated_is_a_warning_with_the_resolved_triple() {
     );
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     assert!(!text(&o).contains("WARNING: coordinator:"), "{}", text(&o));
+}
+
+/// fixes27c COORD D11/D12 with the plugin's `Format-CoordinatorText` / `Format-CoordinatorId`: a
+/// coordinator no roster entry matches - the dry run's line ends "(not in the roster - no reviewer
+/// can match it)", the real run says "coordinator: openai :: gpt-9 (not in the roster ...)"; a `#9`
+/// with no seat is shown as "#9 (names no roster position here); host ..." and gets no D11 line;
+/// a codex coordinator carries no ` [codex]`.
+#[test]
+fn the_coordinator_line_is_the_plugins() {
+    let e = setup("coordline");
+    let roster = e.work.join("roster.json");
+    std::fs::write(
+        &roster,
+        r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-5.1"}]}"#,
+    )
+    .unwrap();
+    let r = roster.to_string_lossy().to_string();
+    let line = |o: &Output| {
+        text(o)
+            .lines()
+            .find(|l| l.starts_with("coordinator : "))
+            .unwrap_or("")
+            .to_string()
+    };
+    let o = e.consult(
+        &["--dry-run"],
+        &[
+            ("CODEX_CONSULT_ROSTER", r.as_str()),
+            ("CODEX_CONSULT_COORDINATOR", "openai :: gpt-9"),
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    let l = line(&o);
+    assert!(
+        l.starts_with("coordinator : openai :: gpt-9; host ")
+            && l.ends_with("; source explicit (not in the roster - no reviewer can match it)"),
+        "{l}"
+    );
+    let o = e.consult(
+        &["--reply-name", "c1"],
+        &[
+            ("CODEX_CONSULT_ROSTER", r.as_str()),
+            ("CODEX_CONSULT_COORDINATOR", "openai :: gpt-9"),
+        ],
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(
+        text(&o)
+            .lines()
+            .any(|l| l
+                == "coordinator: openai :: gpt-9 (not in the roster - no reviewer can match it)"),
+        "{}",
+        text(&o)
+    );
+    let o = e.consult(
+        &["--dry-run"],
+        &[
+            ("CODEX_CONSULT_ROSTER", r.as_str()),
+            ("CODEX_CONSULT_COORDINATOR", "#9"),
+        ],
+    );
+    let l = line(&o);
+    assert!(
+        l.starts_with("coordinator : #9 (names no roster position here); host ")
+            && l.ends_with("; source explicit"),
+        "{l}"
+    );
+    let o = e.consult(
+        &["--dry-run"],
+        &[
+            ("CODEX_CONSULT_ROSTER", r.as_str()),
+            ("CODEX_CONSULT_COORDINATOR", "#1"),
+        ],
+    );
+    let l = line(&o);
+    assert!(
+        l.starts_with("coordinator : openai :: gpt-5.1; host "),
+        "{l}"
+    );
 }

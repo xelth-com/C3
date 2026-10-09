@@ -63,6 +63,9 @@ v0.6.1 harnesses through the shim (`docs/port/harness-shim.md`).
 - Wave 5: `CODEX_CONSULT_COORDINATOR` is refused with the plugin's character rule
   (`Get-IdentityStringProblem`: "the provider 'open::ai' must not contain '::'") instead of a
   provider-label pattern the plugin does not have; interior blanks are accepted as the plugin does.
+  The coordinator's dry-run line and the "not in the roster" console line follow the plugin's
+  `Format-CoordinatorText` / `Format-CoordinatorId` (no ` [codex]` suffix, "(model not named)", an
+  unresolved `#n` shown as such).
 
 ### Changed
 
