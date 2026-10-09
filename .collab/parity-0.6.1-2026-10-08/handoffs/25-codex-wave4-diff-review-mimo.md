@@ -1,14 +1,22 @@
-codex-consult: detached run bb3c3407 (detach id bb3c3407-1eb7-48a6-bd13-76fc6461c54d) - pid 22216 on LAPTOP-9SGIHQ03, started 2026-10-09T09:53:40+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-bb3c3407.status.json
-Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 3 of 12 for -Provider mimo (model, codex_config applied)
-codex-consult: usable reply - mimo :: mimo-v2.6-pro, mode fork, thread 01a11fa7-8a2c-7322-90b3-9a5b8710f70d (source: events), wall 1124.3 s
-verdict    : HOLD - HOLD — findings #1 and #2 leave endpoint-mode availability and transcript safety unproven.
-findings   : 2 blocker, 0 major, 2 minor, 0 note -> F25-1..F25-4 in findings.json
-prior      : F02-1 fixed, F02-3 fixed, F02-4 still-open, F02-5 fixed, F02-6 fixed, F02-7 fixed, F02-8 not-checked, F04-1 fixed, F04-2 fixed, F04-3 not-checked, F06-1 fixed, F09-1 fixed, F09-2 fixed, F09-3 fixed, F09-4 fixed, F09-5 fixed, F09-6 not-checked, F11-1 fixed, F11-2 fixed, F11-3 fixed, F11-4 fixed, F11-5 fixed, F14-1 fixed, F19-1 fixed, F19-2 fixed, F19-3 not-checked, F22-1 still-open, F23-1 still-open, F23-2 still-open, F23-3 still-open, F23-4 still-open, F23-5 still-open, F24-1 still-open, F24-2 still-open, F24-3 still-open, F24-4 still-open, F24-5 still-open, F24-6 still-open
+# Handoff 25 - Codex: wave4-diff-review-mimo
+
+Date: 2026-10-09 09:53 local. Author: Codex (model mimo-v2.6-pro, effort high), Codex CLI 0.155.1.
+Reviewer: mimo :: mimo-v2.6-pro (provider from -Provider, model from roster; endpoint https://token-plan-ams.xiaomimimo.com/v1, wire_api: responses; provider fingerprint 47cd6ee7e4ff; harness codex-cli 0.155.1).
+Preflight: ok: env MIMO_API_KEY set.
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 3 of 12 for -Provider mimo (model, codex_config applied).
+Effort: high sent (requested high, mapping mimo-v1, by caps-v1: token-plan-ams.xiaomimimo.com, mimo-v2.6-pro; not confirmed by the provider). Consultation id: 5d4d3ea9-89b2-49c9-841c-bf709a3462ab.
+Invocation: `codex-consult.ps1` (mode: fork, sandbox: read-only, purpose: diff-review). Argv: `codex exec --sandbox read-only --color never --json -m mimo-v2.6-pro -c model_reasoning_effort="high" -c model_provider="mimo" -c model_catalog_json="C:/Users/Dmytro/.codex/model-catalogs.json" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-4d78d04d4254441b82c858c017d13557.md fork 01a11f84-5109-72a2-82b2-9bc3b94cd00a -` (prompt on stdin).
+Parent thread: `01a11f84-5109-72a2-82b2-9bc3b94cd00a`. Result thread: `01a11fa7-8a2c-7322-90b3-9a5b8710f70d` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/24-claude-wave4-diff-review.md` (sha256 04669c584cff). Reviewed: fda1f33, base fda1f33669e0f7c1e6bd1363341545617f8d1dfe, tree sha256 c5d196dca1bf, 0 changed files.
 WARNING: working tree changed during the review (fingerprint before/after differ).
 Note: HEAD moved during the review (fda1f33 -> f7105f3).
-reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\25-codex-wave4-diff-review-mimo.md
-reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\25-codex-wave4-diff-review-mimo.reply.json
-events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\25-codex-wave4-diff-review-mimo.events.jsonl
+Bridge outcome: usable reply. Wall time: 1124.3 s. Tokens: in 17957569 (cached 12190976), out 59945, reasoning 36339.
+Timeout: 2400 s (the default of purpose diff-review); continuation after a timeout kill: up to 900 s. Range: `6bfc080..1fdb8bd` - the range changes 32 files, 6214 lines (6092 insertions, 122 deletions).
+Verdict: HOLD - HOLD — findings #1 and #2 leave endpoint-mode availability and transcript safety unproven. Findings: 2 blocker, 0 major, 2 minor, 0 note (F25-1..F25-4, tracked in `findings.json`). Structured reply (prompt-only transport): `handoffs/25-codex-wave4-diff-review-mimo.reply.json`.
+Raw event stream: `handoffs/25-codex-wave4-diff-review-mimo.events.jsonl`.
+Verbatim reply follows.
+
+---
 
 **Q1.** No direct endpoint-token value path into files, logs, or the ledger was found; the allow list stores names only. However, `ChildEnv` derives `Debug` while holding the endpoint token, creating a latent leak if debug logging or panic output prints it. The tree-check gap is concrete: endpoint mode never resolves `projectsDirectory`, so transcripts can be written inside the repository and evade the intended launch guard.
 
@@ -24,6 +32,8 @@ events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\25-code
 `RC3` (finding #3) — In `C:\Users\Dmytro\C3`, workspace-write, validate roster models `OPUS` and `CLAUDE-HAIKU-5-5` and compare with the pinned plugin rules. Budget: 10 minutes.
 
 `RC4` (finding #4) — In `C:\Users\Dmytro\C3`, workspace-write, enable debug logging around endpoint child-environment construction and require no token value in output. Budget: 10 minutes.
+
+---
 
 ### Findings
 

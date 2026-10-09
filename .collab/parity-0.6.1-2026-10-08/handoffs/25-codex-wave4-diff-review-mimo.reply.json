@@ -1,0 +1,166 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "HOLD — findings #1 and #2 leave endpoint-mode availability and transcript safety unproven.",
+  "reply_markdown": "**Q1.** No direct endpoint-token value path into files, logs, or the ledger was found; the allow list stores names only. However, `ChildEnv` derives `Debug` while holding the endpoint token, creating a latent leak if debug logging or panic output prints it. The tree-check gap is concrete: endpoint mode never resolves `projectsDirectory`, so transcripts can be written inside the repository and evade the intended launch guard.\n\n**Q2.** The init proof, E13 model check, killed-turn proof, and quota-mark mapping are present in the reviewed code paths, but the endpoint preflight is not faithful: it accepts a token variable without proving the launcher runs, and it skips the transcript-location check. Model validation also rejects case variants that the normalization rules accept.\n\n**Q3.** HOLD until findings #1 and #2 are fixed and the endpoint-mode safety checks are exercised.\n\n## Requested checks\n`RC1` (finding #1) — In `C:\\Users\\Dmytro\\C3`, workspace-write, configure valid endpoint auth with a non-executable or wrong launcher and run the preflight; require unavailable before any turn starts. Budget: 20 minutes.\n\n`RC2` (finding #2) — In `C:\\Users\\Dmytro\\C3`, workspace-write, make endpoint-mode `claude auth status` report `projectsDirectory` inside the repository and require launch refusal. Budget: 20 minutes.\n\n`RC3` (finding #3) — In `C:\\Users\\Dmytro\\C3`, workspace-write, validate roster models `OPUS` and `CLAUDE-HAIKU-5-5` and compare with the pinned plugin rules. Budget: 10 minutes.\n\n`RC4` (finding #4) — In `C:\\Users\\Dmytro\\C3`, workspace-write, enable debug logging around endpoint child-environment construction and require no token value in output. Budget: 10 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 197
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 311
+        }
+      ],
+      "claim": "Endpoint-auth preflight reports available without proving the configured Claude launcher can run; only the token variable is checked, so a wrong or non-runnable launcher passes preflight and fails later.",
+      "trigger": "Valid `auth: endpoint` and token variable, but `--engine-exe` or the configured launcher points to a non-executable or unrelated binary.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:197-209",
+          "observation": "Endpoint mode returns `ok(env <NAME> set)` before any launcher probe."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:230-246",
+          "observation": "Subscription and api-key modes execute `claude auth status`, proving the launcher runs."
+        }
+      ],
+      "verification": "Run endpoint preflight with a non-executable launcher and require unavailable before the turn starts.",
+      "remedy": "Run a cheap launcher probe such as `--version` or `auth status` in the endpoint child environment before returning available.",
+      "supersedes": []
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 357
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 374
+        }
+      ],
+      "claim": "Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed.",
+      "trigger": "Endpoint auth with `CLAUDE_CONFIG_DIR` outside the repository but Claude's configured projects directory inside it.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:197-209",
+          "observation": "Endpoint mode returns before parsing `claude auth status` facts."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:357-380",
+          "observation": "The launch guard consults only `CLAUDE_CONFIG_DIR` and cached sign-in information."
+        }
+      ],
+      "verification": "Make endpoint-mode `auth status` report an in-repository projects directory and require refusal before spawn.",
+      "remedy": "Probe the status facts for endpoint mode too, without reading or logging the token, and reject unsafe transcript locations.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/claude.rs",
+          "line": 130
+        },
+        {
+          "path": "crates/c3-core/src/claude.rs",
+          "line": 139
+        }
+      ],
+      "claim": "Claude model validation is case-sensitive even though the model normalization and alias rules are case-insensitive, rejecting valid spellings such as `OPUS`.",
+      "trigger": "A subscription or api-key roster entry uses `OPUS`, `CLAUDE-HAIKU-5-5`, or another case variant.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/claude.rs:130-148",
+          "observation": "The non-endpoint path exact-matches the lower-case model table after only `[1m]` stripping."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/claude.rs:100-108",
+          "observation": "The normalization helpers lowercase aliases and model bases."
+        }
+      ],
+      "verification": "Compare `model_problem` results for case variants against the pinned plugin's model rules.",
+      "remedy": "Validate the lower-cased stripped base while preserving the original spelling in messages.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/claude.rs",
+          "line": 392
+        }
+      ],
+      "claim": "The endpoint child environment derives `Debug` while containing `ANTHROPIC_AUTH_TOKEN`, so accidental debug or panic output can expose the credential value.",
+      "trigger": "Any future logging, tracing, or error formatting that prints the `ChildEnv` debug representation during endpoint auth.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/claude.rs:390-403",
+          "observation": "`ChildEnv` stores token values and derives `Debug`; the ledger contract stores names only."
+        }
+      ],
+      "verification": "Enable debug logging around child-environment construction and assert no token value appears.",
+      "remedy": "Redact secret values in `Debug` or wrap the token in a secret type that never formats its value.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id": "F02-1", "status": "fixed", "note": "Spool rewrite synchronization is implemented."},
+    {"id": "F02-3", "status": "fixed", "note": "Deletion retry identity is retained."},
+    {"id": "F02-4", "status": "still-open", "note": "Implementation coverage map remains incomplete."},
+    {"id": "F02-5", "status": "fixed", "note": "Rating mark ordering is implemented."},
+    {"id": "F02-6", "status": "fixed", "note": "Context-budgeted prompt anchor is implemented."},
+    {"id": "F02-7", "status": "fixed", "note": "Claude roster plan identity is accepted and scheduled."},
+    {"id": "F02-8", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-1", "status": "fixed", "note": "Unicode-safe process-name handling is present."},
+    {"id": "F04-2", "status": "fixed", "note": "Local-zone boundary normalization is present."},
+    {"id": "F04-3", "status": "not-checked", "note": "Panel gate behavior outside this range."},
+    {"id": "F06-1", "status": "fixed", "note": "Samoa local-year handling is implemented."},
+    {"id": "F09-1", "status": "fixed", "note": "Unicode-safe configuration handling is present."},
+    {"id": "F09-2", "status": "fixed", "note": "Deletion checks occur under both locks."},
+    {"id": "F09-3", "status": "fixed", "note": "Cleanup ordering preserves retry identity."},
+    {"id": "F09-4", "status": "fixed", "note": "Reread failure preserves the spool."},
+    {"id": "F09-5", "status": "fixed", "note": "Legacy events pass through sanitization."},
+    {"id": "F09-6", "status": "not-checked", "note": "Rating actor resolution outside this range."},
+    {"id": "F11-1", "status": "fixed", "note": "Journal I/O failures are surfaced and preserved."},
+    {"id": "F11-2", "status": "fixed", "note": "Resolved engine launcher reaches requirement checks."},
+    {"id": "F11-3", "status": "fixed", "note": "Full roster plan quota evaluation is implemented."},
+    {"id": "F11-4", "status": "fixed", "note": "Hook pointer is runnable in PowerShell."},
+    {"id": "F11-5", "status": "fixed", "note": "AGY tool-flight tracking is implemented."},
+    {"id": "F14-1", "status": "fixed", "note": "Local-only cleanup records its transaction."},
+    {"id": "F19-1", "status": "fixed", "note": "Complaint submission participates in deletion gating."},
+    {"id": "F19-2", "status": "fixed", "note": "Unreadable salt aborts cleanup safely."},
+    {"id": "F19-3", "status": "not-checked", "note": "Duplicate-key sanitizer behavior outside this range."},
+    {"id": "F22-1", "status": "still-open", "note": "Journal eviction/replay invariant remains open."},
+    {"id": "F23-1", "status": "still-open", "note": "Process inspection failure can still be treated as gone."},
+    {"id": "F23-2", "status": "still-open", "note": "Unknown creation rows can still be skipped."},
+    {"id": "F23-3", "status": "still-open", "note": "Recovery evidence is still written late."},
+    {"id": "F23-4", "status": "still-open", "note": "Fail-closed recovery tests remain incomplete."},
+    {"id": "F23-5", "status": "still-open", "note": "Production Samoa behavior remains unproven."},
+    {"id": "F24-1", "status": "still-open", "note": "Not-spooled fallback accounting remains open."},
+    {"id": "F24-2", "status": "still-open", "note": "Recorded suffix-tail handling remains open."},
+    {"id": "F24-3", "status": "still-open", "note": "Cleanup versus concurrent count writes remains open."},
+    {"id": "F24-4", "status": "still-open", "note": "Latest not-spooled reporting remains open."},
+    {"id": "F24-5", "status": "still-open", "note": "P8 marker and production-path proof remains open."},
+    {"id": "F24-6", "status": "still-open", "note": "Post-fold second rewrite error remains unhandled."}
+  ],
+  "unproven": [
+    "No tests were run in this read-only consultation.",
+    "Endpoint-mode launcher probing and transcript-location refusal were not executed.",
+    "The init proof, E13 model check, E12-E15 killed-turn proof, and quota-mark persistence were not independently exercised.",
+    "No endpoint-mode live run or token-safety logging test was performed."
+  ],
+  "first_run_checklist": []
+}
