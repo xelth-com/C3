@@ -1484,11 +1484,31 @@ pub fn new_machine_health_record_marked(
 // again. (wave 28c, D10) A line that does not parse is moved to `<health file>.journal.bad`
 // (appended: the time, a tab, the line's bytes) and counted in a note; the journal loses only what
 // was applied or moved. The plugin and C3 share the health file and its journal.
+//
+// (wave 2h, F22-1) THE APPLIED-KEY LIST `<health file>.journal.applied`: the endpoint list is not a
+// durable replay ledger - the 24-hour retention and the 500-record cap remove keys from it, after
+// which a journal line still on disk would apply again as a new record (resurrected, displacing
+// another). Whenever a journal with applied records is KEPT (its unreadable lines could not be
+// moved to `.bad`, or emptying it failed) the keys of every record it holds are written to this
+// list after the health file; a record whose key is listed is never applied again - from the
+// journal or directly - whatever the endpoint list still holds. The list is removed once the
+// journal is emptied. A crash between the health file and the list (or the emptying) is covered by
+// the endpoint keys: the next update applies the journal first, before anything could evict them.
+// C3-only: the plugin neither reads nor writes it (its own rule keeps the suffix from the first
+// unmovable line by an in-place rewrite and replays it against the endpoint list).
 
 /// `Get-MachineHealthJournalPath`: `<health file>.journal`.
 pub fn machine_health_journal_path(path: &Path) -> PathBuf {
     let mut os = path.as_os_str().to_os_string();
     os.push(".journal");
+    PathBuf::from(os)
+}
+
+/// (wave 2h, F22-1) `<health file>.journal.applied`: the keys of the records of a KEPT journal that
+/// were applied - see the journal section above.
+pub fn machine_health_journal_applied_path(path: &Path) -> PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(".journal.applied");
     PathBuf::from(os)
 }
 
@@ -1625,6 +1645,11 @@ mod journal_faults {
         pub static READ_FAILS_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
         /// `true`: the journal's rewrite (emptying it) fails.
         pub static REWRITE_FAILS: Cell<bool> = const { Cell::new(false) };
+        /// (wave 2h, F22-1) `true`: the update dies right after the health file is written (the
+        /// applied-key list and the journal untouched) - a crash between the apply and the clearing.
+        pub static CRASH_AFTER_WRITE: Cell<bool> = const { Cell::new(false) };
+        /// (wave 2h, F22-1) `true`: writing the applied-key list fails.
+        pub static APPLIED_WRITE_FAILS: Cell<bool> = const { Cell::new(false) };
     }
 }
 
@@ -1648,6 +1673,54 @@ fn empty_journal(f: &std::fs::File) -> std::io::Result<()> {
         return Err(std::io::Error::other("injected write fault"));
     }
     f.set_len(0)
+}
+
+/// (wave 2h, F22-1) Read the applied-key list. Missing: empty. A list that does not parse (it is
+/// written atomically, so only another writer makes one) is empty too - the replay then falls back
+/// to the endpoint keys rather than blocking every later update; any other read error is returned
+/// (the caller fails the update before anything is written).
+fn read_journal_applied(p: &Path) -> std::io::Result<std::collections::HashSet<String>> {
+    let bytes = match std::fs::read(p) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
+        Err(e) => return Err(e),
+    };
+    let keys = serde_json::from_slice::<Value>(&bytes)
+        .ok()
+        .and_then(|v| {
+            v["keys"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|k| k.as_str().map(str::to_string))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    Ok(keys)
+}
+
+/// (wave 2h, F22-1) Write the applied-key list atomically (`{"applied_version":1,"keys":[...]}`);
+/// no keys (a kept journal of unreadable lines only): the list is removed.
+fn write_journal_applied(
+    p: &Path,
+    keys: &std::collections::BTreeSet<String>,
+) -> std::io::Result<()> {
+    #[cfg(test)]
+    if journal_faults::APPLIED_WRITE_FAILS.with(|c| c.get()) {
+        return Err(std::io::Error::other("injected list fault"));
+    }
+    if keys.is_empty() {
+        return match std::fs::remove_file(p) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    let mut bytes = serde_json::to_vec(&serde_json::json!({
+        "applied_version": 1,
+        "keys": keys,
+    }))
+    .map_err(std::io::Error::other)?;
+    bytes.push(b'\n');
+    crate::store::write_text_atomic(p, &bytes)
 }
 
 /// One unreadable journal line: its byte range (the line end included when there is one).
@@ -1859,8 +1932,9 @@ static HEALTH_FAIL_FIRST_DONE: std::sync::atomic::AtomicBool =
 /// Read-modify-write the machine health file under the `<path>.lock` exclusive lock: apply the
 /// journal (wave 28b, D13), then `add_endpoint`/`add_running`/`remove_pid`, prune stale endpoints and
 /// dead running rows, cap endpoints to the last 500, and write atomically; then move the journal's
-/// unreadable lines to `<journal>.bad` and empty the journal by what was applied or moved. Never
-/// panics; a failure is named.
+/// unreadable lines to `<journal>.bad` and empty the journal by what was applied or moved; (wave 2h,
+/// F22-1) a journal that is kept lists the keys it holds in `<journal>.applied`, and a listed record
+/// is never applied again. Never panics; a failure is named.
 fn update_machine_health(
     path: &Path,
     add_endpoint: Option<MachineEndpoint>,
@@ -1915,6 +1989,11 @@ fn update_machine_health(
         let mut journal: Option<std::fs::File> = None;
         let mut j_bytes: Vec<u8> = Vec::new();
         let mut j_bad: Vec<BadLine> = Vec::new();
+        // (wave 2h, F22-1) the keys of a kept journal's records that were applied (never applied
+        // again), and the keys of every record the journal holds now (the list a kept journal gets)
+        let applied_path = machine_health_journal_applied_path(path);
+        let mut applied: std::collections::HashSet<String> = Default::default();
+        let mut j_keys: std::collections::BTreeSet<String> = Default::default();
         if journal_path.is_file() {
             for _ in 0..20 {
                 match open_exclusive(&journal_path, false, false) {
@@ -1931,6 +2010,14 @@ fn update_machine_health(
                 read_journal(f, &mut j_bytes).map_err(|e| {
                     format!(
                         "journal read failed: {} (the journal {} is kept)",
+                        crate::one_line(&e.to_string()),
+                        journal_path.display()
+                    )
+                })?;
+                applied = read_journal_applied(&applied_path).map_err(|e| {
+                    format!(
+                        "journal read failed: the applied-key list {}: {} (the journal {} is kept)",
+                        applied_path.display(),
                         crate::one_line(&e.to_string()),
                         journal_path.display()
                     )
@@ -1953,7 +2040,9 @@ fn update_machine_health(
                             .and_then(|v| serde_json::from_value::<MachineEndpoint>(v).ok());
                         match rec {
                             Some(r) => {
-                                if keys.insert(machine_record_key(&r)) {
+                                let k = machine_record_key(&r);
+                                j_keys.insert(k.clone());
+                                if !applied.contains(&k) && keys.insert(k) {
                                     endpoints.push(r);
                                 }
                             }
@@ -1966,7 +2055,9 @@ fn update_machine_health(
         }
 
         if let Some(e) = add_endpoint {
-            if keys.insert(machine_record_key(&e)) {
+            // (wave 2h, F22-1) the same record the journal already delivered is not added again
+            let k = machine_record_key(&e);
+            if !applied.contains(&k) && keys.insert(k) {
                 endpoints.push(e);
             }
         }
@@ -2016,14 +2107,22 @@ fn update_machine_health(
             .map_err(|e| format!("write failed: {}", crate::one_line(&e.to_string())))?;
         crate::store::write_text_atomic(path, &bytes)
             .map_err(|e| format!("write failed: {}", crate::one_line(&e.to_string())))?;
+        #[cfg(test)]
+        if journal_faults::CRASH_AFTER_WRITE.with(|c| c.get()) {
+            return Err("injected crash after the health write".to_string());
+        }
 
-        // (D13) applied: the journal is emptied (a crash before this applies it again - no
-        // double); (wave 28c, D10) first the unreadable lines go to <journal>.bad (with the time).
-        // (wave 2e, F11-1) The journal is only ever emptied WHOLE, never rewritten in place: when
-        // a line could not be moved, the whole journal stays (its applied records apply again
-        // next time - the record key makes that a no-op), since an in-place rewrite of the
-        // suffix that failed half-way would lose the bytes not yet rewritten. A failure to empty
-        // it fails the update (the journal is kept whole).
+        // (D13) applied: the journal is emptied (a crash before this applies it again - the
+        // endpoint keys make that a no-op, nothing could evict them in between: every update
+        // applies the journal first); (wave 28c, D10) first the unreadable lines go to
+        // <journal>.bad (with the time). (wave 2e, F11-1) The journal is only ever emptied WHOLE,
+        // never rewritten in place: when a line could not be moved, the whole journal stays, since
+        // an in-place rewrite of the suffix that failed half-way would lose the bytes not yet
+        // rewritten. A failure to empty it fails the update (the journal is kept whole). (wave 2h,
+        // F22-1) A KEPT journal is replayed later, when retention or the cap may have removed its
+        // records' keys from the endpoint list - so the keys of every record it holds go to
+        // <journal>.applied (after the health file: a listed key was applied) and a listed record
+        // is never applied again; the list goes once the journal is emptied.
         if let Some(f) = journal.as_mut() {
             let mut empty_it = true;
             if !j_bad.is_empty() {
@@ -2066,11 +2165,35 @@ fn update_machine_health(
                 }
             }
             if empty_it {
-                empty_journal(f).map_err(|e| {
-                    format!(
-                        "journal not emptied: {} (the journal {} is kept; its records apply again, once)",
+                if let Err(e) = empty_journal(f) {
+                    let listed = match write_journal_applied(&applied_path, &j_keys) {
+                        Ok(()) => format!(
+                            "its records are listed as applied in {}",
+                            applied_path.display()
+                        ),
+                        Err(e2) => format!(
+                            "the applied-key list {} not written either: {}",
+                            applied_path.display(),
+                            crate::one_line(&e2.to_string())
+                        ),
+                    };
+                    return Err(format!(
+                        "journal not emptied: {} (the journal {} is kept; {})",
                         crate::one_line(&e.to_string()),
-                        journal_path.display()
+                        journal_path.display(),
+                        listed
+                    ));
+                }
+                // emptied: nothing is left to guard (a list that stays is harmless - a key in it
+                // names a record that was applied)
+                let _ = std::fs::remove_file(&applied_path);
+            } else {
+                write_journal_applied(&applied_path, &j_keys).map_err(|e| {
+                    format!(
+                        "journal applied-key list not written: {} (the journal {} is kept; the list {} is not up to date)",
+                        crate::one_line(&e.to_string()),
+                        journal_path.display(),
+                        applied_path.display()
                     )
                 })?;
             }
@@ -2243,8 +2366,8 @@ mod machine_health_tests {
 
     // (wave 28c, D10) torn lines go to <journal>.bad ("<time>\t<bytes>"), the good ones are
     // applied, the journal is emptied once everything was applied or moved; (wave 2e, F11-1) a
-    // .bad that cannot be written keeps the WHOLE journal (never rewritten in place) - the applied
-    // records apply again next time without a second record.
+    // .bad that cannot be written keeps the WHOLE journal (never rewritten in place) - (wave 2h,
+    // F22-1) its records are listed in <journal>.applied and never applied a second time.
     #[test]
     fn torn_journal_lines_are_moved_aside_never_dropped() {
         let _notes = notes_lock();
@@ -2395,16 +2518,22 @@ mod machine_health_tests {
         let b = serde_json::to_string(&ok_record("fp-wb", "C:\\repo-b")).unwrap();
         let journal = format!("{a}\n{b}\n");
         std::fs::write(&jp, &journal).unwrap();
+        let lp = machine_health_journal_applied_path(&hp);
         let r = with_fault(None, true, || apply_machine_health_journal(&hp, &alive));
         match &r {
-            HealthUpdate::Failed(why) => assert!(
-                why.starts_with("journal not emptied: injected write fault (the journal ")
-                    && why.ends_with(" is kept; its records apply again, once)"),
-                "{why}"
+            HealthUpdate::Failed(why) => assert_eq!(
+                why,
+                &format!(
+                    "journal not emptied: injected write fault (the journal {} is kept; its records are listed as applied in {})",
+                    jp.display(),
+                    lp.display()
+                )
             ),
             other => panic!("{other:?}"),
         }
         assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal);
+        // (wave 2h, F22-1) the kept journal's keys are listed
+        assert_eq!(read_journal_applied(&lp).unwrap().len(), 2);
         assert_eq!(
             apply_machine_health_journal(&hp, &alive),
             HealthUpdate::Written
@@ -2412,6 +2541,8 @@ mod machine_health_tests {
         assert_eq!(endpoints_of(&hp, "fp-wa"), 1);
         assert_eq!(endpoints_of(&hp, "fp-wb"), 1);
         assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        // emptied: the list is gone
+        assert!(!lp.exists());
         // the archival fails (a directory in the .bad's place) and so would the rewrite
         std::fs::create_dir_all(&bad_path).unwrap();
         let c = serde_json::to_string(&ok_record("fp-wc", "C:\\repo-c")).unwrap();
@@ -2438,6 +2569,232 @@ mod machine_health_tests {
         assert!(std::fs::read_to_string(&bad_path)
             .unwrap()
             .ends_with("\ttorn-line\n"));
+        let _ = take_machine_health_journal_notes();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (wave 2h, F22-1) Runs `f` with one of the boolean journal faults set on this thread.
+    fn with_flag<T>(
+        flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        flag.with(|c| c.set(true));
+        let r = f();
+        flag.with(|c| c.set(false));
+        r
+    }
+
+    /// Writes the health file with `endpoints` (what other runs' updates left there).
+    fn write_endpoints(hp: &Path, endpoints: &[MachineEndpoint]) {
+        let v = serde_json::json!({"health_version": 1, "endpoints": endpoints, "running": []});
+        std::fs::write(hp, serde_json::to_vec(&v).unwrap()).unwrap();
+    }
+
+    // (wave 2h, F22-1 / RC1 of handoff 22) a journal record applied, then evicted by the 500-record
+    // cap, while the journal is kept whole (its .bad cannot be written): the next update must not
+    // apply it again - no resurrected record, no newer record displaced - nor may the same record
+    // come back directly; once the journal empties, the list goes.
+    #[test]
+    fn an_applied_journal_record_evicted_by_the_cap_is_never_applied_again() {
+        let _notes = notes_lock();
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("evict");
+        let hp = dir.join("health.json");
+        let jp = machine_health_journal_path(&hp);
+        let lp = machine_health_journal_applied_path(&hp);
+        assert_eq!(lp, dir.join("health.json.journal.applied"));
+        let bad_path = PathBuf::from(format!("{}.bad", jp.display()));
+        std::fs::create_dir_all(&bad_path).unwrap();
+        let old = ok_record("fp-old", "C:\\repo-old");
+        let journal = format!("{}\ntorn-line\n", serde_json::to_string(&old).unwrap());
+        std::fs::write(&jp, &journal).unwrap();
+        // 1. applied once; the journal kept byte for byte; its key listed
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-old"), 1);
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal);
+        let listed = read_journal_applied(&lp).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert!(listed.contains(&machine_record_key(&old)));
+        // 2. 500 newer records of other runs: 499 already in the file, the 500th through an
+        //    update - the cap removes the oldest, fp-old
+        let mut eps = read_machine_health(&hp).endpoints;
+        for i in 0..499 {
+            eps.push(ok_record(&format!("fp-n{i:03}"), "C:\\repo-n"));
+        }
+        write_endpoints(&hp, &eps);
+        let last = ok_record("fp-n499", "C:\\repo-n");
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &last, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(read_machine_health(&hp).endpoints.len(), 500);
+        assert_eq!(endpoints_of(&hp, "fp-old"), 0);
+        assert_eq!(endpoints_of(&hp, "fp-n000"), 1);
+        // 3. the kept journal replayed: fp-old stays out, fp-n000 stays in
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal);
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-old"), 0);
+        assert_eq!(endpoints_of(&hp, "fp-n000"), 1);
+        assert_eq!(read_machine_health(&hp).endpoints.len(), 500);
+        // 4. the same record directly (a retry after the commit): not added again either
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &old, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-old"), 0);
+        assert_eq!(endpoints_of(&hp, "fp-n000"), 1);
+        // 5. the .bad writable again: the torn line moved, the journal emptied, the list removed -
+        //    fp-old still out
+        std::fs::remove_dir_all(&bad_path).unwrap();
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        assert!(!lp.exists());
+        assert_eq!(endpoints_of(&hp, "fp-old"), 0);
+        assert_eq!(read_machine_health(&hp).endpoints.len(), 500);
+        let _ = take_machine_health_journal_notes();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 2h, F22-1) a crash between the apply and the clearing (the update dies right after the
+    // health file is written): the next update applies nothing twice - the endpoint keys stop it,
+    // nothing could evict them in between - and empties the journal; with a kept journal the next
+    // update lists the keys although it applied nothing, so a later eviction cannot resurrect them.
+    #[test]
+    fn a_crash_between_the_apply_and_the_clearing_applies_nothing_twice() {
+        let _notes = notes_lock();
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("crash");
+        let hp = dir.join("health.json");
+        let jp = machine_health_journal_path(&hp);
+        let lp = machine_health_journal_applied_path(&hp);
+        let a = ok_record("fp-ca", "C:\\repo-a");
+        let b = ok_record("fp-cb", "C:\\repo-b");
+        let journal = format!(
+            "{}\n{}\n",
+            serde_json::to_string(&a).unwrap(),
+            serde_json::to_string(&b).unwrap()
+        );
+        std::fs::write(&jp, &journal).unwrap();
+        let r = with_flag(&journal_faults::CRASH_AFTER_WRITE, || {
+            apply_machine_health_journal(&hp, &alive)
+        });
+        assert!(matches!(r, HealthUpdate::Failed(_)), "{r:?}");
+        assert_eq!(endpoints_of(&hp, "fp-ca"), 1);
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal);
+        assert!(!lp.exists());
+        // the next update (here the retry of fp-ca itself): nothing doubled, the journal emptied
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &a, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-ca"), 1);
+        assert_eq!(endpoints_of(&hp, "fp-cb"), 1);
+        assert_eq!(read_machine_health(&hp).endpoints.len(), 2);
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        assert!(!lp.exists());
+        // a kept journal (a directory in the .bad's place): the crash leaves no list ...
+        let bad_path = PathBuf::from(format!("{}.bad", jp.display()));
+        std::fs::create_dir_all(&bad_path).unwrap();
+        let c = ok_record("fp-cc", "C:\\repo-c");
+        let journal2 = format!("{}\ntorn-line\n", serde_json::to_string(&c).unwrap());
+        std::fs::write(&jp, &journal2).unwrap();
+        let r2 = with_flag(&journal_faults::CRASH_AFTER_WRITE, || {
+            apply_machine_health_journal(&hp, &alive)
+        });
+        assert!(matches!(r2, HealthUpdate::Failed(_)), "{r2:?}");
+        assert_eq!(endpoints_of(&hp, "fp-cc"), 1);
+        assert!(!lp.exists());
+        // ... the next update applies nothing (the endpoint key) and lists the key ...
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-cc"), 1);
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal2);
+        assert!(read_journal_applied(&lp)
+            .unwrap()
+            .contains(&machine_record_key(&c)));
+        // ... so once retention or the cap removed fp-cc, the replay does not bring it back
+        let eps: Vec<MachineEndpoint> = read_machine_health(&hp)
+            .endpoints
+            .into_iter()
+            .filter(|e| e.endpoint != "fp-cc")
+            .collect();
+        write_endpoints(&hp, &eps);
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-cc"), 0);
+        assert_eq!(read_machine_health(&hp).endpoints.len(), 2);
+        let _ = take_machine_health_journal_notes();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 2h, F22-1) the list's own failures are named: a kept journal whose list cannot be
+    // written fails the update (after the health file - the record applied once); a list that
+    // cannot be read fails it before anything is written; a list that does not parse is empty.
+    #[test]
+    fn the_applied_key_list_failures_are_named() {
+        let _notes = notes_lock();
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("listfault");
+        let hp = dir.join("health.json");
+        let jp = machine_health_journal_path(&hp);
+        let lp = machine_health_journal_applied_path(&hp);
+        let bad_path = PathBuf::from(format!("{}.bad", jp.display()));
+        std::fs::create_dir_all(&bad_path).unwrap();
+        let a = ok_record("fp-la", "C:\\repo-a");
+        let journal = format!("{}\ntorn-line\n", serde_json::to_string(&a).unwrap());
+        std::fs::write(&jp, &journal).unwrap();
+        let r = with_flag(&journal_faults::APPLIED_WRITE_FAILS, || {
+            apply_machine_health_journal(&hp, &alive)
+        });
+        assert_eq!(
+            r,
+            HealthUpdate::Failed(format!(
+                "journal applied-key list not written: injected list fault (the journal {} is kept; the list {} is not up to date)",
+                jp.display(),
+                lp.display()
+            ))
+        );
+        assert_eq!(endpoints_of(&hp, "fp-la"), 1);
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal);
+        assert!(!lp.exists());
+        // the list cannot be read (a directory in its place): nothing is written
+        std::fs::create_dir_all(&lp).unwrap();
+        let direct = ok_record("fp-ldirect", "C:\\repo-d");
+        match add_machine_health_endpoint(&hp, &direct, &alive) {
+            HealthUpdate::Failed(why) => assert!(
+                why.starts_with(&format!(
+                    "journal read failed: the applied-key list {}: ",
+                    lp.display()
+                )) && why.ends_with(&format!(" (the journal {} is kept)", jp.display())),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(endpoints_of(&hp, "fp-ldirect"), 0);
+        // a list that does not parse is empty: the endpoint keys still stop a double
+        std::fs::remove_dir_all(&lp).unwrap();
+        std::fs::write(&lp, "not json").unwrap();
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-la"), 1);
+        assert!(read_journal_applied(&lp)
+            .unwrap()
+            .contains(&machine_record_key(&a)));
         let _ = take_machine_health_journal_notes();
         let _ = std::fs::remove_dir_all(&dir);
     }
