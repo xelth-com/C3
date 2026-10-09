@@ -400,7 +400,7 @@ pub(crate) fn safe_label(raw: &str, max: usize) -> Option<String> {
 }
 
 /// A friendly OS label from the compile-time target.
-fn os_label() -> String {
+pub(crate) fn os_label() -> String {
     match std::env::consts::OS {
         "windows" => "Windows",
         "linux" => "Linux",

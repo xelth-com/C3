@@ -21,7 +21,17 @@
 //! posted is not in that multiset and stays. Crash-safe: before the rename the old file is
 //! intact (a crash re-sends what was delivered - at worst a duplicate, never a loss); a torn
 //! append (a crash mid-write) leaves a line without its newline, which the next append ends
-//! first and the sender drops as unreadable.
+//! first and the sender drops as unreadable. (wave 2d, F09-4) The rewrite needs the CURRENT
+//! contents: a reread that fails replaces nothing (the flush reports the error and the spool keeps
+//! its bytes - the delivered lines go again next time); a spool that is gone is not re-created.
+//!
+//! (wave 2d) The deletion transaction (`forget-pending.json`, `complaint`): the sender decides on it
+//! UNDER the sender lock and the spool lock (F09-2) - every operation that sets or clears it holds
+//! both - and posts nothing while one exists; a confirmed one whose local cleanup did not finish is
+//! finished by the sender instead of a send (F09-3). Every event is closed through the classes
+//! before it leaves (F09-5, `classes::close_event_body`): a line queued before wave 2 carries the
+//! roster's labels as typed and leaves with `other` in their place; one that cannot be closed is
+//! discarded with a local diagnostic.
 //!
 //! Never in a consultation's critical path: [`flush_in_background`] runs the sender in a thread
 //! joined with a cap; one POST of at most 100 events, a 3 s budget, no retry within a run (a
@@ -37,6 +47,8 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 
+use crate::telemetry::classes;
+use crate::telemetry::complaint::{deletion_state, run_local_cleanup, DeletionState};
 use crate::telemetry::event::Event;
 use crate::telemetry::{debug_log, default_hub, telemetry_dir, Error, Result};
 
@@ -110,9 +122,28 @@ pub struct FlushReport {
     /// skipped).
     pub attempted: bool,
     /// Why the flush did nothing (`""` when it ran): another sender holds the sender lock, a
-    /// deletion of this instance is pending, the intake is refused, the spool lock stayed busy.
+    /// deletion of this instance is pending at the intake (or its local cleanup was finished
+    /// instead), the intake is refused, the spool lock stayed busy.
     pub skipped: String,
+    /// (F09-5) Queued events discarded unsent: no C3 consultation or rating event, or without an
+    /// instance id or a time of this client's shape (a local diagnostic says so).
+    pub discarded: usize,
 }
+
+/// The test seams of a flush ([`Spool::flush_hooked`]); the default is the real flush.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct FlushHooks<'a> {
+    /// Runs right after the early, unlocked deletion check - before the sender lock (F09-2's
+    /// interleaving: a forget completes while the sender waits here).
+    pub after_check: Option<&'a dyn Fn()>,
+    /// Reads the CURRENT spool for the rewrite after a send (F09-4: a failing reread).
+    pub reread: Option<&'a Reread>,
+}
+
+/// How the sender reads the current spool for its rewrite ([`FlushHooks::reread`]).
+#[doc(hidden)]
+pub type Reread = dyn Fn(&Path) -> std::io::Result<String>;
 
 /// One spool line parsed.
 struct SpoolLine {
@@ -179,11 +210,22 @@ impl Spool {
                 wait.as_secs_f64()
             ))
         })?;
-        if self.dir.join(FORGET_PENDING).exists() {
-            return Err(Error::new(format!(
-                "a deletion of this instance is pending at the intake ({}): nothing is spooled until it is confirmed - c3 forget-me retries it",
-                self.dir.join(FORGET_PENDING).display()
-            )));
+        // a deletion transaction in ANY phase (or an unreadable one) refuses: pending at the
+        // intake, or confirmed with its local cleanup not finished (F09-3)
+        match deletion_state(&self.dir) {
+            DeletionState::None => {}
+            DeletionState::Pending => {
+                return Err(Error::new(format!(
+                    "a deletion of this instance is pending at the intake ({}): nothing is spooled until it is confirmed - c3 forget-me retries it",
+                    self.dir.join(FORGET_PENDING).display()
+                )))
+            }
+            DeletionState::Cleanup(_) => {
+                return Err(Error::new(format!(
+                    "the local deletion of this instance is not finished ({}): nothing is spooled until it is - the next flush or c3 forget-me finishes it",
+                    self.dir.join(FORGET_PENDING).display()
+                )))
+            }
         }
         let line = serde_json::json!({
             "v": 1,
@@ -216,18 +258,34 @@ impl Spool {
 
     /// Send the spool once (see the module docs for the rule): under the sender lock, a snapshot
     /// read under the spool lock; lines queued more than 7 days ago and unreadable lines dropped;
-    /// up to 100 events posted; then - under the spool lock again - exactly the delivered and the
-    /// dropped lines removed from the CURRENT file. Never retries within the run.
+    /// every event closed through the classes (F09-5); up to 100 events posted; then - under the
+    /// spool lock again - exactly the delivered and the dropped lines removed from the CURRENT file.
+    /// Never retries within the run.
     pub fn flush(&self) -> Result<FlushReport> {
         self.flush_with(|body| self.post_events(body))
     }
 
     /// [`Spool::flush`] with an injected sender (tests hold the "network" while they append).
     pub fn flush_with(&self, post: impl Fn(&str) -> bool) -> Result<FlushReport> {
+        self.flush_hooked(post, &FlushHooks::default())
+    }
+
+    /// [`Spool::flush_with`] with the test seams of [`FlushHooks`].
+    #[doc(hidden)]
+    pub fn flush_hooked(
+        &self,
+        post: impl Fn(&str) -> bool,
+        hooks: &FlushHooks<'_>,
+    ) -> Result<FlushReport> {
         let mut report = FlushReport::default();
-        if self.dir.join(FORGET_PENDING).exists() {
+        // a cheap early skip without any lock; NOT the decision - the deletion state is decided
+        // below, under the sender lock and the spool lock (F09-2)
+        if matches!(deletion_state(&self.dir), DeletionState::Pending) {
             report.skipped = "a deletion of this instance is pending at the intake".into();
             return Ok(report);
+        }
+        if let Some(after_check) = hooks.after_check {
+            after_check();
         }
         let Some(_sender) = lock_within(&self.dir.join(FLUSH_LOCK), Duration::ZERO)? else {
             report.skipped = "another flush is running (its lock is held)".into();
@@ -239,9 +297,38 @@ impl Spool {
                 report.skipped = "the spool lock stayed busy".into();
                 return Ok(report);
             };
+            // (F09-2) the deletion state as it is NOW, under BOTH locks: every operation that sets
+            // or clears it (a forget, a cleanup) holds the same two, so it cannot change before
+            // this flush releases the sender lock - a forget that failed its DELETE while this
+            // flush waited is seen here, and nothing is posted
+            match deletion_state(&self.dir) {
+                DeletionState::None => {}
+                DeletionState::Pending => {
+                    report.skipped = "a deletion of this instance is pending at the intake".into();
+                    return Ok(report);
+                }
+                DeletionState::Cleanup(txn) => {
+                    // (F09-3) a confirmed deletion whose local cleanup did not finish: it is
+                    // finished now, with the transaction's identity - and nothing is sent
+                    let c = run_local_cleanup(&self.dir, &txn, true, &|p| fs::remove_file(p));
+                    report.skipped = match &c.error {
+                        None => format!(
+                            "finished the local deletion of instance {} (removed {}) - nothing was sent",
+                            txn.instance_id,
+                            if c.removed.is_empty() { "nothing".to_string() } else { c.removed.join(", ") }
+                        ),
+                        Some(e) => format!(
+                            "the local deletion of instance {} is not finished ({e}) - nothing was sent",
+                            txn.instance_id
+                        ),
+                    };
+                    return Ok(report);
+                }
+            }
             match fs::read_to_string(self.path()) {
                 Ok(t) => t,
-                Err(_) => return Ok(report),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(report),
+                Err(e) => return Err(e.into()),
             }
         };
         let lines: Vec<&str> = snapshot
@@ -265,10 +352,25 @@ impl Spool {
                     report.dropped_stale += 1;
                     remove.push(l);
                 }
-                Some(s) if s.kind == "event" => fresh.push((l, s.body)),
+                // (F09-5) every event leaves through the closed classes - a line queued before
+                // wave 2 carries the roster's labels as typed; one that cannot be closed is
+                // discarded here, with a local diagnostic, never sent
+                Some(s) if s.kind == "event" => match classes::close_event_body(&s.body) {
+                    Some(body) => fresh.push((l, body)),
+                    None => {
+                        report.discarded += 1;
+                        remove.push(l);
+                    }
+                },
                 // another kind (a complaint line of a later wave): kept untouched
                 Some(_) => {}
             }
+        }
+        if report.discarded > 0 {
+            debug_log(&format!(
+                "telemetry flush discarded {} queued event(s) that are no closable C3 event (no consultation or rating of this client, no instance id or time) - not sent",
+                report.discarded
+            ));
         }
         let batch: Vec<(&str, String)> = fresh.iter().take(MAX_BATCH).cloned().collect();
         if !batch.is_empty() {
@@ -291,20 +393,41 @@ impl Spool {
             }
         }
         if !remove.is_empty() {
-            self.remove_lines(&remove)?;
+            let reread: &Reread = match hooks.reread {
+                Some(r) => r,
+                None => &|p| fs::read_to_string(p),
+            };
+            self.remove_lines(&remove, reread)?;
         }
         report.kept = self.pending();
         Ok(report)
     }
 
     /// Remove exactly `lines` (one occurrence each) from the CURRENT spool file, under the spool
-    /// lock, by an atomic replace; lines appended since the snapshot stay.
-    fn remove_lines(&self, lines: &[&str]) -> Result<()> {
+    /// lock, by an atomic replace; lines appended since the snapshot stay. (F09-4) The current
+    /// file is read by `reread`; when its contents cannot be established the spool is NOT
+    /// replaced (a rewrite from a guess would erase the events appended while the sender posted)
+    /// and the error is returned - the delivered lines are then sent once more by the next flush
+    /// (at worst a duplicate, never a loss).
+    fn remove_lines(&self, lines: &[&str], reread: &Reread) -> Result<()> {
         let Some(_lock) = lock_within(&self.dir.join(SPOOL_LOCK), SENDER_LOCK_WAIT)? else {
             // not rewritten: the delivered lines are sent once more by the next flush
             return Err(Error::new("the spool lock stayed busy for the rewrite"));
         };
-        let current = fs::read_to_string(self.path()).unwrap_or_default();
+        let current = match reread(&self.path()) {
+            Ok(t) => t,
+            // the invariant: only the local deletion removes the spool, and it holds the sender
+            // lock this flush holds - so a missing spool is an outside removal; nothing was
+            // appended to it that a rewrite could keep, and nothing is rewritten (no file made)
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                return Err(Error::new(format!(
+                    "the spool {} could not be re-read for its rewrite ({}); it is kept exactly as it is - the delivered events are sent again by the next flush",
+                    self.path().display(),
+                    c3_core::one_line(&e.to_string())
+                )))
+            }
+        };
         let mut want: HashMap<&str, usize> = HashMap::new();
         for l in lines {
             *want.entry(l).or_insert(0) += 1;
@@ -365,6 +488,13 @@ impl Spool {
                 r.kept, r.dropped_stale
             ),
             Err(e) => format!("failed - {e}"),
+        };
+        let result = match report {
+            Ok(r) if r.discarded > 0 => format!(
+                "{result}; discarded {} queued event(s) that are no closable C3 event (not sent)",
+                r.discarded
+            ),
+            _ => result,
         };
         let v = serde_json::json!({
             "time": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),

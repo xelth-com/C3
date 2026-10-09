@@ -677,6 +677,78 @@ fn rating_judge_rev_telemetry_sent_and_the_backfill_rc1() {
     let _ = std::fs::remove_dir_all(&e.work);
 }
 
+/// (F09-6 / RC5) The rating actor of a BARE provider label: `JudgeLabel-Kimi` (its sole roster
+/// entry's model k3, its endpoint api.kimi.ai) resolves as the plugin's `Resolve-CoordinatorIdentity`
+/// does - the entry's one model - so the mark saves and the event carries `moonshot/k3/rating_actor`
+/// (C3 sent `moonshot/other`). The same resolver records the consultation's coordinator: a bare
+/// label in the ledger names that model and engine; a label of two models names none.
+#[test]
+fn rating_actor_of_a_bare_label_infers_its_sole_roster_model_rc5() {
+    let e = setup("tel-rate-bare");
+    let roster = e.work.join("roster.json");
+    std::fs::write(
+        &roster,
+        r#"{"roster_version":1,"reviewers":[{"provider":"JudgeLabel-Kimi","model":"k3"},{"provider":"ZAI","model":"glm-5.3"},{"provider":"ZAI","model":"glm-5.1"}]}"#,
+    )
+    .unwrap();
+    let r = roster.to_string_lossy().to_string();
+    let c = e.consult(
+        &[
+            "--purpose",
+            "diff-review",
+            "--provider",
+            "ZAI",
+            "--model",
+            "glm-5.3",
+            "--reply-name",
+            "b1",
+            "--telemetry",
+            "off",
+        ],
+        &[
+            ("CODEX_CONSULT_ROSTER", &r),
+            ("CODEX_CONSULT_COORDINATOR", "JudgeLabel-Kimi"),
+        ],
+    );
+    assert_eq!(c.status.code(), Some(0), "{}", text(&c));
+    let co = &e.ledger()[0]["coordinator"];
+    assert_eq!(co["provider"], "JudgeLabel-Kimi");
+    assert_eq!(co["model"], "k3", "{co}");
+    assert_eq!(co["engine"], "codex", "{co}");
+    assert_eq!(co["in_roster"], true, "{co}");
+    let rate = |useful: &str, coordinator: &str| {
+        e.c3(
+            &["findings", "--task", "t", "--rate", "1", "--useful", useful],
+            &[
+                ("CODEX_CONSULT_ROSTER", r.as_str()),
+                ("CODEX_CONSULT_COORDINATOR", coordinator),
+            ],
+        )
+    };
+    let j = rate("yes", "JudgeLabel-Kimi");
+    assert_eq!(j.status.code(), Some(0), "{}", text(&j));
+    let m = e.marks()[0].clone();
+    assert_eq!(mark_judge(&m), "moonshot/k3/rating_actor");
+    assert!(m["telemetry_sent"].is_i64());
+    let evs = e.spool_events();
+    assert_eq!(evs.len(), 1);
+    assert_eq!(judge_of(&evs[0]), "moonshot/k3/rating_actor");
+    // an ambiguous label (two models of ZAI): the vendor class of its endpoint, the model not named
+    let j2 = rate("partly", "ZAI");
+    assert_eq!(j2.status.code(), Some(0), "{}", text(&j2));
+    assert_eq!(mark_judge(&e.marks()[0]), "zai/other/rating_actor");
+    let evs = e.spool_events();
+    assert_eq!(evs.len(), 2);
+    assert_eq!(judge_of(&evs[1]), "zai/other/rating_actor");
+    // a bare openai label outside the roster takes the Codex config's model (gpt-5.1)
+    let j3 = rate("yes", "openai");
+    assert_eq!(j3.status.code(), Some(0), "{}", text(&j3));
+    assert_eq!(mark_judge(&e.marks()[0]), "openai/gpt-5.1/rating_actor");
+    let raw = e.spool_lines().join("\n");
+    assert!(!raw.contains("JudgeLabel") && !raw.contains("ZAI"), "{raw}");
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
 #[test]
 fn backfill_of_a_mark_without_a_saved_judge_never_takes_the_backfills_coordinator() {
     let e = setup("tel-backfill-legacy");

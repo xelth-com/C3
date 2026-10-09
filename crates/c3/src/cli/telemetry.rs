@@ -145,12 +145,29 @@ pub fn run_complain(args: ComplainArgs) -> i32 {
 /// for the retry (F02-3). Without any reference: `--local` removes the local data only.
 pub fn run_forget_me(args: ForgetMeArgs) -> i32 {
     let dir = telemetry::telemetry_dir();
+    // (F09-3) a deletion the intake confirmed whose local cleanup did not finish: only that is
+    // left - nothing is asked of the intake, and nothing needs asking here
+    if telemetry::pending_deletion_in(&dir).is_some_and(|p| p.cleanup_due()) {
+        let out = telemetry::forget(
+            &telemetry::ForgetRequest {
+                public_ref: None,
+                local: true,
+                yes: true,
+            },
+            prompt_yes_no,
+        );
+        for l in &out.lines {
+            println!("{l}");
+        }
+        return out.exit;
+    }
     let explicit = args.public_ref.trim().to_string();
     let reference = if !explicit.is_empty() {
         Some(explicit)
     } else {
         telemetry::pending_deletion_in(&dir)
             .map(|p| p.public_ref)
+            .filter(|r| !r.is_empty())
             .or_else(|| telemetry::newest_ref(&dir))
     };
     if reference.is_none() && !args.local {
@@ -264,6 +281,12 @@ pub fn run_telemetry(args: TelemetryArgs) -> i32 {
                     r.kept,
                     r.dropped_stale
                 );
+                if r.discarded > 0 {
+                    println!(
+                        "{TOOL}: discarded {} queued event(s) that are no closable C3 event - not sent",
+                        r.discarded
+                    );
+                }
                 if r.attempted && r.sent == 0 {
                     1
                 } else {
@@ -353,8 +376,11 @@ fn print_status() {
             last.get("why").and_then(|v| v.as_str()).unwrap_or("?")
         ),
     }
-    if let Some(p) = telemetry::pending_deletion_in(&dir) {
-        println!("forgetting : a deletion of instance {} is pending at the intake since {} ({} attempt(s), the last: {}) - nothing is spooled or sent until it is confirmed; c3 forget-me retries it", p.instance_id, p.since, p.attempts, p.last_error);
+    match telemetry::pending_deletion_in(&dir) {
+        Some(p) if p.cleanup_due() => println!("forgetting : the local deletion of instance {} did not finish (phase {}, since {}) - nothing is spooled or sent until it is; the next flush or c3 forget-me finishes it", p.instance_id, p.phase, p.since),
+        Some(p) => println!("forgetting : a deletion of instance {} is pending at the intake since {} ({} attempt(s), the last: {}) - nothing is spooled or sent until it is confirmed; c3 forget-me retries it", p.instance_id, p.since, p.attempts, p.last_error),
+        None if dir.join("forget-pending.json").exists() => println!("forgetting : the deletion record {} cannot be read - nothing is spooled or sent until it is removed or a forget rewrites it", dir.join("forget-pending.json").display()),
+        None => {}
     }
     let last = std::fs::read_to_string(dir.join("last-flush.json"))
         .ok()

@@ -386,6 +386,10 @@ fn instance_id_if_exists_is_read_only_until_created() {
 
 // --------------------------------------------------------------------------- spool
 
+/// An instance id of the client's shape (64 lower-case hex digits): the sender closes every queued
+/// event and discards one without such an id (F09-5).
+const TEST_INSTANCE: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
 fn enqueue_one(spool: &Spool, purpose: &str) {
     let entry = LedgerEntry {
         purpose: purpose.into(),
@@ -395,7 +399,7 @@ fn enqueue_one(spool: &Spool, purpose: &str) {
         },
         ..Default::default()
     };
-    let event = Event::from_ledger(&entry, Some(1), "testinstance");
+    let event = Event::from_ledger(&entry, Some(1), TEST_INSTANCE);
     spool.enqueue(&event).unwrap();
 }
 
@@ -765,7 +769,7 @@ fn outbox_second_sender_skips_while_the_first_holds_the_lock() {
 fn outbox_line_shape_legacy_lines_torn_lines_and_queue_time() {
     let dir = temp_dir("outbox-shape");
     let spool = Spool::new(&dir, "http://unused.invalid/T");
-    let old = serde_json::json!({"app_id": "c3", "event_type": "rating", "client_time": "2000-01-01T00:00:00Z", "details": {}});
+    let old = serde_json::json!({"app_id": "c3", "instance_id": TEST_INSTANCE, "event_type": "rating", "client_time": "2000-01-01T00:00:00Z", "details": {}});
     spool.enqueue_line(&old).unwrap();
     let text = std::fs::read_to_string(dir.join("spool.ndjson")).unwrap();
     let line: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
@@ -781,7 +785,7 @@ fn outbox_line_shape_legacy_lines_torn_lines_and_queue_time() {
     // a legacy raw line (fresh client_time) and a torn line without its newline
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let legacy = format!(
-        r#"{{"app_id":"c3","event_type":"consultation","client_time":"{now}","details":{{}}}}"#
+        r#"{{"app_id":"c3","instance_id":"{TEST_INSTANCE}","event_type":"consultation","client_time":"{now}","details":{{}}}}"#
     );
     let mut f = std::fs::OpenOptions::new()
         .append(true)
@@ -810,6 +814,383 @@ fn outbox_line_shape_legacy_lines_torn_lines_and_queue_time() {
     assert_eq!(spool.pending(), 0);
     let body = posted.lock().unwrap().clone();
     assert!(body.contains("2000-01-01T00:00:00Z") && body.contains("decision"));
+}
+
+// --------------------------------------------------------------------------- wave 2d (F09-2..F09-5)
+
+fn forget_req(public_ref: Option<&str>, local: bool) -> telemetry::ForgetRequest {
+    telemetry::ForgetRequest {
+        public_ref: public_ref.map(str::to_string),
+        local,
+        yes: true,
+    }
+}
+
+fn consultation_of(instance: &str, purpose: &str) -> Event {
+    let entry = LedgerEntry {
+        purpose: purpose.into(),
+        reviewer: Reviewer {
+            engine: "codex".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    Event::from_ledger(&entry, Some(1), instance)
+}
+
+/// (F09-2 / RC2, schedule 1) A sender passes its early deletion check and waits at a barrier
+/// BEFORE the sender lock; meanwhile a forget (with `--local` and without) takes the locks, the
+/// intake does NOT confirm the DELETE, the pending deletion is recorded and the locks released;
+/// the sender resumes and decides again under the sender lock and the spool lock: it skips, the
+/// injected sender is NEVER called, and the queued event stays.
+#[test]
+fn a_forget_failing_while_a_flush_waits_never_lets_the_flush_post_rc2() {
+    for local in [true, false] {
+        let dir = temp_dir(if local {
+            "rc2-barrier-local"
+        } else {
+            "rc2-barrier"
+        });
+        let iid = telemetry::instance_id_in(&dir);
+        let spool = Spool::new(&dir, "http://unused.invalid/T");
+        spool.enqueue(&consultation_of(&iid, "framing")).unwrap();
+        let (hub, log) = scripted_mock(vec![(503, r#"{"ok":false,"error":"maintenance"}"#)]);
+        let (at_barrier, checked) = channel::<()>();
+        let (release, go) = channel::<()>();
+        let posted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (d2, p2) = (dir.clone(), posted.clone());
+        let sender = thread::spawn(move || {
+            let after = || {
+                at_barrier.send(()).unwrap();
+                go.recv().unwrap();
+            };
+            Spool::new(&d2, "http://unused.invalid/T")
+                .flush_hooked(
+                    |_| {
+                        p2.store(true, Ordering::SeqCst);
+                        true
+                    },
+                    &telemetry::FlushHooks {
+                        after_check: Some(&after),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+        });
+        checked.recv_timeout(Duration::from_secs(10)).unwrap();
+        let out = telemetry::forget_at(
+            &hub_at(&hub),
+            &dir,
+            &forget_req(Some("CC-7Q"), local),
+            |_| true,
+        );
+        assert_eq!(out.exit, 3, "{:?}", out.lines);
+        let txn = telemetry::pending_deletion_in(&dir).expect("the pending deletion");
+        assert_eq!(txn.phase, telemetry::PHASE_PENDING);
+        assert_eq!(txn.instance_id, iid);
+        release.send(()).unwrap();
+        let report = sender.join().unwrap();
+        assert!(
+            !posted.load(Ordering::SeqCst),
+            "the sender posted while a deletion was pending"
+        );
+        assert!(
+            !report.attempted && report.skipped.contains("deletion"),
+            "{report:?}"
+        );
+        assert_eq!(spool.pending(), 1);
+        assert_eq!(
+            log.lock().unwrap().clone(),
+            [format!("DELETE /T/v2/instances/{iid}?public_ref=CC-7Q")]
+        );
+    }
+}
+
+/// (F09-3 / RC2, schedule 2) The intake CONFIRMS the DELETE and the local cleanup is interrupted
+/// (an injected removal failure where the spool goes - the process dies there): the transaction
+/// stays, `cleaning`, with the OLD instance id, and the old instance's queued event with it; the
+/// salt is still there (queued data goes before identity material). Then the state of the review -
+/// the salt gone, the spool preserved - and a restart: a producer spools nothing, the sender posts
+/// NOTHING of the old instance and finishes the cleanup with the retained identity, the record
+/// removed last; only then does a NEW instance's event go out.
+#[test]
+fn a_confirmed_delete_with_an_interrupted_cleanup_resumes_and_never_posts_the_old_instance_rc2() {
+    let dir = temp_dir("rc2-resume");
+    let old_iid = telemetry::instance_id_in(&dir);
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    spool
+        .enqueue(&consultation_of(&old_iid, "framing"))
+        .unwrap();
+    std::fs::write(dir.join("refs.ndjson"), "{\"public_ref\":\"CC-7Q\"}\n").unwrap();
+    let (hub, log) = scripted_mock(vec![(200, r#"{"ok":true,"deleted":3}"#)]);
+    let spool_path = dir.join("spool.ndjson");
+    let phases = std::sync::Mutex::new(Vec::<String>::new());
+    let interrupted = telemetry::forget_with(
+        &hub_at(&hub),
+        &dir,
+        &forget_req(Some("CC-7Q"), true),
+        |_| true,
+        &|p: &std::path::Path| {
+            phases.lock().unwrap().push(
+                telemetry::pending_deletion_in(&dir)
+                    .map(|t| t.phase)
+                    .unwrap_or_default(),
+            );
+            if p == spool_path {
+                Err(std::io::Error::other("injected: the process died here"))
+            } else {
+                std::fs::remove_file(p)
+            }
+        },
+    );
+    assert!(interrupted.server_deleted);
+    assert_eq!(interrupted.exit, 1, "{:?}", interrupted.lines);
+    let t = interrupted.lines.join("\n");
+    assert!(t.contains("the local deletion did not finish"), "{t}");
+    assert!(t.contains(&format!("keeps instance {old_iid}")), "{t}");
+    assert_eq!(phases.lock().unwrap().clone(), ["cleaning"]);
+    let txn = telemetry::pending_deletion_in(&dir).expect("the transaction survives");
+    assert_eq!(txn.phase, telemetry::PHASE_CLEANING);
+    assert_eq!(txn.instance_id, old_iid);
+    assert_eq!(
+        spool.pending(),
+        1,
+        "the old instance's event is still queued"
+    );
+    assert!(
+        dir.join("salt").is_file(),
+        "identity material goes after the queued data"
+    );
+    // the review's state: the salt gone, the spool preserved
+    std::fs::remove_file(dir.join("salt")).unwrap();
+    // restart: a producer spools nothing
+    assert!(spool
+        .enqueue(&consultation_of(TEST_INSTANCE, "decision"))
+        .is_err());
+    // the sender posts nothing of the old instance - it finishes the cleanup instead
+    let r = Spool::new(&dir, hub.clone())
+        .flush_with(|b| panic!("posted while a deletion's cleanup was due: {b}"))
+        .unwrap();
+    assert!(!r.attempted, "{r:?}");
+    assert!(
+        r.skipped.contains(&format!(
+            "finished the local deletion of instance {old_iid}"
+        )),
+        "{r:?}"
+    );
+    assert!(!spool_path.exists() && !dir.join("refs.ndjson").exists());
+    assert!(!dir.join("forget-pending.json").exists());
+    assert_eq!(
+        log.lock().unwrap().clone(),
+        [format!("DELETE /T/v2/instances/{old_iid}?public_ref=CC-7Q")],
+        "the intake saw the DELETE and never an event of the old instance"
+    );
+    // afterwards: a NEW instance, whose event goes out and never names the old one
+    let new_iid = telemetry::instance_id_in(&dir);
+    assert_ne!(new_iid, old_iid);
+    spool
+        .enqueue(&consultation_of(&new_iid, "decision"))
+        .unwrap();
+    let sent = std::sync::Mutex::new(String::new());
+    let r2 = spool
+        .flush_with(|b| {
+            *sent.lock().unwrap() = b.to_string();
+            true
+        })
+        .unwrap();
+    assert_eq!(r2.sent, 1);
+    let body = sent.lock().unwrap().clone();
+    assert!(
+        body.contains(&new_iid) && !body.contains(&old_iid),
+        "{body}"
+    );
+}
+
+/// (F09-3) A `confirmed` transaction left by a process that died right after the intake confirmed
+/// (no cleanup started): the next forget - even one without a reference - finishes the cleanup
+/// with the transaction's identity, asks the intake nothing more and asks the user nothing; a salt
+/// made meanwhile by ANOTHER instance stays.
+#[test]
+fn a_confirmed_transaction_is_finished_by_the_next_forget() {
+    let dir = temp_dir("rc2-forget-resume");
+    let old_iid = telemetry::instance_id_in(&dir);
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    spool
+        .enqueue(&consultation_of(&old_iid, "framing"))
+        .unwrap();
+    let record = serde_json::json!({"instance_id": old_iid, "public_ref": "CC-7Q", "since": "2026-10-09T10:00:00Z", "attempts": 1, "last_error": "", "phase": "confirmed"});
+    std::fs::write(dir.join("forget-pending.json"), record.to_string()).unwrap();
+    let (hub, log) = scripted_mock(vec![(500, "{}")]);
+    let out = telemetry::forget_at(&hub_at(&hub), &dir, &forget_req(None, false), |_| {
+        panic!("a confirmed deletion asks nothing")
+    });
+    assert_eq!(out.exit, 0, "{:?}", out.lines);
+    let t = out.lines.join("\n");
+    assert!(
+        t.contains(&format!(
+            "finishing the local deletion of instance {old_iid}"
+        )),
+        "{t}"
+    );
+    assert!(t.contains("removed locally - spool.ndjson, salt"), "{t}");
+    assert!(!dir.join("salt").exists() && spool.pending() == 0);
+    assert!(telemetry::pending_deletion_in(&dir).is_none());
+    assert!(
+        log.lock().unwrap().is_empty(),
+        "nothing more asked of the intake"
+    );
+    // a salt of ANOTHER instance (made after the deletion began) is not the transaction's: kept
+    let other_iid = telemetry::instance_id_in(&dir);
+    let record = serde_json::json!({"instance_id": old_iid, "public_ref": "CC-7Q", "since": "2026-10-09T10:00:00Z", "attempts": 1, "last_error": "", "phase": "cleaning"});
+    std::fs::write(dir.join("forget-pending.json"), record.to_string()).unwrap();
+    let again = telemetry::forget_at(&hub_at(&hub), &dir, &forget_req(None, true), |_| true);
+    assert_eq!(again.exit, 0, "{:?}", again.lines);
+    assert!(
+        again
+            .lines
+            .join("\n")
+            .contains(&format!("another instance ({other_iid})")),
+        "{:?}",
+        again.lines
+    );
+    assert_eq!(
+        telemetry::instance_id_if_exists_in(&dir).as_deref(),
+        Some(other_iid.as_str())
+    );
+    assert!(telemetry::pending_deletion_in(&dir).is_none());
+}
+
+/// (F09-4 / RC3) The sender delivered A; B was appended during the POST; the reread of the
+/// CURRENT spool fails: the flush reports the failure and the spool's bytes are exactly what they
+/// were (A and B) - nothing is replaced from a guess (the failure used to read as an empty file and
+/// erase both). The next flush re-sends A (at worst a duplicate) and delivers B.
+#[test]
+fn outbox_reread_failure_after_a_send_keeps_the_spool_bytes_rc3() {
+    let dir = temp_dir("rc3-reread");
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    enqueue_one(&spool, "framing");
+    let path = dir.join("spool.ndjson");
+    let before = std::sync::Mutex::new(Vec::new());
+    let fail = |_: &std::path::Path| -> std::io::Result<String> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "injected reread failure",
+        ))
+    };
+    let r = spool.flush_hooked(
+        |body| {
+            assert!(body.contains("\"framing\""));
+            enqueue_one(&spool, "decision"); // B arrives while A's POST is in flight
+            *before.lock().unwrap() = std::fs::read(&path).unwrap();
+            true
+        },
+        &telemetry::FlushHooks {
+            reread: Some(&fail),
+            ..Default::default()
+        },
+    );
+    let err = r.expect_err("a failed reread is a failed flush");
+    assert!(err.to_string().contains("could not be re-read"), "{err}");
+    let bytes = before.lock().unwrap().clone();
+    assert!(!bytes.is_empty());
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        bytes,
+        "the spool bytes are unchanged"
+    );
+    assert_eq!(spool.pending(), 2);
+    let next = spool.flush_with(|_| true).unwrap();
+    assert_eq!(next.sent, 2);
+    assert_eq!(spool.pending(), 0);
+}
+
+/// (F09-5 / RC4) The upgrade backlog: a FRESH raw event queued before wave 2 (provider, model,
+/// purpose, title, tags and outcome the operator's labels as typed - `customer-acme`), a rating of
+/// that time, and a wave-2b envelope whose body still carries a label all leave through the closed
+/// classes - `customer-acme` never reaches the intake, the values that ARE closed survive; an event
+/// that cannot be closed (no instance id) is discarded unsent, with a diagnostic.
+#[test]
+fn legacy_queued_events_never_send_a_private_label_rc4() {
+    let dir = temp_dir("rc4-legacy");
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let consult = serde_json::json!({"app_id": "c3", "app_version": "0.1.0", "instance_id": TEST_INSTANCE, "event_type": "consultation", "severity": "info", "title": "customer-acme-intake",
+        "details": {"engine": "codex", "provider": "customer-acme", "model": "customer-acme-7b", "purpose": "customer-acme-intake", "outcome": "failed:customer-acme-gateway", "wall_seconds": 12.5, "tokens_in": 10, "tokens_out": 5, "findings": 2, "structured": true, "format_retry": false, "panel_size": 1, "peers_used": 0, "os": "Windows", "runtime": "rust 0.1.0"},
+        "client_time": now, "os": "Windows", "runtime": "rust 0.1.0", "tags": ["customer-acme"]});
+    let rating = serde_json::json!({"app_id": "c3", "app_version": "0.1.0", "instance_id": TEST_INSTANCE, "event_type": "rating", "severity": "info", "title": "customer-acme-intake",
+        "details": {"engine": "codex", "provider": "openai", "model": "GPT-5.1", "purpose": "framing", "mark": "yes", "age_days": 2, "os": "Windows", "runtime": "rust 0.1.0", "topic_tags": ["security"]},
+        "client_time": now, "os": "Windows", "runtime": "rust 0.1.0", "tags": []});
+    let no_id = serde_json::json!({"app_id": "c3", "event_type": "consultation", "client_time": now, "details": {"provider": "customer-acme"}});
+    let envelope_body = serde_json::json!({"app_id": "c3", "app_version": "0.1.0", "instance_id": TEST_INSTANCE, "event_type": "consultation", "severity": "info", "title": "framing",
+        "details": {"engine": "codex", "provider": "ZAI-customer-acme", "model": "glm-5.3", "purpose": "framing", "outcome": "usable", "wall_seconds": 1.0, "tokens_in": 1, "tokens_out": 1, "findings": 0, "structured": true, "format_retry": false, "panel_size": 1, "peers_used": 0, "os": "Windows", "runtime": "rust 0.1.0"},
+        "tags": ["ZAI-customer-acme", "glm-5.3"], "client_time": now, "os": "Windows", "runtime": "rust 0.1.0"});
+    let envelope = serde_json::json!({"v": 1, "kind": "event", "queued_unix": chrono::Utc::now().timestamp(), "body": envelope_body.to_string()});
+    std::fs::write(
+        dir.join("spool.ndjson"),
+        format!("{consult}\n{rating}\n{no_id}\n{envelope}\n"),
+    )
+    .unwrap();
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    let posted = std::sync::Mutex::new(String::new());
+    let r = spool
+        .flush_with(|b| {
+            *posted.lock().unwrap() = b.to_string();
+            true
+        })
+        .unwrap();
+    assert_eq!((r.sent, r.discarded), (3, 1), "{r:?}");
+    assert_eq!(spool.pending(), 0);
+    let body = posted.lock().unwrap().clone();
+    assert!(!body.to_lowercase().contains("acme"), "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let evs = v["events"].as_array().unwrap();
+    assert_eq!(evs.len(), 3);
+    // the raw consultation: every label closed, the counts kept, the severity from the outcome
+    let c = &evs[0];
+    assert_eq!(c["details"]["provider"], "other");
+    assert_eq!(c["details"]["model"], "other");
+    assert_eq!(c["details"]["purpose"], "other");
+    assert_eq!(c["details"]["outcome"], "failed:unknown");
+    assert_eq!(c["title"], "other");
+    assert_eq!(c["severity"], "error");
+    assert_eq!(c["tags"], serde_json::json!(["other", "other"]));
+    assert_eq!(c["details"]["tokens_in"], 10);
+    assert_eq!(c["details"]["wall_seconds"], 12.5);
+    assert_eq!(c["instance_id"], TEST_INSTANCE);
+    // the raw rating: the closed values survive (the table's spelling), the 0.6.1 detail keys
+    let g = &evs[1];
+    assert_eq!(g["details"]["provider"], "openai");
+    assert_eq!(g["details"]["model"], "gpt-5.1");
+    assert_eq!(g["details"]["purpose"], "framing");
+    assert_eq!(g["title"], "yes");
+    assert_eq!(
+        g["details"]["judge"],
+        serde_json::json!({"provider": "other", "model": "other", "source": "unknown"})
+    );
+    let keys: Vec<&str> = g["details"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|k| k.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "engine",
+            "provider",
+            "model",
+            "purpose",
+            "mark",
+            "age_days",
+            "bridge_version",
+            "os",
+            "ps_version",
+            "judge"
+        ]
+    );
+    // the 2b envelope: its label closed, its listed model kept only with a class (none here)
+    assert_eq!(evs[2]["details"]["provider"], "other");
+    assert_eq!(evs[2]["details"]["model"], "other");
+    assert_eq!(evs[2]["details"]["outcome"], "usable");
 }
 
 // --------------------------------------------------------------------------- off switch
