@@ -39,6 +39,11 @@ scan's process table is not hooked (the plugin's scan reads `Win32_Process.Creat
 New helpers: `pid_identity`, `process_info` (`Get-ProcessInfo`: name without `.exe`, command line
 with `CODEX_CONSULT_TEST_CMDLINE_UNREADABLE`, start, parent), `terminate_pid`,
 `enumerate_processes_checked` (a snapshot that fails or comes back empty is a failed scan).
+(wave 3c, F23-1) `process_info` is `None` ONLY for a pid that no longer answers: a name-and-parent
+lookup that fails (the Toolhelp snapshot failed or did not list the pid) while the pid still has a
+start time returns the process with `inspected: false` (name `""`, parent `0`) - its identity is
+unknown, never "gone". TEST HOOK (test mode only, C3's): `CODEX_CONSULT_TEST_INFO_UNREADABLE=<pid>
+[,<pid>]` - the lookup fails for those pids.
 
 ## 2. What a kill keeps, at the three kill sites (E1, E18, E23)
 
@@ -63,6 +68,19 @@ The main turn (`finish`), the timeout continuation and the format repair (both `
   not confirmed` when it has none). A secondary turn's kept lists replace the main turn's.
   `PendingRecord` carries `unverified: []` right after `survivors` in every record (the plugin's
   `New-PendingRecord`), `kill_unconfirmed` only when set.
+- **Written AT the kill (wave 3c, F23-3; the plugin's rule):** each of the three kill sites writes
+  that record the moment its kill's check is known - before anything else of the run proceeds (the
+  rollout lookup, the secondary turns, the ledger, the commit): `finish` right after the main
+  turn's outcome, `secondary_kill` for the continuation and the format repair (the repair's record
+  is built on the one that turn has on disk, which names the saved prose). The survivors'
+  `{pid, start_time, name}` entries are read there, once, and reused by the end-of-run write,
+  which still writes the same evidence on the run's base record (as before). A main-turn write
+  that fails is said in the outcome as the plugin's: `; WARNING: the survivors|unverified
+  pids|unconfirmed kill could not be recorded (<error>) - <path> still names only child pid <n>`.
+  A blocked commit (D3) rewrites the KEPT record with its note, never the base record without the
+  evidence. TEST HOOK (test mode only, C3's): `CODEX_CONSULT_TEST_KILL_PAUSE_MS=<ms> |
+  <model>=<ms>[|...]` - a pause right after a kill site's write (the window a test terminates the
+  bridge in).
 - **Said:** the summary's `pending    : recovery record kept: <path> (state 'survivors'|'launching')`
   (the plugin's `$pendingNote`, which C3 never printed); the warnings `kill not confirmed (<turn>):
   ...` (`Add-KillCheck`, both forms, for the main turn, `timeout continuation`, `format repair`); the
@@ -95,6 +113,9 @@ The main turn (`finish`), the timeout continuation and the format repair (both `
      running (fail-closed)`;
    - started before the record's `started` - dropped, `started <t>, before that run: not its
      process`;
+   - (wave 3c, F23-1) its name and parent cannot be read (`inspected: false`) - running, `start
+     time readable now; pid <n> runs a process whose name and parent cannot be read - counted as
+     running (fail-closed)`;
    - the "looks like codex" rule matches - running, `start time readable now; <rule>`;
    - its command line not readable (`""`, ps's `[name]`, or a generic runtime - node, nodejs, bun,
      deno, cmd, powershell, pwsh, sh, bash, dash, zsh, python, python3 - with nothing after the
@@ -107,7 +128,13 @@ The main turn (`finish`), the timeout continuation and the format repair (both `
 5. **E23 / E25 / E28, the unknown tree** (`kill_unconfirmed`): another host - active; outside
    Windows - active (`this host cannot scan for its processes by parent pid`); no recorded pid -
    active; else the scan by parent pid under the writer, the child, the survivors and the unverified
-   pids, THEN the machine-wide "looks like codex" scan - for every record, a panel member's too. A
+   pids, THEN the machine-wide "looks like codex" scan - for every record, a panel member's too.
+   (wave 3c, F23-2) A process whose start time cannot be read (`created: None` - C3's table reads it
+   with `GetProcessTimes`, which a protected or another user's process denies; the plugin's
+   `Win32_Process.CreationDate` is always read) counts as started at or after `started` (and before a
+   reuse of the parent's pid): by parent it is found, by the machine-wide rule it is judged like any
+   recent process (its command line read) - its rule ends `its start time cannot be read - counted
+   (fail-closed)`. A row that is not codex-like is still left out (no blanket refusal). A
    failed scan or a find refuses (a panel member's machine-wide find: `a codex-like process runs: pid
    <n> <name> (task not verifiable) - this panel member's unknown tree is released only when no such
    process runs`); both clean - released: `unknown tree after an unconfirmed kill: the scan found no
@@ -130,13 +157,35 @@ AM` at `2012-01-01T14:01:00+14:00` read `2012-01-01T14:00:00+14:00` (already pas
 **Corrected, not bounded:** a candidate whose round-trip instant `wall - o` falls in ANOTHER calendar
 year than `wall` is judged by the zone's own (local-year) classification; within one year the UTC
 round trip stays the authority. The F04-2 edges (Berlin's March and October transitions, in all
-three zone implementations) are untouched - they never straddle a year. Test
-`health::retry_after_tests::samoa_year_boundary_keeps_the_local_years_offset`: a synthetic
-`WindowsLikeSamoa2012` zone with the registry's 2011/2012 rules and chrono's two lookups; 2012-01-01
-00:00, 05:00, 14:00 and 2012-01-02 00:00 are `Single(+14:00)`, 2011-12-31 00:00 and 20:00
-`Single(-10:00)`; the trigger returns `2012-01-02T00:00:00+14:00` (the pinned plugin's result) in it
-and in IANA `Pacific/Apia`; the Berlin boundary samples still pass. It fails on the unfixed rule
-(`2012-01-01T00:00:00` -> `None`).
+three zone implementations) are untouched - they never straddle a year.
+
+**Proven on the zone's real rules (wave 3c, F23-5).** chrono's `Local` is the machine's zone and
+cannot be switched per test, so the fixture zone is `ChronoWindowsZone`: a PORT of chrono 0.4.45's
+Windows `Local` (`offset_from_local_datetime` with `lookup_with_dst_transitions` on the wall time's
+year, `offset_from_utc_datetime` on the UTC year, `TzInfo::for_year` and
+`naive_date_time_from_system_time`) over a Windows zone's per-year registry rules (`REG_TZI_FORMAT`
+blobs; a year outside the entries takes the nearest, as `GetTimeZoneInformationForYear`) - no rule
+is hand-written any more.
+- `health::retry_after_tests::samoa_year_boundary_keeps_the_local_years_offset` (every platform):
+  the zone from the 2011/2012 blobs this machine's registry held on 2026-10-09 (`SAMOA_TZI`); its
+  raw lookups disagree across New Year and carry chrono's boundary quirks (2012-04-01 04:00 reported
+  ambiguous, 2012-09-30 03:00 a single time at +13:00); the normalised classification equals .NET's
+  (`SAMOA_DOTNET`, 30 wall times: both DST edges of 2011 and 2012 - the fall-back end 04:00 is
+  `Single(+13:00)` / `Single(-11:00)` only, as F04-2 -, 2011-12-29..31 and 2012-01-01/02 around the
+  year boundary, where Windows' Samoa skips no day: its rules change at the LOCAL year boundary) and
+  all 19 resets of `SAMOA_RESETS` are the pinned plugin's (`Get-RetryAfter -TimeZone
+  (FindSystemTimeZoneById 'Samoa Standard Time')`, v0.6.1, Windows PowerShell 5.1, run on
+  2026-10-09: the New Year trigger, time-only resets across the year boundary, dated ones on both
+  sides, every DST edge); the trigger also in IANA `Pacific/Apia`; the Berlin samples still pass.
+- `health::retry_after_tests::samoa_registry_rules_match_dotnet_and_the_pinned_plugin` (Windows,
+  gated on the registry holding `Samoa Standard Time`): reads EVERY year of the zone's `Dynamic DST`
+  key at test time (`reg query`), asks .NET for its classification of the same zone NOW (Windows
+  PowerShell: `IsInvalidTime`, `IsAmbiguousTime` + `GetAmbiguousTimeOffsets`, `GetUtcOffset`) at
+  the 30 wall times and requires the live-registry zone, normalised, to say the same; when the
+  registry still holds the pinned 2011/2012 rules it also requires .NET's answers to equal the
+  pinned table and the 19 resets to be the plugin's. A machine whose own zone is Samoa runs the
+  resets on production `chrono::Local` too (others say SKIPPED for that part). 30/30 and 19/19 on
+  this machine.
 
 What stays bounded: `to_zone_time` (an instant shown in the zone) still uses the UTC-year lookup -
 an instant within the hours around New Year in a zone whose rules change between those years is
@@ -156,7 +205,8 @@ day and every reset instant of the fixture are unaffected.
   after both scans, refused with a live orphan of the recorded writer (Windows), a survivor without
   a start time read and not codex (Windows).
 - `c3_core::store::tests::pending_record_carries_unverified_after_survivors`,
-  `c3_core::health::retry_after_tests::samoa_year_boundary_keeps_the_local_years_offset`.
+  `c3_core::health::retry_after_tests::samoa_year_boundary_keeps_the_local_years_offset`,
+  `...::samoa_registry_rules_match_dotnet_and_the_pinned_plugin` (wave 3c).
 - `crates/c3/tests/recovery_wave3a.rs` - the hooks in one test (START_UNREADABLE and
   CMDLINE_UNREADABLE, honoured in test mode only) and, on Windows, three REAL tree kills of a `.cmd`
   -> `PING.EXE` tree: a clean kill (confirmed), a descendant whose start time cannot be read with
@@ -201,14 +251,81 @@ brief's baseline (RC2 for fixes28e and fixes; wave 2b's for the rest).
 `cargo test --workspace -j 2`: 616 passed, 0 failed (600 + 16). `cargo clippy --workspace
 --all-targets -- -D warnings`: clean. `cargo fmt --all -- --check`: clean.
 
+## Wave 3c: the diff review's fixes (handoff 23, F23-1..F23-5; branch `wave3c-recovery-fixes`)
+
+The review of this wave (mimo, handoff 23, HOLD) found the recovery invariant fail-open in three
+places and the tests unable to prove it. The invariant, restated: **a pid or a tree is released only
+on positive evidence that it is gone or not ours; a read that fails counts as running.**
+
+- **F23-1 (blocker) - a failed lookup is not "gone".** `proc::process_info` returned `None` when the
+  name-and-parent lookup (a Toolhelp snapshot) failed, and E19 took that for `gone` - a live
+  reviewer whose start time was readable could be dropped. Now `None` means the pid no longer
+  answers; a process that exists but cannot be inspected comes back with `inspected: false`.
+  `test_unverified_process` counts it as running (`start time readable now; pid <n> runs a process
+  whose name and parent cannot be read - counted as running (fail-closed)`), `test_recorded_process`
+  keeps a matching recorded start time's verdict (a name it cannot show is never "reused"), and
+  `survivor_entries` keeps such a survivor (name `""`). Test hook `CODEX_CONSULT_TEST_INFO_UNREADABLE`.
+- **F23-2 (blocker) - an unreadable start time never skips a row.** Both scans of
+  `find_codex_processes` skipped `created: None`; C3's table cannot read a protected or another
+  user's process's creation time (the plugin's WMI table always can), so an unknown tree could be
+  released while such a process ran. Now such a row counts as started at or after `started` (and
+  before a reuse of the parent's pid): a child of a recorded pid is found, a machine-wide row is
+  judged by the rule like any recent one (its command line is read) - the rule ends `its start time
+  cannot be read - counted (fail-closed)`. A row that is not codex-like is still left out, so the
+  machine's own protected processes block nothing. Same in the descendant scan.
+- **F23-3 (blocker) - the evidence is written at the kill.** See section 2 ("Written AT the kill"):
+  the three kill sites write the kept record before the run goes on; the end of the run writes the
+  same evidence again; a blocked commit keeps it.
+- **F23-4 (major) - the tests prove the invariant.** Every hooked assertion first shows the other
+  verdict without the hook (this process's start time and name must be readable - asserted, not
+  skipped); the tree kills pick the batch file's `PING.EXE` by its image (never the console host);
+  the unknown-tree release runs on a synthetic table through the new seam
+  `pending::test_pending_active_with(record, path, &ProcessTable { read, command_line })` and
+  asserts ONE table read, both passes in the check text (with the app server each names), the pids
+  whose command lines were read, and the refusals by either pass, by an unreadable start in either
+  pass and by a failed read.
+- **F23-5 (minor) - Samoa on the real rules.** See section 4 ("Proven on the zone's real rules").
+
+New tests:
+
+| test | proves |
+|---|---|
+| `liveness::proc::tests::f23_2_a_row_whose_start_cannot_be_read_is_never_skipped` | F23-2, pure: both scans, the reuse case, no blanket refusal, an app server stays excluded |
+| `liveness::pending::tests::an_unknown_tree_is_released_only_after_both_scans` (rewritten) | F23-4: release only after both passes over one table read, the command lines read |
+| `liveness::pending::tests::an_unknown_tree_is_refused_by_either_scan_and_by_an_unreadable_start` | F23-2 (RC2) / F23-4: by parent, machine-wide, `created: None` in each, a failed read |
+| `liveness::pending::tests::the_descendant_scan_counts_a_child_whose_start_cannot_be_read` | F23-2 in the `launching` scan |
+| `tests/recovery_wave3a.rs::hooked_recovery_rules_and_the_confirmed_tree_kill` (extended) | F23-1 (RC1): `INFO_UNREADABLE` - running, never gone, at the verdict and record level; F23-4: a recorded start time with the current one unreadable; non-vacuous hooks; `PING.EXE` picked by image |
+| `consult::orchestrate::kill_record_tests::a_kill_writes_the_record_it_keeps_at_the_kill` | F23-3: the record on disk when the secondary kill returns, the main turn's unknown-tree why kept, the survivors' entries read once and reused by the end-of-run record |
+| `c3-cli/tests/kill_record_durable.rs` (2 tests, Windows) | F23-3 (RC3): a real `c3 consult` killed on its timeout, the bridge terminated in `CODEX_CONSULT_TEST_KILL_PAUSE_MS` right after the kill site's write: the record on disk is `survivors` with `kill_unconfirmed` (the unconfirmed kill) / `unverified[]` (a live descendant it could not verify), nothing committed |
+| `health::retry_after_tests::samoa_year_boundary_keeps_the_local_years_offset` (rewritten), `...::samoa_registry_rules_match_dotnet_and_the_pinned_plugin` | F23-5 (RC4), section 4 |
+
+`cargo test --workspace -j 2 --no-fail-fast`: 669 passed, 0 failed (662 + 7). `cargo clippy
+--workspace --all-targets -- -D warnings`: clean. `cargo fmt --all -- --check`: clean.
+
+Harnesses through the shim (staging as above, `C3_EXE` a copy of this branch's build, one at a
+time under `HARNESS.lock`, Windows PowerShell 5.1, 2026-10-09):
+
+| harness | expected | wave 3c | note |
+|---|---|---|---|
+| fixes28e | 63 / 2 | **63 / 2** | the two RECORD code greps over the shim (shim artifacts, as above) |
+| fixes | 56 / 0 | **56 / 0** | on a quiet machine; a first run gave 53 / 3 (F04-10 x2, E28 x1) while another session's Codex CLI ran (node + codex.exe started minutes before): the machine-wide rule found those live, readable-start processes and refused the releases - the environment note above, not a C3 difference |
+| pending | 26 / 0 | **26 / 0** | |
+| panel | 62 / 0 | **62 / 0** | |
+| 3b | 12 / 0 | **12 / 0** | |
+
 ## What differs from the plugin
 
 - The `CODEX_CONSULT_TEST_SURVIVORS` hook applies at every kill (C3 adds it inside the turn's kill,
   since wave 2), the plugin's at the main turn only; `CODEX_CONSULT_TEST_UNVERIFIED` is main-turn
   only in both. `Add-KillCheck`'s warning is formed with the hooked survivors (the plugin forms it
   before adding the hook's) - a test-hook-only difference in the warning's wording.
-- The kept record is written once, at the end of the run (before the commit, as since M2), with the
-  last kill site's lists; the plugin rewrites it at each kill site.
+- (wave 3c, F23-3: no longer a difference) The kept record is written at each kill site, as the
+  plugin's, and once more at the end of the run with the same evidence (C3's end-of-run record is
+  built on the run's base record; the plugin's single record object carries the last turn's
+  `child_pid`). The continuation's kill builds on the base record too (the plugin's record names the
+  continuation's child there).
+- (wave 3c, F23-2) C3's scans count a row whose start time cannot be read; the plugin's never meet
+  one (WMI reads every creation date).
 - A kicked continuation or repair keeps C3's own problem text (`stopped by the operator (-Kick)`);
   its kill check is recorded and keeps the record as the plugin's.
 - `Get-ProcessInfo`'s name on Linux is `/proc/<pid>/comm` (15 characters at most), .NET's

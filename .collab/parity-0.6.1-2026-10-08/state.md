@@ -71,3 +71,4 @@ Decisions (coordinator, 2026-10-08 20:20):
 - 2026-10-09 10:10: MiMo on wave 3b (reply 24-codex-...-mimo; the brief for wave 4 is also numbered 24 - a numbering collision, both kept): HOLD F24-1..F24-6 -> wave 3d now. Ratings n=10-12 and marks F19-1..3 done. Wave 4 review by MiMo launched (brief 24-claude).
 - 2026-10-09 10:40: wave 2h (F22-1: an applied-key list beside the journal, c5d8b28) merged f46410b - 665 tests on the branch. Running: 3c (F23), 3d (F24), MiMo review of wave 4 (bb3c3407). Pending (task lock): re-rate n=10/n=11 as VOID, rate n=12-14, mark F22-1.
 - 2026-10-09 10:20: MiMo on wave 4 (handoff 25): HOLD F25-1..F25-4 -> wave 4f now. Ratings n=10/11 re-rated VOID (no), n=12-15 yes; F22-1 implemented.
+- 2026-10-09 11:00: wave 3c (F23-1..5, b649e96) merged 6f7a8f7 - 669 tests on the branch; fixes28e 63/2, fixes 56/0 (a first run 53/3 while another session ran Codex: the scan rule correctly saw its processes). Running: 3d (F24), 4f (F25).

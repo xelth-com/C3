@@ -246,6 +246,9 @@ impl Verdict {
 ///   no such process - dropped (`gone`);
 ///   its start time STILL cannot be read - running (it blocks the task as a survivor does);
 ///   started before that run (`since`, the record's `started`) - dropped (not its process);
+///   (wave 3c, F23-1) it exists but its name and parent cannot be read (a failed or incomplete
+///     process-table lookup: [`proc::ProcessInfo::inspected`]) - running (`... cannot be read -
+///     counted as running (fail-closed)`), never `gone`;
 ///   the "looks like codex" rule matches - running;
 ///   its command line cannot be read (`""` - access denied -, ps's `[name]`, or a generic runtime
 ///     such as node or powershell with nothing after the executable) - running (`command line not
@@ -283,6 +286,9 @@ pub fn test_unverified_process(
     let Some(info) = proc::process_info(pid) else {
         return Verdict::new(false, "gone");
     };
+    if !info.inspected {
+        return Verdict::new(true, uninspected_how(pid));
+    }
     // (wave 29, E27) a codex-named server or helper of the Codex app is not codex-like; it still has
     // to pass the command-line and parent checks below, and its drop says what it was taken for
     let m = proc::codex_match(&info.name, &info.cmd, launcher);
@@ -327,12 +333,22 @@ pub fn test_unverified_process(
     )
 }
 
+/// (wave 3c, F23-1) The verdict's why for a process that exists but whose name and parent cannot be
+/// read.
+fn uninspected_how(pid: u32) -> String {
+    format!(
+        "start time readable now; pid {pid} runs a process whose name and parent cannot be read - counted as running (fail-closed)"
+    )
+}
+
 /// `Test-RecordedProcess`: is a process recorded in a pending record still that process? With a
 /// recorded start time that can be read now too: alive only when the pid runs with that start time
 /// (and that name, when one is recorded) - another start time means the pid was reused. Without
 /// one (a bare pid, or `start_time` empty), or when the live start time cannot be read: (wave 28e,
 /// E19 / F27-2) the same fail-closed evidence rule and messages as an unverified pid
-/// ([`test_unverified_process`]).
+/// ([`test_unverified_process`]). (wave 3c, F23-1) Only a pid that no longer answers is `gone`; one
+/// whose name and parent cannot be read keeps its recorded start time's verdict (a name it cannot
+/// show is never "reused"), else the evidence rule counts it as running.
 pub fn test_recorded_process(
     pid: u32,
     start_time: &str,
@@ -348,7 +364,7 @@ pub fn test_recorded_process(
         if !proc::same_start_time(&info.start, start_time) {
             return Verdict::new(false, "pid reused (start time differs)");
         }
-        if !name.is_empty() && !info.name.eq_ignore_ascii_case(name) {
+        if !name.is_empty() && info.inspected && !info.name.eq_ignore_ascii_case(name) {
             return Verdict::new(false, format!("pid reused (now {})", info.name));
         }
         return Verdict::new(true, "pid + start time");
@@ -356,11 +372,33 @@ pub fn test_recorded_process(
     test_unverified_process(pid, since, launcher, recorded_pids)
 }
 
+/// What the re-check reads from this machine's process table (wave 3c, F23-4: a seam, so a fixture
+/// can hand [`test_pending_active_with`] a table of its own): the whole table, and one process's
+/// command line.
+pub struct ProcessTable<'a> {
+    /// The table (`Err` - the scan failed).
+    pub read: &'a dyn Fn() -> Result<Vec<proc::ScanProc>, String>,
+    /// One process's command line (`""` when it cannot be read).
+    pub command_line: &'a dyn Fn(u32) -> String,
+}
+
+impl ProcessTable<'static> {
+    /// This machine's table ([`proc::enumerate_processes_checked`], [`proc::process_command_line`]).
+    pub fn live() -> ProcessTable<'static> {
+        ProcessTable {
+            read: &proc::enumerate_processes_checked,
+            command_line: &proc::process_command_line,
+        }
+    }
+}
+
 /// One pass of `Find-CodexProcesses` over the table read for this check: by parent pid (a
 /// `parent` above 0, on Windows) or the machine-wide "looks like codex" rule (`parent` 0: the command lines of the
 /// recent candidates are read first - (wave 29, E27) a codex-named process too; TEST HOOK (test
 /// mode only): `CODEX_CONSULT_TEST_CMDLINE_UNREADABLE=<pid>[,<pid>]` - these pids are scanned with
 /// the command line `''`). A table that could not be read: `failed`, `<check> could not run`.
+/// (wave 3c, F23-2) A row whose start time could not be read is a recent candidate too (its command
+/// line is read; [`proc::find_codex_processes`] counts it).
 fn scan_pass(
     table: &Result<Vec<proc::ScanProc>, String>,
     since: chrono::DateTime<chrono::Utc>,
@@ -368,6 +406,7 @@ fn scan_pass(
     launcher: &str,
     parent: u32,
     on_windows: bool,
+    command_line: &dyn Fn(u32) -> String,
 ) -> proc::ScanOutcome {
     let self_pid = std::process::id();
     let procs = match table {
@@ -395,11 +434,11 @@ fn scan_pass(
     let unreadable = proc::pid_list_hook("CODEX_CONSULT_TEST_CMDLINE_UNREADABLE");
     let mut procs = procs.clone();
     for p in procs.iter_mut() {
-        if p.created.map(|c| c >= since).unwrap_or(false) {
+        if p.created.map(|c| c >= since).unwrap_or(true) {
             p.command_line = if unreadable.contains(&p.pid) {
                 String::new()
             } else {
-                proc::process_command_line(p.pid)
+                command_line(p.pid)
             };
         }
     }
@@ -426,7 +465,18 @@ fn scan_pass(
 ///   3. The process scan: children of the recorded writer and pids (Windows keeps an orphan's
 ///      parent id), then - outside a panel only - the machine-wide "looks like codex" rule
 ///      (`Find-CodexProcesses`, "task not verifiable"). READ-ONLY: it never stops anything.
+///      (wave 3c, F23-2) A process whose start time cannot be read is never skipped by a scan.
 pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
+    test_pending_active_with(record, path, &ProcessTable::live())
+}
+
+/// [`test_pending_active`] with the scans' process table given (wave 3c, F23-4: the fixtures'
+/// seam; the recorded pids are still checked on this machine).
+pub fn test_pending_active_with(
+    record: &Value,
+    path: &Path,
+    machine: &ProcessTable<'_>,
+) -> PendingCheck {
     let state = pv_str(record, "state", "");
     let rec_host = pv_str(record, "host", "");
     let other_host = !rec_host.is_empty() && !rec_host.eq_ignore_ascii_case(&machine_name());
@@ -787,7 +837,7 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
                 "unknown tree after an unconfirmed kill: no recorded pid to scan under".to_string(),
             );
         }
-        let table = proc::enumerate_processes_checked();
+        let table = (machine.read)();
         let mut k_checks: Vec<String> = Vec::new();
         if !recorded_gone.is_empty() {
             k_checks.push(recorded_gone.clone());
@@ -795,7 +845,15 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
         // by parent pid, then the machine-wide rule for EVERY record (a panel member's too): a
         // grandchild whose own parent died is invisible by parent
         for parent in parent_pids.iter().copied().chain(std::iter::once(0)) {
-            let s = scan_pass(&table, since, &since_text, &launcher, parent, on_windows);
+            let s = scan_pass(
+                &table,
+                since,
+                &since_text,
+                &launcher,
+                parent,
+                on_windows,
+                machine.command_line,
+            );
             if s.failed {
                 return active(
                     format!(
@@ -870,14 +928,22 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
         ));
     }
 
-    let table = proc::enumerate_processes_checked();
+    let table = (machine.read)();
     let mut checks: Vec<String> = Vec::new();
     if !recorded_gone.is_empty() {
         checks.push(recorded_gone.clone());
     }
     let mut scan: Option<proc::ScanOutcome> = None;
     for parent in &parent_pids {
-        let s = scan_pass(&table, since, &since_text, &launcher, *parent, on_windows);
+        let s = scan_pass(
+            &table,
+            since,
+            &since_text,
+            &launcher,
+            *parent,
+            on_windows,
+            machine.command_line,
+        );
         if s.failed || !s.found.is_empty() {
             scan = Some(s);
             break;
@@ -908,6 +974,7 @@ pub fn test_pending_active(record: &Value, path: &Path) -> PendingCheck {
             &launcher,
             0,
             on_windows,
+            machine.command_line,
         ));
     }
     let mut scan = scan.expect("scan is set by the name-branch fallback");
@@ -1158,38 +1225,200 @@ mod tests {
         );
     }
 
+    /// (wave 3c, F23-4) The record of an unconfirmed kill whose writer (pid 999998, never a Windows
+    /// pid: not a multiple of 4) is gone, started at `STARTED`.
+    const STARTED: &str = "2026-10-09T10:00:00+02:00";
+
+    fn unknown_tree_record() -> Value {
+        record(&format!(
+            r#"{{"state":"survivors","n":1,"nn":"01","reply":"r","started":"{STARTED}","pid":999998,"host":"{}","launcher":"","engine":"codex","child_pid":null,"child_start_time":"","survivors":[],"unverified":[],"kill_unconfirmed":"the children could not be enumerated (test)","note":""}}"#,
+            host()
+        ))
+    }
+
+    /// A row of a synthetic process table: `created` minutes after `STARTED` (`None`: unreadable).
+    fn row(pid: u32, ppid: u32, name: &str, created: Option<i64>) -> proc::ScanProc {
+        let since = at(STARTED).unwrap();
+        proc::ScanProc {
+            pid,
+            ppid,
+            name: name.to_string(),
+            created: created.map(|m| since + chrono::Duration::minutes(m)),
+            command_line: String::new(),
+        }
+    }
+
+    /// `test_pending_active_with` over a synthetic table; the command lines come from `cmds`, and
+    /// every pid whose command line the scans read is collected.
+    fn check_on(
+        r: &Value,
+        table: Result<Vec<proc::ScanProc>, String>,
+        cmds: &[(u32, &str)],
+    ) -> (PendingCheck, usize, Vec<u32>) {
+        let reads = std::cell::Cell::new(0usize);
+        let asked = std::cell::RefCell::new(Vec::new());
+        let read = || {
+            reads.set(reads.get() + 1);
+            table.clone()
+        };
+        let command_line = |pid: u32| {
+            asked.borrow_mut().push(pid);
+            cmds.iter()
+                .find(|(p, _)| *p == pid)
+                .map(|(_, c)| c.to_string())
+                .unwrap_or_default()
+        };
+        let machine = ProcessTable {
+            read: &read,
+            command_line: &command_line,
+        };
+        let c = test_pending_active_with(r, Path::new("x.json"), &machine);
+        let mut asked = asked.into_inner();
+        asked.sort_unstable();
+        (c, reads.get(), asked)
+    }
+
+    /// The table every unknown-tree fixture starts from: each row is judged by a pass and left out.
+    fn quiet_table() -> Vec<proc::ScanProc> {
+        vec![
+            // a child of the writer, started before the record: the by-parent pass leaves it out
+            row(4_000_001, 999_998, "PING.EXE", Some(-60)),
+            // codex, started before the record: the machine-wide pass leaves it out
+            row(4_000_002, 1, "codex.exe", Some(-60)),
+            // recent, not codex-like: read and left out by the name rule
+            row(4_000_003, 1, "notepad.exe", Some(60)),
+            // recent, the Codex app's server: left out and named (the machine-wide pass ran)
+            row(4_000_004, 1, "codex.exe", Some(60)),
+            // its start time unreadable, not codex-like: read, left out (no blanket refusal)
+            row(4_000_005, 1, "svchost.exe", None),
+        ]
+    }
+
+    const QUIET_CMDS: &[(u32, &str)] = &[
+        (4_000_003, "notepad.exe x.txt"),
+        (4_000_004, "codex.exe app-server"),
+        (4_000_005, ""),
+    ];
+
     #[test]
     fn an_unknown_tree_is_released_only_after_both_scans() {
-        // started in the future: nothing on this machine started at or after it, so both scans
-        // are clean (outside Windows the record is refused: no scan by parent pid)
-        let started = (chrono::Local::now() + chrono::Duration::days(1))
-            .format("%Y-%m-%dT%H:%M:%S%:z")
-            .to_string();
-        let r = record(&format!(
-            r#"{{"state":"survivors","n":1,"nn":"01","reply":"r","started":"{started}","pid":999998,"host":"{}","launcher":"","engine":"codex","child_pid":null,"child_start_time":"","survivors":[],"unverified":[],"kill_unconfirmed":"the children could not be enumerated (test)","note":""}}"#,
-            host()
-        ));
-        let c = test_pending_active(&r, Path::new("x.json"));
-        if cfg!(windows) {
-            assert!(!c.active, "{}", c.message);
-            assert!(
-                c.check.starts_with(&format!(
-                    "unknown tree after an unconfirmed kill: the scan found no codex-like process under pid 999998 since {started} - released (Win32_Process scan (children of the interrupted bridge pid 999998; "
-                )),
-                "{}",
-                c.check
-            );
-            assert!(
-                c.check.contains("; Win32_Process scan (name codex*, or a command line containing the recorded launcher or @openai/codex"),
-                "{}",
-                c.check
-            );
-        } else {
+        let r = unknown_tree_record();
+        let (c, reads, asked) = check_on(&r, Ok(quiet_table()), QUIET_CMDS);
+        if !cfg!(windows) {
+            // outside Windows there is no scan by parent pid: refused before any scan
             assert!(c.active);
             assert!(c
                 .message
                 .contains("and this host cannot scan for its processes by parent pid"));
+            assert_eq!(reads, 0);
+            return;
         }
+        assert!(!c.active, "{} | {}", c.message, c.check);
+        let since_text = at(STARTED)
+            .unwrap()
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%dT%H:%M:%S")
+            .to_string();
+        assert_eq!(
+            c.check,
+            format!(
+                "unknown tree after an unconfirmed kill: the scan found no codex-like process under pid 999998 since {STARTED} - released (Win32_Process scan (children of the interrupted bridge pid 999998; started at or after {since_text}): none found; Win32_Process scan (name codex*, or a command line containing the recorded launcher or @openai/codex; not the Codex app's servers and helpers; started at or after {since_text}; excluded: pid 4000004 codex.exe [codex app-server]): none found)"
+            )
+        );
+        // ONE table read, both passes over it; the machine-wide pass read the command lines of the
+        // recent rows and of the one whose start time is unreadable - never of the older ones
+        assert_eq!(reads, 1);
+        assert_eq!(asked, vec![4_000_003, 4_000_004, 4_000_005]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_unknown_tree_is_refused_by_either_scan_and_by_an_unreadable_start() {
+        let r = unknown_tree_record();
+        let refused = |extra: proc::ScanProc, cmd: &'static str| {
+            let mut table = quiet_table();
+            let pid = extra.pid;
+            table.push(extra);
+            let mut cmds = QUIET_CMDS.to_vec();
+            cmds.push((pid, cmd));
+            let (c, _, _) = check_on(&r, Ok(table), &cmds);
+            assert!(c.active, "pid {pid} refuses: {}", c.check);
+            c
+        };
+        // the by-parent pass: a child of the writer since the record
+        let c = refused(row(4_000_010, 999_998, "node.exe", Some(5)), "node x.js");
+        assert!(
+            c.message.contains(
+                "and a codex-like process of it may still run: pid 4000010 node.exe [child of the interrupted bridge (ppid 999998)], found by Win32_Process scan (children of the interrupted bridge pid 999998;"
+            ),
+            "{}",
+            c.message
+        );
+        // (F23-2, RC2) the same child with its start time unreadable: refused, never skipped
+        let c = refused(row(4_000_011, 999_998, "node.exe", None), "node x.js");
+        assert!(
+            c.message.contains(
+                "pid 4000011 node.exe [child of the interrupted bridge (ppid 999998); its start time cannot be read - counted (fail-closed)]"
+            ),
+            "{}",
+            c.message
+        );
+        // the machine-wide pass, after a clean by-parent pass: codex under another parent
+        let c = refused(row(4_000_012, 1, "codex.exe", Some(5)), "codex.exe exec -");
+        assert!(
+            c.message.contains(
+                "pid 4000012 codex.exe [name codex, task not verifiable], found by Win32_Process scan (name codex*"
+            ),
+            "{}",
+            c.message
+        );
+        // (F23-2, RC2) codex whose start time is unreadable, under another parent: refused
+        let c = refused(row(4_000_013, 1, "codex.exe", None), "");
+        assert!(
+            c.message.contains(
+                "pid 4000013 codex.exe [name codex, task not verifiable; its start time cannot be read - counted (fail-closed)]"
+            ),
+            "{}",
+            c.message
+        );
+        // a table that cannot be read: refused
+        let (c, _, _) = check_on(
+            &r,
+            Err("the process table could not be read (test)".into()),
+            &[],
+        );
+        assert!(c.active);
+        assert!(
+            c.message.contains(
+                "and the scan for its processes failed: Win32_Process scan (children of the interrupted bridge pid 999998;"
+            ) && c.message.contains("could not run: the process table could not be read (test)"),
+            "{}",
+            c.message
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_descendant_scan_counts_a_child_whose_start_cannot_be_read() {
+        // (F23-2) a `launching` record outside a panel: the scan by the writer's pid finds its
+        // child even though that child's start time cannot be read
+        let r = record(&format!(
+            r#"{{"state":"launching","n":1,"nn":"01","reply":"r","started":"{STARTED}","pid":999998,"host":"{}","launcher":"","engine":"codex","child_pid":null,"child_start_time":"","survivors":[],"unverified":[],"note":""}}"#,
+            host()
+        ));
+        let (c, _, _) = check_on(&r, Ok(quiet_table()), QUIET_CMDS);
+        assert!(!c.active, "{}", c.check);
+        let mut table = quiet_table();
+        table.push(row(4_000_020, 999_998, "codex.exe", None));
+        let (c, _, _) = check_on(&r, Ok(table), QUIET_CMDS);
+        assert!(c.active, "{}", c.check);
+        assert!(
+            c.message.contains(
+                "may still have its codex process running: pid 4000020 codex.exe [child of the interrupted bridge (ppid 999998); its start time cannot be read - counted (fail-closed)]"
+            ),
+            "{}",
+            c.message
+        );
     }
 
     #[cfg(windows)]

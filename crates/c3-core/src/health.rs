@@ -3552,67 +3552,423 @@ mod retry_after_tests {
         }
     }
 
-    /// (F06-1) Windows' `Samoa Standard Time` around New Year 2012, as chrono's Windows `Local`
-    /// reads it: one rule set per year (the registry's Dynamic DST: 2011 Bias 660, DaylightBias -60,
-    /// standard from the first Saturday of April 04:00, daylight from the fourth Saturday of
-    /// September 03:00; 2012 Bias -780, DaylightBias -60, the first Sunday of April 04:00, the last
-    /// Sunday of September 03:00). The wall-time classification takes the rules of the wall time's
-    /// own (local) year, the UTC-to-local lookup the rules of the UTC year (chrono 0.4.45
-    /// `offset_from_utc_datetime`, as `SystemTimeToTzSpecificLocalTime`) - so 2012-01-01 00:00
-    /// (+14:00) has its instant 2011-12-31T10:00Z looked up with the 2011 rules (-10:00).
-    struct WindowsLikeSamoa2012;
+    /// (F06-1, F23-5) One year's rules of a Windows zone: a `REG_TZI_FORMAT` blob of the registry's
+    /// `Time Zones\<zone>\Dynamic DST\<year>` (Bias, StandardBias, DaylightBias in minutes west of
+    /// UTC; StandardDate - the daylight->standard transition, in daylight time - and DaylightDate -
+    /// the standard->daylight transition, in standard time - as SYSTEMTIMEs, a rule when wYear is 0).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct Tzi {
+        bias: i32,
+        standard_bias: i32,
+        daylight_bias: i32,
+        standard_date: [u16; 8],
+        daylight_date: [u16; 8],
+    }
 
-    /// One year's rules: (standard, daylight, the DST->standard transition as a daylight wall time,
-    /// the standard->DST transition as a standard wall time). Southern hemisphere: daylight before
-    /// the first and from the second.
-    fn samoa_rules(year: i32) -> (FixedOffset, FixedOffset, NaiveDateTime, NaiveDateTime) {
-        if year <= 2011 {
+    impl Tzi {
+        /// The blob as `reg query` prints it (88 hex digits).
+        fn from_hex(hex: &str) -> Option<Tzi> {
+            let hex = hex.trim();
+            let b: Vec<u8> = (0..hex.len())
+                .step_by(2)
+                .map(|i| {
+                    hex.get(i..i + 2)
+                        .and_then(|h| u8::from_str_radix(h, 16).ok())
+                })
+                .collect::<Option<_>>()?;
+            if b.len() != 44 {
+                return None;
+            }
+            let i32_at = |o: usize| i32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+            let st_at = |o: usize| {
+                let mut st = [0u16; 8];
+                for (k, v) in st.iter_mut().enumerate() {
+                    *v = u16::from_le_bytes([b[o + 2 * k], b[o + 2 * k + 1]]);
+                }
+                st
+            };
+            Some(Tzi {
+                bias: i32_at(0),
+                standard_bias: i32_at(4),
+                daylight_bias: i32_at(8),
+                standard_date: st_at(12),
+                daylight_date: st_at(28),
+            })
+        }
+    }
+
+    /// chrono 0.4.45's `naive_date_time_from_system_time` (Windows `TzInfo`): a SYSTEMTIME as a
+    /// transition in `year` (`None`: no transition) - a concrete date, or the nth weekday of the
+    /// month (5: the last; the 4th when the month has no 5th).
+    fn system_time_in(st: [u16; 8], year: i32) -> Option<NaiveDateTime> {
+        let [w_year, w_month, w_day_of_week, w_day, hour, minute, second, milli] = st;
+        if w_year == 0 && w_month == 0 {
+            return None;
+        }
+        let time =
+            NaiveTime::from_hms_milli_opt(hour as u32, minute as u32, second as u32, milli as u32)?;
+        if w_year != 0 {
+            return NaiveDate::from_ymd_opt(w_year as i32, w_month as u32, w_day as u32)
+                .map(|d| d.and_time(time));
+        }
+        let weekday = match w_day_of_week {
+            0 => chrono::Weekday::Sun,
+            1 => chrono::Weekday::Mon,
+            2 => chrono::Weekday::Tue,
+            3 => chrono::Weekday::Wed,
+            4 => chrono::Weekday::Thu,
+            5 => chrono::Weekday::Fri,
+            _ => chrono::Weekday::Sat,
+        };
+        NaiveDate::from_weekday_of_month_opt(year, w_month as u32, weekday, w_day as u8)
+            .or_else(|| NaiveDate::from_weekday_of_month_opt(year, w_month as u32, weekday, 4))
+            .map(|d| d.and_time(time))
+    }
+
+    /// (F06-1, F23-5) A Windows zone as chrono 0.4.45's Windows `Local` reads it - a port of its
+    /// `offset_from_local_datetime` (`lookup_with_dst_transitions`: the rules of the wall time's own
+    /// year) and `offset_from_utc_datetime` (the rules of the UTC year, as
+    /// `SystemTimeToTzSpecificLocalTime`) over `TzInfo::for_year` - built from the registry's
+    /// per-year rules (`GetTimeZoneInformationForYear`: a year before the first or after the last
+    /// entry takes that entry's). chrono's `Local` is the machine's zone and cannot be switched per
+    /// test; this zone takes ANY zone's rules.
+    struct ChronoWindowsZone {
+        years: std::collections::BTreeMap<i32, Tzi>,
+    }
+
+    /// One year's rules resolved: (standard, daylight, the daylight->standard transition in
+    /// daylight time, the standard->daylight transition in standard time).
+    type YearRules = (
+        FixedOffset,
+        FixedOffset,
+        Option<NaiveDateTime>,
+        Option<NaiveDateTime>,
+    );
+
+    impl ChronoWindowsZone {
+        fn rules(&self, year: i32) -> YearRules {
+            let first = *self.years.keys().next().expect("a year");
+            let last = *self.years.keys().next_back().expect("a year");
+            let t = self.years[&year.clamp(first, last)];
+            let west = |m: i32| FixedOffset::west_opt(m * 60).expect("an offset");
             (
-                hours(-11),
-                hours(-10),
-                wall(&format!("{year}-04-02T04:00:00")),
-                wall(&format!("{year}-09-24T03:00:00")),
-            )
-        } else {
-            (
-                hours(13),
-                hours(14),
-                wall(&format!("{year}-04-01T04:00:00")),
-                wall(&format!("{year}-09-30T03:00:00")),
+                west(t.bias + t.standard_bias),
+                west(t.bias + t.daylight_bias),
+                system_time_in(t.standard_date, year),
+                system_time_in(t.daylight_date, year),
             )
         }
     }
 
-    impl ResetZone for WindowsLikeSamoa2012 {
+    /// `wall` minus `o` (a wall time at offset `o` as its UTC instant).
+    fn minus(wall: NaiveDateTime, o: FixedOffset) -> NaiveDateTime {
+        wall - Duration::seconds(o.local_minus_utc() as i64)
+    }
+
+    impl ResetZone for ChronoWindowsZone {
         fn reported_wall_offsets(&self, w: NaiveDateTime) -> LocalResult<FixedOffset> {
-            let (std, dst, to_std, to_dst) = samoa_rules(w.year());
-            if w < to_std - Duration::hours(1) {
-                LocalResult::Single(dst)
-            } else if w <= to_std {
-                LocalResult::Ambiguous(dst, std)
-            } else if w <= to_dst {
-                LocalResult::Single(std)
-            } else if w < to_dst + Duration::hours(1) {
-                LocalResult::None
-            } else {
-                LocalResult::Single(dst)
+            let (std, dst, to_std, to_dst) = self.rules(w.year());
+            // (instant, offset before, offset after), sorted by instant
+            let mut ts: Vec<(NaiveDateTime, FixedOffset, FixedOffset)> = Vec::new();
+            if let Some(s) = to_std {
+                ts.push((minus(s, dst), dst, std));
             }
+            if let Some(d) = to_dst {
+                ts.push((minus(d, std), std, dst));
+            }
+            if ts.len() == 2 && ts[0].0 == ts[1].0 {
+                return LocalResult::Single(std);
+            }
+            ts.sort_by_key(|t| t.0);
+            let Some(last) = ts.last().copied() else {
+                return LocalResult::Single(std);
+            };
+            for (utc, before, after) in ts {
+                let (lo, hi) = if after.local_minus_utc() > before.local_minus_utc() {
+                    (before, after)
+                } else {
+                    (after, before)
+                };
+                let earliest = utc + Duration::seconds(lo.local_minus_utc() as i64);
+                let latest = utc + Duration::seconds(hi.local_minus_utc() as i64);
+                if w < earliest {
+                    return LocalResult::Single(before);
+                } else if w <= latest {
+                    return match after.local_minus_utc().cmp(&before.local_minus_utc()) {
+                        std::cmp::Ordering::Equal => LocalResult::Single(before),
+                        std::cmp::Ordering::Less => LocalResult::Ambiguous(before, after),
+                        std::cmp::Ordering::Greater => {
+                            if w == earliest {
+                                LocalResult::Single(before)
+                            } else if w == latest {
+                                LocalResult::Single(after)
+                            } else {
+                                LocalResult::None
+                            }
+                        }
+                    };
+                }
+            }
+            LocalResult::Single(last.2)
         }
         fn utc_offset(&self, utc: NaiveDateTime) -> FixedOffset {
-            let (std, dst, to_std, to_dst) = samoa_rules(utc.year());
-            let to_std_utc = to_std - Duration::seconds(dst.local_minus_utc() as i64);
-            let to_dst_utc = to_dst - Duration::seconds(std.local_minus_utc() as i64);
-            if utc >= to_std_utc && utc < to_dst_utc {
-                std
-            } else {
-                dst
+            let (std, dst, to_std, to_dst) = self.rules(utc.year());
+            match (to_std, to_dst) {
+                (Some(s), Some(d)) => {
+                    let s_utc = minus(s, dst);
+                    let d_utc = minus(d, std);
+                    if d_utc < s_utc {
+                        if utc >= d_utc && utc < s_utc {
+                            dst
+                        } else {
+                            std
+                        }
+                    } else if utc >= s_utc && utc < d_utc {
+                        std
+                    } else {
+                        dst
+                    }
+                }
+                (Some(s), None) => {
+                    if utc < minus(s, dst) {
+                        dst
+                    } else {
+                        std
+                    }
+                }
+                (None, Some(d)) => {
+                    if utc < minus(d, std) {
+                        std
+                    } else {
+                        dst
+                    }
+                }
+                (None, None) => std,
             }
         }
+    }
+
+    /// Windows' `Samoa Standard Time` rules for 2011 and 2012, as this machine's registry held them
+    /// when the pinned plugin's results below were taken (2026-10-09; `reg query "HKLM\SOFTWARE\
+    /// Microsoft\Windows NT\CurrentVersion\Time Zones\Samoa Standard Time\Dynamic DST"`): 2011 Bias
+    /// 660, DaylightBias -60, standard from the first Saturday of April 04:00, daylight from the
+    /// fourth Saturday of September 03:00; 2012 Bias -780, DaylightBias -60, the first Sunday of
+    /// April 04:00, the last Sunday of September 03:00.
+    const SAMOA_TZI: &[(i32, &str)] = &[
+        (
+            2011,
+            "9402000000000000C4FFFFFF0000040006000100040000000000000000000900060004000300000000000000",
+        ),
+        (
+            2012,
+            "F4FCFFFF00000000C4FFFFFF0000040000000100040000000000000000000900000005000300000000000000",
+        ),
+    ];
+
+    fn zone_of(years: &[(i32, String)]) -> ChronoWindowsZone {
+        ChronoWindowsZone {
+            years: years
+                .iter()
+                .map(|(y, h)| (*y, Tzi::from_hex(h).expect("a REG_TZI_FORMAT blob")))
+                .collect(),
+        }
+    }
+
+    fn samoa_captured() -> ChronoWindowsZone {
+        zone_of(
+            &SAMOA_TZI
+                .iter()
+                .map(|(y, h)| (*y, h.to_string()))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    /// (F23-5) .NET's own classification of Windows' `Samoa Standard Time` - the plugin's zone
+    /// (`TimeZoneInfo.FindSystemTimeZoneById`: `IsInvalidTime`, `IsAmbiguousTime` +
+    /// `GetAmbiguousTimeOffsets`, `GetUtcOffset`; Windows PowerShell 5.1, 2026-10-09) - at every DST
+    /// edge of 2011 and 2012 and around the year boundary (Windows' Samoa does not skip 2011-12-30:
+    /// its rules change at the LOCAL year boundary). `single|<minutes>`, `ambiguous|<lo>,<hi>`,
+    /// `none` (a gap).
+    const SAMOA_DOTNET: &[(&str, &str)] = &[
+        // 2011: the fall-back end (04:00 back to 03:00), the spring-forward gap (03:00 to 04:00)
+        ("2011-04-02T02:59:00", "single|-600"),
+        ("2011-04-02T03:00:00", "ambiguous|-660,-600"),
+        ("2011-04-02T03:59:00", "ambiguous|-660,-600"),
+        ("2011-04-02T04:00:00", "single|-660"),
+        ("2011-09-24T02:59:00", "single|-660"),
+        ("2011-09-24T03:00:00", "none"),
+        ("2011-09-24T03:59:00", "none"),
+        ("2011-09-24T04:00:00", "single|-600"),
+        // around 2011-12-30/31 and New Year 2012
+        ("2011-12-29T23:59:00", "single|-600"),
+        ("2011-12-30T00:00:00", "single|-600"),
+        ("2011-12-30T12:00:00", "single|-600"),
+        ("2011-12-31T00:00:00", "single|-600"),
+        ("2011-12-31T09:59:00", "single|-600"),
+        ("2011-12-31T10:00:00", "single|-600"),
+        ("2011-12-31T20:00:00", "single|-600"),
+        ("2011-12-31T23:59:00", "single|-600"),
+        ("2012-01-01T00:00:00", "single|840"),
+        ("2012-01-01T05:00:00", "single|840"),
+        ("2012-01-01T09:59:00", "single|840"),
+        ("2012-01-01T10:00:00", "single|840"),
+        ("2012-01-01T14:00:00", "single|840"),
+        ("2012-01-02T00:00:00", "single|840"),
+        // 2012: the fall-back end (its exact end 04:00 is +13:00 only - F04-2), the gap
+        ("2012-04-01T02:59:00", "single|840"),
+        ("2012-04-01T03:00:00", "ambiguous|780,840"),
+        ("2012-04-01T03:59:00", "ambiguous|780,840"),
+        ("2012-04-01T04:00:00", "single|780"),
+        ("2012-09-30T02:59:00", "single|780"),
+        ("2012-09-30T03:00:00", "none"),
+        ("2012-09-30T03:59:00", "none"),
+        ("2012-09-30T04:00:00", "single|840"),
+    ];
+
+    /// (F23-5, RC4) The pinned plugin's `Get-RetryAfter -TimeZone (FindSystemTimeZoneById 'Samoa
+    /// Standard Time')` (v0.6.1, Windows PowerShell 5.1, 2026-10-09, with the registry rules of
+    /// [`SAMOA_TZI`]): (message, reference, result) - the New Year trigger (F06-1), time-only resets
+    /// across the year boundary, dated ones on both sides, and every DST edge.
+    const SAMOA_RESETS: &[(&str, &str, &str)] = &[
+        (
+            "try again at 12:00 AM",
+            "2012-01-01T14:01:00+14:00",
+            "2012-01-02T00:00:00+14:00",
+        ),
+        (
+            "try again at 12:00 AM",
+            "2011-12-31T20:00:00-10:00",
+            "2012-01-02T00:00:00+14:00",
+        ),
+        (
+            "try again at 12:00 AM",
+            "2011-12-31T23:58:00-10:00",
+            "2012-01-02T00:00:00+14:00",
+        ),
+        (
+            "try again at 11:00 PM",
+            "2011-12-31T20:00:00-10:00",
+            "2011-12-31T23:00:00-10:00",
+        ),
+        (
+            "try again at 9:00 AM",
+            "2012-01-01T08:00:00+14:00",
+            "2011-12-31T09:00:00-10:00",
+        ),
+        (
+            "try again at Jan 1st, 2012 12:00 AM",
+            "2011-12-31T12:00:00-10:00",
+            "2012-01-01T00:00:00+14:00",
+        ),
+        (
+            "try again at Dec 31st, 2011 11:00 PM",
+            "2011-12-31T12:00:00-10:00",
+            "2011-12-31T23:00:00-10:00",
+        ),
+        (
+            "try again at Dec 30th, 2011 12:00 PM",
+            "2011-12-29T12:00:00-10:00",
+            "2011-12-30T12:00:00-10:00",
+        ),
+        (
+            "try again at Apr 1st, 2012 4:00 AM",
+            "2012-03-31T12:00:00+14:00",
+            "2012-04-01T04:00:00+13:00",
+        ),
+        (
+            "try again at Apr 1st, 2012 3:00 AM",
+            "2012-03-31T12:00:00+14:00",
+            "2012-04-01T03:00:00+14:00",
+        ),
+        (
+            "try again at 4:00 AM",
+            "2012-04-01T03:00:00+13:00",
+            "2012-04-01T04:00:00+13:00",
+        ),
+        (
+            "try again at 3:00 AM",
+            "2012-04-01T02:30:00+14:00",
+            "2012-04-01T03:00:00+14:00",
+        ),
+        (
+            "try again at Sep 30th, 2012 3:00 AM",
+            "2012-09-29T12:00:00+13:00",
+            "2012-09-30T03:00:00+14:00",
+        ),
+        (
+            "try again at 3:00 AM",
+            "2012-09-30T02:50:00+13:00",
+            "2012-09-30T04:00:00+14:00",
+        ),
+        (
+            "try again at 4:00 AM",
+            "2012-09-30T02:50:00+13:00",
+            "2012-09-30T04:00:00+14:00",
+        ),
+        (
+            "try again at Apr 2nd, 2011 4:00 AM",
+            "2011-04-01T12:00:00-10:00",
+            "2011-04-02T04:00:00-11:00",
+        ),
+        (
+            "try again at Apr 2nd, 2011 3:00 AM",
+            "2011-04-01T12:00:00-10:00",
+            "2011-04-02T03:00:00-10:00",
+        ),
+        (
+            "try again at Sep 24th, 2011 3:00 AM",
+            "2011-09-23T12:00:00-11:00",
+            "2011-09-24T03:00:00-10:00",
+        ),
+        (
+            "try again at 3:00 AM",
+            "2011-09-24T02:50:00-11:00",
+            "2011-09-24T04:00:00-10:00",
+        ),
+    ];
+
+    /// A normalised classification in [`SAMOA_DOTNET`]'s form.
+    fn classified(r: LocalResult<FixedOffset>) -> String {
+        let m = |o: FixedOffset| o.local_minus_utc() / 60;
+        match r {
+            LocalResult::None => "none".to_string(),
+            LocalResult::Single(o) => format!("single|{}", m(o)),
+            LocalResult::Ambiguous(a, b) => {
+                let (lo, hi) = (m(a).min(m(b)), m(a).max(m(b)));
+                format!("ambiguous|{lo},{hi}")
+            }
+        }
+    }
+
+    /// Every mismatch of `zone` against .NET's classification (`dotnet`) and the pinned plugin's
+    /// resets.
+    fn samoa_failures(zone: &dyn ResetZone, dotnet: &[(String, String)]) -> Vec<String> {
+        let mut bad: Vec<String> = dotnet
+            .iter()
+            .filter_map(|(w, want)| {
+                let got = classified(zone.wall_offsets(wall(w)));
+                (got != *want).then(|| format!("{w}: {got}, .NET {want}"))
+            })
+            .collect();
+        bad.extend(SAMOA_RESETS.iter().filter_map(|(msg, reference, want)| {
+            let got = retry_after_in(msg, dto(reference), zone)
+                .map(format_offset_iso)
+                .unwrap_or_default();
+            (got != *want).then(|| format!("{msg} @ {reference}: {got}, the plugin {want}"))
+        }));
+        bad
+    }
+
+    fn pinned_dotnet() -> Vec<(String, String)> {
+        SAMOA_DOTNET
+            .iter()
+            .map(|(w, c)| (w.to_string(), c.to_string()))
+            .collect()
     }
 
     #[test]
     fn samoa_year_boundary_keeps_the_local_years_offset() {
-        let z = WindowsLikeSamoa2012;
+        let z = samoa_captured();
         // the two raw lookups disagree across the year boundary ...
         assert_eq!(
             z.reported_wall_offsets(wall("2012-01-01T00:00:00")),
@@ -3620,29 +3976,26 @@ mod retry_after_tests {
         );
         assert_eq!(z.utc_offset(wall("2011-12-31T10:00:00")), hours(-10));
         assert_eq!(z.utc_offset(wall("2012-01-01T10:00:00")), hours(14));
-        // ... the valid midnight keeps +14:00 (.NET: valid and unambiguous at +14:00), the last
-        // local hours of 2011 keep -10:00, the days around stay single
-        let cases = [
-            ("2012-01-01T00:00:00", LocalResult::Single(hours(14))),
-            ("2012-01-01T05:00:00", LocalResult::Single(hours(14))),
-            ("2012-01-01T14:00:00", LocalResult::Single(hours(14))),
-            ("2012-01-02T00:00:00", LocalResult::Single(hours(14))),
-            ("2011-12-31T00:00:00", LocalResult::Single(hours(-10))),
-            ("2011-12-31T20:00:00", LocalResult::Single(hours(-10))),
-        ];
-        for (w, want) in cases {
-            assert_eq!(z.wall_offsets(wall(w)), want, "{w} (Windows-like Samoa)");
-        }
-        // the trigger: the pinned plugin's result (v0.6.1 `Get-RetryAfter -TimeZone` with
-        // `Samoa Standard Time`): tomorrow's midnight, not an artificial gap's end (14:00, passed)
-        let got = retry_after_in(
-            "try again at 12:00 AM",
-            dto("2012-01-01T14:01:00+14:00"),
-            &z,
-        )
-        .map(format_offset_iso);
-        assert_eq!(got.as_deref(), Some("2012-01-02T00:00:00+14:00"));
-        // the zone database agrees (Pacific/Apia skipped 2011-12-30 instead)
+        // ... and chrono's boundary quirks are there (the fall-back END reported ambiguous, the
+        // gap's start a single time at the earlier offset) - the normalisation corrects them
+        assert_eq!(
+            z.reported_wall_offsets(wall("2012-04-01T04:00:00")),
+            LocalResult::Ambiguous(hours(14), hours(13))
+        );
+        assert_eq!(
+            z.reported_wall_offsets(wall("2012-09-30T03:00:00")),
+            LocalResult::Single(hours(13))
+        );
+        // the normalised classification is .NET's at every edge and around New Year; every reset
+        // is the pinned plugin's - the trigger included: tomorrow's midnight, not an artificial
+        // gap's end (14:00, passed)
+        let bad = samoa_failures(&z, &pinned_dotnet());
+        assert!(bad.is_empty(), "Windows-like Samoa:\n{}", bad.join("\n"));
+        assert_eq!(
+            z.wall_offsets(wall("2012-04-01T04:00:00")),
+            LocalResult::Single(hours(13))
+        );
+        // the zone database agrees on the trigger (Pacific/Apia skipped 2011-12-30 instead)
         let apia: chrono_tz::Tz = "Pacific/Apia".parse().expect("the Pacific/Apia zone");
         let got = retry_after_in(
             "try again at 12:00 AM",
@@ -3653,6 +4006,128 @@ mod retry_after_tests {
         assert_eq!(got.as_deref(), Some("2012-01-02T00:00:00+14:00"));
         // and the Berlin edges (F04-2) are untouched by the cross-year rule
         assert!(boundary_failures(&WindowsLikeBerlin2026).is_empty());
+    }
+
+    /// (F23-5, RC4) The production zone's rules: Windows' `Samoa Standard Time` as THIS machine's
+    /// registry holds it, read at test time (`reg query ... \Samoa Standard Time\Dynamic DST`, every
+    /// year), in chrono's Windows reading ([`ChronoWindowsZone`]) - compared with .NET's own
+    /// classification of the same zone read now (`TimeZoneInfo.FindSystemTimeZoneById`, the
+    /// plugin's zone object, through Windows PowerShell) at every sample of [`SAMOA_DOTNET`], and
+    /// with the pinned plugin's resets ([`SAMOA_RESETS`], when the registry still holds the rules
+    /// they were taken with). A machine without the zone, or without Windows PowerShell, skips the
+    /// part it cannot run (it says so). When this machine's own zone IS Samoa, production
+    /// `chrono::Local` runs the same resets.
+    #[test]
+    #[cfg(windows)]
+    fn samoa_registry_rules_match_dotnet_and_the_pinned_plugin() {
+        const KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones\Samoa Standard Time\Dynamic DST";
+        let out = std::process::Command::new("reg")
+            .args(["query", KEY])
+            .output();
+        let text = match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_string(),
+            _ => {
+                println!("samoa_registry_rules SKIPPED: no 'Samoa Standard Time' in this machine's registry");
+                return;
+            }
+        };
+        let years: Vec<(i32, String)> = text
+            .lines()
+            .filter_map(|l| {
+                let parts: Vec<&str> = l.split_whitespace().collect();
+                match parts.as_slice() {
+                    [y, "REG_BINARY", hex] => Some((y.parse::<i32>().ok()?, hex.to_string())),
+                    _ => None,
+                }
+            })
+            .collect();
+        assert!(
+            years.iter().any(|(y, _)| *y == 2011) && years.iter().any(|(y, _)| *y == 2012),
+            "the registry's Samoa rules name 2011 and 2012: {text}"
+        );
+        let live = zone_of(&years);
+        let captured = SAMOA_TZI.iter().all(|(y, h)| {
+            years
+                .iter()
+                .any(|(ly, lh)| ly == y && lh.eq_ignore_ascii_case(h))
+        });
+
+        // .NET's classification of the same zone, read now
+        let script = format!(
+            "$tz = [TimeZoneInfo]::FindSystemTimeZoneById('Samoa Standard Time'); foreach ($s in @({})) {{ $w = [datetime]::SpecifyKind([datetime]::ParseExact($s, 'yyyy-MM-ddTHH:mm:ss', [Globalization.CultureInfo]::InvariantCulture), 'Unspecified'); if ($tz.IsInvalidTime($w)) {{ \"$s|none\" }} elseif ($tz.IsAmbiguousTime($w)) {{ \"$s|ambiguous|\" + (($tz.GetAmbiguousTimeOffsets($w) | ForEach-Object {{ [int]$_.TotalMinutes }} | Sort-Object) -join ',') }} else {{ \"$s|single|\" + [int]$tz.GetUtcOffset($w).TotalMinutes }} }}",
+            SAMOA_DOTNET
+                .iter()
+                .map(|(w, _)| format!("'{w}'"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let ps = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .env_remove("PSModulePath")
+            .output();
+        let dotnet: Vec<(String, String)> = match ps {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| {
+                    let (w, c) = l.trim().split_once('|')?;
+                    Some((w.to_string(), c.to_string()))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        if dotnet.len() == SAMOA_DOTNET.len() {
+            // .NET now says what it said when the table was pinned (same registry rules) ...
+            if captured {
+                assert_eq!(dotnet, pinned_dotnet(), ".NET's Samoa classification");
+            }
+            // ... and the live-registry zone, normalised, says what .NET says now
+            let bad: Vec<String> = dotnet
+                .iter()
+                .filter_map(|(w, want)| {
+                    let got = classified(live.wall_offsets(wall(w)));
+                    (got != *want).then(|| format!("{w}: {got}, .NET {want}"))
+                })
+                .collect();
+            assert!(
+                bad.is_empty(),
+                "registry Samoa vs .NET:\n{}",
+                bad.join("\n")
+            );
+            println!(
+                "samoa_registry_rules: {} wall times classified as .NET's TimeZoneInfo does",
+                dotnet.len()
+            );
+        } else {
+            println!(
+                "samoa_registry_rules: .NET's classification SKIPPED (Windows PowerShell gave {} of {} lines)",
+                dotnet.len(),
+                SAMOA_DOTNET.len()
+            );
+        }
+        if captured {
+            let bad = samoa_failures(&live, &pinned_dotnet());
+            assert!(bad.is_empty(), "registry Samoa:\n{}", bad.join("\n"));
+        } else {
+            println!(
+                "samoa_registry_rules: the pinned plugin's resets SKIPPED - the registry's 2011/2012 rules are not the ones they were taken with"
+            );
+        }
+
+        // production chrono::Local - only on a machine whose own zone is Samoa
+        let local = chrono::Local;
+        let off = |utc: &str| ResetZone::utc_offset(&local, dto(utc).naive_utc());
+        let samoa_machine = off("2011-12-31T09:00:00Z") == hours(-10)
+            && off("2012-06-15T12:00:00Z") == hours(13)
+            && off("2012-01-15T12:00:00Z") == hours(14);
+        if samoa_machine && captured {
+            let bad = samoa_failures(&local, &pinned_dotnet());
+            assert!(bad.is_empty(), "chrono::Local (Samoa):\n{}", bad.join("\n"));
+            println!("samoa_registry_rules: production chrono::Local is Samoa - checked");
+        } else {
+            println!(
+                "samoa_registry_rules: production chrono::Local SKIPPED (the machine zone is not Samoa Standard Time)"
+            );
+        }
     }
 
     #[test]

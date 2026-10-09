@@ -3779,7 +3779,7 @@
                      },
                      {
                          "id":  "F23-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -3842,6 +3842,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
                                              "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T10:27:47+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3c b649e96: process_info None only when the pid is gone (F23-1); unreadable start counts as recent in both scans, non-codex rows stay out (F23-2); the record written at each kill site, a real bridge killed under CODEX_CONSULT_TEST_KILL_PAUSE_MS finds it on disk (F23-3); non-vacuous assertions and a fake process table (F23-4); the Samoa fixture from the live registry matched against .NET and the plugin at 30 wall times / 19 resets (F23-5)",
+                                             "evidence":  "",
+                                             "base_commit":  "6f7a8f7046d281b0ad92851f0ec9ccce0ca95ad1",
+                                             "tree_sha256":  "672ccb6fee160486dd680e9faf6066e674c1dd0ae8b0f954f17a4be67747500e"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -3865,7 +3874,7 @@
                      },
                      {
                          "id":  "F23-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -3928,6 +3937,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
                                              "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T10:27:52+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3c b649e96: process_info None only when the pid is gone (F23-1); unreadable start counts as recent in both scans, non-codex rows stay out (F23-2); the record written at each kill site, a real bridge killed under CODEX_CONSULT_TEST_KILL_PAUSE_MS finds it on disk (F23-3); non-vacuous assertions and a fake process table (F23-4); the Samoa fixture from the live registry matched against .NET and the plugin at 30 wall times / 19 resets (F23-5)",
+                                             "evidence":  "",
+                                             "base_commit":  "6f7a8f7046d281b0ad92851f0ec9ccce0ca95ad1",
+                                             "tree_sha256":  "672ccb6fee160486dd680e9faf6066e674c1dd0ae8b0f954f17a4be67747500e"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -3951,7 +3969,7 @@
                      },
                      {
                          "id":  "F23-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -4010,6 +4028,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
                                              "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T10:27:56+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3c b649e96: process_info None only when the pid is gone (F23-1); unreadable start counts as recent in both scans, non-codex rows stay out (F23-2); the record written at each kill site, a real bridge killed under CODEX_CONSULT_TEST_KILL_PAUSE_MS finds it on disk (F23-3); non-vacuous assertions and a fake process table (F23-4); the Samoa fixture from the live registry matched against .NET and the plugin at 30 wall times / 19 resets (F23-5)",
+                                             "evidence":  "",
+                                             "base_commit":  "6f7a8f7046d281b0ad92851f0ec9ccce0ca95ad1",
+                                             "tree_sha256":  "672ccb6fee160486dd680e9faf6066e674c1dd0ae8b0f954f17a4be67747500e"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -4033,7 +4060,7 @@
                      },
                      {
                          "id":  "F23-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -4096,6 +4123,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
                                              "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T10:28:00+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3c b649e96: process_info None only when the pid is gone (F23-1); unreadable start counts as recent in both scans, non-codex rows stay out (F23-2); the record written at each kill site, a real bridge killed under CODEX_CONSULT_TEST_KILL_PAUSE_MS finds it on disk (F23-3); non-vacuous assertions and a fake process table (F23-4); the Samoa fixture from the live registry matched against .NET and the plugin at 30 wall times / 19 resets (F23-5)",
+                                             "evidence":  "",
+                                             "base_commit":  "6f7a8f7046d281b0ad92851f0ec9ccce0ca95ad1",
+                                             "tree_sha256":  "672ccb6fee160486dd680e9faf6066e674c1dd0ae8b0f954f17a4be67747500e"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -4119,7 +4155,7 @@
                      },
                      {
                          "id":  "F23-5",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -4173,6 +4209,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a2943d8a447c643d25fca481351693f6493508ab",
                                              "tree_sha256":  "1ac9e910cd6a3e9864faa479e1e2d887eadf68baecce00aa670078269d0676a0"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T10:28:04+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3c b649e96: process_info None only when the pid is gone (F23-1); unreadable start counts as recent in both scans, non-codex rows stay out (F23-2); the record written at each kill site, a real bridge killed under CODEX_CONSULT_TEST_KILL_PAUSE_MS finds it on disk (F23-3); non-vacuous assertions and a fake process table (F23-4); the Samoa fixture from the live registry matched against .NET and the plugin at 30 wall times / 19 resets (F23-5)",
+                                             "evidence":  "",
+                                             "base_commit":  "6f7a8f7046d281b0ad92851f0ec9ccce0ca95ad1",
+                                             "tree_sha256":  "672ccb6fee160486dd680e9faf6066e674c1dd0ae8b0f954f17a4be67747500e"
                                          }
                                      ],
                          "reviewer_checks":  [
