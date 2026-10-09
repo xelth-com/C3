@@ -1,12 +1,20 @@
-codex-consult: detached run 1ae30a56 (detach id 1ae30a56-7924-4c7b-a143-9cc227f07ed0) - pid 18576 on LAPTOP-9SGIHQ03, started 2026-10-09T03:54:38+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-1ae30a56.status.json
-Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied)
-codex-consult: usable reply - openai :: gpt-6-astra, mode fork, thread 01a11e5e-ac5f-7b31-b3d9-49fd2cd68d88 (source: events), wall 306.9 s
-verdict    : HOLD - The health journal can discard records after I/O failures, and the new single-run requirement check evaluates availability with incomplete launcher and plan context.
-findings   : 0 blocker, 4 major, 1 minor, 0 note -> F11-1..F11-5 in findings.json
-prior      : F02-1 fixed, F02-3 fixed, F02-4 fixed, F02-5 fixed, F02-6 not-checked, F02-7 not-checked, F02-8 fixed, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 still-open, F09-1 still-open, F09-2 still-open, F09-3 still-open, F09-4 still-open, F09-5 still-open, F09-6 still-open
-reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\11-codex-wave2b-diff-review.md
-reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\11-codex-wave2b-diff-review.reply.json
-events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\11-codex-wave2b-diff-review.events.jsonl
+# Handoff 11 - Codex: wave2b-diff-review
+
+Date: 2026-10-09 03:54 local. Author: Codex (model gpt-6-astra, effort high), Codex CLI 0.155.1.
+Reviewer: openai :: gpt-6-astra (provider from -Provider, model from roster; endpoint builtin:openai; provider fingerprint 56d97b6ece36; harness codex-cli 0.155.1).
+Preflight: ok: Logged in using ChatGPT.
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied).
+Effort: high sent (requested high, mapping openai, by caps-v1: builtin:openai, any model; not confirmed by the provider). Consultation id: 04189e96-9098-4269-8d64-3f5924b328e2.
+Invocation: `codex-consult.ps1` (mode: fork, sandbox: read-only, purpose: diff-review). Argv: `codex exec --sandbox read-only --color never --json -m gpt-6-astra -c model_reasoning_effort="high" -c model_provider="openai" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-f15d99a1d87b40449f0ea41ff3e49b99.md --output-schema C:\Users\Dmytro\claude-codex-consult\plugins\codex-consult\schemas\consult-reply.schema.json fork 01a11e3b-363e-7951-a94f-4c1f3fa0f187 -` (prompt on stdin).
+Parent thread: `01a11e3b-363e-7951-a94f-4c1f3fa0f187`. Result thread: `01a11e5e-ac5f-7b31-b3d9-49fd2cd68d88` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/10-claude-wave2b-diff-review.md` (sha256 eef8df46a74f). Reviewed: 6a5f838, base 6a5f838d8f15dcbca25f8e901561ebfe41975997, tree sha256 185ba27012b1, 0 changed files.
+Bridge outcome: usable reply. Wall time: 306.9 s. Tokens: in 8727839 (cached 7684608), out 37920, reasoning 7796.
+Timeout: 2400 s (the default of purpose diff-review); continuation after a timeout kill: up to 900 s. Range: `0d78ec0..1fa1ba7` - the range changes 34 files, 3438 lines (3084 insertions, 354 deletions).
+Verdict: HOLD - The health journal can discard records after I/O failures, and the new single-run requirement check evaluates availability with incomplete launcher and plan context. Findings: 0 blocker, 4 major, 1 minor, 0 note (F11-1..F11-5, tracked in `findings.json`). Structured reply: `handoffs/11-codex-wave2b-diff-review.reply.json`.
+Raw event stream: `handoffs/11-codex-wave2b-diff-review.events.jsonl`.
+Verbatim reply follows.
+
+---
 
 1. **The normal health write order is sound; its error paths are not.** One immutable record is attempted before the task lock, journaled after failure, and retried after commit. The health lock and exclusive journal handle serialize replay; record-key deduplication handles replay after a crash between health replacement and journal clearing. However, ignored read and suffix-write errors can discard unapplied journal bytes while reporting success (finding #1). Existing replay, malformed-line and `.bad` tests do not exercise those failures.
 
@@ -24,6 +32,8 @@ events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\11-code
 - **RC2:** Cwd repository root; workspace-write; extend the single-run requirement fixture with two cases: an AGY launcher available only through `--engine-exe`, and a required healthy route whose omitted plan sibling has an active quota failure. Require success for the first and exit 5 for the second (#2–#3). Budget: two cases, 25 minutes.
 - **RC3:** Cwd repository root; workspace-write; forward batch-launcher arguments into a native argv-dumping helper using literal `%TEMP%`, backslash-before-quote, a spaced path ending in backslash, and CR/LF. Require exact supported argv and explicit newline refusal. Budget: one fixture matrix, 15 minutes.
 - **RC4:** Cwd repository root; workspace-write; make a fake AGY emit an ACTIVE tool event, remain quiet for four seconds, then complete under `--stall-sec 3`; repeat beyond six seconds. Require success first and a labelled stall second (#5). Budget: two runs, 15 minutes.
+
+---
 
 ### Findings
 

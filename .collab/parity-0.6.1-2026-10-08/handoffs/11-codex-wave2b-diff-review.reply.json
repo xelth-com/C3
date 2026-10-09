@@ -1,0 +1,314 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The health journal can discard records after I/O failures, and the new single-run requirement check evaluates availability with incomplete launcher and plan context.",
+  "reply_markdown": "1. **The normal health write order is sound; its error paths are not.** One immutable record is attempted before the task lock, journaled after failure, and retried after commit. The health lock and exclusive journal handle serialize replay; record-key deduplication handles replay after a crash between health replacement and journal clearing. However, ignored read and suffix-write errors can discard unapplied journal bytes while reporting success (finding #1). Existing replay, malformed-line and `.bad` tests do not exercise those failures.\n\n2. **The plain-token `raw_arg` change looks appropriately constrained.** Its whitelist excludes shell metacharacters; I found no new injection path. Some differences are intentional: `foo=\"%TEMP%\"` can expand through the plugin’s batch path but remains literal through Rust’s escaping; CR/LF in batch arguments is refused; backslashes before quotes are escaped differently to preserve downstream arguments. Keep these protections and document them as compatibility differences. Ordinary multiline asks use stdin or a prompt file, so argument-level newline refusal does not reject those asks. The batch echo tests do not establish native argv preservation for percent expressions or backslash/quote boundaries.\n\n3. **REFUSE D3 wording can be a documented difference.** `BriefPrefix` can be deferred if the release explicitly excludes it and users can supply equivalent brief content. The label resolver should remain a release dependency on wave 2d: F09-6 also affects coordinator attribution and self-review warnings, so it is not merely wording.\n\n   Additional gaps surfaced here: single-run `--require` forgets the explicit engine launcher (#2), and filtering its roster before plan evaluation hides quota failures on sibling routes (#3). The latter also exists in the pinned plugin: faithful copying does not satisfy the promised roster-walk availability invariant. The default hook command fails PowerShell parsing (#4), while the harness overrides that command. AGY still lacks the plugin’s open-tool stall allowance (#5); this is an existing omission, not a new regression.\n\n4. **HOLD wave 2b for findings #1–#3.** Fix the hook pointer and assign the AGY omission explicitly before claiming full compatibility. Wave 2d remains independently responsible for F09-1–F09-6, which are still present at the reviewed revision. Reported harness improvements are useful evidence, but I did not rerun builds or tests; this review used source inspection, pinned-plugin comparison and a read-only PowerShell parse check.\n\n## Requested checks\n\n- **RC1:** Cwd repository root; workspace-write; add journal fault-injection fixtures for a partial read failure and a retained-suffix write failure. Require preserved unapplied bytes and a failure result, then successful replay after removing the fault (#1). Budget: two fixtures, 25 minutes.\n- **RC2:** Cwd repository root; workspace-write; extend the single-run requirement fixture with two cases: an AGY launcher available only through `--engine-exe`, and a required healthy route whose omitted plan sibling has an active quota failure. Require success for the first and exit 5 for the second (#2–#3). Budget: two cases, 25 minutes.\n- **RC3:** Cwd repository root; workspace-write; forward batch-launcher arguments into a native argv-dumping helper using literal `%TEMP%`, backslash-before-quote, a spaced path ending in backslash, and CR/LF. Require exact supported argv and explicit newline refusal. Budget: one fixture matrix, 15 minutes.\n- **RC4:** Cwd repository root; workspace-write; make a fake AGY emit an ACTIVE tool event, remain quiet for four seconds, then complete under `--stall-sec 3`; repeat beyond six seconds. Require success first and a labelled stall second (#5). Budget: two runs, 15 minutes.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1839
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1968
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1971
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1972
+        }
+      ],
+      "claim": "Ignored journal I/O errors can discard unapplied records or the suffix retained after a failed .bad archival, while the update reports HealthUpdate::Written.",
+      "trigger": "Reading the journal fails after zero or partial bytes; alternatively, .bad archival fails and the subsequent retained-suffix rewrite fails before truncation succeeds.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1837-1839,1925-1926,1966-1976",
+          "observation": "The read result is discarded. Consumption is calculated from the bytes successfully read, and the journal can then be truncated to zero despite an unread tail."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1955-1976",
+          "observation": "Retained-suffix seek and write_all errors are ignored; set_len still runs and the closure returns success."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git -c safe.directory=C:/Users/Dmytro/claude-codex-consult -C C:/Users/Dmytro/claude-codex-consult diff v0.6.1 -- plugins/codex-consult/scripts/codex-consult-common.ps1",
+          "observation": "The comparator script matched the pinned v0.6.1 version."
+        },
+        {
+          "kind": "read-code",
+          "reference": "Pinned codex-consult-common.ps1:6768-6772,6837-6851",
+          "observation": "A journal-read exception exits before clearing; suffix Write and SetLength share a try block, so a write exception skips truncation."
+        }
+      ],
+      "verification": "Inject partial journal-read and retained-suffix-write failures; require preserved unapplied bytes, a failure result, and successful later replay.",
+      "remedy": "Propagate journal read and seek errors, and never truncate after unsuccessful rewriting. Prefer retaining the entire journal when archival fails and relying on deduplication, or implement recovery-safe atomic compaction.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 1630
+        },
+        {
+          "path": "crates/c3/src/providers.rs",
+          "line": 396
+        },
+        {
+          "path": "crates/c3/src/providers.rs",
+          "line": 847
+        }
+      ],
+      "claim": "Single-run --require does not carry the resolved --engine-exe into its availability context, so it can reject a usable reviewer or inspect a different launcher.",
+      "trigger": "A selected AGY reviewer is explicitly required, its working launcher is supplied through --engine-exe, and AGY is absent from normal launcher discovery or resolves there to another installation.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:1334-1350,1547-1548,1630-1638",
+          "observation": "The explicit launcher is resolved and seeded into the roster-walk context, but the newly constructed requirement context receives no corresponding seed."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/providers.rs:379-398,840-853",
+          "observation": "for_consult creates an empty engine-launcher cache; non-Codex discovery subsequently resolves with an empty explicit-launcher argument."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git show v0.6.1:plugins/codex-consult/scripts/codex-consult.ps1 in the pinned plugin checkout",
+          "observation": "The plugin seeds engineLaunchers with EngineExe and passes that map into the single-run required-reviewer selection."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/compat_wave2b.rs:567-618",
+          "observation": "The new requirement test exercises Codex providers and missing credentials, not a non-Codex explicit launcher."
+        }
+      ],
+      "verification": "Run a required AGY reviewer with a fake working launcher supplied only through --engine-exe and absent from normal discovery; require the availability check to use that launcher.",
+      "remedy": "Seed the requirement context with the resolved engine binding, or reuse the complete launcher context already built for the consultation.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 1626
+        },
+        {
+          "path": "crates/c3/src/providers.rs",
+          "line": 994
+        }
+      ],
+      "claim": "Single-run --require can report a required reviewer available despite an active quota failure on another route of its shared plan, because non-required roster entries are removed before plan quota evaluation.",
+      "trigger": "The selected reviewer belongs to an unrelated plan; required entry #2 shares a plan with non-required entry #3; #2 has usable credentials and no own failure, while #3 has an active recorded usage limit.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:1625-1638",
+          "observation": "The requirement context receives a roster retaining only required positions."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/providers.rs:985-1014",
+          "observation": "plan_quota constructs the plan's fingerprint set exclusively from that context's roster, so omitted sibling routes cannot contribute quota failures."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/providers.rs:697-703",
+          "observation": "Required-member availability uses plan_verdict, but its plan evaluation has already lost the omitted route."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "Pinned v0.6.1 codex-consult.ps1 singleRequired block and codex-consult-common.ps1 Select-PanelMembers/Get-PlanQuota",
+          "observation": "The pinned plugin also filters the roster before this calculation; this is an inherited correctness gap rather than a mismatch with that implementation."
+        }
+      ],
+      "verification": "Seed an active quota record for non-required entry #3 sharing required entry #2's plan, then run an unrelated provider with --require #2; require exit 5 naming the plan outage.",
+      "remedy": "Retain the full roster for plan and identity resolution, and filter only the members whose availability results are required.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3/src/hook/mod.rs",
+          "line": 46
+        },
+        {
+          "path": "plugin/hooks/c3-hook.ps1",
+          "line": 55
+        },
+        {
+          "path": "tests/shim/codex-consult-hook.ps1",
+          "line": 99
+        }
+      ],
+      "claim": "The default hook pointer is not runnable as written in PowerShell because it places a quoted executable path directly before arguments without the call operator.",
+      "trigger": "A Windows user or coordinator copies the production hook's command, such as \"C:\\Users\\Dmytro\\C3\\target\\debug\\c3.exe\" consult --explain coordinate, into PowerShell.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/hook/mod.rs:41-51",
+          "observation": "The default command is formatted as a quoted executable path followed by consult arguments, without '&'."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "PowerShell Language.Parser.ParseInput on the generated command shape",
+          "observation": "Parsing returned UnexpectedToken at 'consult'; no command was executed."
+        },
+        {
+          "kind": "read-code",
+          "reference": "plugin/hooks/c3-hook.ps1:55; tests/shim/codex-consult-hook.ps1:97-103",
+          "observation": "The production wrapper uses the default command, while the harness shim supplies a different powershell -File command and therefore bypasses the defect."
+        }
+      ],
+      "verification": "Parse and execute the production pointer command in PowerShell 5.1 and PowerShell 7, requiring the coordinate skill text to print successfully.",
+      "remedy": "Generate a shell-appropriate invocation, including PowerShell's call operator and correct path quoting, and test the production default rather than only the shim override.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/agy.rs",
+          "line": 104
+        },
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 592
+        }
+      ],
+      "claim": "AGY tool calls still receive neither the plugin's extended stall allowance nor open-call attribution, allowing C3 to terminate a healthy quiet tool after stall_sec instead of twice that interval.",
+      "trigger": "An AGY primary turn emits a step_update with step_type='tool', state='ACTIVE' and step_index=2, then remains quiet longer than stall_sec but less than twice stall_sec before completing.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/agy.rs:100-106",
+          "observation": "AGY supplies its stall limit but passes tool_flight=None."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/subprocess.rs:569-603",
+          "observation": "The doubled quiet-time bound and open-call labels apply only when the tool tracker is nonempty."
+        },
+        {
+          "kind": "read-code",
+          "reference": "Pinned v0.6.1 codex-consult-common.ps1:11102-11110,11223 onward",
+          "observation": "The plugin tracks AGY ACTIVE tool steps, closes them on other states, labels them by step index and applies the doubled bound."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git diff 0d78ec0..1fa1ba7 -- crates/c3/src/engines/agy.rs",
+          "observation": "tool_delta=None becomes tool_flight=None, confirming an existing parity omission rather than a newly introduced regression."
+        }
+      ],
+      "verification": "With stall_sec=3, emit an ACTIVE AGY tool event followed by four quiet seconds and successful completion; require success, then verify a longer-than-six-second case stalls with the tool label.",
+      "remedy": "Implement an AGY ToolFlight classifier keyed by step_index and connect it to the shared subprocess tracker.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "fixed",
+      "note": "Retains the previous closure for the original concurrent-append overwrite; the telemetry implementation is unchanged in this range."
+    },
+    {
+      "id": "F02-3",
+      "status": "fixed",
+      "note": "Retains the previous closure for failed-DELETE retry identity; the separate F09 deletion defects remain open."
+    },
+    {
+      "id": "F02-4",
+      "status": "fixed",
+      "note": "The coverage map and telemetry shim remain present; harness passes still require interpretation by implementation coverage."
+    },
+    {
+      "id": "F02-5",
+      "status": "fixed",
+      "note": "The earlier ordering correction remains valid; this range does not change the rating commit-before-spool path."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "The inline re-read anchor was not revalidated in this review."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Full cross-engine and cross-repository plan behavior was not revalidated. Finding #3 identifies a separate new requirement-check interaction with existing plan evaluation."
+    },
+    {
+      "id": "F02-8",
+      "status": "fixed",
+      "note": "Plan P4 continues to gate native Messages on a separate benchmark rather than inheriting the plugin's measured savings."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "The process-name Unicode fix is outside this range and was not rerun."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Health-journal changes were reviewed, but Windows local-zone boundary parsing was not revalidated."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light execution and ledger metadata were not revalidated."
+    },
+    {
+      "id": "F06-1",
+      "status": "still-open",
+      "note": "The state document retains the historical Samoa case for wave 3; this delta does not correct it."
+    },
+    {
+      "id": "F09-1",
+      "status": "still-open",
+      "note": "The reviewed revision still slices extra configuration strings at key.len() without a UTF-8 boundary check."
+    },
+    {
+      "id": "F09-2",
+      "status": "still-open",
+      "note": "The reviewed revision still checks pending deletion before acquiring flush.lock."
+    },
+    {
+      "id": "F09-3",
+      "status": "still-open",
+      "note": "Successful DELETE still removes the pending record before local cleanup; telemetry fixes are outside this range."
+    },
+    {
+      "id": "F09-4",
+      "status": "still-open",
+      "note": "The current-spool reread still uses unwrap_or_default before replacement."
+    },
+    {
+      "id": "F09-5",
+      "status": "still-open",
+      "note": "Legacy payload forwarding is unchanged; this range adds no backlog sanitization."
+    },
+    {
+      "id": "F09-6",
+      "status": "still-open",
+      "note": "Rating actor resolution still uses the incomplete coordinator parser; the brief assigns its correction to wave 2d."
+    }
+  ],
+  "unproven": [
+    "No builds, tests, writes or live reviewer runs were performed; reported test and harness totals were not independently reproduced.",
+    "Journal I/O-failure behavior and the two requirement-check failures were established from source, without runtime fault injection.",
+    "Percent and backslash/quote behavior was compared through implementation inspection; native argv round trips remain requested.",
+    "The AGY quiet-tool scenario was not executed.",
+    "Full interoperability of concurrent C3 and plugin health-journal writers, including interrupted I/O, was not exercised."
+  ],
+  "first_run_checklist": []
+}
