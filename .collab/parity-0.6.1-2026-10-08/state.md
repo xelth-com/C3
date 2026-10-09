@@ -84,3 +84,19 @@ Decisions (coordinator, 2026-10-08 20:20):
 - 2026-10-09 15:10: wave 5 (--brief-prefix, the coordinator refusal/warning texts, the telemetry sender parity 429/400/413/403 + the owner record, version 0.2.0 + CHANGELOG + README; 8c01b7e, f00a823) merged 9bc502a - 737 tests on the branch; host 55/10 -> 59/6 (the rest n/a). Running: 3e. Next: wave 6 (RC3 differences), RC6 final verification, the acceptance brief, pause until Wed.
 - 2026-10-09 15:30: wave 3e (F30-1..3, 9ee3a7b) merged 7a4d882 - 728 tests on the branch; the record is written BEFORE the kill (beyond the plugin). All review findings now implemented. Disk: cargo clean of the workspace crates + incremental removed before wave 6. Next: wave 6 (RC3 differences), RC6 final verification, the acceptance brief.
 - 2026-10-09 16:30: wave 6 (the four RC3 differences, 09b9d25) merged 09b9d25 - 772 tests on the branch; harnesses unchanged (SEND x2 stay red only because the consult shim forces telemetry off and app_id is c3 - P7). Next: RC6 final verification of main, the acceptance brief, pause until Wed.
+
+## Paused for the acceptance (2026-10-09 18:10)
+
+C3 0.2.0 = main 09b9d25 (code). RC6 final: 772 tests, clippy/fmt clean, all 22 harnesses at the expected counts,
+the live smoke clean (the detached sender delivered within 10 s; coordinator record complete). Every finding of
+every review implemented (F14-2 wontfix = parity). The acceptance brief is `handoffs/33-claude-0.2.0-acceptance.md`.
+
+TO RUN when openai :: gpt-6-astra is back (Wed 2026-10-14 11:37; check `codex-providers.ps1 -Short`), from ~/C3:
+
+    CODEX_CONSULT_ROSTER=~/.codex/codex-consult-roster-0.6.json CODEX_CONSULT_COORDINATOR="anthropic :: claude-fable-5-1" \n    powershell -NoProfile -ExecutionPolicy Bypass -File <plugin>/scripts/codex-consult.ps1 -Task parity-0.6.1-2026-10-08 \n    -Provider openai -Mode fork -Purpose acceptance -Range 4cd8d18..09b9d25 \n    -Brief .collab/parity-0.6.1-2026-10-08/handoffs/33-claude-0.2.0-acceptance.md -ReplyName 0.2.0-acceptance -Detach
+
+Then: rate it, implement blockers if any (a fresh worker per wave, the machine rules of the log), re-run RC6 on the
+fixed main, tag `v0.2.0` on ACCEPT, push the tag. Open small items: the operator roster-0.6 lacks a claude
+`auth: subscription` entry (add `{"provider":"anthropic","engine":"claude","model":"claude-haiku-5-5","auth":"subscription"}`
+as a chore reviewer); one c3-cli compiler warning (the German linker note, `linker_messages`); the improvement track
+(RC4 benchmark for a native Messages route, SurrealDB-derived views) is NOT started.
