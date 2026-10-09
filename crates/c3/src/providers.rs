@@ -594,6 +594,29 @@ pub(crate) struct PanelMemberRow {
     pub reason: String,
     /// `""` | `refused` | `unavailable` | `weighty` | `context` | `light`.
     pub skip_kind: String,
+    /// The verdict's `until` (an unavailable entry's way back), `None` otherwise.
+    pub until: Option<DateTime<FixedOffset>>,
+}
+
+/// `Format-RequiredOutage`: `#<n> <lineage> (<reason>[; back <local>, <relative>])` - a required
+/// reviewer that is not available, with its way back when the verdict knows it.
+pub(crate) fn format_required_outage(m: &PanelMemberRow, now_utc: DateTime<Utc>) -> String {
+    let engine = if m.entry.engine.is_empty() {
+        "codex"
+    } else {
+        &m.entry.engine
+    };
+    let shown = format_reviewer_lineage(&m.identity.provider, &m.identity.model, engine);
+    let mut text = format!("#{} {shown} ({}", m.entry.position, m.reason);
+    if let Some(until) = m.until {
+        text.push_str(&format!(
+            "; back {}, {}",
+            c3_core::availability::format_local_when(until, now_utc),
+            c3_core::availability::format_relative_hint(until.with_timezone(&Utc) - now_utc)
+        ));
+    }
+    text.push(')');
+    text
 }
 
 /// `Select-PanelMembers`' result.
@@ -648,6 +671,7 @@ impl Ctx {
             let mut state = "run".to_string();
             let mut reason = String::new();
             let mut skip_kind = String::new();
+            let mut until: Option<DateTime<FixedOffset>> = None;
             let health = if id.resolved {
                 Some(endpoint_health(
                     &self.consults,
@@ -676,6 +700,7 @@ impl Ctx {
                     state = "skipped".into();
                     reason = verdict.reason.clone();
                     skip_kind = "unavailable".into();
+                    until = verdict.until;
                 }
             }
             if state == "run" && e.panel == "weighty" && !all && !weighty_purpose {
@@ -711,6 +736,7 @@ impl Ctx {
                 state,
                 reason,
                 skip_kind,
+                until,
             });
         }
         stand_in_light_members(&mut members);

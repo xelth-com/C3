@@ -23,7 +23,9 @@
 param(
     [string]$CollabDir = '.collab',
     [string]$Task = '',
-    [switch]$Json
+    [switch]$Json,
+    # (wave 26, wave 2b) purpose (the default) | topic - one row per (lineage, topic)
+    [string]$By = ''
 )
 
 # (wave 27c, D14) c3 honours a CODEX_CONSULT_TEST_* hook only when CODEX_CONSULT_TEST_MODE is
@@ -62,6 +64,7 @@ $c3Args.Add('scoreboard')
 if ($CollabDir) { $c3Args.Add('--collab-dir'); $c3Args.Add($CollabDir) }
 if ($Task) { $c3Args.Add('--task'); $c3Args.Add($Task) }
 if ($Json) { $c3Args.Add('--json') }
+if ($PSBoundParameters.ContainsKey('By')) { $c3Args.Add('--by'); $c3Args.Add($By) }
 
 & $c3 @c3Args
 exit $LASTEXITCODE

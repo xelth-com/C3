@@ -330,19 +330,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
             Some(m)
                 if m.state == "skipped" && m.skip_kind != "weighty" && m.skip_kind != "light" =>
             {
-                required_problems.push(format!(
-                    "#{pos} {} ({})",
-                    format_reviewer_lineage(
-                        &m.identity.provider,
-                        &m.identity.model,
-                        if m.entry.engine.is_empty() {
-                            "codex"
-                        } else {
-                            &m.entry.engine
-                        }
-                    ),
-                    m.reason
-                ));
+                required_problems.push(providers::format_required_outage(m, utc_now));
             }
             _ => {}
         }
@@ -1003,6 +991,10 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     // (wave 27, R13 D3) the coordinator-is-a-reviewer warnings for seated members (the dry run and
     // the real-run header alike); kept out of the members' panel_warnings.
     for w in &b.coordinator_warnings {
+        println!("WARNING: {w}");
+    }
+    // (wave 28b, D10) the panel run says it too (each member's warnings[] carries it).
+    if let Some(w) = c3_core::test_hooks::test_mode_warning() {
         println!("WARNING: {w}");
     }
     println!("{}", concurrency_line(&o, &b.concurrency));

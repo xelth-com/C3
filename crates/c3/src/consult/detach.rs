@@ -559,8 +559,9 @@ pub fn start_detached_run(
         return refuse(&format!("{e}; nothing was started."));
     }
 
+    let test_mode_line = c3_core::test_hooks::TEST_MODE_WARNING;
     for w in warnings {
-        if !w.is_empty() {
+        if !w.is_empty() && w != test_mode_line {
             println!("WARNING: {w}");
         }
     }
@@ -582,6 +583,11 @@ pub fn start_detached_run(
         "come back  : codex-consult.ps1 -Task {}{collab_opt} -Status -Id {} (exit 0 done and usable, 1 a failure, 2 still running); -Wait -Id {} waits until it is done (default: its budget, {budget} s)",
         o.task, paths.id8, paths.id8
     );
+    // (wave 28b, D10) the test-mode line after the detach lines (the first line stays
+    // "Detached <id8>: ...").
+    if warnings.iter().any(|w| w == test_mode_line) {
+        println!("WARNING: {test_mode_line}");
+    }
     0
 }
 

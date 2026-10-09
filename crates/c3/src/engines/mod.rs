@@ -26,10 +26,16 @@ pub use muse::MuseEngine;
 /// operator's own `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_PLUGIN_ROOT` and provider keys survive.
 ///
 /// The NAMES removed are recorded in the ledger (`child_env_scrubbed`); no value is ever logged.
+///
+/// (wave 28b, D10) The test-mode variables go too (`Hide-HostMarkers -TestVars`,
+/// `Remove-HostMarkersFromStartInfo`): `CODEX_CONSULT_TEST_MODE` and every `CODEX_CONSULT_TEST_*`
+/// are the BRIDGE's switches - an engine child (codex/agy/muse) and a launcher probe (`--version`,
+/// `login status`, `models`) never inherit them. They are not listed in `child_env_scrubbed`. The
+/// bridge's own processes (a panel member re-exec, the detached background) keep them.
 pub fn scrub_host_markers(cmd: &mut std::process::Command) {
     for (k, _) in std::env::vars_os() {
         if let Some(name) = k.to_str() {
-            if c3_core::host::is_host_marker(name) {
+            if c3_core::host::is_host_marker(name) || c3_core::test_hooks::is_test_var(name) {
                 cmd.env_remove(name);
             }
         }

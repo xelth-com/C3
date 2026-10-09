@@ -710,8 +710,14 @@ pub(crate) struct Context {
     /// (wave 1b, 0.6.0 E16) the run's roster entry's plan (`""` without one): its machine-wide
     /// running row carries it, so a panel elsewhere counts this run against the plan's limit.
     pub(crate) plan: String,
-    /// The member's role name (empty when none), for the ledger `role` field.
+    /// The role name (a member's, or a single run's `-Role`; empty when none), for the ledger
+    /// `role` field.
     pub(crate) role: String,
+    /// (wave 26, R16) the resolved role file (name, source, path) for the dry run's `role :` line.
+    pub(crate) role_info: Option<crate::panel::roles::RoleInfo>,
+    /// (wave 26, D7) a single run's `-Require` positions, all available (the dry run's
+    /// `required    :` line); empty without `-Require`.
+    pub(crate) single_required: Vec<i64>,
     /// The panel-wide roles note (ledger `panel.roles_note`), if any.
     pub(crate) roles_note: String,
     /// (wave 26b, D16) a fork/resume the reviewer's context window forced down to a new thread
@@ -821,7 +827,7 @@ fn run_inner(o: Options) -> i32 {
 }
 
 /// The normal run flow (a single run or a panel), reused by the detached background.
-fn run_normal(o: Options) -> i32 {
+fn run_normal(mut o: Options) -> i32 {
     let home = std::env::var("HOME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -830,6 +836,7 @@ fn run_normal(o: Options) -> i32 {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
+    r.apply_companions(&mut o);
     if o.panel || o.panel_all {
         return crate::panel::run::run(o, r, home.as_deref());
     }
@@ -838,7 +845,7 @@ fn run_normal(o: Options) -> i32 {
 
 /// The foreground of `-Detach` (D2, D8): make every check a real run makes before its lock, then
 /// spawn the background — or refuse with nothing left behind.
-fn detach_foreground(o: Options, home: Option<&str>) -> i32 {
+fn detach_foreground(mut o: Options, home: Option<&str>) -> i32 {
     if !o.panel_spec.is_empty() {
         return refuse("-Detach does not go with -PanelSpec (internal to -Panel).");
     }
@@ -851,6 +858,7 @@ fn detach_foreground(o: Options, home: Option<&str>) -> i32 {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
+    r.apply_companions(&mut o);
     if o.panel || o.panel_all {
         return crate::panel::run::detach_foreground(o, r, home);
     }
@@ -922,11 +930,14 @@ fn detach_foreground(o: Options, home: Option<&str>) -> i32 {
         .as_ref()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_default();
-    let warnings: Vec<String> = if ctx.preflight_warning.is_empty() {
-        Vec::new()
-    } else {
-        vec![ctx.preflight_warning.clone()]
-    };
+    // The run's warnings, the preflight's and the peak window's (`$detachWarnings`); the
+    // test-mode line among them is printed after the detach lines (wave 28b, D10).
+    let mut warnings: Vec<String> = ctx.run_warnings.clone();
+    for w in [&ctx.preflight_warning, &ctx.peak_warning] {
+        if !w.is_empty() {
+            warnings.push(w.clone());
+        }
+    }
     super::detach::start_detached_run(&o, "run", &members, budget, &plan, &brief_full, &warnings)
 }
 
@@ -950,11 +961,12 @@ fn run_member(o: Options, home: Option<&str>) -> i32 {
             "-PanelSpec is internal to -Panel and does not name this member's numbers and parent (n, nn, parent_pid); this panel member was not started.",
         );
     }
-    let mo = member_options(&o.task, &spec);
+    let mut mo = member_options(&o.task, &spec);
     let r = match args::validate(&mo, home) {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
+    r.apply_companions(&mut mo);
     // The member rewrites its reserved record as its own, waits the test-pause, and checks the
     // parent is alive — all BEFORE its preflight (`codex-consult.ps1:2074-2113`), so the
     // kill-after-rewrite window (F07-1/F11-6) is real and a parent that dies during the preflight
@@ -1251,7 +1263,7 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
 }
 
 fn build_context(
-    o: Options,
+    mut o: Options,
     mut r: Resolved,
     member: Option<&crate::panel::member::MemberSpec>,
 ) -> Result<Context, (String, i32)> {
@@ -1296,6 +1308,14 @@ fn build_context(
         None
     })?;
     let child_env_scrubbed = c3_core::host::host_marker_names();
+    // (wave 26, D7) -Require: a panel, or a single run of a chosen reviewer (-Provider).
+    let require_given = o.require.iter().any(|v| !v.trim().is_empty());
+    if require_given && !(o.panel || o.panel_all) && member.is_none() && o.provider.is_empty() {
+        return Err((
+            "-Require goes with -Panel, or with -Provider (a single run of a chosen reviewer); a roster walk takes whichever reviewer is available.".to_string(),
+            1,
+        ));
+    }
 
     let utc_now = c3_core::peak::consult_clock(0)
         .map(|(u, _, _)| u)
@@ -1361,6 +1381,13 @@ fn build_context(
     let ignored_hooks_warning = c3_core::test_hooks::ignored_hooks_warning();
     if !ignored_hooks_warning.is_empty() {
         run_warnings.push(ignored_hooks_warning);
+    }
+    // (wave 28b, D10 / F36-5) test mode never goes unnoticed: a run that finds
+    // CODEX_CONSULT_TEST_MODE=1 says so on the console (a real run with its output, a dry run with
+    // its warnings) and once in warnings[]; no engine child gets the test-mode variables
+    // (`engines::scrub_host_markers`).
+    if let Some(w) = c3_core::test_hooks::test_mode_warning() {
+        run_warnings.push(w.to_string());
     }
     // (wave 27c, D11/D12) a coordinator that parses but names no seat is SAID, not refused: a
     // roster position with no seat here warns and the run goes on; a coordinator no reviewer can
@@ -1570,6 +1597,67 @@ fn build_context(
         }
     }
 
+    // (wave 26, D7) -Require on a single run (with -Provider): every required reviewer must be
+    // available by the roster walk's verdict (stricter than a plain -Provider run: a usage limit
+    // without a reset time is out) - else the run is refused before anything starts, exit 5 (a dry
+    // run too).
+    let mut single_required: Vec<i64> = Vec::new();
+    if require_given && !(o.panel || o.panel_all) && member.is_none() {
+        if !roster.exists {
+            return Err((
+                format!(
+                    "-Require names reviewers of the roster, and there is no reviewer roster{}.",
+                    if roster.disabled {
+                        " (CODEX_CONSULT_ROSTER=none)"
+                    } else {
+                        ""
+                    }
+                ),
+                1,
+            ));
+        }
+        let required = crate::panel::plan::resolve_required_reviewers(
+            &roster, &o.require, &o.purpose, true, false,
+        );
+        if !required.error.is_empty() {
+            return Err((format!("{}.", required.error), 1));
+        }
+        if !required.positions.is_empty() {
+            let mut req_roster = roster.clone();
+            req_roster
+                .entries
+                .retain(|e| required.positions.contains(&(e.position as i64)));
+            let req_ctx = providers::Ctx::for_consult(
+                config.clone(),
+                providers::read_all_task_consults_health(&collab_root),
+                req_roster,
+                launcher.clone(),
+                openai_base_url.clone(),
+                utc_now,
+            );
+            let sel = req_ctx.panel_members("", "", &o.purpose, true, false, 0);
+            let out: Vec<String> = sel
+                .members
+                .iter()
+                .filter(|m| m.state != "run")
+                .map(|m| providers::format_required_outage(m, utc_now))
+                .collect();
+            if !out.is_empty() {
+                let plural = out.len() != 1;
+                return Err((
+                    format!(
+                        "required reviewer{} not available (-Require, judged like the roster walk): {}; nothing was started - wait for {}, or run without -Require (exit 5).",
+                        if plural { "s" } else { "" },
+                        out.join("; "),
+                        if plural { "them" } else { "it" }
+                    ),
+                    5,
+                ));
+            }
+            single_required = required.positions.clone();
+        }
+    }
+
     // Finalize the engine (`codex-consult.ps1:2798`): default codex, its spec, its launcher and
     // harness. The engine launcher is the codex launcher for codex; otherwise the resolved
     // engine launcher (the `-EngineExe` seed when it bound this engine, else PATH/install).
@@ -1728,12 +1816,19 @@ fn build_context(
             r.transport_override
         ), 1));
     }
-    // -MaxModelSteps: only an engine with a model-step cap (muse, D9).
+    // -MaxModelSteps: only an engine with a model-step cap (muse, D9); a panel member of another
+    // engine drops it (the panel passes it to every member; the members whose engine has a cap
+    // use it - the plugin's `if ($panelMember) { $MaxModelSteps = 0 }`).
     if o.max_model_steps > 0 && spec.steps_flag.is_empty() {
-        return Err((format!(
-            "-MaxModelSteps is for the muse engine (--max-model-steps); the {engine_name} engine has no model-step cap.",
-        ), 1));
+        if member.is_some() {
+            o.max_model_steps = 0;
+        } else {
+            return Err((format!(
+                "-MaxModelSteps is for the muse engine (--max-model-steps); the {engine_name} engine has no model-step cap.",
+            ), 1));
+        }
     }
+
     // (M7b-b) --key-env / --base-url configure the http engine only; on an http run --base-url
     // must be https:// and the reviewer needs a provider label (from -Provider or the roster).
     if (!o.key_env.trim().is_empty() || !o.base_url.trim().is_empty() || o.pack_budget != -1)
@@ -2185,39 +2280,35 @@ fn build_context(
     // and before the brief. A bad/unknown role refuses (naming the member); no role → empty.
     let mut role_line = String::new();
     let mut roles_note = String::new();
-    if let Some(m) = member {
-        roles_note = m.roles_note.clone();
-        if !m.role.is_empty() {
-            let ri = crate::panel::roles::resolve_role_file(
-                &m.role,
-                &collab_root,
-                &crate::panel::roles::plugin_root(),
-            );
-            // A safety problem (reparse/containment) refuses; a role that resolves only as a plugin
-            // template (unknown to c3, which ships none) is tolerated with no role paragraph.
-            if crate::panel::roles::is_role_refusal(&ri.error) {
-                return Err((
-                    format!("-Role: {}; this panel member was not started.", ri.error),
-                    1,
-                ));
-            }
-            if ri.error.is_empty() {
-                role_line = crate::panel::roles::role_prompt_line(&ri);
-            }
+    let mut role_info: Option<crate::panel::roles::RoleInfo> = None;
+    // (wave 26, R16) the role block - <CollabDir>/roles/<name>.md, else the plugin's
+    // templates/role-<name>.md - is resolved now: an unknown role refuses the run, nothing started.
+    // Without a known plugin root (no CLAUDE_PLUGIN_ROOT, no scripts dir, no plugin directory
+    // beside the binary) only a safety problem refuses: the built-in roles cannot be told apart
+    // from unknown ones there, and the role is left out.
+    let role_name = match member {
+        Some(m) => {
+            roles_note = m.roles_note.clone();
+            m.role.clone()
         }
-    } else if !o.role.is_empty() {
-        // (wave 26b, D1) a single run's -Role resolves its role file too: a bad/reparse role file
-        // (or a junctioned roles directory) refuses before anything is written.
-        let ri = crate::panel::roles::resolve_role_file(
-            &o.role,
-            &collab_root,
-            &crate::panel::roles::plugin_root(),
-        );
-        if crate::panel::roles::is_role_refusal(&ri.error) {
-            return Err((format!("-Role: {}", ri.error), 1));
+        None => o.role.clone(),
+    };
+    if !role_name.is_empty() {
+        let plugin_root = crate::panel::roles::plugin_root();
+        let ri = crate::panel::roles::resolve_role_file(&role_name, &collab_root, &plugin_root);
+        if !ri.error.is_empty()
+            && (!plugin_root.is_empty() || crate::panel::roles::is_role_refusal(&ri.error))
+        {
+            let tail = if member.is_some() {
+                "; this panel member was not started"
+            } else {
+                ""
+            };
+            return Err((format!("-Role: {}{tail}.", ri.error), 1));
         }
         if ri.error.is_empty() {
             role_line = crate::panel::roles::role_prompt_line(&ri);
+            role_info = Some(ri);
         }
     }
 
@@ -2442,7 +2533,12 @@ fn build_context(
             .as_ref()
             .map(|e| e.plan.clone())
             .unwrap_or_default(),
-        role: member.map(|m| m.role.clone()).unwrap_or_default(),
+        role: role_info
+            .as_ref()
+            .map(|ri| ri.name.clone())
+            .unwrap_or_else(|| role_name.clone()),
+        role_info,
+        single_required,
         roles_note,
         mode_fallback,
         stall_sec,
@@ -2890,11 +2986,22 @@ fn select_parent_thread(
 }
 
 fn schema_file(_repo_root: &Path) -> Option<PathBuf> {
-    // The reply schema is embedded in the binary (`c3_core::schema::REPLY_SCHEMA_V1`, the
-    // plugin's file byte-for-byte). Materialise it under `<CODEX_HOME>/c3/schemas/
-    // consult-reply.v1.json` (rewritten only when missing/different) and pass THAT path to
-    // `--output-schema`, mirroring the plugin passing its own on-disk schema file. With no
-    // resolvable codex home, name the would-be path without writing (a dry run still shows it).
+    // (wave 2b) `C3_SCHEMA_FILE` names an on-disk copy of the reply schema to pass instead - the
+    // plugin's own `<scripts>\..\schemas\consult-reply.schema.json` when the harness shim fronts
+    // the plugin's script (`--json-schema`/`--output-schema` then name the file the plugin would).
+    // Honoured only when the file holds exactly the embedded schema (CRLF read as LF), so what the
+    // engine is given and what C3 validates against never differ.
+    if let Ok(v) = std::env::var("C3_SCHEMA_FILE") {
+        let p = PathBuf::from(v.trim());
+        if !v.trim().is_empty() {
+            if let Ok(bytes) = std::fs::read(&p) {
+                let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+                if text == c3_core::schema::REPLY_SCHEMA_V1 {
+                    return Some(p);
+                }
+            }
+        }
+    }
     let home = providers::get_codex_home();
     if home.is_empty() {
         return None;
@@ -3229,7 +3336,22 @@ fn run_live(mut ctx: Context) -> i32 {
     // A panel member re-checks its parent right before launching its reviewer (D1,
     // `codex-consult.ps1:3973`): if the panel run died during the member's preflight, the member
     // stops here, withdraws its record, and starts nothing.
+    // TEST HOOK (test mode only): CODEX_CONSULT_TEST_MEMBER_LAUNCH_MARK=<file> is written (this pid)
+    // when a member reaches this point, and CODEX_CONSULT_TEST_MEMBER_LAUNCH_PAUSE_MS=<ms> pauses it
+    // here - the harness kills the panel run inside that pause (harness-panel SPEC, D1).
     if let Some(m) = &ctx.panel_member {
+        if let Some(mark) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_MEMBER_LAUNCH_MARK") {
+            if !mark.trim().is_empty() {
+                let _ = std::fs::write(mark.trim(), std::process::id().to_string());
+            }
+        }
+        if let Some(ms) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_MEMBER_LAUNCH_PAUSE_MS") {
+            if let Ok(ms) = ms.trim().parse::<u64>() {
+                if ms > 0 {
+                    std::thread::sleep(Duration::from_millis(ms));
+                }
+            }
+        }
         if !crate::liveness::proc::pid_alive(m.parent_pid as u32, &m.parent_start_time) {
             let path = store_pending_path(&store, &pending);
             let rm = std::fs::remove_file(&path);
@@ -4072,6 +4194,7 @@ fn finish(
                     last_event,
                     silent_seconds,
                     tool_open_seconds,
+                    open_tools,
                 } => {
                     // (wave 26b, D12) a stall is stopped like a timeout: one continuation turn
                     // follows (gated by --continue-sec) and the salvage is written.
@@ -4083,9 +4206,15 @@ fn finish(
                     });
                     let mut stop_text =
                         format!("stalled after {} s without an event", ctx.stall_sec);
-                    if tool_open_seconds > 0 {
+                    // (wave 28b, D12) the cut names the open call(s).
+                    if tool_open_seconds > 0 || !open_tools.is_empty() {
+                        let named = if open_tools.is_empty() {
+                            String::new()
+                        } else {
+                            format!(": {open_tools}")
+                        };
                         stop_text += &format!(
-                            " - no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s)"
+                            " - no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s{named})"
                         );
                     }
                     stall_stop_text = stop_text.clone();
@@ -4312,8 +4441,10 @@ fn finish(
     }
 
     // A failed main turn's outcome (`codex-consult.ps1:3840-3847`): `failed: codex exit N`, with
-    // ` - <detail>` where detail is the event error, else the last non-empty stderr line.
-    if main_provider_failure {
+    // ` - <detail>` where detail is the event error, else the last non-empty stderr line. (rows (e),
+    // wave 28b D19) never over a registration failure: its "could not register" outcome stands (the
+    // child it stopped exits non-zero).
+    if main_provider_failure && register_failure_text.is_none() {
         if let Some(n) = main_pf_exit.filter(|n| *n != 0) {
             let detail = if !main_event_error.is_empty() {
                 main_event_error.clone()
@@ -4790,6 +4921,54 @@ fn finish(
         }
         let _ = store.write_pending(&pending, &committing_record);
     }
+    // (wave 26b, D13; 26c, D2; 27c, D7; 28b, D13 / F36-6, F37-1) the run's outcome on its endpoint
+    // into the machine-wide health file (a usable reply clears the endpoint - class ok -, a provider
+    // failure marks it, class operator excepted) - now, BEFORE the write lock, with the full budget
+    // (3 x 5 s). The record is built ONCE: the same record goes into the journal at the commit and
+    // into the retry after it (applying is idempotent). ANY failure is retried after the commit, its
+    // cause named; the ledger keeps the truth either way. Disabled with CODEX_CONSULT_HEALTH=none.
+    let health_repo = ctx.repo_root.to_string_lossy().to_string();
+    let health_path = if ctx.identity.resolved {
+        c3_core::health::machine_health_path(&providers::get_codex_home())
+    } else {
+        None
+    };
+    let health_record = health_path.as_ref().and_then(|_| {
+        let failure = provider_failure
+            .as_ref()
+            .map(|pf| c3_core::health::MachineFailure {
+                class: pf.class.clone(),
+                kind: pf.kind.clone().unwrap_or_default(),
+                when: pf.when.clone(),
+                retry_after: pf.retry_after.clone(),
+                message: pf.message.clone(),
+            });
+        c3_core::health::new_machine_health_record(
+            &ctx.identity.fingerprint,
+            &bridge_outcome,
+            failure.as_ref(),
+            &health_repo,
+        )
+    });
+    let health_alive = |pid: u32, st: &str| crate::liveness::proc::pid_alive(pid, st);
+    let mut health_retry_cause: Option<String> = None;
+    if let (Some(hp), Some(rec)) = (&health_path, &health_record) {
+        let res = c3_core::health::add_machine_health_endpoint(hp, rec, &health_alive);
+        if res.failed() {
+            health_retry_cause = Some(res.cause().unwrap_or_default());
+        }
+    }
+    // (wave 28c, D10 / F42-6, F44-1) a journal line that could not be applied was moved aside, never
+    // dropped silently: said in warnings[] and the summary (this run's updates so far - its
+    // registration, its outcome).
+    let mut health_summary_warnings: Vec<String> = Vec::new();
+    for note in c3_core::health::take_machine_health_journal_notes() {
+        let v = serde_json::Value::String(note.clone());
+        if !entry.warnings.contains(&v) {
+            entry.warnings.push(v);
+            health_summary_warnings.push(note);
+        }
+    }
     // TEST HOOK: CODEX_CONSULT_TEST_COMMIT_PAUSE_MS=<ms> | <model>=<ms>[|...] — a pause held INSIDE
     // the commit, between findings.json and sessions.json (the ORPHAN window a kill can hit; the
     // write-lock contention window), applied by the store (`codex-consult.ps1:5176`).
@@ -4822,50 +5001,26 @@ fn finish(
         }
         Err(e) => return refuse(&format!("could not take the write lock: {e}")),
     };
-    // (wave 26c, D2) record this run's outcome on its endpoint in the machine-wide health file
-    // BEFORE the ledger entry: a usable reply clears the endpoint (class ok), a provider failure
-    // marks it (class operator excepted). A lock timeout is retried once here at the commit and, if
-    // it still fails, recorded as the warning `machine-wide health not updated (lock timeout)` in
-    // `warnings[]` and printed as a `warning    :` summary line (the ledger keeps the truth either
-    // way). A failed update never fails the run; disabled with CODEX_CONSULT_HEALTH=none.
-    // (wave 27c, D7/D8) inside the task write lock only ONE bounded attempt (≤1 s) is made, so the
-    // health retry never extends the hold on the commit lock; every failure class sets the retry
-    // flag and the ledger warning names the real cause. The FULL retry (3×5 s) runs after the lock
-    // is released (below). A failed update never fails the run; disabled with CODEX_CONSULT_HEALTH=none.
-    let mut health_warn_cause: Option<String> = None;
-    let mut health_retry: Option<(std::path::PathBuf, Option<c3_core::health::MachineFailure>)> =
-        None;
-    let health_fingerprint = ctx.identity.fingerprint.clone();
-    let health_outcome_text = bridge_outcome.clone();
-    let health_repo = ctx.repo_root.to_string_lossy().to_string();
-    if ctx.identity.resolved {
-        if let Some(hp) = c3_core::health::machine_health_path(&providers::get_codex_home()) {
-            let failure = provider_failure
-                .as_ref()
-                .map(|pf| c3_core::health::MachineFailure {
-                    class: pf.class.clone(),
-                    kind: pf.kind.clone().unwrap_or_default(),
-                    when: pf.when.clone(),
-                    retry_after: pf.retry_after.clone(),
-                    message: pf.message.clone(),
-                });
-            let res = c3_core::health::add_machine_health_record_bounded(
-                &hp,
-                &health_fingerprint,
-                &health_outcome_text,
-                failure.as_ref(),
-                &health_repo,
-                &|pid, st| crate::liveness::proc::pid_alive(pid, st),
-            );
-            if res.failed() {
-                let cause = res.cause().unwrap_or_default();
-                entry.warnings.push(serde_json::Value::String(format!(
-                    "machine-wide health not updated at the commit ({cause}); retried after it"
-                )));
-                health_warn_cause = Some(cause);
-                health_retry = Some((hp, failure));
+    // (wave 26c, D2 / 28b, D13) the machine-wide health update that failed before the commit: its
+    // record goes into the JOURNAL beside the health file now, inside the write lock (a local append -
+    // no wait for the health lock, so the hold on this task's lock does not grow); this entry's
+    // warning says a retry follows the commit; the retry after the lock is released - or the next
+    // run of any repository, should this one die first - applies the journal and empties it.
+    let mut health_journal_failed = false;
+    if let (Some(cause), Some(hp), Some(rec)) = (&health_retry_cause, &health_path, &health_record)
+    {
+        let mid = match c3_core::health::add_machine_health_journal(hp, rec) {
+            Ok(()) => "the record is kept in the journal; ".to_string(),
+            Err(why) => {
+                health_journal_failed = true;
+                format!("the journal could not be written ({why}); ")
             }
-        }
+        };
+        let w = format!(
+            "machine-wide health not updated at the commit ({cause}); {mid}a retry follows the commit"
+        );
+        entry.warnings.push(serde_json::Value::String(w.clone()));
+        health_summary_warnings.push(w);
     }
 
     // The write-lock wait (`commit_wait_ms`): 0 when the first attempt won it, else the measured
@@ -4889,18 +5044,37 @@ fn finish(
     drop(write_lock);
     let _ = receipt;
 
-    // (wave 27c, D8) the FULL machine-health retry (3×5 s), now that the task write lock is
-    // released, so the earlier bounded attempt never held up the commit. Best-effort; never fails
-    // the run — the ledger already carries the truth either way.
-    if let Some((hp, failure)) = health_retry.take() {
-        let _ = c3_core::health::add_machine_health_record(
-            &hp,
-            &health_fingerprint,
-            &health_outcome_text,
-            failure.as_ref(),
-            &health_repo,
-            &|pid, st| crate::liveness::proc::pid_alive(pid, st),
-        );
+    // (wave 27c, D8 / 28b, D13) the FULL machine-health retry (3 x 5 s), outside the write lock: it
+    // applies the journal (this run's record and any other) and empties it; its OUTCOME, either way,
+    // is in the summary (the console, and a detached run's status record). Never fails the run.
+    let mut health_lines: Vec<String> = Vec::new();
+    if let (Some(cause), Some(hp), Some(rec)) = (&health_retry_cause, &health_path, &health_record)
+    {
+        let res = c3_core::health::add_machine_health_endpoint(hp, rec, &health_alive);
+        if res == c3_core::health::HealthUpdate::Written {
+            health_lines.push(
+                "health     : machine-wide health updated by the retry after the commit (the journal applied)"
+                    .to_string(),
+            );
+        } else {
+            let why = res.cause().unwrap_or_else(|| cause.clone());
+            let waits = if health_journal_failed {
+                String::new()
+            } else {
+                format!(
+                    " - the record waits in {} for the next run",
+                    c3_core::health::machine_health_journal_path(hp).display()
+                )
+            };
+            health_lines.push(format!(
+                "warning    : machine-wide health not updated by the retry after the commit ({why}){waits}"
+            ));
+        }
+    }
+    // (wave 28c, D10) the journal's unreadable lines found by the updates after the commit: the
+    // summary
+    for note in c3_core::health::take_machine_health_journal_notes() {
+        health_lines.push(format!("warning    : {note}"));
     }
 
     // Telemetry: record this consultation to the spool (errors ignored) - after the commit, so an
@@ -5089,14 +5263,19 @@ fn finish(
         reply_body,
         section,
         engine_warnings: {
-            // (wave 26c D2 / 27c D7) a failed machine-health update prints as a `warning    :`
-            // summary line naming the cause, after any engine-turn warnings.
+            // (wave 26c D2 / 28b D13 / 28c D10) the machine-health warnings of warnings[] (the
+            // update at the commit, the journal's unreadable lines) print as `warning    :` summary
+            // lines too, after any engine-turn warnings.
             let mut w = sec.engine_warnings.clone();
-            if let Some(cause) = &health_warn_cause {
-                w.push(format!("machine-wide health not updated ({cause})"));
+            for hw in &health_summary_warnings {
+                if !w.contains(hw) {
+                    w.push(hw.clone());
+                }
             }
             w
         },
+        health_lines,
+
         denial_retry_line: sec.denial_console.clone(),
         ..Default::default()
     };
@@ -5313,10 +5492,11 @@ fn run_codex_secondary(
         message: format!("the secondary turn could not be planned ({e:?})"),
     };
     let start = std::time::Instant::now();
-    // (wave 26c, D1) only the FORMAT REPAIR turn watches the kick file (a kicked repair leaves the
-    // first reply standing); a kicked continuation/denial retry fails the run and is handled on the
-    // primary turn's path, so those secondary turns do not watch it.
-    let secondary_kick = if matches!(kind, TurnKind::FormatRepair) {
+    // (wave 26c, D1) the FORMAT REPAIR turn watches the kick file (a kicked repair leaves the first
+    // reply standing); (wave 27c, D2 / F30-5) so does the TIMEOUT CONTINUATION - a kick addresses the
+    // RUN: found during the continuation it cancels it, and the run keeps the main turn's timeout
+    // outcome and its salvage (`run_timeout_continuation`). The denial retry does not watch it.
+    let secondary_kick = if matches!(kind, TurnKind::FormatRepair | TurnKind::TimeoutContinuation) {
         Some(ctx.kick_path.clone())
     } else {
         None
@@ -6831,13 +7011,16 @@ fn render_handoff(
             drift.artifacts_changed_paths.join(", ")
         ));
     }
-    // The handoff `Warnings:` line: engine turn warnings for an engine run (denial notices,
-    // engine stderr warnings), else the run warnings.
-    let warn_source: &[String] = if !ctx.is_codex() {
-        &sec.engine_warnings
-    } else {
-        &ctx.run_warnings
-    };
+    // The handoff `Warnings:` line: the run warnings, then an engine run's turn warnings (denial
+    // notices, engine stderr warnings) - the ledger's `warnings[]`.
+    let mut warn_source: Vec<String> = ctx.run_warnings.clone();
+    if !ctx.is_codex() {
+        for ew in &sec.engine_warnings {
+            if !warn_source.contains(ew) {
+                warn_source.push(ew.clone());
+            }
+        }
+    }
     if !warn_source.is_empty() {
         records.warnings = Some(format!(
             "Warnings: {}.",
@@ -7466,18 +7649,19 @@ fn build_entry(
             })
         },
         range: ctx.range_record.clone(),
-        // An engine run records its engine turn warnings (denial notices etc.); a codex run
-        // records the run warnings (range size, roster ambiguity, semantics).
-        warnings: if ctx.is_codex() {
-            ctx.run_warnings
-                .iter()
-                .map(|w| serde_json::Value::String(w.clone()))
-                .collect()
-        } else {
-            sec.engine_warnings
-                .iter()
-                .map(|w| serde_json::Value::String(w.clone()))
-                .collect()
+        // The run warnings (range size, roster ambiguity, test mode, semantics) for EVERY engine
+        // (`foreach ($rw in $runWarnings) { $engineWarnings.Add($rw) }`), then an engine run's turn
+        // warnings (denial notices etc.).
+        warnings: {
+            let mut w: Vec<String> = ctx.run_warnings.clone();
+            if !ctx.is_codex() {
+                for ew in &sec.engine_warnings {
+                    if !w.contains(ew) {
+                        w.push(ew.clone());
+                    }
+                }
+            }
+            w.into_iter().map(serde_json::Value::String).collect()
         },
         base_commit: ctx.revision.base_commit.clone(),
         reviewed_revision: ctx.revision.reviewed_revision.clone(),
@@ -7845,6 +8029,45 @@ mod member_tests {
         assert_eq!(ctx.role, "adversary");
         assert!(ctx.panel_member.is_some());
 
+        std::env::remove_var("CODEX_CONSULT_ROSTER");
+        std::env::remove_var("CODEX_CONSULT_TELEMETRY");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // (muse PANEL) a panel passes -MaxModelSteps to every member; a codex member (no step cap)
+    // drops it instead of refusing (`if ($panelMember) { $MaxModelSteps = 0 }`), a single codex run
+    // still refuses it.
+    #[test]
+    fn a_codex_member_drops_the_step_cap() {
+        let _g = super::telemetry_tests::ENV_LOCK.lock().unwrap();
+        let root = scratch();
+        let roster_path = root.join("roster.json");
+        std::fs::write(
+            &roster_path,
+            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-6-astra"}]}"#,
+        )
+        .unwrap();
+        std::env::set_var("CODEX_CONSULT_ROSTER", &roster_path);
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "off");
+        let mut spec = sample_spec(root.to_str().unwrap(), vec![], "");
+        spec.args["max_model_steps"] = json!(40);
+        let mo = member_options("t", &spec);
+        assert_eq!(mo.max_model_steps, 40);
+        let r = args::validate(&mo, None).unwrap();
+        let ctx = build_context(mo, r, Some(&spec)).expect("a codex member runs");
+        assert_eq!(ctx.o.max_model_steps, 0);
+        let mut single = member_options("t", &spec);
+        single.collab_dir = root.to_str().unwrap().to_string();
+        let r2 = args::validate(&single, None).unwrap();
+        let err = match build_context(single, r2, None) {
+            Ok(_) => panic!("a single codex run refuses -MaxModelSteps"),
+            Err(e) => e,
+        };
+        assert!(
+            err.0.starts_with("-MaxModelSteps is for the muse engine"),
+            "{}",
+            err.0
+        );
         std::env::remove_var("CODEX_CONSULT_ROSTER");
         std::env::remove_var("CODEX_CONSULT_TELEMETRY");
         let _ = std::fs::remove_dir_all(root);

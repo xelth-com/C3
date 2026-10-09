@@ -103,7 +103,7 @@ impl AgyEngine {
             kick_path: self.kick_path.as_deref(),
             // agy step updates grow the stream on every tool step, so the byte-growth reset covers
             // its tool calls; no separate suspension classifier is needed.
-            tool_delta: None,
+            tool_flight: None,
             on_running: self
                 .on_running
                 .as_ref()
@@ -146,6 +146,7 @@ impl AgyEngine {
                     kind: c3_core::engine::StopKind::Stall {
                         silent_seconds: result.silent_seconds,
                         tool_open_seconds: result.tool_open_seconds,
+                        open_tools: result.open_tools.clone(),
                         last_event: result.last_event.clone(),
                     },
                     partial,

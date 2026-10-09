@@ -59,6 +59,9 @@ try {
     $first = (@($raw | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
     if (-not $first) { $first = "c3 hook exited $code without output" }
     Write-Output $first
+    # (wave 27, R13 D5) the second line: the pointer to the coordinator's rules (and the telemetry switch)
+    $pointer = (@($raw | Where-Object { $_ -like 'codex-consult: coordinator rules - *' }) | Select-Object -First 1)
+    if ($pointer -and $pointer -ne $first) { Write-Output $pointer }
 } catch {
     $msg = ("$($_.Exception.Message)" -replace '\s+', ' ').Trim()
     if ($msg.Length -gt 120) { $msg = $msg.Substring(0, 117) + '...' }

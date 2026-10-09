@@ -168,6 +168,12 @@ pub struct SummaryInputs {
     /// The `write lock : waited N ms for another commit of this task` line when the commit waited
     /// (empty when it won the lock at once, F11-3).
     pub commit_wait_line: String,
+    /// (wave 28b, D13 / 28c, D10) The machine-wide health lines after the commit, each complete:
+    /// the retry's outcome (`health     : ... updated by the retry after the commit (the journal
+    /// applied)` / `warning    : ... not updated by the retry after the commit (<cause>) - the
+    /// record waits in <journal> for the next run`) and the journal's unreadable-line notes.
+    pub health_lines: Vec<String>,
+
     /// The `format repair: ...` console line when a repair ran (empty otherwise).
     pub repair_console: String,
     /// The repair drift notes, each rendered as `  drift: <note>`.
@@ -228,7 +234,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
                 out.push("resume     : not possible - the thread of the killed turn is not known (start again with -Mode new)".into());
             }
         }
+        out.extend(s.health_lines.iter().cloned());
         out.push(format!("reply file : {}", s.reply_path));
+
         if !s.reply_json_path.is_empty() {
             out.push(format!("reply json : {}", s.reply_json_path));
         }
@@ -301,7 +309,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
     if !s.commit_wait_line.is_empty() {
         out.push(s.commit_wait_line.clone());
     }
+    out.extend(s.health_lines.iter().cloned());
     out.push(format!("reply file : {}", s.reply_path));
+
     if !s.reply_json_path.is_empty() {
         out.push(format!("reply json : {}", s.reply_json_path));
     }

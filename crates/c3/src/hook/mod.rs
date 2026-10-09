@@ -11,7 +11,11 @@
 //! * Otherwise the availability line, but only if it is well-formed (`^codex-consult: `
 //!   and single-line, exactly the plugin's guard); anything else, or any failure inside
 //!   the check, becomes `codex-consult: reviewer check failed - <reason>`.
-//! * Always exactly one line to stdout, always exit 0.
+//! * Then (wave 27, R13 D5) ONE pointer line, always, whatever the first line says - (wave 27c,
+//!   D13) with a command runnable as written on a host that substitutes nothing - and (wave 28,
+//!   R17) ending with the telemetry switch: `codex-consult: coordinator rules - skill
+//!   codex-consult:coordinate (or <command>); telemetry: on|off`.
+//! * Always exactly two lines to stdout, always exit 0.
 
 use c3_core::one_line;
 
@@ -21,12 +25,32 @@ use crate::providers::{resolve_codex_launcher, short_line, Options};
 const CODEX_MISSING: &str =
     "codex-consult: codex CLI not found on PATH - follow the setup-providers skill before consulting a reviewer";
 
-/// Compute the SessionStart line, print it, and return 0. `collab_dir` is the value of
+/// Compute the SessionStart lines, print them, and return 0. `collab_dir` is the value of
 /// `--collab-dir` (endpoint health is read from every task ledger under it; no network,
-/// no lock, nothing written).
-pub fn run(collab_dir: &str) -> i32 {
+/// no lock, nothing written); `explain_command` the pointer line's command (`""`: this binary's
+/// own `consult --explain coordinate`).
+pub fn run(collab_dir: &str, explain_command: &str) -> i32 {
     println!("{}", line(collab_dir));
+    println!("{}", pointer_line(explain_command));
     0
+}
+
+/// (wave 27, R13 D5 / 27c D13 / 28 R17) The pointer to the coordinator's rules: the skill, else a
+/// command that prints it, then the telemetry switch (`CODEX_CONSULT_TELEMETRY`, the environment
+/// only).
+pub fn pointer_line(explain_command: &str) -> String {
+    let cmd = if explain_command.trim().is_empty() {
+        let exe = std::env::current_exe()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "c3".to_string());
+        format!("\"{exe}\" consult --explain coordinate")
+    } else {
+        explain_command.trim().to_string()
+    };
+    format!(
+        "codex-consult: coordinator rules - skill codex-consult:coordinate (or {cmd}); telemetry: {}",
+        crate::telemetry::switch(None).text()
+    )
 }
 
 /// The line, without printing it (so the behaviour is unit-testable).
@@ -91,6 +115,21 @@ fn reviewer_check_failed(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pointer_line_names_the_command_and_the_switch() {
+        let l = pointer_line("powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\s\\codex-consult.ps1\" -Explain coordinate");
+        assert!(l.starts_with("codex-consult: coordinator rules - skill codex-consult:coordinate (or powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\s\\codex-consult.ps1\" -Explain coordinate); telemetry: "), "{l}");
+        assert!(
+            l.ends_with("; telemetry: on") || l.ends_with("; telemetry: off"),
+            "{l}"
+        );
+        let d = pointer_line("");
+        assert!(
+            d.contains("consult --explain coordinate); telemetry: "),
+            "{d}"
+        );
+    }
 
     #[test]
     fn codex_missing_message() {

@@ -133,6 +133,26 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
         },
         ctx.r.max_words
     ));
+    // (wave 26, R14-R16, D7) the companions: the topics, the role block, the required reviewers
+    if !ctx.o.topic.is_empty() {
+        out.push(format!("topics      : {}", ctx.o.topic.join(", ")));
+    }
+    if let Some(ri) = &ctx.role_info {
+        out.push(format!(
+            "role        : {} ({}: {}) - in the prompt after the ask",
+            ri.name, ri.source, ri.path
+        ));
+    }
+    if !ctx.single_required.is_empty() {
+        out.push(format!(
+            "required    : {} available (-Require)",
+            ctx.single_required
+                .iter()
+                .map(|p| format!("#{p}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     out.push(format!(
         "effort      : {} sent (requested {}, mapping {}, by {})",
         effort_shown, ctx.effort.requested, ctx.effort.mapping, ctx.effort.basis

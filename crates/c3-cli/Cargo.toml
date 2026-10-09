@@ -28,3 +28,5 @@ index-surreal = ["c3/index-surreal"]
 serde_json.workspace = true
 # telemetry_parity: the marks' `when` as UTC client times, seeded consultation times.
 chrono.workspace = true
+# compat_wave2b: the stall outcome's shape.
+regex.workspace = true
