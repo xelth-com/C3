@@ -6288,7 +6288,7 @@
                      },
                      {
                          "id":  "F29-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -6351,6 +6351,15 @@
                                              "evidence":  "",
                                              "base_commit":  "70e74c76faf9bc9b765569a5ca5ce195a3a4028d",
                                              "tree_sha256":  "700af582d85d52030675a9f96d1c4d79f2aeaabf440e782a6805cc53ad4d7d34"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T14:16:00+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2i 2f9edda: the applied state lives in the journal itself as appended marked copies (applying:\u003csha256 of the health file\u003e before the write, applied:true after); judged fail-closed; proven against the plugin\u0027s real Update-MachineHealth (its parser ignores extra fields, its writer keeps the tail byte for byte)",
+                                             "evidence":  "",
+                                             "base_commit":  "3b1df071cece203c7bc8ae92a6e845d12001550c",
+                                             "tree_sha256":  "aef7d63e4a8ab4ba32672d51c247f235708a06c827101afff12ecd6935393c3a"
                                          }
                                      ],
                          "reviewer_checks":  [
