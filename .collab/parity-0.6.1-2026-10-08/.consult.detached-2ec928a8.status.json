@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "2ec928a8-748b-407b-9466-ea20e33a1694",
+    "id8":  "2ec928a8",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "running",
+    "exit":  null,
+    "started":  "2026-10-09T11:02:00+02:00",
+    "updated":  "2026-10-09T11:02:09+02:00",
+    "finished":  null,
+    "wall_seconds":  null,
+    "pid":  10024,
+    "start_time":  "2026-10-09T09:02:00.7196824Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave2b-round3-mimo",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\26-claude-wave2b-round3.md",
+    "members":  [
+                    {
+                        "position":  3,
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "state":  "running",
+                        "outcome":  "",
+                        "wall_seconds":  null,
+                        "n":  16,
+                        "handoff":  "29",
+                        "reply":  "handoffs/29-codex-wave2b-round3-mimo.md"
+                    }
+                ],
+    "summary":  "",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-2ec928a8.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}
