@@ -266,7 +266,16 @@ pub fn run_telemetry(args: TelemetryArgs) -> i32 {
         }
         return match telemetry::flush_now() {
             Ok(r) if !r.skipped.is_empty() => {
-                println!("{TOOL}: skipped - {}", r.skipped);
+                // (wave 3d, F24-6) the record's warning is said on a skipped flush too
+                println!(
+                    "{TOOL}: skipped - {}{}",
+                    r.skipped,
+                    if r.last_warning.is_empty() {
+                        String::new()
+                    } else {
+                        format!("; warning: {}", r.last_warning)
+                    }
+                );
                 if r.skipped.starts_with("another flush") {
                     2
                 } else {

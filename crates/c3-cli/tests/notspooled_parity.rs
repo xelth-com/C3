@@ -18,7 +18,13 @@
 //!   equal or longer contents); a legacy file a writer holds is skipped with a note;
 //! - E3: the forgetting marker judged on pid AND start ticks (the wrong ticks gone - a producer
 //!   removes it with a note; the right ticks refuse; an unreadable start alive), the forget's own
-//!   marker with `start_ticks`.
+//!   marker with `start_ticks`;
+//! - wave 3d (the diff-review F24-1..F24-6): a flush without the spool lock sees only the kept
+//!   lines (RC1); a tail without a line end appended to a recorded file is counted (RC2); a count
+//!   made during a local forget never survives it (RC3, test hook `CODEX_CONSULT_TEST_CLEANUP_GATE`);
+//!   `--status` names the latest unseen line; the plugin-home hook's marker and the production
+//!   layout without it (RC4); a failed rewrite after the fold's deletes is said and loses no count
+//!   (test hook `CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL`).
 //!
 //! This test process stands in for a LIVE producer (its pid and start ticks); pid 999999 for a gone
 //! one. Nothing reaches a real intake (`C3_TELEMETRY_HUB` is a closed loopback port). Windows only
@@ -92,6 +98,11 @@ fn setup(tag: &str) -> H {
 impl H {
     /// `c3` with this test's switches only: test mode on, the intake a closed loopback port.
     fn c3(&self, args: &[&str], env: &[(&str, &str)]) -> Output {
+        self.cmd(args, env).output().expect("run c3")
+    }
+
+    /// The command [`H::c3`] runs (to start it in the background).
+    fn cmd(&self, args: &[&str], env: &[(&str, &str)]) -> Command {
         let mut cmd = Command::new(c3_bin());
         for (k, _) in std::env::vars() {
             if k.starts_with("CODEX_CONSULT_") || k.starts_with("FAKE_") || k.starts_with("C3_") {
@@ -113,7 +124,8 @@ impl H {
                 cmd.env(k, v);
             }
         }
-        cmd.args(args).output().expect("run c3")
+        cmd.args(args);
+        cmd
     }
 
     fn status(&self) -> String {
@@ -1059,4 +1071,427 @@ fn the_plugin_home_hook_is_honoured_in_test_mode_only() {
     assert_eq!(last["not_spooled_seen"], 0);
     assert!(!h.home.join("telemetry-not-spooled.ndjson").exists());
     h.done();
+}
+
+// --------------------------------------------------------------------------- wave 3d (F24-1..F24-6)
+
+/// Start `c3 telemetry --forget --local --yes` with the cleanup gate (test hook
+/// `CODEX_CONSULT_TEST_CLEANUP_GATE`) and wait until its cleanup has listed the files and waits.
+fn forget_at_the_gate(h: &H, env: &[(&str, &str)]) -> (std::process::Child, PathBuf) {
+    let gate = h.work.join(format!(
+        "gate-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let gate_text = gate.to_string_lossy().to_string();
+    let mut all: Vec<(&str, &str)> = env.to_vec();
+    all.push(("CODEX_CONSULT_TEST_CLEANUP_GATE", &gate_text));
+    let child = h
+        .cmd(&["telemetry", "--forget", "--local", "--yes"], &all)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let waiting = PathBuf::from(format!("{gate_text}.waiting"));
+    let t0 = std::time::Instant::now();
+    while !waiting.exists() && t0.elapsed() < Duration::from_secs(60) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(waiting.exists(), "the cleanup never reached its gate");
+    (child, gate)
+}
+
+/// Open the gate and wait for the forget: its exit code and output.
+fn open_the_gate(child: std::process::Child, gate: &Path) -> (Option<i32>, String) {
+    std::fs::write(gate, "go").unwrap();
+    let o = child.wait_with_output().unwrap();
+    (o.status.code(), text(&o))
+}
+
+/// (F24-1, RC1) A flush that cannot take the spool lock folds nothing and counts as seen only the
+/// lines of the files a fold would keep (this live producer's): the gone producer's 3 lines stay
+/// unseen - `--status` counts them -, and the next flush folds them ONCE. One accounting of N.
+#[test]
+fn f24_1_a_flush_without_the_spool_lock_sees_only_the_kept_lines_and_the_next_folds_the_gone_once()
+{
+    let h = setup("f24-1");
+    notspooled::append(&h.paths, "own-1").unwrap();
+    let gone = h.write(
+        "telemetry-not-spooled-999999-639000000000000000.ndjson",
+        &(line("2026-10-01T10:00:00+02:00", "gone-1")
+            + &line("2026-10-01T10:01:00+02:00", "gone-2")
+            + &line("2026-10-01T10:02:00+02:00", "gone-3")),
+    );
+    assert_eq!(h.count().count, 4);
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(h.dir.join("spool.lock"))
+        .unwrap();
+    held.lock().unwrap();
+    let fl1 = h.flush(&[]);
+    let last1 = h.last();
+    drop(held);
+    assert_eq!(
+        last1["not_spooled_seen"],
+        1,
+        "{} | {}",
+        text(&fl1),
+        h.last_text()
+    );
+    assert!(folded_entries(&last1).is_empty(), "{}", h.last_text());
+    assert_eq!(h.fold_notes(), 0, "{:?}", h.notes());
+    assert!(gone.exists());
+    let st = h.status();
+    assert!(
+        st.contains("\nnot spooled: 3 event(s) since the last flush - the latest "),
+        "{}",
+        status_line(&st, "not spooled")
+    );
+    let fl2 = h.flush(&[]);
+    assert_eq!(fl2.status.code(), Some(0), "{}", text(&fl2));
+    assert_eq!(
+        h.notes_like(r"folded 3 not-spooled line\(s\) of 1 gone producer\(s\)"),
+        1,
+        "{:?}",
+        h.notes()
+    );
+    assert_eq!(h.fold_notes(), 1);
+    assert_eq!(h.last()["not_spooled_seen"], 1);
+    assert!(!gone.exists());
+    assert_eq!(h.count().count, 0);
+    h.done();
+}
+
+/// (F24-2, RC2) A crash between the save and the deletes (exit 87), then a last piece WITHOUT a
+/// line end appended to the recorded file: the restarted flush counts it (one more fold note of 1
+/// line) and deletes the file - never a silent zero.
+#[test]
+fn f24_2_a_tail_without_a_line_end_appended_to_a_recorded_file_is_counted() {
+    let h = setup("f24-2");
+    let name = "telemetry-not-spooled-999999-639000000000000000.ndjson";
+    let gone = h.write(
+        name,
+        &(line("2026-10-01T10:00:00+02:00", "gone-1")
+            + &line("2026-10-01T10:01:00+02:00", "gone-2")),
+    );
+    let len0 = len(&gone);
+    let crash = h.flush(&[("CODEX_CONSULT_TEST_FOLD_CRASH", "1")]);
+    assert_eq!(crash.status.code(), Some(87), "{}", text(&crash));
+    assert_eq!(folded_entries(&h.last()), vec![format!("{name}={len0}")]);
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&gone)
+            .unwrap();
+        f.write_all(b"{\"time\":\"2026-10-01T10:05:00+02:00\",\"why\":\"tail\"}")
+            .unwrap();
+    }
+    // --status counts complete lines only
+    assert_eq!(h.count().count, 0);
+    let fl = h.flush(&[]);
+    assert_eq!(fl.status.code(), Some(0), "{}", text(&fl));
+    assert_eq!(
+        h.notes_like(r"folded 2 not-spooled line\(s\) of 1 gone producer\(s\)"),
+        1,
+        "{:?}",
+        h.notes()
+    );
+    assert_eq!(
+        h.notes_like(r"folded 1 not-spooled line\(s\) of 1 gone producer\(s\)"),
+        1,
+        "{:?}",
+        h.notes()
+    );
+    assert_eq!(h.fold_notes(), 2);
+    assert!(!gone.exists());
+    assert!(folded_entries(&h.last()).is_empty());
+    h.done();
+}
+
+/// (F24-3, RC3) A local forget paused after its cleanup listed the files: C3's producer writes
+/// nothing meanwhile (and leaves no file); a file another producer makes after the listing (the
+/// plugin's, an older C3 - it does not check) is removed by the cleanup's second listing. No
+/// not-spooled file survives the forget; after it a count is written again.
+#[test]
+fn f24_3_a_count_made_during_a_local_forget_never_survives_it() {
+    let h = setup("f24-3");
+    h.write(
+        "telemetry-not-spooled-999999-639000000000000000.ndjson",
+        &line("2026-10-01T10:00:00+02:00", "gone"),
+    );
+    h.write(
+        "telemetry-not-spooled.ndjson",
+        &line("2026-09-01T10:00:00+02:00", "legacy"),
+    );
+    let (child, gate) = forget_at_the_gate(&h, &[]);
+    let m: Value =
+        serde_json::from_str(&std::fs::read_to_string(&h.paths.marker).unwrap()).unwrap();
+    assert_eq!(m["pid"], child.id(), "the forget holds its marker");
+    let e = notspooled::append(&h.paths, "during the forget").unwrap_err();
+    assert!(
+        e.contains("is not written while the local telemetry data is being deleted"),
+        "{e}"
+    );
+    assert!(!h.own().exists(), "the refused append left no file");
+    let late = "telemetry-not-spooled-999998-639000000000000002.ndjson";
+    h.write(late, &line("2026-10-09T10:00:00+02:00", "late"));
+    let (code, out) = open_the_gate(child, &gate);
+    assert_eq!(code, Some(0), "{out}");
+    assert!(out.contains("removed locally - "), "{out}");
+    assert!(out.contains(late), "the late file is named: {out}");
+    assert!(h.ns_names().is_empty(), "{:?}", h.ns_names());
+    assert!(!h.paths.marker.exists());
+    assert!(!h.dir.join("forget-pending.json").exists());
+    notspooled::append(&h.paths, "after the forget").unwrap();
+    assert!(h.own().exists());
+    h.done();
+}
+
+/// (F24-4) `--status` names the latest line the last flush did not see: with
+/// `not_spooled_seen` 1, a seen line dated 2030 before a new one dated 2020 names the 2020 one.
+#[test]
+fn f24_4_status_names_the_latest_unseen_line() {
+    let h = setup("f24-4");
+    h.write(
+        "telemetry-not-spooled-999999-639000000000000000.ndjson",
+        &(line("2030-01-01T00:00:00+00:00", "seen-2030")
+            + &line("2020-01-01T00:00:00+00:00", "new-2020")),
+    );
+    std::fs::write(
+        &h.paths.last,
+        r#"{"time":"2026-10-09T10:00:00+02:00","result":"seeded","delivered":0,"kept":0,"dropped":0,"rejected":[],"http":null,"not_spooled_seen":1,"not_spooled_folded":[],"notes":[]}"#,
+    )
+    .unwrap();
+    let st = h.status();
+    assert!(
+        st.contains("\nnot spooled: 1 event(s) since the last flush - the latest 2020-01-01T00:00:00+00:00: new-2020 ("),
+        "{}",
+        status_line(&st, "not spooled")
+    );
+    h.done();
+}
+
+/// (F24-5, P8) Under the plugin-home test hook the forgetting marker is the PLUGIN's
+/// `<home>/telemetry-forgetting`: `--status` and the sender read it there (a living owner stops the
+/// sender, a gone one is removed with a note in the plugin's `.last`), C3's own place is not read,
+/// and a local forget writes its marker there (its pid and start ticks), refuses C3's producer
+/// with it, and removes it last - with the plugin's not-spooled files and `.last`.
+#[test]
+fn f24_5_the_plugin_home_hook_puts_the_marker_at_the_plugin_place() {
+    let h = setup("f24-5-hook");
+    let home = h.home.to_string_lossy().to_string();
+    let hook = [(notspooled::PLUGIN_HOME_VAR, home.as_str())];
+    let pmk = h.home.join("telemetry-forgetting");
+    let plast = h.home.join("telemetry-spool").join(".last");
+    let me = std::process::id();
+    let live = format!(
+        "{{\"pid\":{me},\"start_ticks\":{},\"since\":\"2026-10-09T01:00:00+02:00\"}}\n",
+        notspooled::own_start_ticks()
+    );
+    // a living owner's marker at the plugin place
+    std::fs::write(&pmk, &live).unwrap();
+    let st = text(&h.c3(&["telemetry", "--status"], &hook));
+    let re = regex::Regex::new(&format!(
+        r"(?m)^forgetting : the marker {} is there - its owner pid {me} lives",
+        regex::escape(&pmk.display().to_string())
+    ))
+    .unwrap();
+    assert!(re.is_match(&st), "{}", status_line(&st, "forgetting"));
+    let fl = text(&h.c3(&["telemetry", "--flush", "--telemetry", "on"], &hook));
+    assert!(
+        fl.contains("skipped - c3 telemetry --forget --local is deleting")
+            && fl.contains(&pmk.display().to_string()),
+        "{fl}"
+    );
+    assert!(pmk.exists());
+    // C3's own place is not read under the hook
+    std::fs::remove_file(&pmk).unwrap();
+    std::fs::write(&h.paths.marker, &live).unwrap();
+    let st = text(&h.c3(&["telemetry", "--status"], &hook));
+    assert!(!st.contains("\nforgetting : the marker"), "{st}");
+    let fl = text(&h.c3(&["telemetry", "--flush", "--telemetry", "on"], &hook));
+    assert!(!fl.contains("is deleting"), "{fl}");
+    std::fs::remove_file(&h.paths.marker).unwrap();
+    // a gone owner's marker at the plugin place: the sender removes it, the note in the plugin's .last
+    std::fs::write(&pmk, "{\"pid\":999999,\"since\":\"x\"}\n").unwrap();
+    let fl = h.c3(&["telemetry", "--flush", "--telemetry", "on"], &hook);
+    assert!(!pmk.exists(), "{}", text(&fl));
+    let pl: Value = serde_json::from_str(&std::fs::read_to_string(&plast).unwrap()).unwrap();
+    assert!(
+        pl["notes"].as_array().unwrap().iter().any(|n| n
+            .as_str()
+            .unwrap_or("")
+            .contains("removed the forgetting marker of pid 999999 (gone) since x")),
+        "{pl}"
+    );
+    assert!(
+        !h.paths.last.exists(),
+        "C3's own record is not written under the hook"
+    );
+    // the forget's own marker at the plugin place
+    let pgone = h
+        .home
+        .join("telemetry-not-spooled-999999-639000000000000000.ndjson");
+    std::fs::write(&pgone, line("2026-10-01T10:00:00+02:00", "plugin-place")).unwrap();
+    let (child, gate) = forget_at_the_gate(&h, &hook);
+    let m: Value = serde_json::from_str(&std::fs::read_to_string(&pmk).unwrap()).unwrap();
+    assert_eq!(m["pid"], child.id());
+    assert!(m["start_ticks"].as_i64().is_some_and(|t| t > 0), "{m}");
+    assert!(!h.paths.marker.exists(), "not at C3's place");
+    let pp = LocalPaths::plugin_home(&h.home, &h.dir);
+    assert!(notspooled::append(&pp, "during").is_err());
+    let (code, out) = open_the_gate(child, &gate);
+    assert_eq!(code, Some(0), "{out}");
+    assert!(!pmk.exists(), "removed last");
+    assert!(!plast.exists(), "{out}");
+    assert!(!pgone.exists(), "{out}");
+    h.done();
+}
+
+/// (F24-5, P8) Without the hook - test mode on and the variable unset, or the variable set with
+/// test mode off - every file is under C3's own root `<codex home>/c3/telemetry/`: the fold's
+/// record and files, the forget's marker; nothing appears at the plugin's places.
+#[test]
+fn f24_5_without_the_hook_every_file_is_under_c3s_own_root() {
+    let h = setup("f24-5-prod");
+    let home = h.home.to_string_lossy().to_string();
+    let plugin_places = || -> Vec<String> {
+        std::fs::read_dir(&h.home)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n != "c3")
+            .collect()
+    };
+    let gone = h.write(
+        "telemetry-not-spooled-999999-639000000000000000.ndjson",
+        &line("2026-10-01T10:00:00+02:00", "gone-1"),
+    );
+    let fl = h.flush(&[]);
+    assert_eq!(fl.status.code(), Some(0), "{}", text(&fl));
+    assert_eq!(
+        h.notes_like(r"folded 1 not-spooled line\(s\) of 1 gone producer\(s\)"),
+        1
+    );
+    assert!(!gone.exists());
+    assert!(plugin_places().is_empty(), "{:?}", plugin_places());
+    // the variable set but test mode off: ignored
+    let gone2 = h.write(
+        "telemetry-not-spooled-999999-639000000000000001.ndjson",
+        &(line("2026-10-02T10:00:00+02:00", "gone-2")
+            + &line("2026-10-02T10:01:00+02:00", "gone-3")),
+    );
+    let fl = h.c3(
+        &["telemetry", "--flush", "--telemetry", "on"],
+        &[
+            (notspooled::PLUGIN_HOME_VAR, &home),
+            ("CODEX_CONSULT_TEST_MODE", ""),
+        ],
+    );
+    assert_eq!(fl.status.code(), Some(0), "{}", text(&fl));
+    assert_eq!(
+        h.notes_like(r"folded 2 not-spooled line\(s\) of 1 gone producer\(s\)"),
+        1,
+        "{:?}",
+        h.notes()
+    );
+    assert!(!gone2.exists());
+    assert!(plugin_places().is_empty(), "{:?}", plugin_places());
+    // the forget's marker at C3's root
+    notspooled::append(&h.paths, "own").unwrap();
+    let (child, gate) = forget_at_the_gate(&h, &[]);
+    let m: Value =
+        serde_json::from_str(&std::fs::read_to_string(&h.paths.marker).unwrap()).unwrap();
+    assert_eq!(m["pid"], child.id());
+    assert!(!h.home.join("telemetry-forgetting").exists());
+    let (code, out) = open_the_gate(child, &gate);
+    assert_eq!(code, Some(0), "{out}");
+    assert!(!h.paths.marker.exists());
+    assert!(h.ns_names().is_empty(), "{:?}", h.ns_names());
+    assert!(plugin_places().is_empty(), "{:?}", plugin_places());
+    h.done();
+}
+
+/// (F24-6) The rewrite after the fold's deletes fails (test hook
+/// `CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL=1`): the flush says so, the record still names the
+/// deleted files - `--status` is unaffected -, and the next flush counts everything new exactly once
+/// (a new legacy generation staged under a fresh name, a new gone producer, and a file recreated
+/// SHORTER under a stale name - folded afresh, E24) and drops the stale names.
+#[test]
+fn f24_6_a_failed_rewrite_after_the_deletes_is_said_and_loses_no_count() {
+    let h = setup("f24-6");
+    notspooled::append(&h.paths, "live").unwrap();
+    let gname = "telemetry-not-spooled-999999-639000000000000000.ndjson";
+    let gone = h.write(
+        gname,
+        &(line("2026-10-01T10:00:00+02:00", "gone-1")
+            + &line("2026-10-01T10:01:00+02:00", "gone-2")),
+    );
+    h.write(
+        "telemetry-not-spooled.ndjson",
+        &line("2026-09-01T10:00:00+02:00", "legacy-1"),
+    );
+    let fl = h.flush(&[("CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL", "1")]);
+    let out = text(&fl);
+    assert_eq!(fl.status.code(), Some(0), "{out}");
+    assert!(
+        out.contains("; warning: ")
+            && out.contains("could not be rewritten after the fold's deletes")
+            && out.contains("it still names 2 deleted file(s)"),
+        "{out}"
+    );
+    let stale = folded_entries(&h.last());
+    assert_eq!(stale.len(), 2, "{stale:?}");
+    assert!(!gone.exists());
+    assert!(h.staged().is_empty());
+    assert_eq!(
+        h.notes_like(r"folded 3 not-spooled line\(s\) of 2 gone producer\(s\)"),
+        1
+    );
+    assert_eq!(h.count().count, 0);
+    // new lines: the legacy name again, a new gone producer, the stale producer name recreated shorter
+    h.write(
+        "telemetry-not-spooled.ndjson",
+        &line("2026-09-02T10:00:00+02:00", "legacy-2"),
+    );
+    h.write(
+        "telemetry-not-spooled-999997-639000000000000000.ndjson",
+        &line("2026-10-02T10:00:00+02:00", "gone-new"),
+    );
+    h.write(gname, &line("2026-10-03T10:00:00+02:00", "x"));
+    assert!(len(&gone) < len0_of(&stale, gname));
+    assert_eq!(h.count().count, 3);
+    let fl2 = h.flush(&[]);
+    assert_eq!(fl2.status.code(), Some(0), "{}", text(&fl2));
+    assert!(!text(&fl2).contains("warning"), "{}", text(&fl2));
+    assert_eq!(
+        h.notes_like(r"folded 3 not-spooled line\(s\) of 3 gone producer\(s\)"),
+        1,
+        "{:?}",
+        h.notes()
+    );
+    assert_eq!(h.fold_notes(), 2);
+    assert!(folded_entries(&h.last()).is_empty(), "{}", h.last_text());
+    assert_eq!(h.last()["not_spooled_seen"], 1);
+    assert_eq!(
+        h.ns_names(),
+        vec![h.own().file_name().unwrap().to_string_lossy().to_string()]
+    );
+    assert_eq!(h.count().count, 0);
+    h.done();
+}
+
+/// The recorded bytes of `name` in `folded_entries` output (`name=bytes`).
+fn len0_of(entries: &[String], name: &str) -> u64 {
+    entries
+        .iter()
+        .find_map(|e| e.strip_prefix(&format!("{name}=")))
+        .and_then(|b| b.parse().ok())
+        .unwrap()
 }

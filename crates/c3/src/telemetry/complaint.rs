@@ -393,22 +393,47 @@ pub(crate) fn run_local_cleanup(
     for d in &ns_dirs {
         targets.extend(notspooled::list_files(d).into_iter().map(|f| f.path));
     }
+    // TEST HOOK (test mode only; wave 3d, F24-3): CODEX_CONSULT_TEST_CLEANUP_GATE=<path> - once the
+    // files are listed, the cleanup writes `<path>.waiting` and waits (at most 60 s) until <path>
+    // exists (a producer appends meanwhile)
+    if let Some(gate) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_CLEANUP_GATE") {
+        let gate = PathBuf::from(gate.trim());
+        if !gate.as_os_str().is_empty() {
+            let mut waiting = gate.clone().into_os_string();
+            waiting.push(".waiting");
+            let _ = fs::write(&waiting, "waiting");
+            let t0 = std::time::Instant::now();
+            while !gate.exists() && t0.elapsed() < Duration::from_secs(60) {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
     targets.push(paths.last.clone());
     if paths.last != dir.join(LAST_FLUSH) {
         targets.push(dir.join(LAST_FLUSH));
     }
     targets.push(dir.join("refs.ndjson"));
-    for p in targets {
+    // (wave 3d, F24-3) the not-spooled files are listed once more after the removals: a producer
+    // that does not check the deletion (the plugin's, an older C3) may have made one since the
+    // first listing - C3's own producer writes nothing while the transaction or a living marker is
+    // there, and makes its file before it checks, so the first listing has every file it wrote to
+    let rescan = || -> Vec<PathBuf> {
+        ns_dirs
+            .iter()
+            .flat_map(|d| notspooled::list_files(d).into_iter().map(|f| f.path))
+            .collect()
+    };
+    let removal = |p: &Path, c: &mut Cleanup| -> bool {
         if !p.exists() {
-            continue;
+            return true;
         }
-        if let Err(e) = remove(&p) {
+        if let Err(e) = remove(p) {
             c.error = Some(format!(
                 "{}: {}",
                 p.display(),
                 c3_core::one_line(&e.to_string())
             ));
-            return c;
+            return false;
         }
         c.removed.push(
             p.file_name()
@@ -416,6 +441,17 @@ pub(crate) fn run_local_cleanup(
                 .unwrap_or("?")
                 .to_string(),
         );
+        true
+    };
+    for p in targets {
+        if !removal(&p, &mut c) {
+            return c;
+        }
+    }
+    for p in rescan() {
+        if !removal(&p, &mut c) {
+            return c;
+        }
     }
     // (wave 2g, F19-2) the salt is kept as ANOTHER instance's only when its identity was read and
     // differs; a salt that exists but cannot be read may still be the deleted instance - the cleanup
