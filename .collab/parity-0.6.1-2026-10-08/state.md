@@ -100,3 +100,5 @@ fixed main, tag `v0.2.0` on ACCEPT, push the tag. Open small items: the operator
 `auth: subscription` entry (add `{"provider":"anthropic","engine":"claude","model":"claude-haiku-5-5","auth":"subscription"}`
 as a chore reviewer); one c3-cli compiler warning (the German linker note, `linker_messages`); the improvement track
 (RC4 benchmark for a native Messages route, SurrealDB-derived views) is NOT started.
+
+Idle since 2026-10-09 18:15; idle wake 2 at 19:15 - the handover is this section, the 30-minute wake removed. Resume on Wed 2026-10-14 after 11:37 with a fresh session from this file (the command above).
