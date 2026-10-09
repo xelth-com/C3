@@ -4241,7 +4241,7 @@
                      },
                      {
                          "id":  "F24-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -4300,6 +4300,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6bfc080c950585319ace0bc376f31e046f94b233",
                                              "tree_sha256":  "aea88395eb5d3ef4cc2eb6d72deebbb59fbc29b3a407f91ac172c50cbef9418d"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T11:00:16+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3d e9f3127 with the reviewer\u0027s fixtures RC1-RC4: the lock-busy flush sees only live producers\u0027 lines, a newline-less tail is counted, the producer refuses during a deletion and the cleanup re-lists, --status names the latest unseen line, P8 proven both ways, a failed rewrite is said and a staged name can never recur",
+                                             "evidence":  "",
+                                             "base_commit":  "46ac66e9b2c3fedb1d4d22042a5717dcb307a362",
+                                             "tree_sha256":  "686c4c1c3f1a2e558d77c5c66bfceede87dfa15c99a739f798e9b5c46c44477c"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -4315,7 +4324,7 @@
                      },
                      {
                          "id":  "F24-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -4365,6 +4374,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6bfc080c950585319ace0bc376f31e046f94b233",
                                              "tree_sha256":  "aea88395eb5d3ef4cc2eb6d72deebbb59fbc29b3a407f91ac172c50cbef9418d"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T11:00:21+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3d e9f3127 with the reviewer\u0027s fixtures RC1-RC4: the lock-busy flush sees only live producers\u0027 lines, a newline-less tail is counted, the producer refuses during a deletion and the cleanup re-lists, --status names the latest unseen line, P8 proven both ways, a failed rewrite is said and a staged name can never recur",
+                                             "evidence":  "",
+                                             "base_commit":  "46ac66e9b2c3fedb1d4d22042a5717dcb307a362",
+                                             "tree_sha256":  "686c4c1c3f1a2e558d77c5c66bfceede87dfa15c99a739f798e9b5c46c44477c"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -4380,7 +4398,7 @@
                      },
                      {
                          "id":  "F24-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -4430,6 +4448,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6bfc080c950585319ace0bc376f31e046f94b233",
                                              "tree_sha256":  "aea88395eb5d3ef4cc2eb6d72deebbb59fbc29b3a407f91ac172c50cbef9418d"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T11:00:25+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3d e9f3127 with the reviewer\u0027s fixtures RC1-RC4: the lock-busy flush sees only live producers\u0027 lines, a newline-less tail is counted, the producer refuses during a deletion and the cleanup re-lists, --status names the latest unseen line, P8 proven both ways, a failed rewrite is said and a staged name can never recur",
+                                             "evidence":  "",
+                                             "base_commit":  "46ac66e9b2c3fedb1d4d22042a5717dcb307a362",
+                                             "tree_sha256":  "686c4c1c3f1a2e558d77c5c66bfceede87dfa15c99a739f798e9b5c46c44477c"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -4445,7 +4472,7 @@
                      },
                      {
                          "id":  "F24-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -4490,6 +4517,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6bfc080c950585319ace0bc376f31e046f94b233",
                                              "tree_sha256":  "aea88395eb5d3ef4cc2eb6d72deebbb59fbc29b3a407f91ac172c50cbef9418d"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T11:00:28+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3d e9f3127 with the reviewer\u0027s fixtures RC1-RC4: the lock-busy flush sees only live producers\u0027 lines, a newline-less tail is counted, the producer refuses during a deletion and the cleanup re-lists, --status names the latest unseen line, P8 proven both ways, a failed rewrite is said and a staged name can never recur",
+                                             "evidence":  "",
+                                             "base_commit":  "46ac66e9b2c3fedb1d4d22042a5717dcb307a362",
+                                             "tree_sha256":  "686c4c1c3f1a2e558d77c5c66bfceede87dfa15c99a739f798e9b5c46c44477c"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -4505,7 +4541,7 @@
                      },
                      {
                          "id":  "F24-5",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -4564,6 +4600,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6bfc080c950585319ace0bc376f31e046f94b233",
                                              "tree_sha256":  "aea88395eb5d3ef4cc2eb6d72deebbb59fbc29b3a407f91ac172c50cbef9418d"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T11:00:32+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3d e9f3127 with the reviewer\u0027s fixtures RC1-RC4: the lock-busy flush sees only live producers\u0027 lines, a newline-less tail is counted, the producer refuses during a deletion and the cleanup re-lists, --status names the latest unseen line, P8 proven both ways, a failed rewrite is said and a staged name can never recur",
+                                             "evidence":  "",
+                                             "base_commit":  "46ac66e9b2c3fedb1d4d22042a5717dcb307a362",
+                                             "tree_sha256":  "686c4c1c3f1a2e558d77c5c66bfceede87dfa15c99a739f798e9b5c46c44477c"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -4579,7 +4624,7 @@
                      },
                      {
                          "id":  "F24-6",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -4620,6 +4665,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6bfc080c950585319ace0bc376f31e046f94b233",
                                              "tree_sha256":  "aea88395eb5d3ef4cc2eb6d72deebbb59fbc29b3a407f91ac172c50cbef9418d"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T11:00:36+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3d e9f3127 with the reviewer\u0027s fixtures RC1-RC4: the lock-busy flush sees only live producers\u0027 lines, a newline-less tail is counted, the producer refuses during a deletion and the cleanup re-lists, --status names the latest unseen line, P8 proven both ways, a failed rewrite is said and a staged name can never recur",
+                                             "evidence":  "",
+                                             "base_commit":  "46ac66e9b2c3fedb1d4d22042a5717dcb307a362",
+                                             "tree_sha256":  "686c4c1c3f1a2e558d77c5c66bfceede87dfa15c99a739f798e9b5c46c44477c"
                                          }
                                      ],
                          "reviewer_checks":  [
