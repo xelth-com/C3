@@ -135,67 +135,203 @@ pub struct CoordinatorMatch {
     pub unresolved: Option<String>,
 }
 
-/// `ConvertFrom-ReviewerMatcher` for `CODEX_CONSULT_COORDINATOR`: a `#<n>` roster position, a
-/// `<provider> :: <model>` lineage, or a bare provider label, either with an optional ` [<engine>]`
-/// suffix. `roster` is `None` when there is no reviewer roster at all. `Err` carries the plugin's
-/// exact `<why>` (the caller wraps it into the full refusal).
-pub fn parse_coordinator_matcher(
+/// `Get-CodexConfigDefaults` (wave 27c, D9): the provider and the model the bridge would run with -
+/// the Codex config's top-level `model_provider` (else `openai`) and its top-level `model` (`""`
+/// when none). A model-less codex roster entry and a bare label of the default provider resolve to
+/// them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodexDefaults {
+    pub provider: String,
+    pub model: String,
+}
+
+impl Default for CodexDefaults {
+    fn default() -> Self {
+        CodexDefaults {
+            provider: "openai".to_string(),
+            model: String::new(),
+        }
+    }
+}
+
+/// [`CodexDefaults`] of a read Codex config (`Read-CodexConfigSubset`): a setting counts only when
+/// the file and its top level parsed and the value is a non-empty plain string.
+pub fn codex_config_defaults(config: &crate::config::CodexConfig) -> CodexDefaults {
+    let mut d = CodexDefaults::default();
+    if !(config.exists && config.ok) {
+        return d;
+    }
+    let Some(top) = config.top().filter(|t| t.ok) else {
+        return d;
+    };
+    let p = crate::config::get_toml_string(Some(top), "model_provider");
+    if p.present && p.reason.is_empty() && !p.value.is_empty() {
+        d.provider = p.value;
+    }
+    let m = crate::config::get_toml_string(Some(top), "model");
+    if m.present && m.reason.is_empty() && !m.value.is_empty() {
+        d.model = m.value;
+    }
+    d
+}
+
+/// The resolution half of `Resolve-CoordinatorIdentity` for a `CODEX_CONSULT_COORDINATOR` value
+/// (`ConvertFrom-ReviewerMatcher`'s grammar: a `#<n>` roster position, a `<provider> :: <model>`
+/// lineage, or a bare provider label, either with an optional ` [<engine>]` suffix) - THE one
+/// coordinator resolver of the consultation's ledger record and of a rating's actor (F09-6). A
+/// RESOLVED triple, through the same rules as a seated reviewer:
+///
+/// - `#n`: that entry's provider, its model - else, for a codex entry, the model the bridge would
+///   run (`defaults.model`) - and its engine; a position naming no seat here is no refusal
+///   (`unresolved`);
+/// - a lineage: the model as given (a Claude id's `[1m]` suffix stripped); without an engine, its
+///   first roster entry's engine, else codex;
+/// - a bare label: the model of its roster entries when they name ONE model (a model-less codex
+///   entry counting as `defaults.model`) and one engine; several models (or an entry without one)
+///   leave the model unnamed; a label no entry carries is - for the config's own provider
+///   (`defaults.provider`, ordinal) with a configured model and no other engine - that model on
+///   codex.
+///
+/// `roster` is `None` when there is no reviewer roster (then `in_roster` stays unknown). `Err`
+/// carries the plugin's exact `<why>` (the caller wraps it, [`coordinator_refusal`]).
+pub fn resolve_coordinator_match(
     value: &str,
     roster: Option<&[RosterEntry]>,
+    defaults: &CodexDefaults,
 ) -> Result<CoordinatorMatch, String> {
     let t = value.trim();
     if t.is_empty() {
         return Err("an empty value".to_string());
     }
-    // (wave 27c, D10) the grammar of a reviewer matcher — `#<n>`, a bare provider label, or
-    // `<provider> :: <model>`, any with an optional ` [<engine>]` — is parsed by ONE function that
-    // the roster validator shares (`c3_core::roster::parse_reviewer_matcher_grammar`); what the
-    // roster accepts as a provider/model/engine string, the coordinator value accepts.
-    let g = crate::roster::parse_reviewer_matcher_grammar(t)?;
+    // (wave 27c, D10) the grammar of a reviewer matcher is parsed by ONE function that the roster
+    // validator shares (`c3_core::roster::parse_reviewer_matcher_grammar`).
+    let mut g = crate::roster::parse_reviewer_matcher_grammar(t)?;
+    // (wave 29, item 9) a coordinator's Claude model id may carry the 1M-context suffix: stripped
+    if let Some(m) = g.model.as_mut() {
+        let lower = m.to_ascii_lowercase();
+        if lower.starts_with("claude-") && lower.ends_with("[1m]") {
+            m.truncate(m.len() - "[1m]".len());
+        }
+    }
+    let model_of = |e: &RosterEntry| -> String {
+        if !e.model.is_empty() {
+            e.model.clone()
+        } else if e.engine.is_empty() || e.engine == "codex" {
+            defaults.model.clone()
+        } else {
+            String::new()
+        }
+    };
+    let engine_of = |e: &RosterEntry| -> String {
+        if e.engine.is_empty() {
+            "codex".to_string()
+        } else {
+            e.engine.clone()
+        }
+    };
     if let Some(pos) = g.position {
-        // (wave 27c, D12) a `#<n>` resolves through the same code as a seated reviewer: the entry's
-        // model, else the default the bridge would run. Naming no seat here is NOT a refusal.
-        return match roster {
-            None => Ok(CoordinatorMatch {
+        // (wave 27c, D12) naming no seat here is NOT a refusal
+        return Ok(match roster {
+            None => CoordinatorMatch {
                 unresolved: Some(format!("#{pos}")),
                 ..Default::default()
-            }),
+            },
             Some(entries) => match entries.iter().find(|e| e.position as i64 == pos) {
-                Some(e) => Ok(CoordinatorMatch {
-                    provider: Some(e.provider.clone()),
-                    model: (!e.model.is_empty()).then(|| e.model.clone()),
-                    engine: (!e.engine.is_empty()).then(|| e.engine.clone()),
-                    in_roster: Some(true),
-                    unresolved: None,
-                }),
-                None => Ok(CoordinatorMatch {
+                Some(e) => {
+                    let m = model_of(e);
+                    CoordinatorMatch {
+                        provider: Some(e.provider.clone()),
+                        model: (!m.is_empty()).then_some(m),
+                        engine: Some(engine_of(e)),
+                        in_roster: Some(true),
+                        unresolved: None,
+                    }
+                }
+                None => CoordinatorMatch {
                     unresolved: Some(format!("#{pos}")),
                     in_roster: Some(false),
                     ..Default::default()
-                }),
+                },
             },
-        };
+        });
     }
     let provider = g.provider.unwrap_or_default();
-    // (wave 27c, D11) a coordinator whose provider (and model, when named) matches no roster entry
-    // is SAID (`in_roster: false`), not refused; a run with no roster leaves `in_roster` unknown.
-    let in_roster = roster.map(|entries| {
-        entries.iter().any(|e| {
+    // `Test-ReviewerMatch`: the provider and the model (when named) ordinal, the engine when named
+    let hits: Vec<&RosterEntry> = roster
+        .unwrap_or(&[])
+        .iter()
+        .filter(|e| {
             e.provider == provider
                 && g.model.as_ref().is_none_or(|m| &e.model == m)
-                && g.engine.as_ref().is_none_or(|en| &e.engine == en)
+                && g.engine.as_ref().is_none_or(|en| &engine_of(e) == en)
         })
-    });
+        .collect();
+    let mut model = g.model.clone();
+    let mut engine = g.engine.clone();
+    if g.model.is_some() {
+        if engine.is_none() {
+            engine = Some(
+                hits.first()
+                    .map(|e| engine_of(e))
+                    .unwrap_or_else(|| "codex".to_string()),
+            );
+        }
+    } else if !hits.is_empty() {
+        let mut models: Vec<String> = Vec::new();
+        let mut engines: Vec<String> = Vec::new();
+        for e in &hits {
+            let m = model_of(e);
+            if !m.is_empty() && !models.contains(&m) {
+                models.push(m);
+            }
+            let en = engine_of(e);
+            if !engines.contains(&en) {
+                engines.push(en);
+            }
+        }
+        let every_entry_names_one = hits.iter().all(|e| !model_of(e).is_empty());
+        if models.len() == 1 && engines.len() == 1 && every_entry_names_one {
+            model = models.pop();
+            engine = engines.pop();
+        }
+    } else if provider == defaults.provider
+        && !defaults.model.is_empty()
+        && engine.as_deref().is_none_or(|e| e == "codex")
+    {
+        model = Some(defaults.model.clone());
+        engine = Some("codex".to_string());
+    }
+    // (wave 27c, D11) a coordinator no roster entry matches is SAID (`in_roster: false`), not
+    // refused; a run with no roster leaves `in_roster` unknown.
     Ok(CoordinatorMatch {
         provider: Some(provider),
-        model: g.model,
-        engine: g.engine,
-        in_roster,
+        model,
+        engine,
+        in_roster: roster.map(|_| !hits.is_empty()),
         unresolved: None,
     })
 }
 
-/// Wrap a `parse_coordinator_matcher` `<why>` into the plugin's full refusal (`Stop-WithError`
+/// `Resolve-CoordinatorIdentity`: the ledger `coordinator` record of a `CODEX_CONSULT_COORDINATOR`
+/// value (empty: the host hint alone - [`build_coordinator`] with no identity) resolved by
+/// [`resolve_coordinator_match`]; `Err` the full refusal ([`coordinator_refusal`]) of a value that
+/// does not parse. The consultation's coordinator and a rating's actor both come from here.
+pub fn resolve_coordinator_identity(
+    value: &str,
+    roster: Option<&[RosterEntry]>,
+    defaults: &CodexDefaults,
+    host: &str,
+) -> Result<Coordinator, String> {
+    let t = value.trim();
+    if t.is_empty() {
+        return Ok(build_coordinator(host, None));
+    }
+    let m = resolve_coordinator_match(t, roster, defaults)
+        .map_err(|why| coordinator_refusal(t, &why))?;
+    Ok(build_coordinator(host, Some(&m)))
+}
+
+/// Wrap a `resolve_coordinator_match` `<why>` into the plugin's full refusal (`Stop-WithError`
 /// text, exit 1). `value` is the trimmed `CODEX_CONSULT_COORDINATOR` value.
 pub fn coordinator_refusal(value: &str, why: &str) -> String {
     format!(
@@ -308,6 +444,11 @@ pub fn coordinator_reviewer_warning(
 mod tests {
     use super::*;
 
+    /// The resolver with the bare defaults (`openai`, no configured model).
+    fn parse(value: &str, roster: Option<&[RosterEntry]>) -> Result<CoordinatorMatch, String> {
+        resolve_coordinator_match(value, roster, &CodexDefaults::default())
+    }
+
     #[test]
     fn host_single() {
         // C3 supports one coordinator host: claude-code, else unknown (operator decision, single
@@ -350,18 +491,18 @@ mod tests {
     #[test]
     fn matcher_refusals() {
         assert_eq!(
-            parse_coordinator_matcher("open ai", None).unwrap_err(),
+            parse("open ai", None).unwrap_err(),
             "the provider 'open ai' is not a provider label (letters, digits, dot, dash, underscore)"
         );
         assert_eq!(
-            parse_coordinator_matcher("openai :: gpt 5", None).unwrap_err(),
+            parse("openai :: gpt 5", None).unwrap_err(),
             "the model 'gpt 5' contains white space"
         );
         assert_eq!(
-            parse_coordinator_matcher("openai :: gpt-5.1 [bad]", None).unwrap_err(),
+            parse("openai :: gpt-5.1 [bad]", None).unwrap_err(),
             "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse)"
         );
-        let ok = parse_coordinator_matcher("openai :: gpt-5.1", None).unwrap();
+        let ok = parse("openai :: gpt-5.1", None).unwrap();
         assert_eq!(ok.provider.as_deref(), Some("openai"));
         assert_eq!(ok.model.as_deref(), Some("gpt-5.1"));
     }
@@ -377,26 +518,156 @@ mod tests {
             ..Default::default()
         }];
         // (D12) `#n` that names no seat here is NOT a refusal: recorded unresolved, run goes on.
-        let m = parse_coordinator_matcher("#5", Some(&roster)).unwrap();
+        let m = parse("#5", Some(&roster)).unwrap();
         assert_eq!(m.unresolved.as_deref(), Some("#5"));
         assert_eq!(m.in_roster, Some(false));
         // `#n` with no roster at all is also unresolved (not a refusal).
-        let m = parse_coordinator_matcher("#1", None).unwrap();
+        let m = parse("#1", None).unwrap();
         assert_eq!(m.unresolved.as_deref(), Some("#1"));
         // (D12) `#n` naming a seat resolves through the seated reviewer's lineage.
-        let m = parse_coordinator_matcher("#1", Some(&roster)).unwrap();
+        let m = parse("#1", Some(&roster)).unwrap();
         assert_eq!(m.provider.as_deref(), Some("openai"));
         assert_eq!(m.model.as_deref(), Some("gpt-5.1"));
         assert_eq!(m.in_roster, Some(true));
         assert!(m.unresolved.is_none());
         // (D11) a coordinator no reviewer can match is said, not refused.
-        let m = parse_coordinator_matcher("anthropic :: opus", Some(&roster)).unwrap();
+        let m = parse("anthropic :: opus", Some(&roster)).unwrap();
         assert_eq!(m.in_roster, Some(false));
         assert!(m.unresolved.is_none());
-        // A bare provider label that the roster seats: in_roster true, model not named.
-        let m = parse_coordinator_matcher("openai", Some(&roster)).unwrap();
+        // (F09-6) A bare provider label that the roster seats with ONE model: in_roster true, the
+        // model of that entry and its engine (`Resolve-CoordinatorIdentity`).
+        let m = parse("openai", Some(&roster)).unwrap();
         assert_eq!(m.in_roster, Some(true));
-        assert!(m.model.is_none());
+        assert_eq!(m.model.as_deref(), Some("gpt-5.1"));
+        assert_eq!(m.engine.as_deref(), Some("codex"));
+    }
+
+    /// (F09-6) The plugin's resolution rules: a bare label takes its roster entries' one model (a
+    /// model-less codex entry counting as the configured model), several models leave it unnamed, a
+    /// label outside the roster takes the configured model only for the configured provider, `#n`
+    /// of a model-less entry the configured model, a lineage without an engine its entry's engine
+    /// (else codex), a Claude id's `[1m]` is stripped.
+    #[test]
+    fn coordinator_resolution_infers_models_like_the_plugin() {
+        use crate::roster::RosterEntry;
+        let e = |pos: usize, p: &str, m: &str, en: &str| RosterEntry {
+            position: pos,
+            provider: p.into(),
+            model: m.into(),
+            engine: en.into(),
+            ..Default::default()
+        };
+        let roster = [
+            e(1, "JudgeLabel-Kimi", "k3", "codex"),
+            e(2, "ZAI", "glm-5.3", "codex"),
+            e(3, "ZAI", "glm-5.1", "codex"),
+            e(4, "openai", "", "codex"),
+            e(5, "gem", "gemini-3-pro", "agy"),
+        ];
+        let d = CodexDefaults {
+            provider: "openai".into(),
+            model: "gpt-5.1".into(),
+        };
+        let r = |v: &str| resolve_coordinator_match(v, Some(&roster), &d).unwrap();
+        // the bare label of a sole entry: its model and engine
+        let m = r("JudgeLabel-Kimi");
+        assert_eq!(
+            (m.model.as_deref(), m.engine.as_deref(), m.in_roster),
+            (Some("k3"), Some("codex"), Some(true))
+        );
+        // ambiguous: two models of one label - the model is not named, the engine not inferred
+        let m = r("ZAI");
+        assert_eq!((m.model.as_deref(), m.engine.as_deref()), (None, None));
+        // a model-less codex entry: the configured model
+        let m = r("openai");
+        assert_eq!(m.model.as_deref(), Some("gpt-5.1"));
+        let m = r("#4");
+        assert_eq!(
+            (
+                m.provider.as_deref(),
+                m.model.as_deref(),
+                m.engine.as_deref()
+            ),
+            (Some("openai"), Some("gpt-5.1"), Some("codex"))
+        );
+        // another engine's entry keeps its own engine; the label's engine suffix filters
+        let m = r("gem");
+        assert_eq!(
+            (m.model.as_deref(), m.engine.as_deref()),
+            (Some("gemini-3-pro"), Some("agy"))
+        );
+        assert_eq!(r("gem [codex]").in_roster, Some(false));
+        // a lineage without an engine: its roster entry's, else codex
+        assert_eq!(r("gem :: gemini-3-pro").engine.as_deref(), Some("agy"));
+        let m = r("anthropic :: claude-opus-5-5[1m]");
+        assert_eq!(
+            (m.model.as_deref(), m.engine.as_deref(), m.in_roster),
+            (Some("claude-opus-5-5"), Some("codex"), Some(false))
+        );
+        // a label outside the roster: the configured model only for the configured provider
+        let none = resolve_coordinator_match("openai", None, &d).unwrap();
+        assert_eq!(
+            (
+                none.model.as_deref(),
+                none.engine.as_deref(),
+                none.in_roster
+            ),
+            (Some("gpt-5.1"), Some("codex"), None)
+        );
+        let other = resolve_coordinator_match("anthropic", None, &d).unwrap();
+        assert_eq!(
+            (other.model.as_deref(), other.engine.as_deref()),
+            (None, None)
+        );
+        let agy = resolve_coordinator_match("openai [agy]", None, &d).unwrap();
+        assert!(agy.model.is_none());
+        let no_model =
+            resolve_coordinator_match("openai", None, &CodexDefaults::default()).unwrap();
+        assert!(no_model.model.is_none());
+        // the full record: an empty value is the host hint alone, a bad one the plugin's refusal
+        let rec = resolve_coordinator_identity("JudgeLabel-Kimi", Some(&roster), &d, "claude-code")
+            .unwrap();
+        assert_eq!(
+            (
+                rec.provider.as_deref(),
+                rec.model.as_deref(),
+                rec.source.as_str()
+            ),
+            (Some("JudgeLabel-Kimi"), Some("k3"), "explicit")
+        );
+        assert_eq!(
+            resolve_coordinator_identity("  ", Some(&roster), &d, "unknown")
+                .unwrap()
+                .source,
+            "none"
+        );
+        let bad = resolve_coordinator_identity("open ai", None, &d, "unknown").unwrap_err();
+        assert!(
+            bad.starts_with("CODEX_CONSULT_COORDINATOR='open ai' cannot be used: "),
+            "{bad}"
+        );
+    }
+
+    /// `Get-CodexConfigDefaults`: the top-level `model_provider` (else openai) and `model`.
+    #[test]
+    fn codex_defaults_from_the_config() {
+        let c = crate::config::scan_config_text(
+            "config.toml",
+            "model = \"gpt-6\"\nmodel_provider = \"ZAI\"\n\n[model_providers.ZAI]\nbase_url = \"https://api.z.ai/api/v1\"\n",
+        );
+        assert_eq!(
+            codex_config_defaults(&c),
+            CodexDefaults {
+                provider: "ZAI".into(),
+                model: "gpt-6".into()
+            }
+        );
+        let empty = crate::config::scan_config_text("config.toml", "");
+        assert_eq!(codex_config_defaults(&empty), CodexDefaults::default());
+        assert_eq!(
+            codex_config_defaults(&crate::config::config_not_found("x")),
+            CodexDefaults::default()
+        );
     }
 
     #[test]
@@ -404,17 +675,14 @@ mod tests {
         // Own model: provider + model equal → the strong warning.
         let full = build_coordinator(
             "claude-code",
-            Some(&parse_coordinator_matcher("openai :: gpt-5.1", None).unwrap()),
+            Some(&parse("openai :: gpt-5.1", None).unwrap()),
         );
         let w =
             coordinator_reviewer_warning(&full, "openai", "gpt-5.1", "codex", "openai :: gpt-5.1")
                 .unwrap();
         assert!(w.contains("the coordinator's own model"));
         // Bare provider label → the weaker "own provider (model not named)" warning.
-        let bare = build_coordinator(
-            "claude-code",
-            Some(&parse_coordinator_matcher("openai", None).unwrap()),
-        );
+        let bare = build_coordinator("claude-code", Some(&parse("openai", None).unwrap()));
         let w =
             coordinator_reviewer_warning(&bare, "openai", "gpt-5.1", "codex", "openai :: gpt-5.1")
                 .unwrap();

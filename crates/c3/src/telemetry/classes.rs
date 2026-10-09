@@ -665,8 +665,9 @@ pub(crate) fn coordinator_named(c: Option<&Coordinator>) -> bool {
 }
 
 /// `Get-TelemetryRatingActor`: the judge of a mark given NOW - `CODEX_CONSULT_COORDINATOR` of THIS
-/// process, parsed exactly as the bridge parses it for the ledger's coordinator record (with the
-/// reviewer roster; the host hint of this process), classified by [`judge_class`] - source
+/// process, resolved exactly as the bridge resolves it for the ledger's coordinator record (with the
+/// reviewer roster and the Codex config's defaults - `c3_core::host::resolve_coordinator_identity`;
+/// the host hint of this process), classified by [`judge_class`] - source
 /// `rating_actor`. A value that does not parse names an actor no class fits: `other / other`.
 /// `None` when the variable is unset or empty (the consultation's own coordinator decides then).
 pub fn rating_actor() -> Option<Judge> {
@@ -682,11 +683,22 @@ pub fn rating_actor() -> Option<Judge> {
     };
     let roster = crate::providers::read_reviewer_roster().ok();
     let entries = roster.as_ref().filter(|r| r.exists).map(|r| &r.entries[..]);
-    let Ok(m) = c3_core::host::parse_coordinator_matcher(v, entries) else {
+    let config = crate::providers::read_codex_config(&crate::providers::get_codex_config_path());
+    // (F09-6) the bridge's own resolver - a bare label takes its roster entries' one model, a
+    // model-less entry the configured model - never a second, thinner parse
+    let Ok(record) = c3_core::host::resolve_coordinator_identity(
+        v,
+        entries,
+        &c3_core::host::codex_config_defaults(&config),
+        c3_core::host::coordinator_host(),
+    ) else {
         return Some(none);
     };
-    let record = c3_core::host::build_coordinator(c3_core::host::coordinator_host(), Some(&m));
-    let (provider, model) = judge_class(&CoordinatorView::of(&record), roster.as_ref(), None);
+    let (provider, model) = judge_class(
+        &CoordinatorView::of(&record),
+        roster.as_ref(),
+        Some(&config),
+    );
     Some(Judge {
         provider,
         model,
@@ -773,6 +785,259 @@ pub fn mark_judge(judge: Option<&Value>) -> Option<Judge> {
     }
     let s = |k: &str| o.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
     Some(closed_judge(&s("provider"), &s("model"), &s("source")))
+}
+
+// --------------------------------------------------------------------------- a queued event (F09-5)
+
+/// The `os` values an event may carry: the three the client names, or this build's own label.
+fn closed_os(os: &str) -> String {
+    let own = crate::telemetry::event::os_label();
+    if ["Windows", "Linux", "macOS"].contains(&os) || os == own {
+        os.to_string()
+    } else {
+        "other".to_string()
+    }
+}
+
+/// A version of this client as an event carries it (`app_version`, `bridge_version`): three
+/// numbers and an optional pre-release tag of letters, digits, dots and dashes.
+fn is_version(v: &str) -> bool {
+    let (core, pre) = match v.split_once('-') {
+        Some((c, p)) => (c, Some(p)),
+        None => (v, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 6 && p.chars().all(|c| c.is_ascii_digit()))
+        && pre.is_none_or(|p| {
+            !p.is_empty()
+                && p.len() <= 32
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        })
+}
+
+/// An instance id of this client's shape: the 64 lower-case hex digits of a SHA-256.
+fn is_instance_id(v: &str) -> bool {
+    v.len() == 64 && v.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+}
+
+/// (F09-5) The body a QUEUED event is sent with: the event re-built field by field through the
+/// closed classes, in the constructors' key order - the allowlist of
+/// [`crate::telemetry::Event`] (a consultation) or [`crate::telemetry::RatingEvent`] (a rating),
+/// every string a closed value: the engine one of [`ENGINES`]; the provider a CLASS of the table
+/// (a roster label - `customer-acme` - is `other`); the model an entry of that class's list (else
+/// `other`, `unknown` kept); the purpose, the outcome, the mark, the judge, `os` and the versions
+/// through their own closed sets; ids only of their own shapes (`consult_ref` a guid, the instance
+/// a SHA-256). An event C3 queued before wave 2 (the raw event, its labels as typed) leaves with
+/// `other` where its labels were; an event of the current constructors closes to itself and is sent
+/// with its exact bytes. `None` - the event is discarded, with a local diagnostic - for a body that
+/// is no C3 consultation or rating event, or that has no instance id or no time of this client's
+/// shape (nothing could attribute it).
+pub(crate) fn close_event_body(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let closed = close_event(&v)?;
+    if closed == v {
+        Some(body.to_string())
+    } else {
+        Some(closed.to_string())
+    }
+}
+
+fn close_event(v: &Value) -> Option<Value> {
+    use serde_json::{json, Map};
+    let o = v.as_object()?;
+    if o.get("app_id")?.as_str()? != "c3" {
+        return None;
+    }
+    let instance_id = o.get("instance_id")?.as_str()?;
+    if !is_instance_id(instance_id) {
+        return None;
+    }
+    let client_time = chrono::DateTime::parse_from_rfc3339(o.get("client_time")?.as_str()?)
+        .ok()?
+        .with_timezone(&chrono::Utc)
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let event_type = o.get("event_type")?.as_str()?;
+    if event_type != "consultation" && event_type != "rating" {
+        return None;
+    }
+    let empty = Map::new();
+    let d = o
+        .get("details")
+        .and_then(|d| d.as_object())
+        .unwrap_or(&empty);
+    let text = |m: &Map<String, Value>, k: &str| -> String {
+        m.get(k)
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let engine = text(d, "engine");
+    let engine = if ENGINES.contains(&engine.as_str()) {
+        engine
+    } else {
+        "other".to_string()
+    };
+    // the provider: a CLASS of the table as it stands, else other (a label is never resolved here)
+    let vendor = vendor_of_class(&text(d, "provider"));
+    let raw_model = text(d, "model");
+    let model = if raw_model.is_empty() || raw_model == "unknown" {
+        "unknown".to_string()
+    } else {
+        match model_token(vendor, &raw_model).as_str() {
+            "unknown" => "other".to_string(),
+            m => m.to_string(),
+        }
+    };
+    let provider = vendor.map(|v| v.class).unwrap_or("other").to_string();
+    let raw_purpose = text(d, "purpose");
+    let purpose = if raw_purpose == "none" {
+        raw_purpose
+    } else {
+        purpose_class(&raw_purpose)
+    };
+    let os = closed_os(&text(o, "os"));
+    let runtime = text(o, "runtime");
+    let runtime = match runtime.strip_prefix("rust ") {
+        Some(ver) if is_version(ver) => runtime.clone(),
+        _ => "other".to_string(),
+    };
+    let app_version = text(o, "app_version");
+    let app_version = if is_version(&app_version) {
+        app_version
+    } else {
+        "unknown".to_string()
+    };
+    let consult_ref = Some(text(d, "consult_ref").to_ascii_lowercase()).filter(|r| is_guid(r));
+    let mut details = Map::new();
+    details.insert("engine".into(), json!(engine));
+    details.insert("provider".into(), json!(provider));
+    details.insert("model".into(), json!(model));
+    details.insert("purpose".into(), json!(purpose));
+    let (severity, title) = if event_type == "consultation" {
+        let raw = text(d, "outcome");
+        let outcome = match raw.as_str() {
+            "usable" | "usable-after-continuation" => raw.clone(),
+            _ => match raw.strip_prefix("failed:") {
+                Some(c) if FAILURE_CLASSES.contains(&c) => raw.clone(),
+                _ => "failed:unknown".to_string(),
+            },
+        };
+        let severity = if outcome.starts_with("usable") {
+            "info"
+        } else if ["failed:auth", "failed:quota", "failed:operator"].contains(&outcome.as_str()) {
+            "warning"
+        } else {
+            "error"
+        };
+        let num = |k: &str| d.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
+        let small = |k: &str, dflt: u64| {
+            d.get(k)
+                .and_then(|x| x.as_u64())
+                .filter(|n| *n <= u32::MAX as u64)
+                .unwrap_or(dflt)
+        };
+        let flag = |k: &str| d.get(k).and_then(|x| x.as_bool()).unwrap_or(false);
+        let wall = d
+            .get("wall_seconds")
+            .and_then(|x| x.as_f64())
+            .filter(|w| w.is_finite() && *w >= 0.0)
+            .unwrap_or(0.0);
+        details.insert("outcome".into(), json!(outcome));
+        details.insert("wall_seconds".into(), json!(wall));
+        details.insert("tokens_in".into(), json!(num("tokens_in")));
+        details.insert("tokens_out".into(), json!(num("tokens_out")));
+        details.insert("findings".into(), json!(num("findings")));
+        details.insert("structured".into(), json!(flag("structured")));
+        details.insert("format_retry".into(), json!(flag("format_retry")));
+        details.insert("panel_size".into(), json!(small("panel_size", 1)));
+        details.insert("peers_used".into(), json!(small("peers_used", 0)));
+        details.insert("os".into(), json!(closed_os(&text(d, "os"))));
+        let druntime = text(d, "runtime");
+        details.insert(
+            "runtime".into(),
+            json!(match druntime.strip_prefix("rust ") {
+                Some(ver) if is_version(ver) => druntime.clone(),
+                _ => "other".to_string(),
+            }),
+        );
+        let topic = text(d, "topic_tag");
+        if crate::telemetry::event::TOPIC_VOCAB.contains(&topic.as_str()) {
+            details.insert("topic_tag".into(), json!(topic));
+        }
+        let useful = text(d, "useful");
+        if ["yes", "partly", "no"].contains(&useful.as_str()) {
+            details.insert("useful".into(), json!(useful));
+        }
+        for k in ["verified", "rejected"] {
+            if let Some(n) = d.get(k).and_then(|x| x.as_i64()) {
+                details.insert(k.into(), json!(n));
+            }
+        }
+        if let Some(r) = &consult_ref {
+            details.insert("consult_ref".into(), json!(r));
+        }
+        (severity, purpose.clone())
+    } else {
+        let mark = text(d, "mark");
+        let mark = if ["yes", "partly", "no"].contains(&mark.as_str()) {
+            mark
+        } else {
+            "other".to_string()
+        };
+        let bridge = text(d, "bridge_version");
+        let bridge = if is_version(&bridge) {
+            bridge
+        } else {
+            app_version.clone()
+        };
+        let judge = match d.get("judge").and_then(|j| j.as_object()) {
+            Some(j) => closed_judge(&text(j, "provider"), &text(j, "model"), &text(j, "source")),
+            None => Judge::unknown(),
+        };
+        details.insert("mark".into(), json!(mark));
+        details.insert(
+            "age_days".into(),
+            json!(d
+                .get("age_days")
+                .and_then(|x| x.as_i64())
+                .filter(|n| *n >= 0)
+                .unwrap_or(0)),
+        );
+        details.insert("bridge_version".into(), json!(bridge));
+        details.insert("os".into(), json!(closed_os(&text(d, "os"))));
+        details.insert("ps_version".into(), json!("unknown"));
+        details.insert("judge".into(), judge.to_value());
+        if let Some(n) = d
+            .get("rating_rev")
+            .and_then(|x| x.as_i64())
+            .filter(|n| *n >= 1)
+        {
+            details.insert("rating_rev".into(), json!(n));
+        }
+        if let Some(r) = &consult_ref {
+            details.insert("consult_ref".into(), json!(r));
+        }
+        ("info", mark)
+    };
+    let mut out = Map::new();
+    out.insert("app_id".into(), json!("c3"));
+    out.insert("app_version".into(), json!(app_version));
+    out.insert("instance_id".into(), json!(instance_id));
+    out.insert("event_type".into(), json!(event_type));
+    out.insert("severity".into(), json!(severity));
+    out.insert("title".into(), json!(title));
+    out.insert("details".into(), Value::Object(details));
+    out.insert("tags".into(), json!([provider, model]));
+    out.insert("client_time".into(), json!(client_time));
+    out.insert("os".into(), json!(os));
+    out.insert("runtime".into(), json!(runtime));
+    Some(Value::Object(out))
 }
 
 #[cfg(test)]
@@ -1000,5 +1265,71 @@ mod tests {
         );
         e.consult_ref = Some("not-a-guid".into());
         assert_eq!(consult_ref_of(&e), None);
+    }
+
+    /// (F09-5) Closing is the identity on what the current constructors build: a queued event of
+    /// this build is sent with its EXACT bytes (consultations usable and failed, an OpenRouter
+    /// model, no model, no purpose; ratings with every judge source).
+    #[test]
+    fn a_current_event_closes_to_its_exact_bytes() {
+        use crate::telemetry::{Event, RatingEvent, RatingInput};
+        use c3_core::ledger::ProviderFailure;
+        let iid = "ab".repeat(32);
+        let mut e = LedgerEntry {
+            purpose: "diff-review".into(),
+            bridge_outcome: "usable reply".into(),
+            wall_seconds: 3.0,
+            consult_ref: Some("6f1c2a9e-4b7d-4e2a-9c3f-0d8e5b7a1c24".into()),
+            ..Default::default()
+        };
+        e.reviewer.engine = "codex".into();
+        e.reviewer.model = "glm-5.3".into();
+        e.reviewer.provider_config = serde_json::json!({"base_url": "https://api.z.ai/api/v1"});
+        let mut bodies = Vec::new();
+        bodies.push(serde_json::to_string(&Event::from_ledger(&e, Some(2), &iid)).unwrap());
+        e.bridge_outcome = "failed: quota".into();
+        e.provider_failure = Some(ProviderFailure {
+            class: "quota".into(),
+            ..Default::default()
+        });
+        e.wall_seconds = 12.75;
+        e.purpose = String::new();
+        bodies.push(serde_json::to_string(&Event::from_ledger(&e, None, &iid)).unwrap());
+        e.reviewer.engine = "http".into();
+        e.reviewer.provider_config =
+            serde_json::json!({"base_url": "https://openrouter.ai/api/v1"});
+        e.reviewer.model = "openai/gpt-5.1".into();
+        e.purpose = "my-own-purpose".into();
+        bodies.push(serde_json::to_string(&Event::from_ledger(&e, Some(1), &iid)).unwrap());
+        e.reviewer.model = String::new();
+        e.consult_ref = None;
+        bodies.push(serde_json::to_string(&Event::from_ledger(&e, Some(1), &iid)).unwrap());
+        let rated = chrono::DateTime::parse_from_rfc3339("2026-10-09T10:00:00+02:00").unwrap();
+        for (judge, rev) in [
+            (closed_judge("moonshot", "k3", "rating_actor"), Some(2)),
+            (
+                closed_judge("openai", "gpt-6-astra", "consult_coordinator"),
+                None,
+            ),
+            (Judge::unknown(), Some(1)),
+        ] {
+            let input = RatingInput {
+                entry: &e,
+                mark: "partly",
+                rated_at: rated,
+                consult_when: None,
+                judge: &judge,
+                rating_rev: rev,
+            };
+            bodies.push(serde_json::to_string(&RatingEvent::from_rating(&input, &iid)).unwrap());
+        }
+        for b in &bodies {
+            assert_eq!(close_event_body(b).as_deref(), Some(b.as_str()), "{b}");
+        }
+        // what cannot be attributed is discarded: another app, no instance id, no time
+        assert!(close_event_body(&bodies[0].replace("\"c3\"", "\"other-app\"")).is_none());
+        assert!(close_event_body(&bodies[0].replace(&iid, "testinstance")).is_none());
+        assert!(close_event_body(r#"{"app_id":"c3","instance_id":"x"}"#).is_none());
+        assert!(close_event_body("not json").is_none());
     }
 }

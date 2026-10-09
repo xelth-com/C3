@@ -63,21 +63,24 @@ fn refuse(msg: &str) -> i32 {
 }
 
 /// (wave 27) Resolve the ledger `coordinator` record from the environment (`Get-CoordinatorHost` +
-/// `CODEX_CONSULT_COORDINATOR`). An unparseable value refuses (`Err`, exit 1) before anything is
-/// planned. `roster` is `None` when there is no reviewer roster file (for `#<n>`).
+/// `CODEX_CONSULT_COORDINATOR`) - `Resolve-CoordinatorIdentity` with the reviewer roster and the
+/// Codex config's defaults (F09-6: the one resolver a rating's actor shares). An unparseable value
+/// refuses (`Err`, exit 1) before anything is planned. `roster` is `None` when there is no
+/// reviewer roster file (for `#<n>`).
 pub(crate) fn resolve_coordinator(
     roster: Option<&[c3_core::roster::RosterEntry]>,
 ) -> Result<c3_core::ledger::Coordinator, (String, i32)> {
-    let host = c3_core::host::coordinator_host();
     let value = std::env::var("CODEX_CONSULT_COORDINATOR").unwrap_or_default();
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Ok(c3_core::host::build_coordinator(host, None));
-    }
-    match c3_core::host::parse_coordinator_matcher(trimmed, roster) {
-        Ok(m) => Ok(c3_core::host::build_coordinator(host, Some(&m))),
-        Err(why) => Err((c3_core::host::coordinator_refusal(trimmed, &why), 1)),
-    }
+    let defaults = c3_core::host::codex_config_defaults(&providers::read_codex_config(
+        &providers::get_codex_config_path(),
+    ));
+    c3_core::host::resolve_coordinator_identity(
+        &value,
+        roster,
+        &defaults,
+        c3_core::host::coordinator_host(),
+    )
+    .map_err(|refusal| (refusal, 1))
 }
 
 /// (wave 28b, D15) The `-c` items a codex reviewer with a roster `context_tokens` n gets on every
@@ -99,11 +102,12 @@ pub(crate) fn context_window_config(
         ("model_context_window", context_tokens),
         ("model_auto_compact_token_limit", compact_at),
     ] {
+        // F09-1: split at the first `=` and compare the trimmed key - never slice the item at a
+        // byte offset taken from another string (a Unicode value made that a char-boundary panic).
         let set_by_operator = extra_config.iter().any(|ec| {
-            let t = ec.trim();
-            t.len() >= key.len()
-                && t[..key.len()].eq_ignore_ascii_case(key)
-                && t[key.len()..].trim_start().starts_with('=')
+            ec.trim()
+                .split_once('=')
+                .is_some_and(|(k, _)| k.trim_end().eq_ignore_ascii_case(key))
         });
         if !set_by_operator {
             items.push(format!("{key}={value}"));
@@ -8196,6 +8200,37 @@ mod context_budget_tests {
         std::fs::write(&small, "word ".repeat(100)).unwrap();
         assert!((estimate_prompt_tokens("x", Some(small.as_path())) as f64) <= 0.8 * 32000.0);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // F09-1 / RC1: an operator item whose value is Unicode (`notify` is 6 bytes, the item 35, byte
+    // 20 a continuation byte) must not be sliced at the length of the context keys - the helper
+    // returns normally and adds BOTH generated defaults.
+    #[test]
+    fn context_window_config_survives_a_unicode_operator_item() {
+        let extra = vec![r#"notify=["日本日本日本日本"]"#.to_string()];
+        assert!(!extra[0].is_char_boundary("model_context_window".len()));
+        let (items, record) = context_window_config(256000, true, &extra);
+        assert_eq!(
+            items,
+            vec![
+                "model_context_window=256000".to_string(),
+                "model_auto_compact_token_limit=204800".to_string(),
+            ]
+        );
+        let record = record.expect("a context window record");
+        assert_eq!(record["tokens"], 256000);
+        assert_eq!(record["auto_compact_limit"], 204800);
+        assert_eq!(record["items"].as_array().map(|a| a.len()), Some(2));
+        // A Unicode KEY-shaped prefix of the same length is no match either, and never panics.
+        let odd = vec![
+            "日本日本日本日=1".to_string(),
+            "Model_Context_Window =9".to_string(),
+        ];
+        let (items, _) = context_window_config(1000, true, &odd);
+        assert_eq!(
+            items,
+            vec!["model_auto_compact_token_limit=800".to_string()]
+        );
     }
 }
 

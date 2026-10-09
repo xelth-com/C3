@@ -29,12 +29,12 @@ pub use classes::{
     close_judge, closed_judge, consult_ref_of, mark_judge, rating_actor, resolve_judge, Judge,
 };
 pub use complaint::{
-    complain, complain_to, forget, forget_at, newest_ref, pending_deletion_in, ForgetOutcome,
-    ForgetRequest, PendingDeletion,
+    complain, complain_to, forget, forget_at, forget_with, newest_ref, pending_deletion_in,
+    ForgetOutcome, ForgetRequest, PendingDeletion, PHASE_CLEANING, PHASE_CONFIRMED, PHASE_PENDING,
 };
 pub(crate) use event::topic_slug;
 pub use event::{Details, Event, RatingDetails, RatingEvent, RatingInput};
-pub use spool::{flush_in_background, flush_now, BackgroundFlush, FlushReport, Spool};
+pub use spool::{flush_in_background, flush_now, BackgroundFlush, FlushHooks, FlushReport, Spool};
 
 /// The default T-hub base URL.
 const HUB_DEFAULT: &str = "https://xelth.com/T";

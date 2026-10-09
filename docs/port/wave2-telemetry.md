@@ -2,7 +2,8 @@
 
 Branch `wave2-telemetry`, three commits: **2a** the 0.6.1 rating semantics and the ledger shape,
 **2b** a durable outbox and the forget-me retry identity (Astra's F02-1, F02-3), **2c** closed
-telemetry classes and the telemetry shim (F02-2, F02-4). The specification is the plugin at
+telemetry classes and the telemetry shim (F02-2, F02-4); then branch `wave2d-fixes` (**2d**, Astra's
+F09-1..F09-6 - section "2d" below). The specification is the plugin at
 `v0.6.1` (`codex-consult-common.ps1` telemetry section, `codex-findings.ps1 -Rate`,
 `codex-telemetry.ps1`, `codex-consult.ps1`'s ledger entry, CHANGELOG `[0.6.1]`/`[0.6.0]`, README
 "Telemetry (on by default)").
@@ -97,7 +98,8 @@ Files under `<codex home>/c3/telemetry/` (`telemetry/spool.rs`):
 - `spool.ndjson`: one line per item, the plugin's spool line `{"v":1,"kind":"event",
   "queued_unix":<s>,"body":"<event JSON as a string>"}`; the 7-day drop runs from `queued_unix`
   (a backfilled mark's old `client_time` is not dropped); a raw event line C3 wrote before wave 2
-  is still read and sent; another kind is kept untouched.
+  is still read and sent - through the closed classes since 2d (F09-5); another kind is kept
+  untouched.
 - `spool.lock`: THE spool lock (`File::try_lock` - `LockFileEx` / `flock`, released by the OS
   when the holder dies: never stale). Held by every append (a producer waits at most its budget:
   1 s at a rating's commit, 5 s otherwise; it builds its event and the instance id UNDER the lock),
@@ -143,7 +145,8 @@ deletion's or the newest stored one):
   gone (test `forget_failed_delete_keeps_the_identity_and_the_retry_uses_it`);
 - confirmed: the record goes; with `--local` the local files go (salt, outbox, references,
   counters, last flush) - under the sender lock and the spool lock, so no sender posts and no
-  producer appends meanwhile;
+  producer appends meanwhile; (2d, F09-2/F09-3: the record is a deletion TRANSACTION written
+  before the DELETE, every forget holds both locks, the cleanup is resumable - see "2d");
 - `--local` without a reference: says that the intake keeps what was sent (instance id) and asks
   (`--yes` skips); a pending deletion record survives it (it carries the identity for the retry).
 
@@ -172,6 +175,95 @@ fixes it, and the severity now follows the outcome.
 
 `tests/shim/codex-telemetry.ps1` (see `harness-shim.md` section 4): the plugin's parameter names
 onto `c3 telemetry` / `c3 complain`; the consult and findings shims forward `-Telemetry`.
+
+## 2d - Astra's wave 2 diff-review (F09-1..F09-6, handoff 09)
+
+Branch `wave2d-fixes`. Each finding has the fixture Astra asked for (RC1-RC5); the RC2-RC4 tests
+were also run against the old behaviour re-introduced by hand (the unlocked-only deletion check,
+the reread error read as an empty file, the unclosed body, the cleanup branch skipped) and fail
+there.
+
+**F09-1 - the context-window keys (RC1).** `context_window_config` sliced each operator item at the
+byte length of `model_context_window` - a char-boundary panic on `notify=["日本日本日本日本"]`. It now
+splits the trimmed item at its first `=` and compares the trimmed key (ASCII case-insensitive) -
+the plugin's `^key\s*=`. Test `context_window_config_survives_a_unicode_operator_item` (both
+defaults added; a Unicode key of the same byte length matches nothing).
+
+**F09-2, F09-3 - the deletion transaction (RC2).** `forget-pending.json` is a transaction now:
+`{instance_id, public_ref, since, attempts, last_error, phase}` (a record without `phase` - written
+by wave 2 - is `pending`).
+
+- `pending` is written BEFORE the DELETE (attempts counted then); `confirmed` when the intake
+  confirmed a `--local` forget; `cleaning` when the local cleanup starts (a local-only forget starts
+  here, `public_ref` empty); the record is removed only AFTER the cleanup finished. A forget without
+  `--local` removes it right after the confirmation (the plugin keeps the salt then as well).
+- The cleanup removes the QUEUED data first - `spool.ndjson`, a rewrite's leftover
+  `.spool.ndjson.*.tmp`, `not-spooled.ndjson`, `last-flush.json` -, then the proof
+  (`refs.ndjson`), the identity (`salt`) LAST, and the salt only when it still is the
+  transaction's instance (a salt made meanwhile by a complaint is another instance: kept, said).
+- EVERY forget (with or without `--local`) holds the sender lock and the spool lock from its first
+  write of the record to its last, across the DELETE (producers wait their budget and are refused,
+  as a `--local` forget did before). The sender decides on the record UNDER both locks (its early
+  unlocked check is only a shortcut): `pending` or unreadable - skip; `confirmed`/`cleaning` - it
+  finishes the cleanup with the record's identity instead of sending ("finished the local deletion
+  of instance ..."). A producer is refused under the spool lock in any phase.
+- `c3 forget-me` / `--forget` with a `confirmed`/`cleaning` record only finish the cleanup (no
+  DELETE, no question); `--status` names the phase; a record that cannot be read blocks (fail
+  closed) until a forget rewrites it.
+- Known limit (unchanged): a DELETE the intake executed but whose answer was lost stays `pending`;
+  the retry may then get `404 unknown public_ref` forever. Abandoning a pending deletion is not
+  offered - an operator decision for later.
+
+Tests (`crates/c3/tests/telemetry.rs`): `a_forget_failing_while_a_flush_waits_never_lets_the_flush_post_rc2`
+(a barrier after the sender's early check, a failed forget with and without `--local`, the injected
+sender never called), `a_confirmed_delete_with_an_interrupted_cleanup_resumes_and_never_posts_the_old_instance_rc2`
+(confirmed DELETE, cleanup interrupted where the spool goes - the record `cleaning` with the old id,
+the salt still there -, then the review's state: salt removed, spool preserved; restart: a producer
+refused, the flush posts nothing and finishes the cleanup, the intake saw only the DELETE, the next
+event is a new instance), `a_confirmed_transaction_is_finished_by_the_next_forget` (a `confirmed`
+record finished by a forget without a reference; a salt of another instance kept). Test seams:
+`Spool::flush_hooked` + `FlushHooks {after_check, reread}` and `telemetry::forget_with` (an
+injected file removal), `#[doc(hidden)]`, the pattern of `flush_with`.
+
+**F09-4 - the reread rule (RC3).** After a POST the sender re-reads the CURRENT spool for its
+rewrite; a reread error is returned (the flush fails, `last-flush.json` says so) and NOTHING is
+replaced - the delivered lines go again next time (a duplicate at worst, never a loss). NotFound is
+the one exception, by an invariant: only the local deletion removes the spool and it holds the
+sender lock the flush holds, so a missing spool was removed from outside - nothing to keep, nothing
+rewritten, no file made. Test `outbox_reread_failure_after_a_send_keeps_the_spool_bytes_rc3`.
+
+**F09-5 - the upgrade backlog (RC4).** Every queued event is closed before it leaves
+(`classes::close_event_body`): re-built field by field in the constructors' key order - engine of
+`ENGINES`, provider a vendor CLASS as it stands (a label such as `customer-acme` or `ZAI` is `other`
+- labels are not resolved through today's config), model through that class's list (`unknown`
+kept), purpose/outcome/mark/judge/os/versions through their closed sets (`failed:<not a class>` is
+`failed:unknown`, severity from the outcome), `consult_ref` only as a guid; a rating gets the 0.6.1
+detail keys (`bridge_version` the event's version, `ps_version` unknown, a missing judge
+`other/other/unknown`; the old `topic_tags` dropped). An event of the current constructors closes
+to itself and is sent with its exact bytes (unit test `a_current_event_closes_to_its_exact_bytes`).
+An event that cannot be attributed - another `app_id`, no 64-hex instance id, no RFC 3339 time, no
+consultation/rating - is discarded unsent with a local diagnostic (`FlushReport.discarded`, the
+debug log, `last-flush.json`, `--flush`). This covers raw pre-wave-2 lines AND envelopes a 2b-only
+build may have queued. Test `legacy_queued_events_never_send_a_private_label_rc4`.
+
+**F09-6 - one coordinator resolver (RC5).** `c3_core::host::resolve_coordinator_identity` (with
+`resolve_coordinator_match` and `codex_config_defaults` - `Get-CodexConfigDefaults`) is the plugin's
+`Resolve-CoordinatorIdentity` and the ONE resolver of the consultation's ledger `coordinator` and of
+a rating's actor: a bare label takes its roster entries' one model and engine (a model-less codex
+entry counting as the config's model), several models leave it unnamed, a label outside the roster
+takes the config's model only for the config's provider (ordinal, codex engine), `#n` of a
+model-less codex entry the config's model, a lineage without an engine its first entry's engine
+(else codex), a Claude id's `[1m]` stripped. The old `parse_coordinator_matcher` is gone. Visible
+side effect (plugin parity): the ledger record of `openai :: gpt-6-astra` now carries `engine:
+"codex"` (was null) and a bare label in the roster its model, so the coordinator warning says "own
+model" where it said "own provider (model not named)". Tests `rating_actor_of_a_bare_label_infers_its_sole_roster_model_rc5`
+(parity: `JudgeLabel-Kimi` -> mark and event `moonshot/k3/rating_actor`, ledger `k3`/`codex`; the
+two-model label `ZAI` -> `zai/other`; bare `openai` -> the config's `gpt-5.1`),
+`coordinator_resolution_infers_models_like_the_plugin`, `codex_defaults_from_the_config`.
+
+Workspace: 576 -> 586 tests (`cargo test --workspace`), clippy `-D warnings` and `cargo fmt --check`
+clean. `index::embed::tests::embed_reaches_a_loopback_fake_via_localhost` failed once under the
+parallel suite and passed alone (untouched code, a loopback timing flake).
 
 ## Tests
 
