@@ -80,12 +80,20 @@
                                                      "note":  "Spool synchronization is unchanged in this range and remains assigned to wave 2.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The original concurrent-append overwrite is repaired by locked removal from the current file. Finding #4 concerns a separate reread-error path.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
                      {
                          "id":  "F02-2",
-                         "status":  "implemented",
+                         "status":  "superseded",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -126,7 +134,7 @@
 
                                         ],
                          "superseded_by":  [
-
+                                               "F09-5"
                                            ],
                          "source":  {
                                         "consult":  1,
@@ -153,6 +161,15 @@
                                              "evidence":  "",
                                              "base_commit":  "3605395aede39f9ed6f1c61c8347cfc68c9192fc",
                                              "tree_sha256":  "6c04c23fcc4f5372073c5c89c23338955650ffd3126c02e2b16a2a53f138249a"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T03:45:55+02:00",
+                                             "status":  "superseded",
+                                             "by":  "coordinator",
+                                             "note":  "the new constructors send classes; the legacy backlog path remains - F09-5 (handoff 09)",
+                                             "evidence":  "",
+                                             "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                             "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -171,6 +188,14 @@
                                                      "note":  "Closed telemetry classifiers are unchanged and remain assigned to wave 2.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "New event construction is fixed; finding #5 supersedes the broad claim with the remaining legacy-backlog exposure.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -253,6 +278,14 @@
                                                      "note":  "Failed-deletion retry identity is unchanged and remains assigned to wave 2.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Failed DELETE now preserves retry identity and proof. Findings #2 and #3 concern separate synchronization and post-confirmation cleanup defects.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -344,6 +377,14 @@
                                                      "note":  "The complete harness assertion coverage map and telemetry shim are not delivered by this range.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The oracle coverage map distinguishes C3, helper, documentation and unshimmed checks, and codex-telemetry.ps1 now forwards to C3. This does not establish that all semantic assertions pass.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -426,6 +467,14 @@
                                                      "note":  "The state still correctly acknowledges the existing commit-before-spool ordering.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The state document acknowledges existing commit-before-spool ordering; the revised rating path also commits before enqueueing.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -513,6 +562,14 @@
                                                      "note":  "The previously reviewed anchor implementation is unchanged.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "The earlier anchor implementation was not revalidated in this telemetry review.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -604,6 +661,14 @@
                                                      "note":  "Shared plan infrastructure is assigned to wave 1b and is outside the reviewed range.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "The current roster accepts plan on any engine, but cross-engine and cross-repository quota behavior was not audited here.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -678,6 +743,14 @@
                                                      "note":  "Decision P4 retains spawned Claude for parity and gates native Messages on its own benchmark.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "State plan P4 explicitly treats native Messages as a benchmark-gated candidate and distinguishes the plugin\u0027s measured route; the benchmark result remains unproven.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -766,6 +839,14 @@
                                                      "note":  "str::get guards the suffix boundary before slicing; new fixtures cover Unicode names in the helper, classifier, and both scan variants.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this review range; the recorded earlier closure was not independently revalidated.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -858,6 +939,14 @@
                                                      "note":  "The reported Berlin boundary errors are corrected and covered by synthetic, IANA, and conditional production-Local tests; the supplied report confirms the production test ran. Finding #1 records a distinct historical limitation.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this review range; no Windows local-zone boundary tests were rerun.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -955,6 +1044,14 @@
                                                      "note":  "Member and skipped records now use final routed states. The real fake-CLI integration test asserts correct state and empty skip records in every member\u0027s ledger entry.",
                                                      "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                                      "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Required-light ledger metadata was not revalidated; this range\u0027s panel change forwards the telemetry switch.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                                  }
                                              ]
                      },
@@ -1025,6 +1122,390 @@
                                              "evidence":  "",
                                              "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                              "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-10-09T03:20:32+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The state document retains the historical Samoa case for wave 3; this range contains no health-parser correction.",
+                                                     "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                                     "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F09-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate.rs",
+                                               "line":  105
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/roster.rs",
+                                               "line":  155
+                                           }
+                                       ],
+                         "claim":  "The new context-window configuration helper can panic on a valid configuration item containing Unicode because it slices arbitrary UTF-8 at the byte length of a different configuration key.",
+                         "trigger":  "A Codex reviewer has positive context_tokens and an extra configuration item such as notify=[\"日本日本日本日本\"].",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate.rs:102-106",
+                                              "observation":  "The helper checks byte length and then evaluates t[..key.len()] without checking a UTF-8 character boundary."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/roster.rs:155-195",
+                                              "observation":  "The configuration parser accepts the ASCII notify key and preserves the Unicode array literal."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Read-only PowerShell UTF-8 byte inspection of notify=[\"日本日本日本日本\"]",
+                                              "observation":  "The input has 35 UTF-8 bytes; model_context_window has 20 bytes; input byte 20 is a continuation byte, so the Rust slice boundary is invalid."
+                                          }
+                                      ],
+                         "verification":  "Call context_window_config with positive context tokens, is_codex=true, and the stated Unicode item; assert normal return and both generated default items.",
+                         "remedy":  "Split each item at \u0027=\u0027 and compare its trimmed key, or use boundary-safe string access; add Unicode configuration coverage.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/09-codex-wave2-diff-review.md",
+                                        "thread":  "01a11e3b-363e-7951-a94f-4c1f3fa0f187",
+                                        "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                        "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T03:20:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                             "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F09-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/spool.rs",
+                                               "line":  228
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/complaint.rs",
+                                               "line":  280
+                                           }
+                                       ],
+                         "claim":  "A flush can send retained events while deletion is pending because it checks the pending-deletion marker before acquiring the lock that serializes it with local forgetting.",
+                         "trigger":  "Flush observes no pending record and pauses before acquiring flush.lock; forget --local acquires the locks, receives a DELETE failure, persists forget-pending.json and releases the locks; flush resumes and posts the retained events.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/spool.rs:226-246",
+                                              "observation":  "FORGET_PENDING is checked before flush.lock acquisition and is not rechecked under the sender or snapshot lock."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/complaint.rs:280-349",
+                                              "observation":  "Local forgetting holds both locks and records pending deletion on failure, then returns with the spool retained."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/tests/telemetry.rs:597-606",
+                                              "observation":  "The test starts flush only after pending deletion exists, so it does not exercise the check-before-lock interleaving."
+                                          }
+                                      ],
+                         "verification":  "Use a barrier after the initial pending check, complete a failed local forget, then resume flush and assert the injected sender is never called.",
+                         "remedy":  "Check deletion state after acquiring the sender lock and under the appropriate spool interlock; synchronize all operations that establish or clear the deletion state with those same locks.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/09-codex-wave2-diff-review.md",
+                                        "thread":  "01a11e3b-363e-7951-a94f-4c1f3fa0f187",
+                                        "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                        "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T03:20:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                             "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F09-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/complaint.rs",
+                                               "line":  314
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/complaint.rs",
+                                               "line":  353
+                                           }
+                                       ],
+                         "claim":  "Confirmed remote deletion is not followed by recoverable local cleanup: the pending record is removed before cleanup, and the salt is deleted before the spool, allowing surviving old-instance events to be sent again without retained retry identity.",
+                         "trigger":  "After DELETE succeeds, cleanup removes the pending record and salt, then spool removal fails or the process terminates before removing the spool.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/complaint.rs:311-317",
+                                              "observation":  "Successful DELETE immediately removes FORGET_PENDING."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/complaint.rs:353-372",
+                                              "observation":  "Cleanup deletes salt before SPOOL_FILE and returns on a removal failure without creating a recovery marker."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "crates/c3/src/telemetry/spool.rs:228-287",
+                                              "observation":  "A later flush sees no pending marker and can post surviving event bodies containing the deleted instance identifier."
+                                          }
+                                      ],
+                         "verification":  "Confirm DELETE, interrupt cleanup after salt removal while preserving the spool, then restart and assert no old-instance POST occurs and cleanup can resume using retained identity.",
+                         "remedy":  "Persist a deletion transaction before the remote operation, retain its identity and confirmed phase through cleanup, remove queued data before identity material, and clear the transaction only after cleanup completes.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/09-codex-wave2-diff-review.md",
+                                        "thread":  "01a11e3b-363e-7951-a94f-4c1f3fa0f187",
+                                        "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                        "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T03:20:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                             "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F09-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/spool.rs",
+                                               "line":  307
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/spool.rs",
+                                               "line":  326
+                                           }
+                                       ],
+                         "claim":  "An error rereading the current spool is treated as an empty file and can erase newly appended, undelivered events during atomic replacement.",
+                         "trigger":  "Flush snapshots event A, a producer appends B during POST, POST succeeds, and the current-file read fails while replacement remains possible, such as a read-permission failure with directory replacement permitted.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/spool.rs:302-326",
+                                              "observation":  "read_to_string(...).unwrap_or_default() converts every read error to empty content, which is then passed to replace_atomic."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "crates/c3/src/telemetry/spool.rs:287-294",
+                                              "observation":  "A successful POST triggers this rewrite even though the current file may contain events absent from the delivered snapshot."
+                                          }
+                                      ],
+                         "verification":  "Inject a reread failure after appending B during a successful send of A; assert flush reports failure and the spool bytes remain intact.",
+                         "remedy":  "Propagate reread errors and skip replacement whenever current contents cannot be established; handle NotFound separately only with an explicit justified invariant.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/09-codex-wave2-diff-review.md",
+                                        "thread":  "01a11e3b-363e-7951-a94f-4c1f3fa0f187",
+                                        "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                        "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T03:20:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                             "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F09-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/spool.rs",
+                                               "line":  279
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/spool.rs",
+                                               "line":  401
+                                           }
+                                       ],
+                         "claim":  "The privacy fix does not cover the upgrade backlog: legacy queued events containing private provider or model labels are still transmitted unchanged.",
+                         "trigger":  "Before upgrading, an unsuccessful flush leaves a recent event whose provider or model is a syntactically valid private label such as customer-acme; the upgraded sender later flushes it.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "git show e508a76:crates/c3/src/telemetry/event.rs",
+                                              "observation":  "The previous consultation and rating constructors copied provider/model through label_or and safe_label rather than a closed classifier."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/spool.rs:399-417",
+                                              "observation":  "Legacy events are accepted using client_time and retained verbatim as the outbound body."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/spool.rs:273-287",
+                                              "observation":  "Batch construction directly concatenates stored bodies without applying the new privacy classes."
+                                          }
+                                      ],
+                         "verification":  "Seed a recent pre-wave-2 raw event containing customer-acme and capture flush_with output; assert the private label is absent.",
+                         "remedy":  "Validate and sanitize legacy payloads before delivery, conservatively mapping unresolvable labels to closed fallback classes, or explicitly discard unsafe legacy events with a local diagnostic.",
+                         "supersedes":  [
+                                            "F02-2"
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/09-codex-wave2-diff-review.md",
+                                        "thread":  "01a11e3b-363e-7951-a94f-4c1f3fa0f187",
+                                        "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                        "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T03:20:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                             "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F09-6",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/classes.rs",
+                                               "line":  685
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/host.rs",
+                                               "line":  190
+                                           },
+                                           {
+                                               "path":  "crates/c3-cli/tests/telemetry_parity.rs",
+                                               "line":  508
+                                           }
+                                       ],
+                         "claim":  "Rating actor resolution omits the plugin\u0027s model inference for bare provider labels, permanently saving and transmitting judge.model=\u0027other\u0027 when the roster identifies a unique known model.",
+                         "trigger":  "CODEX_CONSULT_COORDINATOR is JudgeLabel-Kimi, its sole roster entry has model k3, and its provider endpoint is api.kimi.ai; C3 produces moonshot/other/rating_actor instead of moonshot/k3/rating_actor.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/classes.rs:683-689; crates/c3-core/src/host.rs:142-195",
+                                              "observation":  "rating_actor uses parse_coordinator_matcher and build_coordinator; a bare label leaves the model unset without unique-roster-model inference."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Pinned v0.6.1 codex-consult-common.ps1 in C:/Users/Dmytro/claude-codex-consult",
+                                              "observation":  "Get-TelemetryRatingActor uses Resolve-CoordinatorIdentity with Codex defaults; that resolver infers a unique roster model and supplies applicable configured defaults."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-cli/tests/telemetry_parity.rs:504-521",
+                                              "observation":  "The test described as a roster-label case supplies JudgeLabel-Kimi :: k3, bypassing missing-model inference."
+                                          }
+                                      ],
+                         "verification":  "Repeat the rating parity fixture with the bare provider label and require moonshot/k3/rating_actor in both the saved mark and event.",
+                         "remedy":  "Use a full shared coordinator resolver matching the pinned plugin; cover bare labels, omitted models with configured defaults, and ambiguous multiple-model labels.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/09-codex-wave2-diff-review.md",
+                                        "thread":  "01a11e3b-363e-7951-a94f-4c1f3fa0f187",
+                                        "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                        "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T03:20:32+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
+                                             "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1101,6 +1582,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1791492330
+                    },
+                    {
+                        "n":  5,
+                        "consult_id":  "37164f6b-99a9-4f07-a0a9-056fc0919693",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-09T03:15:56+02:00",
+                        "useful":  "yes",
+                        "note":  "HOLD with five majors on the outbox and forgetting interlocks (a sender passing the deletion check before the lock, cleanup order after a confirmed DELETE, a reread error erasing events, legacy payloads with private labels), a Unicode slice panic in the context-window helper, and the bare-label judge inference; the identity question answered: keep C3\u0027s app id and outbox separate, adapt the harness fixtures",
+                        "when":  "2026-10-09T03:45:48+02:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "claude-fable-5-1",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1791510350
                     }
                 ]
 }
