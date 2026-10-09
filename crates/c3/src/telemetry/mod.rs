@@ -16,6 +16,7 @@ pub mod backfill;
 pub mod classes;
 mod complaint;
 mod event;
+pub mod notspooled;
 mod spool;
 
 use std::path::{Path, PathBuf};
@@ -34,6 +35,7 @@ pub use complaint::{
 };
 pub(crate) use event::topic_slug;
 pub use event::{Details, Event, RatingDetails, RatingEvent, RatingInput};
+pub use notspooled::{local_paths, LocalPaths};
 pub use spool::{flush_in_background, flush_now, BackgroundFlush, FlushHooks, FlushReport, Spool};
 
 /// The default T-hub base URL.
@@ -261,25 +263,18 @@ pub fn parse_mark_when(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>>
     event::parse_when(s)
 }
 
-/// Count an event that could not be spooled (`Add-TelemetryNotSpooled`): one NDJSON line `{time,
-/// why}` appended to `<telemetry dir>/not-spooled.ndjson`; `c3 telemetry --status` counts them.
-/// Never fails the caller. (The plugin's per-producer files and the `.last` fold are wave 3.)
+/// Count an event that could not be spooled (`Add-TelemetryNotSpooled`; wave 3b, E2): one NDJSON
+/// line `{time, why}` appended - without any lock - to THIS process's own file
+/// `<telemetry dir>/telemetry-not-spooled-<pid>-<start ticks>.ndjson`; `c3 telemetry --status`
+/// sums every producer's file, a flush folds the files of gone producers into the last flush's
+/// record. Never fails the caller ([`note_not_spooled_checked`] says why a line was not written).
 pub fn note_not_spooled(why: &str) {
-    let dir = telemetry_dir();
-    let line = serde_json::json!({
-        "time": chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
-        "why": c3_core::one_line(why),
-    })
-    .to_string();
-    let _ = std::fs::create_dir_all(&dir);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(dir.join("not-spooled.ndjson"))
-    {
-        use std::io::Write;
-        let _ = writeln!(f, "{line}");
-    }
+    let _ = note_not_spooled_checked(why);
+}
+
+/// [`note_not_spooled`], `Err(why)` when the line could not be written.
+pub fn note_not_spooled_checked(why: &str) -> std::result::Result<(), String> {
+    notspooled::append(&local_paths(&telemetry_dir()), why)
 }
 
 // --------------------------------------------------------------------------- instance id
