@@ -19,12 +19,16 @@
 //! - E3: the forgetting marker judged on pid AND start ticks (the wrong ticks gone - a producer
 //!   removes it with a note; the right ticks refuse; an unreadable start alive), the forget's own
 //!   marker with `start_ticks`;
-//! - wave 3d (the diff-review F24-1..F24-6): a flush without the spool lock sees only the kept
-//!   lines (RC1); a tail without a line end appended to a recorded file is counted (RC2); a count
-//!   made during a local forget never survives it (RC3, test hook `CODEX_CONSULT_TEST_CLEANUP_GATE`);
+//! - wave 3d (the diff-review F24-1..F24-6): a flush without the spool lock folds nothing and
+//!   leaves the gone producer's lines unseen (RC1; since wave 3f it sees no line at all); a tail
+//!   without a line end appended to a recorded file is counted (RC2); a count made during a local
+//!   forget never survives it (RC3, test hook `CODEX_CONSULT_TEST_CLEANUP_GATE`);
 //!   `--status` names the latest unseen line; the plugin-home hook's marker and the production
 //!   layout without it (RC4); a failed rewrite after the fold's deletes is said and loses no count
-//!   (test hook `CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL`).
+//!   (test hook `CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL`);
+//! - wave 3f (F31-1): a producer PROCESS live at a flush without the spool lock and gone at the next
+//!   fold is counted exactly once (N; N + M with lines appended in between; with the fold's crash
+//!   hooks too), and that flush carries the last fold's baseline unchanged.
 //!
 //! This test process stands in for a LIVE producer (its pid and start ticks); pid 999999 for a gone
 //! one. Nothing reaches a real intake (`C3_TELEMETRY_HUB` is a closed loopback port). Windows only
@@ -1110,12 +1114,12 @@ fn open_the_gate(child: std::process::Child, gate: &Path) -> (Option<i32>, Strin
     (o.status.code(), text(&o))
 }
 
-/// (F24-1, RC1) A flush that cannot take the spool lock folds nothing and counts as seen only the
-/// lines of the files a fold would keep (this live producer's): the gone producer's 3 lines stay
-/// unseen - `--status` counts them -, and the next flush folds them ONCE. One accounting of N.
+/// (F24-1, RC1; wave 3f, F31-1) A flush that cannot take the spool lock folds nothing and sees no
+/// line (the baseline stays the last fold's - none here: 0): the gone producer's 3 lines and this
+/// live producer's 1 stay unseen - `--status` counts all 4 -, and the next flush folds the gone
+/// ones ONCE and sees the live one. One accounting of N.
 #[test]
-fn f24_1_a_flush_without_the_spool_lock_sees_only_the_kept_lines_and_the_next_folds_the_gone_once()
-{
+fn f24_1_a_flush_without_the_spool_lock_sees_nothing_and_the_next_folds_the_gone_once() {
     let h = setup("f24-1");
     notspooled::append(&h.paths, "own-1").unwrap();
     let gone = h.write(
@@ -1138,7 +1142,7 @@ fn f24_1_a_flush_without_the_spool_lock_sees_only_the_kept_lines_and_the_next_fo
     drop(held);
     assert_eq!(
         last1["not_spooled_seen"],
-        1,
+        0,
         "{} | {}",
         text(&fl1),
         h.last_text()
@@ -1148,7 +1152,7 @@ fn f24_1_a_flush_without_the_spool_lock_sees_only_the_kept_lines_and_the_next_fo
     assert!(gone.exists());
     let st = h.status();
     assert!(
-        st.contains("\nnot spooled: 3 event(s) since the last flush - the latest "),
+        st.contains("\nnot spooled: 4 event(s) since the last flush - the latest "),
         "{}",
         status_line(&st, "not spooled")
     );
@@ -1163,6 +1167,312 @@ fn f24_1_a_flush_without_the_spool_lock_sees_only_the_kept_lines_and_the_next_fo
     assert_eq!(h.fold_notes(), 1);
     assert_eq!(h.last()["not_spooled_seen"], 1);
     assert!(!gone.exists());
+    assert_eq!(h.count().count, 0);
+    h.done();
+}
+
+// --------------------------------------------------------------------------- wave 3f (F31-1)
+
+/// (wave 3f) A PRODUCER PROCESS for the F31-1 fixtures: it appends its batches (`C3_NS_F31_BATCHES`,
+/// e.g. `3,2`) to its own not-spooled file under `C3_NS_F31_HOME` - the first at once, each next
+/// one once `go-<i>` appears in `C3_NS_F31_DIR` -, writes `ready-<i>` (its file's name) after each,
+/// and exits once `go-<batches>` appears. Without `C3_NS_F31_DIR` it does nothing.
+#[test]
+fn f31_child_producer() {
+    let Ok(dir) = std::env::var("C3_NS_F31_DIR") else {
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    let paths = LocalPaths::in_dir(Path::new(&std::env::var("C3_NS_F31_HOME").unwrap()));
+    let batches: Vec<usize> = std::env::var("C3_NS_F31_BATCHES")
+        .unwrap()
+        .split(',')
+        .map(|n| n.trim().parse().unwrap())
+        .collect();
+    let name = paths
+        .own_file()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
+    for i in 0..=batches.len() {
+        if i > 0 {
+            let t0 = std::time::Instant::now();
+            while !dir.join(format!("go-{i}")).exists() && t0.elapsed() < Duration::from_secs(120) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+        let Some(n) = batches.get(i) else {
+            break;
+        };
+        for k in 1..=*n {
+            notspooled::append(&paths, &format!("batch {i} line {k}")).unwrap();
+        }
+        let tmp = dir.join(format!("ready-{i}.tmp"));
+        std::fs::write(&tmp, &name).unwrap();
+        std::fs::rename(&tmp, dir.join(format!("ready-{i}"))).unwrap();
+    }
+}
+
+/// (wave 3f) A LIVE producer process ([`f31_child_producer`]) the test steps through its batches.
+struct Producer {
+    child: std::process::Child,
+    sync: PathBuf,
+    file: PathBuf,
+    step: usize,
+}
+
+impl Producer {
+    /// Start it: its first batch is in its file when this returns.
+    fn start(h: &H, batches: &str) -> Producer {
+        let sync = h.work.join("producer");
+        std::fs::create_dir_all(&sync).unwrap();
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        for (k, _) in std::env::vars() {
+            if k.starts_with("CODEX_CONSULT_") || k.starts_with("C3_") {
+                cmd.env_remove(&k);
+            }
+        }
+        let child = cmd
+            .args([
+                "--exact",
+                "f31_child_producer",
+                "--nocapture",
+                "--test-threads",
+                "1",
+            ])
+            .env("C3_NS_F31_DIR", &sync)
+            .env("C3_NS_F31_HOME", &h.dir)
+            .env("C3_NS_F31_BATCHES", batches)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let name = wait_for(&sync.join("ready-0"));
+        assert!(
+            name.starts_with(&format!("telemetry-not-spooled-{}-", child.id())),
+            "{name}"
+        );
+        Producer {
+            file: h.dir.join(name),
+            child,
+            sync,
+            step: 0,
+        }
+    }
+
+    /// Its next batch: appended when this returns (the producer still lives).
+    fn next(&mut self) {
+        self.step += 1;
+        std::fs::write(self.sync.join(format!("go-{}", self.step)), "go").unwrap();
+        wait_for(&self.sync.join(format!("ready-{}", self.step)));
+    }
+
+    /// Let it exit: gone when this returns.
+    fn exit(mut self) {
+        std::fs::write(self.sync.join(format!("go-{}", self.step + 1)), "go").unwrap();
+        assert!(self.child.wait().unwrap().success());
+    }
+}
+
+/// The contents of `p` once it is there (120 s at most).
+fn wait_for(p: &Path) -> String {
+    let t0 = std::time::Instant::now();
+    loop {
+        if let Ok(t) = std::fs::read_to_string(p) {
+            return t;
+        }
+        assert!(
+            t0.elapsed() < Duration::from_secs(120),
+            "{} never came",
+            p.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A flush while another handle holds the spool lock (the fold's 1 s wait runs out): its output and
+/// the record it wrote.
+fn flush_with_the_spool_lock_held(h: &H) -> (Output, Value) {
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(h.dir.join("spool.lock"))
+        .unwrap();
+    held.lock().unwrap();
+    let fl = h.flush(&[]);
+    let last = h.last();
+    drop(held);
+    (fl, last)
+}
+
+/// The lines the record's fold notes count, summed.
+fn folded_total(h: &H) -> u64 {
+    let re =
+        regex::Regex::new(r"^\S+ folded (\d+) not-spooled line\(s\) of \d+ gone producer\(s\)$")
+            .unwrap();
+    h.notes()
+        .iter()
+        .filter_map(|n| re.captures(n))
+        .map(|c| c[1].parse::<u64>().unwrap())
+        .sum()
+}
+
+fn lines_of(p: &Path) -> u64 {
+    std::fs::read_to_string(p).unwrap().lines().count() as u64
+}
+
+/// (wave 3f, F31-1, RC1 of handoff 31) A producer LIVE with N lines at a flush that cannot take the
+/// spool lock, then gone, then a fold under the lock: exactly N counted in total - the flush without
+/// the lock sees NONE of them (`not_spooled_seen` 0, no `{name, bytes}` either), `--status` counts
+/// them meanwhile, the fold counts them once in its note. With M lines appended between that flush
+/// and the fold: N + M. And with the fold's own crash hooks (87: between the save and the deletes;
+/// 88: between the deletes and the rewrite) and its restart: still N + M, once.
+#[test]
+fn f31_1_a_producer_live_at_a_flush_without_the_spool_lock_and_gone_at_the_fold_is_counted_once() {
+    for (n, m, crash) in [(3u64, 0u64, ""), (3, 2, ""), (3, 2, "1"), (3, 2, "2")] {
+        let case = format!("N {n}, M {m}, crash '{crash}'");
+        let h = setup(&format!("f31-1-{n}-{m}-{crash}"));
+        let batches = if m == 0 {
+            n.to_string()
+        } else {
+            format!("{n},{m}")
+        };
+        let mut p = Producer::start(&h, &batches);
+        assert_eq!(lines_of(&p.file), n, "{case}");
+        assert_eq!(h.count().count, n, "{case}");
+        // flush 1: the spool lock busy - no fold, and NO line seen
+        let (fl1, last1) = flush_with_the_spool_lock_held(&h);
+        assert_eq!(
+            last1["not_spooled_seen"],
+            0,
+            "{case}: {} | {}",
+            text(&fl1),
+            h.last_text()
+        );
+        assert!(
+            folded_entries(&last1).is_empty(),
+            "{case}: {}",
+            h.last_text()
+        );
+        assert_eq!(h.fold_notes(), 0, "{case}: {:?}", h.notes());
+        assert!(p.file.exists(), "{case}");
+        let st = h.status();
+        assert!(
+            st.contains(&format!(
+                "\nnot spooled: {n} event(s) since the last flush - the latest "
+            )),
+            "{case}: {}",
+            status_line(&st, "not spooled")
+        );
+        // M lines appended between the flush and the fold, then the producer exits
+        if m > 0 {
+            p.next();
+        }
+        let file = p.file.clone();
+        p.exit();
+        assert_eq!(lines_of(&file), n + m, "{case}");
+        assert_eq!(h.count().count, n + m, "{case}");
+        // flush 2: the fold under the lock (with a crash hook: then its restart)
+        let fl2 = h.flush(&[("CODEX_CONSULT_TEST_FOLD_CRASH", crash)]);
+        let want = match crash {
+            "1" => 87,
+            "2" => 88,
+            _ => 0,
+        };
+        assert_eq!(fl2.status.code(), Some(want), "{case}: {}", text(&fl2));
+        let note = format!(
+            r"folded {} not-spooled line\(s\) of 1 gone producer\(s\)",
+            n + m
+        );
+        assert_eq!(h.notes_like(&note), 1, "{case}: {:?}", h.notes());
+        if crash == "1" {
+            // saved, not deleted: the file is named with its length and counted nowhere meanwhile
+            assert!(file.exists(), "{case}");
+            let name = file.file_name().unwrap().to_string_lossy().to_string();
+            assert_eq!(
+                folded_entries(&h.last()),
+                vec![format!("{name}={}", len(&file))],
+                "{case}"
+            );
+            assert_eq!(h.count().count, 0, "{case}");
+        }
+        if !crash.is_empty() {
+            let restart = h.flush(&[]);
+            assert_eq!(restart.status.code(), Some(0), "{case}: {}", text(&restart));
+        }
+        assert_eq!(h.fold_notes(), 1, "{case}: {:?}", h.notes());
+        assert_eq!(h.notes_like(&note), 1, "{case}: {:?}", h.notes());
+        let last2 = h.last();
+        assert_eq!(last2["not_spooled_seen"], 0, "{case}: {}", h.last_text());
+        assert!(
+            folded_entries(&last2).is_empty(),
+            "{case}: {}",
+            h.last_text()
+        );
+        assert!(!file.exists(), "{case}");
+        assert_eq!(h.count().count, 0, "{case}");
+        // the total accounting: what flush 1 saw plus every fold note - exactly N + M
+        assert_eq!(
+            last1["not_spooled_seen"].as_u64().unwrap() + folded_total(&h),
+            n + m,
+            "{case}: {:?}",
+            h.notes()
+        );
+        h.done();
+    }
+}
+
+/// (wave 3f, F31-1) The flush without the spool lock moves the baseline NEITHER way: a fold under
+/// the lock keeps the live producer's 2 lines (`not_spooled_seen` 2); one line later the flush
+/// without the lock records 2 again - not 3 (that line is not seen: `--status` counts it and names
+/// it), not 0 (the 2 the fold saw stay seen); one more line, the producer exits, and the next fold
+/// counts all 4 ONCE in its note.
+#[test]
+fn f31_1_a_flush_without_the_spool_lock_keeps_the_last_folds_baseline() {
+    let h = setup("f31-1-base");
+    let mut p = Producer::start(&h, "2,1,1");
+    let fl0 = h.flush(&[]);
+    assert_eq!(fl0.status.code(), Some(0), "{}", text(&fl0));
+    assert_eq!(h.last()["not_spooled_seen"], 2, "{}", h.last_text());
+    assert_eq!(h.fold_notes(), 0, "{:?}", h.notes());
+    assert_eq!(h.count().count, 0);
+    p.next();
+    assert_eq!(h.count().count, 1);
+    let (fl1, last1) = flush_with_the_spool_lock_held(&h);
+    assert_eq!(
+        last1["not_spooled_seen"],
+        2,
+        "{} | {}",
+        text(&fl1),
+        h.last_text()
+    );
+    assert_eq!(h.fold_notes(), 0, "{:?}", h.notes());
+    let st = h.status();
+    let ns = status_line(&st, "not spooled");
+    assert!(
+        ns.starts_with("not spooled: 1 event(s) since the last flush - the latest ")
+            && ns.contains(": batch 1 line 1 ("),
+        "{ns}"
+    );
+    p.next();
+    let file = p.file.clone();
+    p.exit();
+    assert_eq!(h.count().count, 2);
+    let fl2 = h.flush(&[]);
+    assert_eq!(fl2.status.code(), Some(0), "{}", text(&fl2));
+    assert_eq!(
+        h.notes_like(r"folded 4 not-spooled line\(s\) of 1 gone producer\(s\)"),
+        1,
+        "{:?}",
+        h.notes()
+    );
+    assert_eq!(h.fold_notes(), 1);
+    assert_eq!(folded_total(&h), 4);
+    assert_eq!(h.last()["not_spooled_seen"], 0);
+    assert!(!file.exists());
     assert_eq!(h.count().count, 0);
     h.done();
 }

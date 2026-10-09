@@ -115,9 +115,10 @@ the variable (without test mode it is ignored).
 - The fold runs under C3's sender lock and spool lock (the plugin: its `.flush.lock` record and its
   `telemetry.lock`). A sender that finds the sender lock busy writes NO record (the plugin: none
   either, but a "sender stuck" note - C3's OS lock is never stale, so there is no stuck sender to
-  report). With the spool lock busy for 1 s the record is written without a fold; since wave 3d
-  (F24-1) only the lines of the files a fold would keep count as seen (the plugin's fallback counts
-  every line but the legacy file's - see "Wave 3d" below).
+  report). With the spool lock busy for 1 s the record is written without a fold; since wave 3f
+  (F31-1) it sees no line - `not_spooled_seen` stays the last fold's (the plugin's fallback counts
+  every line but the legacy file's as seen; wave 3d's rule, the lines of the files a fold would
+  keep, is superseded - see "Wave 3d" and "Wave 3f" below).
 - The marker's refusal and the status line name `c3 telemetry --forget --local`, not
   `codex-telemetry.ps1`.
 - A forget writes the marker only when it may delete local data (as the plugin's `-Local`); a forget
@@ -199,7 +200,8 @@ plugin it is said under "Differences".
 - **F24-1 (blocker) - a line is never "seen" without its file being kept.** The flush without the
   spool lock (busy 1 s) no longer writes `not_spooled_seen = every line but the legacy files'`: it
   writes the lines of the files a fold would KEEP (`notspooled::kept_seen`: live producers - the
-  fold's own `seen`); a gone producer's, a staged, a legacy and a named file's lines stay unseen,
+  fold's own `seen`; **superseded by wave 3f**, F31-1: no line at all - see "Wave 3f" below); a
+  gone producer's, a staged, a legacy and a named file's lines stay unseen,
   `--status` counts them and the next fold counts them ONCE in its note. The same rule closes the
   narrower twin in the fold: a file the fold takes (gone, staged, named) but cannot open this time
   is neither folded nor seen (before: seen, then folded by the next flush). The names an earlier fold
@@ -273,8 +275,8 @@ plugin it is said under "Differences".
 
 ### Differences from the plugin (added by 3d)
 
-- The fallback's `not_spooled_seen` (F24-1) and a taken-but-unopened file (neither seen nor folded):
-  the plugin counts those lines as seen.
+- The fallback's `not_spooled_seen` (F24-1; since 3f, F31-1, the last fold's baseline unchanged)
+  and a taken-but-unopened file (neither seen nor folded): the plugin counts those lines as seen.
 - A named file's unterminated tail is counted (F24-2); the plugin counts complete lines only there.
 - No not-spooled line while a deletion is pending/confirmed/cleaning or a living owner's marker is
   there (F24-3); the plugin still counts an event its marker refused - harness-telemetry FORGET D3
@@ -299,3 +301,88 @@ Pinned v0.6.1, Windows PowerShell 5.1, staging as above, `C3_EXE` a copy of this
 | fixes28e | 46 / 19 (RECORD 19) | 63 / 2 (RECORD 2) | NOTSPOOLED and MARKER all green; the 2 RECORD failures are outside this wave (recovery) |
 | fixes28d | 25 / 2, stops at line 365 | 25 / 2, stops at line 365 | none - the same MARKER D2 halfway and LOCK D3 sender-stuck failures (plugin path by design) |
 | telemetry | 47 / 96 | 47 / 96 | none - the same 96 checks by name as the same-day baseline run `run-all-20261009-091435` (diffed line by line); FORGET D3 keeps failing (shim) and now also differs by design (F24-3) |
+
+## Wave 3f: the second-round blocker F31-1 (2026-10-09)
+
+Branch `wave3f-fallback`. The MiMo second round on 3b/3d (handoff 31 of
+`.collab/parity-0.6.1-2026-10-08/`, verdict HOLD) found one blocker, F31-1, which supersedes F24-1:
+the flush without the spool lock recorded a LIVE producer's lines as seen; when that producer exited
+before the next fold, the fold counted its whole file in its note - the same N lines were
+`not_spooled_seen` N in one record and `folded N` in the next.
+
+**The rule chosen: a flush without the spool lock counts nothing.** Its record carries the last
+fold's `not_spooled_seen` unchanged (`notspooled::carried_seen`; no record or no number in it: 0)
+and, as before, the names of `not_spooled_folded[]` whose files are there; it reads no not-spooled
+file. Only a fold - under the spool lock - moves the baseline, so:
+
+- a line appended since the last fold stays unseen (`--status` counts it) until a fold keeps its
+  file (seen then) or takes it (counted ONCE, in that fold's note);
+- a line the last fold saw stays seen (3d's rule also turned a kept producer's lines back into
+  unseen ones when that producer was gone by the flush without the lock);
+- the flush without the lock adds nothing to the notes and nothing to the baseline under every
+  interleaving: a producer appending during it (it reads no file), the producer exiting between it
+  and the fold (none of its lines was seen there: the fold counts the whole file once), the fold's
+  own crash hooks (87/88 - the E20/E24 path is untouched; a flush without the lock after a crashed
+  fold carries that fold's baseline and its names, and the restart deletes the named files
+  uncounted).
+
+Why not the other remedy, `{name, bytes}` per live file: `not_spooled_folded[]` means "in a fold's
+note already" (E24). A live producer's entry there would make the next fold delete those bytes
+UNCOUNTED - the lines would reach no note, only a `not_spooled_seen` the next record overwrites;
+`--status` would subtract them twice (a named file counts only beyond its bytes, and the baseline
+again) unless the baseline left them out; a fold under the lock would TAKE the live producer's file
+(`foldable` takes every named file: opened exclusively and deleted while its producer still
+appends); and under the plugin-home hook (P8) the plugin's fold reads the entry the same way. A
+separate per-file seen list would be a record field the plugin does not know. Counting nothing needs
+no new field and keeps the record in the plugin's shape.
+
+What `not_spooled_seen` is, stated once: `--status`'s baseline - the complete lines of the files the
+LAST FOLD kept -, not a count of its own. The count of record is the fold notes, and every line
+reaches exactly one note. (A live producer a FOLD keeps is seen by that fold and counted in a later
+fold's note once it is gone - E2's design, unchanged; the flush without the lock no longer adds a
+second "seen" of its own.)
+
+Fixtures - the reviewer's RC1 with a real producer PROCESS (`f31_child_producer`, stepped through
+its batches by the test), so the producer is live at the flush without the lock and gone at the fold:
+
+- `f31_1_a_producer_live_at_a_flush_without_the_spool_lock_and_gone_at_the_fold_is_counted_once`:
+  N = 3 lines at a flush with `spool.lock` held - its record `not_spooled_seen` 0, no `{name,
+  bytes}`, no fold note, `--status` 3; the producer exits; the fold under the lock - one note `folded
+  3 not-spooled line(s) of 1 gone producer(s)`, `not_spooled_seen` 0, the file gone, `--status` 0;
+  what the first flush saw plus every fold note = exactly 3. With M = 2 lines appended between that
+  flush and the fold: 5. With crash 87 at the fold (the record saved, the file there and named with
+  its bytes, `--status` 0) and its restart, and with crash 88 and its restart: still one note of 5,
+  5 in total.
+- `f31_1_a_flush_without_the_spool_lock_keeps_the_last_folds_baseline`: a fold keeps the live
+  producer's 2 lines (`not_spooled_seen` 2); one line later the flush without the lock records 2 -
+  not 3 (3d's rule), not 0 - and `--status` counts 1 and names it; one more line, the producer
+  exits, the next fold: one note `folded 4`.
+- The 3d fixture `f24_1_...` is renamed
+  `f24_1_a_flush_without_the_spool_lock_sees_nothing_and_the_next_folds_the_gone_once` (after the
+  flush without the lock: `not_spooled_seen` 0, `--status` 4; then `folded 3`, `not_spooled_seen` 1);
+  the unit test `f24_1_without_a_fold_only_the_kept_files_lines_are_seen` is replaced by
+  `f31_1_without_a_fold_the_last_folds_baseline_is_carried_and_no_line_is_seen`.
+
+### Differences from the plugin (changed by 3f)
+
+- The flush without the lock: the plugin writes `not_spooled_seen` = every line but the legacy
+  file's; C3 carries the last fold's (3d: the lines of the files a fold would keep). The field's
+  shape is unchanged - under the plugin-home hook either implementation reads the other's record.
+
+Workspace: 717 -> 720 tests (`cargo test --workspace -j 2 --no-fail-fast`, on freshly touched sources
+- the shared target dir otherwise reuses another worktree's newer artifacts: 1 unit test replaced, 2
+fixtures and the producer process added in `notspooled_parity.rs`), `cargo clippy --workspace
+--all-targets -- -D warnings` and `cargo fmt --check` clean.
+
+### Harnesses through the shim (3f)
+
+Pinned v0.6.1, Windows PowerShell 5.1, staging as above, `C3_EXE` a copy of this branch's build -
+checked to carry 3f's rule (a record with `not_spooled_seen` 7, no not-spooled file, a flush with
+`spool.lock` held: 7 carried; 3d's build writes 0) -, one harness at a time under `HARNESS.lock`.
+The harnesses cannot hold C3's spool lock (it is under C3's own root), so no harness check reaches
+the changed path; they guard against regressions.
+
+| harness | 3d | 3f | what changed |
+|---|---|---|---|
+| fixes28e | 63 / 2 (RECORD 2) | 63 / 2 (RECORD 2) | none - NOTSPOOLED (22) and MARKER (6) all green; the 2 RECORD failures are the recovery code greps over the shim (outside this wave) |
+| telemetry | 47 / 96 | 47 / 96 | none - the same 96 checks by name as the baseline run `run-all-20261009-091435` (diffed line by line) |

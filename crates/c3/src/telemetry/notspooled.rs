@@ -30,11 +30,14 @@
 //! - **E3** the forgetting marker `telemetry-forgetting` `{pid, start_time, start_ticks, since}`: its
 //!   owner is judged on the pid AND the start ticks when it has them (exactly equal on Windows; a
 //!   start that cannot be read counts as alive), an older marker by its `start_time`.
-//! - **wave 3d** (the diff-review F24-1..F24-6): a line is never "seen" unless a fold would keep
-//!   its file (a flush without the spool lock, a gone file the fold cannot open); a named file's
-//!   tail without a line end is counted; no count is written while the local data is being deleted
-//!   (the file made first, the deletion checked after); `--status` names the latest UNSEEN line; a
-//!   staged generation never takes a name the record holds.
+//! - **wave 3d** (the diff-review F24-1..F24-6): a line is never "seen" unless a fold keeps its
+//!   file (a gone file the fold cannot open is neither seen nor folded); a named file's tail without
+//!   a line end is counted; no count is written while the local data is being deleted (the file
+//!   made first, the deletion checked after); `--status` names the latest UNSEEN line; a staged
+//!   generation never takes a name the record holds.
+//! - **wave 3f** (F31-1): only a fold moves `not_spooled_seen` - a flush without the spool lock
+//!   carries the last fold's baseline unchanged and sees no line, so a producer live then and gone
+//!   at the next fold has its lines counted once, in that fold's note.
 //!
 //! The last flush's record is C3's `last-flush.json` (the plugin's `.last`), in the plugin's shape
 //! `{time, result, delivered, kept, dropped, rejected, http, not_spooled_seen, not_spooled_folded,
@@ -712,13 +715,14 @@ impl NsLine {
 }
 
 /// (wave 3d, F24-4) The latest line by time among the lines NOT seen by the last flush. The record
-/// keeps one number (`not_spooled_seen`: the complete lines of the producers' files that flush kept),
+/// keeps one number (`not_spooled_seen`: the complete lines of the producers' files the last FOLD
+/// kept - wave 3f: a flush without the spool lock carries it unchanged),
 /// so the seen lines are taken from the front of those files - each file in its own order (they only
 /// grow), the files interleaved by time (the earliest first; a line without a time first) -, and
 /// every line of a legacy file, of a staged generation and beyond a named file's recorded bytes is
 /// unseen. Exact for one producer whatever the clock did (a seen line dated later than a new one is
 /// not named) and for several under a clock that only moves forward; the one approximation left: a
-/// producer that was gone already at the last flush but not folded (a flush without the spool lock)
+/// producer that was gone already at the last fold but not folded (its file could not be opened then)
 /// may have its older lines taken for the seen ones - the COUNT is exact either way.
 fn latest_unseen(seeable: Vec<Vec<NsLine>>, never: Vec<NsLine>, seen: u64) -> Option<NsLine> {
     let mut heads = vec![0usize; seeable.len()];
@@ -858,18 +862,17 @@ fn foldable(f: &NsFile, already: &HashMap<String, FoldedEntry>) -> bool {
         || pid_identity_ticks(f.pid, f.ticks) == Identity::Gone
 }
 
-/// (wave 3d, F24-1) The record's `not_spooled_seen` of a flush that could not fold (the spool lock
-/// stayed busy): the complete lines of the files a fold would KEEP (live producers - the fold's
-/// `seen`), nothing else. The lines of a gone producer's file, a staged generation, a legacy file
-/// or a named file stay unseen - the next fold counts them in its note, and `--status` counts them
-/// meanwhile -, so no line is ever both "seen" and folded.
-pub(crate) fn kept_seen(paths: &LocalPaths, already: &HashMap<String, FoldedEntry>) -> u64 {
-    list_files(&paths.ns_dir)
-        .iter()
-        .filter(|f| !f.legacy && !foldable(f, already))
-        .filter_map(|f| read_shared(&f.path))
-        .map(|t| complete_lines(&t, false).len() as u64)
-        .sum()
+/// (wave 3f, F31-1) The record's `not_spooled_seen` of a flush that could not fold (the spool lock
+/// stayed busy): the baseline the LAST FOLD left, carried unchanged - such a flush sees no line.
+/// Only a fold moves the baseline (to the complete lines of the files it keeps), so a line appended
+/// since stays unseen - `--status` counts it - until a fold under the spool lock keeps its file or
+/// takes it (then it is counted ONCE, in that fold's note), and a line the last fold saw stays seen.
+/// Wave 3d's rule (the lines of the files a fold WOULD keep, read here) let a producer that lived
+/// at this flush and was gone at the next fold have the same lines recorded as seen here and folded
+/// there (F31-1); it also brought back as unseen the lines of a producer the last fold kept and that
+/// was gone by this flush.
+pub(crate) fn carried_seen(last: Option<&Value>) -> u64 {
+    count_value(last.and_then(|l| l.get("not_spooled_seen"))).unwrap_or(0) as u64
 }
 
 /// `Merge-TelemetryNotSpooled`, under the spool lock: every file whose producer is gone (no process
@@ -1309,12 +1312,12 @@ mod tests {
         let _ = fs::remove_dir_all(&d);
     }
 
-    /// (F24-1) The `not_spooled_seen` of a flush without the spool lock: the lines of the files a
-    /// fold would keep - this live process's - and none of a gone producer's, a staged, a legacy or
-    /// a named file's.
+    /// (F31-1) The `not_spooled_seen` of a flush without the spool lock: the last fold's baseline
+    /// carried unchanged, whatever the files hold now - a live producer's lines (this process's), a
+    /// gone producer's, a legacy file's add nothing; no record (or no number in it): 0.
     #[test]
-    fn f24_1_without_a_fold_only_the_kept_files_lines_are_seen() {
-        let d = scratch("f24-1");
+    fn f31_1_without_a_fold_the_last_folds_baseline_is_carried_and_no_line_is_seen() {
+        let d = scratch("f31-1");
         let paths = LocalPaths::in_dir(&d);
         append(&paths, "own-1").unwrap();
         append(&paths, "own-2").unwrap();
@@ -1324,32 +1327,25 @@ mod tests {
         )
         .unwrap();
         fs::write(
-            d.join("telemetry-not-spooled-legacy-639000000000000001.ndjson"),
-            ns_line("2026-10-01T10:00:00+02:00", "staged"),
-        )
-        .unwrap();
-        fs::write(
             d.join(LEGACY_FILE),
             ns_line("2026-10-01T10:00:00+02:00", "legacy"),
         )
         .unwrap();
-        assert_eq!(kept_seen(&paths, &HashMap::new()), 2);
-        // a file the record names is the fold's, never seen
-        let own_name = paths
-            .own_file()
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        let mut named = HashMap::new();
-        named.insert(
-            own_name.to_ascii_lowercase(),
-            FoldedEntry {
-                name: own_name,
-                bytes: 3,
-            },
-        );
-        assert_eq!(kept_seen(&paths, &named), 0);
+        assert_eq!(carried_seen(read_last(&paths.last).as_ref()), 0);
+        record_with_seen(&paths, 1);
+        assert_eq!(carried_seen(read_last(&paths.last).as_ref()), 1);
+        // `--status` meanwhile: every line but the one the last fold saw
+        assert_eq!(count(&paths, false).count, 5);
+        for (seen, want) in [
+            (json!("4"), 4),
+            (json!("x"), 0),
+            (json!(-2), 0),
+            (Value::Null, 0),
+        ] {
+            let last = json!({"not_spooled_seen": seen});
+            assert_eq!(carried_seen(Some(&last)), want, "{last}");
+        }
+        assert_eq!(carried_seen(Some(&json!({}))), 0);
         let _ = fs::remove_dir_all(&d);
     }
 
