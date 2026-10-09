@@ -30,6 +30,11 @@
 //! - **E3** the forgetting marker `telemetry-forgetting` `{pid, start_time, start_ticks, since}`: its
 //!   owner is judged on the pid AND the start ticks when it has them (exactly equal on Windows; a
 //!   start that cannot be read counts as alive), an older marker by its `start_time`.
+//! - **wave 3d** (the diff-review F24-1..F24-6): a line is never "seen" unless a fold would keep
+//!   its file (a flush without the spool lock, a gone file the fold cannot open); a named file's
+//!   tail without a line end is counted; no count is written while the local data is being deleted
+//!   (the file made first, the deletion checked after); `--status` names the latest UNSEEN line; a
+//!   staged generation never takes a name the record holds.
 //!
 //! The last flush's record is C3's `last-flush.json` (the plugin's `.last`), in the plugin's shape
 //! `{time, result, delivered, kept, dropped, rejected, http, not_spooled_seen, not_spooled_folded,
@@ -52,7 +57,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 
-use crate::telemetry::spool::{replace_atomic, LAST_FLUSH};
+use crate::telemetry::complaint::{deletion_state, DeletionState};
+use crate::telemetry::spool::{replace_atomic, FORGET_PENDING, LAST_FLUSH};
 
 /// The producers' files: `telemetry-not-spooled-<pid>-<start ticks>.ndjson`.
 const NS_PREFIX: &str = "telemetry-not-spooled-";
@@ -85,6 +91,10 @@ pub struct LocalPaths {
     pub marker: PathBuf,
     /// The last flush's record (`last-flush.json`; the plugin's `.last`).
     pub last: PathBuf,
+    /// C3's own telemetry root - the outbox, the locks and the deletion transaction
+    /// (`forget-pending.json`) stay there under the test hook too (wave 3d, F24-3: a producer reads
+    /// the transaction before it writes a count).
+    pub root: PathBuf,
 }
 
 impl LocalPaths {
@@ -94,15 +104,18 @@ impl LocalPaths {
             ns_dir: dir.to_path_buf(),
             marker: dir.join(MARKER_FILE),
             last: dir.join(LAST_FLUSH),
+            root: dir.to_path_buf(),
         }
     }
 
-    /// The plugin's places under a codex home (the test hook [`PLUGIN_HOME_VAR`]).
-    pub fn plugin_home(home: &Path) -> Self {
+    /// The plugin's places under a codex home (the test hook [`PLUGIN_HOME_VAR`]); `root` is C3's
+    /// own telemetry directory.
+    pub fn plugin_home(home: &Path, root: &Path) -> Self {
         LocalPaths {
             ns_dir: home.to_path_buf(),
             marker: home.join(MARKER_FILE),
             last: home.join("telemetry-spool").join(".last"),
+            root: root.to_path_buf(),
         }
     }
 
@@ -121,7 +134,7 @@ impl LocalPaths {
 pub fn local_paths(dir: &Path) -> LocalPaths {
     if c3_core::test_hooks::mode_on() {
         if let Some(h) = std::env::var_os(PLUGIN_HOME_VAR).filter(|h| !h.is_empty()) {
-            return LocalPaths::plugin_home(Path::new(&h));
+            return LocalPaths::plugin_home(Path::new(&h), dir);
         }
     }
     LocalPaths::in_dir(dir)
@@ -394,6 +407,14 @@ pub(crate) fn list_files(dir: &Path) -> Vec<NsFile> {
 /// `Add-TelemetryNotSpooled`: one `{time, why}` line appended to THIS process's own file - no lock
 /// (no other process appends to it; the retry, up to 1 s, only covers a reader of this very file).
 /// `Err(why)` when the line could not be written.
+///
+/// (wave 3d, F24-3) Never while the local telemetry data is being deleted: the own file is opened
+/// (made) FIRST and only then is the deletion checked ([`deletion_refusal`]: a deletion transaction
+/// in any phase, or a forgetting marker whose owner lives) - so a check that passes means the file
+/// existed before any deletion began, and that deletion's cleanup (which lists the files only after
+/// its transaction and marker are written) removes it; a refused append writes nothing and removes
+/// the file it made (an empty one: a file with lines is the cleanup's). Still no lock: a busy lock
+/// never stops a count (fixes28d D4).
 pub fn append(paths: &LocalPaths, why: &str) -> Result<(), String> {
     let line = format!(
         "{}\n",
@@ -402,9 +423,25 @@ pub fn append(paths: &LocalPaths, why: &str) -> Result<(), String> {
     let own = paths.own_file();
     let mut err = String::new();
     for _ in 0..20 {
-        let r = fs::create_dir_all(&paths.ns_dir)
-            .and_then(|_| OpenOptions::new().create(true).append(true).open(&own))
-            .and_then(|mut f| f.write_all(line.as_bytes()));
+        let opened = fs::create_dir_all(&paths.ns_dir)
+            .and_then(|_| OpenOptions::new().create(true).append(true).open(&own));
+        let r = match opened {
+            Ok(mut f) => {
+                if let Some(refused) = deletion_refusal(paths) {
+                    let empty = f.metadata().map(|m| m.len() == 0).unwrap_or(false);
+                    drop(f);
+                    if empty {
+                        let _ = fs::remove_file(&own);
+                    }
+                    return Err(format!(
+                        "the not-spooled count {} is not written while the local telemetry data is being deleted ({refused})",
+                        own.display()
+                    ));
+                }
+                f.write_all(line.as_bytes())
+            }
+            Err(e) => Err(e),
+        };
         match r {
             Ok(()) => return Ok(()),
             Err(e) => {
@@ -417,6 +454,29 @@ pub fn append(paths: &LocalPaths, why: &str) -> Result<(), String> {
         "the not-spooled count {} could not be written ({err})",
         own.display()
     ))
+}
+
+/// (wave 3d, F24-3) Why no not-spooled line may be written now: a deletion transaction of this
+/// instance in ANY phase (or one that cannot be read - fail closed: pending at the intake, confirmed,
+/// cleaning) or a forgetting marker whose owner lives (a local deletion runs). `None`: write.
+pub(crate) fn deletion_refusal(paths: &LocalPaths) -> Option<String> {
+    match deletion_state(&paths.root) {
+        DeletionState::None => {}
+        DeletionState::Pending => {
+            return Some(format!(
+                "a deletion of this instance is pending at the intake ({})",
+                paths.root.join(FORGET_PENDING).display()
+            ))
+        }
+        DeletionState::Cleanup(_) => {
+            return Some(format!(
+                "the local deletion of this instance is not finished ({})",
+                paths.root.join(FORGET_PENDING).display()
+            ))
+        }
+    }
+    let m = forgetting_owner(&paths.marker);
+    (m.there && m.alive).then_some(m.why)
 }
 
 // --------------------------------------------------------------------------- the last record
@@ -572,8 +632,11 @@ pub fn count(paths: &LocalPaths, all: bool) -> NsCount {
     } else {
         count_value(last.as_ref().and_then(|l| l.get("not_spooled_seen"))).unwrap_or(0)
     };
-    // (time, why, when) of the latest line
-    let mut latest: Option<(Option<DateTime<chrono::FixedOffset>>, String, String)> = None;
+    // (wave 3d, F24-4) the lines that can have been seen - a producer's file the record does not
+    // name, line by line in its order - and those that never are (a legacy file, a staged
+    // generation, a named file's lines beyond its recorded bytes)
+    let mut seeable: Vec<Vec<NsLine>> = Vec::new();
+    let mut never: Vec<NsLine> = Vec::new();
     for f in &files {
         let mut text = None;
         if !f.legacy {
@@ -599,29 +662,107 @@ pub fn count(paths: &LocalPaths, all: bool) -> NsCount {
         if f.legacy {
             r.legacy_lines += lines.len() as u64;
         }
-        for l in lines {
-            let Ok(o) = serde_json::from_str::<Value>(l) else {
-                continue;
-            };
-            let when_text = value_text(o.get("time"));
-            let at = DateTime::parse_from_rfc3339(when_text.trim()).ok();
-            let newer = match &latest {
-                None => true,
-                Some((prev, _, _)) => at.is_some() && (prev.is_none() || at >= *prev),
-            };
-            if newer {
-                latest = Some((at, value_text(o.get("why")), when_text));
-            }
+        let parsed: Vec<NsLine> = lines.into_iter().map(NsLine::parse).collect();
+        if f.legacy || f.staged || named {
+            never.extend(parsed);
+        } else {
+            seeable.push(parsed);
         }
     }
     r.count = (r.total as i64 - seen).max(0) as u64;
     if r.count > 0 {
-        if let Some((_, why, when)) = latest {
-            r.last = why;
-            r.when = when;
+        if let Some(l) = latest_unseen(seeable, never, seen.max(0) as u64) {
+            r.last = l.why;
+            r.when = l.when;
         }
     }
     r
+}
+
+/// One not-spooled line as `--status` reads it: its `time` (parsed, and as written) and its `why`;
+/// a line that is no JSON object has neither (it still counts).
+#[derive(Debug, Clone)]
+struct NsLine {
+    at: Option<DateTime<chrono::FixedOffset>>,
+    when: String,
+    why: String,
+    json: bool,
+}
+
+impl NsLine {
+    fn parse(l: &str) -> NsLine {
+        match serde_json::from_str::<Value>(l) {
+            Ok(o) => {
+                let when = value_text(o.get("time"));
+                NsLine {
+                    at: DateTime::parse_from_rfc3339(when.trim()).ok(),
+                    why: value_text(o.get("why")),
+                    when,
+                    json: true,
+                }
+            }
+            Err(_) => NsLine {
+                at: None,
+                when: String::new(),
+                why: String::new(),
+                json: false,
+            },
+        }
+    }
+}
+
+/// (wave 3d, F24-4) The latest line by time among the lines NOT seen by the last flush. The record
+/// keeps one number (`not_spooled_seen`: the complete lines of the producers' files that flush kept),
+/// so the seen lines are taken from the front of those files - each file in its own order (they only
+/// grow), the files interleaved by time (the earliest first; a line without a time first) -, and
+/// every line of a legacy file, of a staged generation and beyond a named file's recorded bytes is
+/// unseen. Exact for one producer whatever the clock did (a seen line dated later than a new one is
+/// not named) and for several under a clock that only moves forward; the one approximation left: a
+/// producer that was gone already at the last flush but not folded (a flush without the spool lock)
+/// may have its older lines taken for the seen ones - the COUNT is exact either way.
+fn latest_unseen(seeable: Vec<Vec<NsLine>>, never: Vec<NsLine>, seen: u64) -> Option<NsLine> {
+    let mut heads = vec![0usize; seeable.len()];
+    for _ in 0..seen {
+        let mut pick: Option<usize> = None;
+        for (i, f) in seeable.iter().enumerate() {
+            let Some(l) = f.get(heads[i]) else {
+                continue;
+            };
+            pick = match pick {
+                None => Some(i),
+                Some(p) => {
+                    let best = &seeable[p][heads[p]];
+                    let earlier = match (l.at, best.at) {
+                        (None, Some(_)) => true,
+                        (Some(a), Some(b)) => a < b,
+                        _ => false,
+                    };
+                    Some(if earlier { i } else { p })
+                }
+            };
+        }
+        match pick {
+            Some(i) => heads[i] += 1,
+            None => break,
+        }
+    }
+    let unseen = seeable
+        .into_iter()
+        .zip(heads)
+        .flat_map(|(f, h)| f.into_iter().skip(h))
+        .chain(never);
+    // the plugin's rule: the latest by time; a line without a time only when none has one
+    let mut latest: Option<NsLine> = None;
+    for l in unseen.filter(|l| l.json) {
+        let newer = match &latest {
+            None => true,
+            Some(prev) => l.at.is_some() && (prev.at.is_none() || l.at >= prev.at),
+        };
+        if newer {
+            latest = Some(l);
+        }
+    }
+    latest
 }
 
 // --------------------------------------------------------------------------- E2, E20, E24, E26: the fold
@@ -666,14 +807,29 @@ fn utc_now_ticks() -> i64 {
         + DOTNET_UNIX_EPOCH_TICKS
 }
 
-/// (E26) Rename a legacy file to a unique staged name before it is counted; `Err(note)` when a
-/// writer kept it (retried about 1 s) - not folded this flush.
-fn stage_legacy(dir: &Path, legacy: &Path) -> Result<(), String> {
-    let mut ticks = utc_now_ticks();
-    while dir.join(format!("{STAGED_PREFIX}{ticks}.ndjson")).exists() {
+/// (E26) A staged generation's name from `ticks` on: the first that is neither on disk nor named by
+/// the record's `not_spooled_folded[]` (wave 3d, F24-6: a record whose last rewrite failed still
+/// names files the fold deleted - a new generation never takes such a name, so E24's `{name, bytes}`
+/// can never mistake it for the folded one).
+fn staged_path(dir: &Path, mut ticks: i64, taken: &HashMap<String, FoldedEntry>) -> PathBuf {
+    loop {
+        let name = format!("{STAGED_PREFIX}{ticks}.ndjson");
+        let p = dir.join(&name);
+        if !p.exists() && !taken.contains_key(&name.to_ascii_lowercase()) {
+            return p;
+        }
         ticks += 1;
     }
-    let staged = dir.join(format!("{STAGED_PREFIX}{ticks}.ndjson"));
+}
+
+/// (E26) Rename a legacy file to a unique staged name before it is counted; `Err(note)` when a
+/// writer kept it (retried about 1 s) - not folded this flush.
+fn stage_legacy(
+    dir: &Path,
+    legacy: &Path,
+    taken: &HashMap<String, FoldedEntry>,
+) -> Result<(), String> {
+    let staged = staged_path(dir, utc_now_ticks(), taken);
     let mut err = String::new();
     for _ in 0..10 {
         match fs::rename(legacy, &staged) {
@@ -693,21 +849,47 @@ fn stage_legacy(dir: &Path, legacy: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether a fold takes this (non-legacy) file: a file the record names, a staged generation, or a
+/// producer that is gone (no process with its pid and start ticks). A producer that lives - or whose
+/// identity cannot be confirmed - keeps its file.
+fn foldable(f: &NsFile, already: &HashMap<String, FoldedEntry>) -> bool {
+    already.contains_key(&f.name.to_ascii_lowercase())
+        || f.staged
+        || pid_identity_ticks(f.pid, f.ticks) == Identity::Gone
+}
+
+/// (wave 3d, F24-1) The record's `not_spooled_seen` of a flush that could not fold (the spool lock
+/// stayed busy): the complete lines of the files a fold would KEEP (live producers - the fold's
+/// `seen`), nothing else. The lines of a gone producer's file, a staged generation, a legacy file
+/// or a named file stay unseen - the next fold counts them in its note, and `--status` counts them
+/// meanwhile -, so no line is ever both "seen" and folded.
+pub(crate) fn kept_seen(paths: &LocalPaths, already: &HashMap<String, FoldedEntry>) -> u64 {
+    list_files(&paths.ns_dir)
+        .iter()
+        .filter(|f| !f.legacy && !foldable(f, already))
+        .filter_map(|f| read_shared(&f.path))
+        .map(|t| complete_lines(&t, false).len() as u64)
+        .sum()
+}
+
 /// `Merge-TelemetryNotSpooled`, under the spool lock: every file whose producer is gone (no process
 /// with its pid and start ticks), every staged legacy generation and every file `already` names is
 /// opened exclusively and counted (a gone producer's last line without a line end too); a producer
 /// that lives - or whose identity cannot be confirmed - keeps its file (its complete lines: `seen`).
 /// The legacy files are staged first (E26). NOTHING is deleted here (E20): the caller saves the
 /// record, then [`Fold::complete`] deletes. A file `already` names (E24) of the same length or
-/// longer is not counted again - only its complete lines beyond the recorded bytes are new; a
-/// shorter one is another file, folded afresh; a bare name is held for its delete, uncounted.
+/// longer is not counted again - only its lines beyond the recorded bytes are new (wave 3d, F24-2:
+/// a last piece without a line end too - the file is deleted, its producer is gone); a shorter one
+/// is another file, folded afresh; a bare name is held for its delete, uncounted. (wave 3d, F24-1)
+/// A file the fold takes but cannot open this time is neither counted nor seen: it counts in
+/// `--status` until a later fold takes it.
 pub(crate) fn merge(paths: &LocalPaths, already: &HashMap<String, FoldedEntry>) -> Fold {
     let mut r = Fold {
         ns_dir: paths.ns_dir.clone(),
         ..Fold::default()
     };
     for f in list_files(&paths.ns_dir).iter().filter(|f| f.legacy) {
-        if let Err(note) = stage_legacy(&paths.ns_dir, &f.path) {
+        if let Err(note) = stage_legacy(&paths.ns_dir, &f.path, already) {
             r.notes.push(note);
         }
     }
@@ -717,9 +899,7 @@ pub(crate) fn merge(paths: &LocalPaths, already: &HashMap<String, FoldedEntry>) 
             continue;
         }
         let rec = already.get(&f.name.to_ascii_lowercase()).map(|e| e.bytes);
-        let gone =
-            rec.is_some() || f.staged || pid_identity_ticks(f.pid, f.ticks) == Identity::Gone;
-        if gone {
+        if foldable(&f, already) {
             if let Ok(mut fs_) = open_exclusive(&f.path) {
                 let mut earlier = false;
                 let counted: Option<(u64, i64)> = (|| {
@@ -732,7 +912,7 @@ pub(crate) fn merge(paths: &LocalPaths, already: &HashMap<String, FoldedEntry>) 
                             fs_.seek(SeekFrom::Start(b as u64)).ok()?;
                             let mut buf = Vec::new();
                             fs_.read_to_end(&mut buf).ok()?;
-                            complete_lines(&String::from_utf8_lossy(&buf), false).len() as u64
+                            complete_lines(&String::from_utf8_lossy(&buf), true).len() as u64
                         } else {
                             0
                         };
@@ -762,8 +942,9 @@ pub(crate) fn merge(paths: &LocalPaths, already: &HashMap<String, FoldedEntry>) 
                     name: f.name.clone(),
                     bytes: b,
                 });
-                continue;
             }
+            // (wave 3d, F24-1) taken but not opened: neither folded nor seen - a later fold
+            continue;
         }
         if let Some(t) = read_shared(&f.path) {
             r.seen += complete_lines(&t, false).len() as u64;
@@ -1061,6 +1242,256 @@ mod tests {
         fs::write(&mk, "garb").unwrap();
         let g = forgetting_owner(&mk);
         assert!(g.there && !g.alive && g.pid == 0);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    // ----------------------------------------------------------------------- wave 3d (F24-1..F24-6)
+
+    fn ns_line(time: &str, why: &str) -> String {
+        format!("{{\"time\":\"{time}\",\"why\":\"{why}\"}}\n")
+    }
+
+    fn record_with_seen(paths: &LocalPaths, seen: u64) {
+        write_last(
+            &paths.last,
+            &json!({"time": "2026-10-09T10:00:00+02:00", "result": "seeded", "not_spooled_seen": seen, "not_spooled_folded": [], "notes": []}),
+        )
+        .unwrap();
+    }
+
+    /// (F24-4) `--status` names the latest line the last flush did NOT see: a seen line dated later
+    /// (a clock set back) is not it, nor is a seen line of another producer when the unseen one is
+    /// older (a legacy file's).
+    #[test]
+    fn f24_4_the_latest_named_is_an_unseen_line() {
+        let d = scratch("f24-4");
+        let paths = LocalPaths::in_dir(&d);
+        // one producer: the seen line dated 2030, the new one 2020
+        fs::write(
+            d.join("telemetry-not-spooled-12-34.ndjson"),
+            ns_line("2030-01-01T00:00:00+00:00", "seen-2030")
+                + &ns_line("2020-01-01T00:00:00+00:00", "new-2020"),
+        )
+        .unwrap();
+        record_with_seen(&paths, 1);
+        let n = count(&paths, false);
+        assert_eq!((n.count, n.last.as_str()), (1, "new-2020"), "{n:?}");
+        assert_eq!(n.when, "2020-01-01T00:00:00+00:00");
+        // a second producer (its name sorts first) whose one line is new: the seen lines are the
+        // other producer's two
+        fs::remove_file(d.join("telemetry-not-spooled-12-34.ndjson")).unwrap();
+        fs::write(
+            d.join("telemetry-not-spooled-20-1.ndjson"),
+            ns_line("2026-10-01T10:00:00+02:00", "a-1")
+                + &ns_line("2026-10-01T10:01:00+02:00", "a-2"),
+        )
+        .unwrap();
+        fs::write(
+            d.join("telemetry-not-spooled-10-1.ndjson"),
+            ns_line("2026-10-02T10:00:00+02:00", "b-new"),
+        )
+        .unwrap();
+        record_with_seen(&paths, 2);
+        let n = count(&paths, false);
+        assert_eq!((n.count, n.last.as_str()), (1, "b-new"), "{n:?}");
+        // the one unseen line is an OLD legacy line: it is named, not the producers' seen ones
+        fs::remove_file(d.join("telemetry-not-spooled-10-1.ndjson")).unwrap();
+        fs::write(
+            d.join(LEGACY_FILE),
+            ns_line("2026-09-01T09:00:00+02:00", "legacy-old"),
+        )
+        .unwrap();
+        let n = count(&paths, false);
+        assert_eq!((n.count, n.last.as_str()), (1, "legacy-old"), "{n:?}");
+        // every line counts with `all`: the latest of all
+        let n = count(&paths, true);
+        assert_eq!((n.count, n.last.as_str()), (3, "a-2"), "{n:?}");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// (F24-1) The `not_spooled_seen` of a flush without the spool lock: the lines of the files a
+    /// fold would keep - this live process's - and none of a gone producer's, a staged, a legacy or
+    /// a named file's.
+    #[test]
+    fn f24_1_without_a_fold_only_the_kept_files_lines_are_seen() {
+        let d = scratch("f24-1");
+        let paths = LocalPaths::in_dir(&d);
+        append(&paths, "own-1").unwrap();
+        append(&paths, "own-2").unwrap();
+        fs::write(
+            d.join("telemetry-not-spooled-999999-639000000000000000.ndjson"),
+            ns_line("2026-10-01T10:00:00+02:00", "gone-1").repeat(3),
+        )
+        .unwrap();
+        fs::write(
+            d.join("telemetry-not-spooled-legacy-639000000000000001.ndjson"),
+            ns_line("2026-10-01T10:00:00+02:00", "staged"),
+        )
+        .unwrap();
+        fs::write(
+            d.join(LEGACY_FILE),
+            ns_line("2026-10-01T10:00:00+02:00", "legacy"),
+        )
+        .unwrap();
+        assert_eq!(kept_seen(&paths, &HashMap::new()), 2);
+        // a file the record names is the fold's, never seen
+        let own_name = paths
+            .own_file()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let mut named = HashMap::new();
+        named.insert(
+            own_name.to_ascii_lowercase(),
+            FoldedEntry {
+                name: own_name,
+                bytes: 3,
+            },
+        );
+        assert_eq!(kept_seen(&paths, &named), 0);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// (F24-1) A gone producer's file the fold cannot open this time is neither folded nor seen;
+    /// free again, the next fold counts it once.
+    #[cfg(windows)]
+    #[test]
+    fn f24_1_a_gone_file_the_fold_cannot_open_is_neither_folded_nor_seen() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = scratch("f24-1b");
+        let paths = LocalPaths::in_dir(&d);
+        append(&paths, "own").unwrap();
+        let gone = d.join("telemetry-not-spooled-999999-639000000000000000.ndjson");
+        fs::write(
+            &gone,
+            ns_line("2026-10-01T10:00:00+02:00", "gone").repeat(2),
+        )
+        .unwrap();
+        let hold = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&gone)
+            .unwrap();
+        let mut f = merge(&paths, &HashMap::new());
+        assert_eq!((f.lines, f.producers, f.seen), (0, 0, 1), "{f:?}");
+        assert!(f.folded.is_empty());
+        let _ = f.complete(false);
+        drop(hold);
+        let mut f = merge(&paths, &HashMap::new());
+        assert_eq!((f.lines, f.producers, f.seen), (2, 1, 1), "{f:?}");
+        let _ = f.complete(false);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// (F24-2) A file the record names that grew by a last piece without a line end: the fold
+    /// counts that piece (the file is deleted - its producer is gone).
+    #[test]
+    fn f24_2_a_recorded_files_tail_without_a_line_end_is_counted() {
+        let d = scratch("f24-2");
+        let paths = LocalPaths::in_dir(&d);
+        let name = "telemetry-not-spooled-999999-639000000000000000.ndjson";
+        let head =
+            ns_line("2026-10-01T10:00:00+02:00", "a") + &ns_line("2026-10-01T10:01:00+02:00", "b");
+        fs::write(
+            d.join(name),
+            head.clone() + "{\"time\":\"2026-10-01T10:02:00+02:00\",\"why\":\"tail\"}",
+        )
+        .unwrap();
+        let mut already = HashMap::new();
+        already.insert(
+            name.to_string(),
+            FoldedEntry {
+                name: name.to_string(),
+                bytes: head.len() as i64,
+            },
+        );
+        let mut f = merge(&paths, &already);
+        assert_eq!((f.lines, f.producers), (1, 1), "{f:?}");
+        let _ = f.complete(false);
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// (F24-3) No count is written while a deletion is pending, confirmed or cleaning (or its
+    /// record cannot be read), or while a living owner's forgetting marker is there; the empty file
+    /// the refused append made is gone, a file with lines is left to the cleanup; a gone owner's
+    /// marker refuses nothing.
+    #[test]
+    fn f24_3_no_count_is_written_while_the_local_data_is_being_deleted() {
+        let d = scratch("f24-3");
+        let paths = LocalPaths::in_dir(&d);
+        let own = paths.own_file();
+        let txn = |phase: &str| {
+            fs::write(
+                d.join(FORGET_PENDING),
+                format!("{{\"instance_id\":\"i\",\"public_ref\":\"\",\"since\":\"s\",\"attempts\":0,\"last_error\":\"\",\"phase\":\"{phase}\"}}"),
+            )
+            .unwrap();
+        };
+        for phase in ["pending", "confirmed", "cleaning"] {
+            txn(phase);
+            let e = append(&paths, "x").unwrap_err();
+            assert!(
+                e.contains("is not written while the local telemetry data is being deleted"),
+                "{e}"
+            );
+            assert!(
+                !own.exists(),
+                "{phase}: the empty file the append made is removed"
+            );
+        }
+        fs::write(d.join(FORGET_PENDING), "garb").unwrap();
+        assert!(
+            append(&paths, "x").is_err(),
+            "an unreadable record: fail closed"
+        );
+        fs::remove_file(d.join(FORGET_PENDING)).unwrap();
+        let me = std::process::id();
+        fs::write(
+            &paths.marker,
+            format!(
+                "{{\"pid\":{me},\"start_ticks\":{},\"since\":\"s\"}}\n",
+                own_start_ticks()
+            ),
+        )
+        .unwrap();
+        let e = append(&paths, "x").unwrap_err();
+        assert!(
+            e.contains("c3 telemetry --forget --local is deleting"),
+            "{e}"
+        );
+        assert!(!own.exists());
+        fs::write(&paths.marker, "{\"pid\":999999,\"since\":\"s\"}\n").unwrap();
+        append(&paths, "after").unwrap();
+        assert_eq!(fs::read_to_string(&own).unwrap().lines().count(), 1);
+        txn("cleaning");
+        assert!(append(&paths, "y").is_err());
+        assert_eq!(
+            fs::read_to_string(&own).unwrap().lines().count(),
+            1,
+            "a file with lines is left to the cleanup"
+        );
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// (F24-6) A staged generation never takes a name on disk nor one the record names (a record
+    /// whose last rewrite failed still names a file the fold deleted).
+    #[test]
+    fn f24_6_a_staged_name_is_neither_on_disk_nor_recorded() {
+        let d = scratch("f24-6");
+        let t = 639_000_000_000_000_000_i64;
+        fs::write(d.join(format!("{STAGED_PREFIX}{t}.ndjson")), "x\n").unwrap();
+        assert_eq!(
+            staged_path(&d, t, &HashMap::new()),
+            d.join(format!("{STAGED_PREFIX}{}.ndjson", t + 1))
+        );
+        let n = format!("{STAGED_PREFIX}{}.ndjson", t + 1);
+        let mut taken = HashMap::new();
+        taken.insert(n.clone(), FoldedEntry { name: n, bytes: 2 });
+        assert_eq!(
+            staged_path(&d, t, &taken),
+            d.join(format!("{STAGED_PREFIX}{}.ndjson", t + 2))
+        );
         let _ = fs::remove_dir_all(&d);
     }
 }

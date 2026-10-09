@@ -57,8 +57,9 @@ forget's marker and cleanup), `cli/telemetry.rs` (`--status`, `--flush`).
   flush counts them`. TEST HOOK (test mode only): `CODEX_CONSULT_TEST_FOLD_CRASH=1` exits 87 between
   2 and 3, `=2` exits 88 between 3 and 4.
 - **E24 - `{name, bytes}`.** A named file of the recorded length is deleted uncounted; a LONGER one
-  has its complete lines beyond the recorded bytes counted as new (and `--status` counts them
-  meanwhile); a SHORTER one is another file under that name, folded afresh; a bare name (bytes
+  has its complete lines beyond the recorded bytes counted as new (wave 3d, F24-2: the fold counts
+  a last piece without a line end too; `--status` counts the complete ones meanwhile); a SHORTER
+  one is another file under that name, folded afresh; a bare name (bytes
   unknown) is deleted without counting; a named file that cannot be opened stays named.
 - **E26 - legacy staging.** A legacy file is never counted under its own name: it is renamed first to
   `telemetry-not-spooled-legacy-<utc ticks>.ndjson` (a unique name, retried about 1 s), so `{name,
@@ -75,7 +76,8 @@ forget's marker and cleanup), `cli/telemetry.rs` (`--status`, `--flush`).
   guess), an older marker without them by its `start_time`, a marker that names no pid is not alive.
   A producer that meets a living owner's marker refuses AT ONCE (checked before every lock attempt:
   `c3 telemetry --forget --local is deleting the local telemetry data (pid <n>, since <t>; the marker
-  <path>)` - the event is counted as not spooled); under the spool lock a gone owner's marker is
+  <path>)` - the event is dropped: since wave 3d (F24-3) its not-spooled count is not written
+  either); under the spool lock a gone owner's marker is
   removed with the note `removed the forgetting marker of pid <n> (gone) since <t> - a -Forget -Local
   that did not finish; ...` and the producer goes on. The sender does the same (a living owner:
   `skipped - ...`, nothing sent). `--status`: `forgetting : the marker <path> is there - its owner pid
@@ -113,8 +115,9 @@ the variable (without test mode it is ignored).
 - The fold runs under C3's sender lock and spool lock (the plugin: its `.flush.lock` record and its
   `telemetry.lock`). A sender that finds the sender lock busy writes NO record (the plugin: none
   either, but a "sender stuck" note - C3's OS lock is never stale, so there is no stuck sender to
-  report). With the spool lock busy for 1 s the record is written without a fold and every line but
-  the legacy files' counts as seen (the plugin's fallback).
+  report). With the spool lock busy for 1 s the record is written without a fold; since wave 3d
+  (F24-1) only the lines of the files a fold would keep count as seen (the plugin's fallback counts
+  every line but the legacy file's - see "Wave 3d" below).
 - The marker's refusal and the status line name `c3 telemetry --forget --local`, not
   `codex-telemetry.ps1`.
 - A forget writes the marker only when it may delete local data (as the plugin's `-Local`); a forget
@@ -185,3 +188,114 @@ fda5af0 with main's shims, same day, same host.
 - **telemetry DRYRUN** - shim artifact (the same safety net: the dry run can only say off).
 - **telemetry COMPLAIN x10** - older gap (C3's complaint payload/flags, wave 2's note).
 - **telemetry DOCS** - documentation (the plugin's README text).
+
+## Wave 3d: the diff-review fixes F24-1..F24-6 (2026-10-09)
+
+Branch `wave3d-notspooled-fixes`. The MiMo diff-review of this wave (handoff 24 of
+`.collab/parity-0.6.1-2026-10-08/`, verdict HOLD) found one blocker, four majors and one minor; each
+is fixed with the fixture the reviewer asked for (`RC1`..`RC4`). Where the fix departs from the
+plugin it is said under "Differences".
+
+- **F24-1 (blocker) - a line is never "seen" without its file being kept.** The flush without the
+  spool lock (busy 1 s) no longer writes `not_spooled_seen = every line but the legacy files'`: it
+  writes the lines of the files a fold would KEEP (`notspooled::kept_seen`: live producers - the
+  fold's own `seen`); a gone producer's, a staged, a legacy and a named file's lines stay unseen,
+  `--status` counts them and the next fold counts them ONCE in its note. The same rule closes the
+  narrower twin in the fold: a file the fold takes (gone, staged, named) but cannot open this time
+  is neither folded nor seen (before: seen, then folded by the next flush). The names an earlier fold
+  recorded stay while their files are there (as before). RC1:
+  `f24_1_a_flush_without_the_spool_lock_sees_only_the_kept_lines_and_the_next_folds_the_gone_once`
+  (the spool lock held through flush 1:
+  `not_spooled_seen` 1 = the live line, no fold note, `--status` 3; flush 2: one note `folded 3`);
+  unit `f24_1_without_a_fold_only_the_kept_files_lines_are_seen`,
+  `f24_1_a_gone_file_the_fold_cannot_open_is_neither_folded_nor_seen`.
+- **F24-2 (major) - a named file's tail is counted.** A file `not_spooled_folded[]` names that grew
+  beyond its recorded bytes has its lines beyond them counted with a last piece WITHOUT a line end
+  too (the file is deleted - its producer is gone, as for any gone file). RC2:
+  `f24_2_a_tail_without_a_line_end_appended_to_a_recorded_file_is_counted` (crash 87, an unterminated
+  line appended, the restart: notes `folded 2` and `folded 1`, the file gone, `not_spooled_folded`
+  `[]`); unit `f24_2_a_recorded_files_tail_without_a_line_end_is_counted`.
+- **F24-3 (major) - no count survives a local forget.** The producer (`notspooled::append`, under
+  `note_not_spooled`) opens - makes - its own file FIRST and only then checks the deletion
+  (`deletion_refusal`: `forget-pending.json` in any phase - pending, confirmed, cleaning - or one that
+  cannot be read, and a forgetting marker whose owner lives); refused, it writes nothing and removes
+  the file when it made it empty. A check that passes therefore means the file existed before the
+  deletion's transaction or marker, and the cleanup lists the files only after writing both - it
+  sees the file. Still no lock (fixes28d D4). The cleanup lists the not-spooled files a second time
+  after its removals (before the salt and the record): a producer that does not check (the
+  plugin's, an older C3) is caught too. TEST HOOK (test mode only, C3's):
+  `CODEX_CONSULT_TEST_CLEANUP_GATE=<path>` - after the first listing the cleanup writes
+  `<path>.waiting` and waits (60 s at most) for `<path>`. RC3:
+  `f24_3_a_count_made_during_a_local_forget_never_survives_it` (paused at the gate: C3's append is
+  refused and leaves no file; a file written directly after the listing is removed and named; no
+  not-spooled file, marker or transaction left; afterwards a count is written again); unit
+  `f24_3_no_count_is_written_while_the_local_data_is_being_deleted`.
+- **F24-4 (minor) - `--status` names the latest UNSEEN line.** The seen lines are taken from the
+  front of the producers' files the record does not name (each file in its own order - they only
+  grow -, the files interleaved by time); every line of a legacy file, a staged generation and
+  beyond a named file's bytes is unseen; the latest by time among the rest is named. Exact for one
+  producer whatever the clock did, and for several under a clock that only moves forward; the one
+  approximation left (the count is exact): a producer already gone at the last flush but not folded
+  (a flush without the spool lock) may have its older lines taken for the seen ones. Tests:
+  `f24_4_status_names_the_latest_unseen_line` (`not_spooled_seen` 1, a seen 2030 line before a new
+  2020 one: the 2020 one), unit `f24_4_the_latest_named_is_an_unseen_line` (also: a new producer
+  whose name sorts first; an old legacy line beside newer seen lines).
+- **F24-5 (major) - P8 proven for the marker and the production layout.** RC4:
+  `f24_5_the_plugin_home_hook_puts_the_marker_at_the_plugin_place` (under the hook: `--status` and
+  the sender read `<home>/telemetry-forgetting` - a living owner stops the sender, a gone one is
+  removed with its note in `<home>/telemetry-spool/.last`; a living marker at C3's place is NOT read;
+  a forget writes its marker with its pid and `start_ticks` at the plugin place (not C3's), refuses
+  C3's producer with it, and removes it last with the plugin's not-spooled files and `.last`; C3's
+  own `last-flush.json` is never written) and
+  `f24_5_without_the_hook_every_file_is_under_c3s_own_root` (test mode on without the variable, and
+  the variable with test mode off: the fold's record and files and the forget's marker under
+  `<codex home>/c3/telemetry/`; nothing but `c3/` appears under the codex home). The lock contract
+  of the shared files: under the hook C3 and the plugin read and write the same not-spooled files,
+  marker and `.last` under DIFFERENT locks (C3's sender and spool locks under its root, the plugin's
+  `.flush.lock` and `telemetry.lock`); the hook is test-only and the harnesses run the two
+  implementations one after the other, never concurrently - a concurrent C3/plugin flush on one home
+  is not a supported layout (production never shares these files: P7).
+- **F24-6 (major) - the rewrite after the deletes is never swallowed.** Its failure sets the flush's
+  warning `<record> could not be rewritten after the fold's deletes (...) - it still names <n>
+  deleted file(s); no count depends on those names and the next flush drops them` (printed by
+  `--flush`, on a skipped flush too). The names stay: `--status` and the next fold only look at files
+  that exist, and the next record keeps only names whose files are there. **E24 does NOT cover every
+  recreated name** - a file recreated under a stale name SHORTER than the recorded bytes is folded
+  afresh, but one of EQUAL length would be deleted uncounted and a LONGER one counted only beyond the
+  bytes. So a name never recurs instead: a producer's name is its pid and exact start ticks (a gone
+  process's name cannot come back), and a staged generation now takes a name that is neither on disk
+  NOR named by the record (`staged_path`). TEST HOOK (test mode only, C3's):
+  `CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL=1`. Tests:
+  `f24_6_a_failed_rewrite_after_the_deletes_is_said_and_loses_no_count` (the warning, two stale
+  names, `--status` 0; then a new legacy generation, a new gone producer and the stale producer name
+  recreated shorter: one note `folded 3 ... of 3`, the names dropped), unit
+  `f24_6_a_staged_name_is_neither_on_disk_nor_recorded`.
+
+### Differences from the plugin (added by 3d)
+
+- The fallback's `not_spooled_seen` (F24-1) and a taken-but-unopened file (neither seen nor folded):
+  the plugin counts those lines as seen.
+- A named file's unterminated tail is counted (F24-2); the plugin counts complete lines only there.
+- No not-spooled line while a deletion is pending/confirmed/cleaning or a living owner's marker is
+  there (F24-3); the plugin still counts an event its marker refused - harness-telemetry FORGET D3
+  checks `-Status ... not spooled: 1 event(s)` with a living marker (that check failed before 3d for
+  the shim reasons above and still does; it now also differs by design). The cleanup's second
+  listing has no plugin counterpart.
+- `--status` names the latest unseen line (F24-4); the plugin names the latest of all lines.
+- The failed rewrite is said (F24-6); the plugin swallows it. The staged name also avoids the
+  record's names.
+
+Workspace: 686 -> 699 tests (`cargo test --workspace -j 2 --no-fail-fast`: 6 unit tests in
+`notspooled.rs`, 7 in `notspooled_parity.rs`), `cargo clippy --workspace --all-targets -- -D warnings`
+and `cargo fmt --check` clean.
+
+### Harnesses through the shim (3d)
+
+Pinned v0.6.1, Windows PowerShell 5.1, staging as above, `C3_EXE` a copy of this branch's build
+(checked to carry 3d's strings), one harness at a time under `HARNESS.lock`.
+
+| harness | 3b (after) | 3d | what changed |
+|---|---|---|---|
+| fixes28e | 46 / 19 (RECORD 19) | 63 / 2 (RECORD 2) | NOTSPOOLED and MARKER all green; the 2 RECORD failures are outside this wave (recovery) |
+| fixes28d | 25 / 2, stops at line 365 | 25 / 2, stops at line 365 | none - the same MARKER D2 halfway and LOCK D3 sender-stuck failures (plugin path by design) |
+| telemetry | 47 / 96 | 47 / 96 | none - the same 96 checks by name as the same-day baseline run `run-all-20261009-091435` (diffed line by line); FORGET D3 keeps failing (shim) and now also differs by design (F24-3) |

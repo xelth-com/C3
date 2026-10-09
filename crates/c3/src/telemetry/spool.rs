@@ -628,12 +628,18 @@ impl Spool {
     /// the files the fold covers) -, ONLY THEN the files deleted under the handles the fold holds,
     /// then the record written once more without the names of the files now gone. A record that
     /// cannot be saved folds nothing (`last_warning`). The spool lock busy for 1 s: nothing is folded
-    /// and the record says every line (but the legacy files') was seen, as the plugin's flush
-    /// without its telemetry lock.
+    /// and the record's `not_spooled_seen` is the lines of the files a fold would KEEP (live
+    /// producers; wave 3d, F24-1 - the plugin's flush counts every line but the legacy file's as seen
+    /// there, so a gone producer's lines were "seen" and then folded once more); the names an earlier
+    /// fold recorded stay while their files are there. (wave 3d, F24-6) A rewrite that drops the
+    /// names fails: `last_warning` says so and the record goes on naming the deleted files - no
+    /// count depends on them (`--status` and the next fold look only at files that exist, the next
+    /// record drops them, a staged generation never takes such a name).
     ///
     /// TEST HOOK (test mode only): `CODEX_CONSULT_TEST_FOLD_CRASH=1` - the process exits (87)
     /// between the save of the record and the deletes, as a crash would; `=2` - it exits (88) between
-    /// the deletes and the rewrite that drops their names.
+    /// the deletes and the rewrite that drops their names; `CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL=1`
+    /// (C3's) - that rewrite fails.
     fn record_flush(&self, r: Result<FlushReport>) -> Result<FlushReport> {
         let p = &self.paths;
         let result = result_text(&r);
@@ -664,14 +670,14 @@ impl Spool {
             fold = Some(f);
             sf
         } else {
-            // (E26) the legacy files' lines are never seen: they count until a fold stages them
-            let all = notspooled::count(p, true);
+            // (wave 3d, F24-1) only the lines of the files a fold would keep are seen: a gone
+            // producer's, a staged, a legacy or a named file's lines count until a fold takes them
             let kept: Vec<notspooled::FoldedEntry> = folded_before
                 .values()
                 .filter(|e| p.ns_dir.join(&e.name).exists())
                 .cloned()
                 .collect();
-            (all.total.saturating_sub(all.legacy_lines), kept)
+            (notspooled::kept_seen(p, &folded_before), kept)
         };
         let (delivered, kept, dropped, http) = match &r {
             // `kept`: the spool's count now (a skipped flush did not count it)
@@ -721,7 +727,23 @@ impl Spool {
                     }
                     if left.len() != folded.len() {
                         last["not_spooled_folded"] = notspooled::folded_value(&left);
-                        let _ = notspooled::write_last(&p.last, &last);
+                        let rewrite =
+                            if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL")
+                                .is_some_and(|v| v.trim() == "1")
+                            {
+                                Err(Error::new("test hook CODEX_CONSULT_TEST_FOLD_REWRITE_FAIL"))
+                            } else {
+                                notspooled::write_last(&p.last, &last)
+                            };
+                        if let Err(e) = rewrite {
+                            // (wave 3d, F24-6) said, never swallowed; the names stay until the
+                            // next record, which keeps only the names whose files are there
+                            warning = format!(
+                                "{} could not be rewritten after the fold's deletes ({e}) - it still names {} deleted file(s); no count depends on those names and the next flush drops them",
+                                p.last.display(),
+                                folded.len() - left.len()
+                            );
+                        }
                     }
                 }
             }

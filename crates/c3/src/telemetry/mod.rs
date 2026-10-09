@@ -268,6 +268,9 @@ pub fn parse_mark_when(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>>
 /// `<telemetry dir>/telemetry-not-spooled-<pid>-<start ticks>.ndjson`; `c3 telemetry --status`
 /// sums every producer's file, a flush folds the files of gone producers into the last flush's
 /// record. Never fails the caller ([`note_not_spooled_checked`] says why a line was not written).
+/// (wave 3d, F24-3) Nothing is written while the local telemetry data is being deleted (a deletion
+/// transaction in any phase, a living owner's forgetting marker): the event is dropped, as the
+/// deletion would remove its count anyway.
 pub fn note_not_spooled(why: &str) {
     let _ = note_not_spooled_checked(why);
 }
