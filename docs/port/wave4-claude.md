@@ -189,6 +189,109 @@ PowerShell 5.1):
 | claude | 87 / 0 | **87 / 0** | ENDPOINT green: still no `auth` start on the route, one `version` start in the dry run |
 | roster | 125 / 0 | **125 / 0** | the claude model texts unchanged (the case rule was already the plugin's) |
 
+## 4g - the second-round fixes (F32-1, F32-2, 2026-10-09)
+
+Branch `wave4g-claude-r2`. MiMo's second round on wave 4 (handoff 32 of `parity-0.6.1-2026-10-08`,
+HOLD: one blocker, one major; F25-1..F25-4 fixed). Both narrow the 4f fixes; neither touches the
+plugin's E3 rule - still no `claude auth status` on the endpoint route.
+
+- **F32-1 (major) - the endpoint preflight probes the launcher as the endpoint turn starts it.**
+  The `--version` probe of an auth endpoint entry runs in the endpoint TURN's child environment
+  minus its token (`c3_core::claude::probe_environment`, `engines::claude_auth::probe_env`).
+  Passed: the allow list, `DISABLE_AUTOUPDATER=1`, the roster's `ANTHROPIC_BASE_URL` and
+  `API_TIMEOUT_MS`, exactly as the turn gets them - the base URL is what makes the turn an endpoint
+  turn, so a wrapper that dispatches on it must answer under it. NOT passed: `ANTHROPIC_AUTH_TOKEN`
+  (for a probe the token variable is not even read - no credential reaches a launcher not yet
+  proven) and, as in every child, nothing outside the allow list (no parent `ANTHROPIC_*`). The
+  other auth modes keep the plugin's harness probe in auth subscription's environment (so no
+  `ANTHROPIC_API_KEY` either). The probe starts the launcher the turn starts, by the turn's
+  program-and-argument path (`subprocess::apply_launcher_args_quoted`, CRT quoting for a batch
+  file). A launcher whose probe fails there is unavailable (``missing: the claude launcher does not
+  run - `claude --version` exited <n>``); one that answers only there is available. The probe is
+  cached per launcher AND probe environment (`endpoint|<base_url>|<timeout_ms>` or
+  `subscription`), and an entry's harness string comes from its own probe environment
+  (`providers::engine_harness` takes the entry's auth and endpoint; `orchestrate` computes the
+  harness after the auth), so the endpoint preflight and the harness string share ONE `--version`
+  start - the E3 dry run still logs exactly one. Not covered, deliberately: a launcher that answers
+  `--version` but rejects the `-p` turn (proving the turn interface takes a turn, i.e. a request -
+  such a launcher fails its first turn, as in the plugin); a launcher whose `--version` needs the
+  token is classed unavailable (a probe never carries one). Tests:
+  `c3_core::claude::tests::the_probe_environment_is_the_endpoint_turns_without_its_token` (the
+  route's two variables, not the parent's; no token, no parent token, no `ANTHROPIC_API_KEY`; the
+  turn's names minus `ANTHROPIC_AUTH_TOKEN`; subscription and api-key probe in auth subscription's
+  environment), `engines::claude_auth::tests::the_endpoint_launcher_is_probed_in_the_endpoint_environment`
+  (a launcher answering only WITHOUT `ANTHROPIC_BASE_URL` -> `exited 4` on the endpoint route,
+  which auth subscription's environment - the 4f probe's - passes; one answering only WITH the
+  route's variables and WITHOUT a token -> available, harness `claude-cli 2.1.0-w4g`, which auth
+  subscription's environment rejects with `exited 5`) and
+  `claude_engine::the_endpoint_preflight_probes_the_launcher_in_the_endpoint_turns_environment` (the
+  real binary: the first launcher -> ``preflight   : unavailable (the claude launcher does not run -
+  `claude --version` exited 4) - a real run is refused``, the walk's ``... [claude] (missing: ...
+  exited 4)``, exit 1, only `--version` starts; the second -> available, `harness     : claude-cli
+  2.1.0-w4g`, one start; the fake's version start carries `base_url` = the roster's,
+  `api_timeout_ms` 3000000 and `has_token` false although the parent sets `ANTHROPIC_BASE_URL` and
+  `ANTHROPIC_AUTH_TOKEN`).
+- **F32-2 (blocker) - the transcript location as Claude Code derives it, fail-closed.** Claude
+  Code (its 2.1.29x bundle) writes under `(CLAUDE_CONFIG_DIR ?? join(os.homedir(),
+  ".claude")).normalize("NFC")` + `/projects`. `os.homedir()` is libuv's `uv_os_homedir` under
+  node and Bun alike: on Windows `USERPROFILE`, else the account's profile directory from the
+  system - `HOME`, `HOMEDRIVE` and `HOMEPATH` are NOT read, and a blank `USERPROFILE` fails the
+  lookup (checked on this machine with node 24.13 and Bun 1.4: `USERPROFILE` unset with `HOME`,
+  `HOMEDRIVE`, `HOMEPATH` pointing elsewhere -> `C:\Users\<name>`; blank -> `ENOENT,
+  uv_os_homedir`); elsewhere `HOME`, else the user database. The plugin assumes nothing here
+  (`Get-ClaudeLaunchProblem` checks `CLAUDE_CONFIG_DIR` and the projectsDirectory `claude auth
+  status` reported, no home). C3's `projects_directory`: the reported projectsDirectory when `claude
+  auth status` ran; else, from the CHILD's environment (the allow list passes `CLAUDE_CONFIG_DIR`,
+  `USERPROFILE` and `HOME` unchanged in every auth mode), `CLAUDE_CONFIG_DIR` when set, else
+  `<home>/.claude` with the home variable of the platform (`home_var`: `USERPROFILE` on Windows,
+  `HOME` elsewhere - the 4f fallback to the other one is gone, Claude Code never reads it); a
+  relative value against the child's working directory (the repository root), `.` and `..` folded as
+  `path.join` folds them. It cannot be established - and the run is refused with `the transcript
+  location cannot be established (<why>); set CLAUDE_CONFIG_DIR to a directory outside the
+  repository` (the dry run: `a real run is refused: ...`; the run: `the claude engine is refused:
+  ...; nothing was started.`) - when `CLAUDE_CONFIG_DIR` is set but blank (`??` takes it as it is:
+  relative to the repository), when neither it nor the home variable is set (`neither
+  CLAUDE_CONFIG_DIR nor USERPROFILE is set: Claude Code would fall back to the account's profile
+  directory from the system, which c3 does not resolve`; elsewhere `... nor HOME ... the account's
+  home from the user database ...`), or when the home variable is blank. The home inside the
+  repository keeps the plugin's text (`the claude projectsDirectory (<home>\.claude\projects) lies
+  inside ...`). Not covered: a wrapper launcher that sets `CLAUDE_CONFIG_DIR` inside itself - C3
+  cannot see into it; the strict tree check fails such a run after its turn. Tests:
+  `engines::claude_auth::tests::the_transcript_location_that_cannot_be_established_is_refused` (the
+  Windows rule: no `CLAUDE_CONFIG_DIR`/`USERPROFILE` -> refused whatever `HOME`, `HOMEDRIVE`,
+  `HOMEPATH` say, inside the repository or not; the Unix rule: no `HOME` -> refused whatever
+  `USERPROFILE` says; blank `USERPROFILE`, blank `CLAUDE_CONFIG_DIR` -> refused; `USERPROFILE` and
+  `UserProfile` (Windows) and `HOME` (Unix) inside -> the plugin's text; the variable the platform
+  does not read changes nothing; `CLAUDE_CONFIG_DIR` set or a reported projectsDirectory needs no
+  home; a relative `CLAUDE_CONFIG_DIR` against the repository root, `..` folded),
+  `engines::claude_auth::tests::the_projects_directory_inside_the_repository_is_refused_in_every_auth_mode`
+  (4f, on the new inputs; the junction kept),
+  `claude_engine::a_transcript_location_that_cannot_be_established_refuses_the_endpoint_run` (the
+  real binary, RC2: `CLAUDE_CONFIG_DIR`, `USERPROFILE` and `HOME` removed, `HOMEDRIVE`/`HOMEPATH`
+  pointing into the repository -> the dry run and the run refused with the text above, exit 1, no
+  turn, no `auth` start; `USERPROFILE` inside -> the plugin's text; `USERPROFILE` outside with `HOME`
+  inside -> a usable run) and `claude_engine::endpoint_transcripts_that_would_land_in_the_repository_are_refused`
+  (4f, the junction, unchanged).
+
+Besides `claude_auth.rs` and `c3-core`'s `claude.rs`, the shared probe needs its two call sites:
+`providers::engine_harness` (the entry's auth and endpoint) and `consult::orchestrate` (the
+harness computed after the auth).
+
+Verification (2026-10-09, the 4g binary): `cargo test --workspace -j 2 --no-fail-fast` 720 passed,
+1 failed - `compat_wave2b::a_stall_cut_names_the_open_tool_call` (a 3 s stall cut under the load of
+concurrent builds; untouched code), green on the rerun; 5 new tests (1 in `c3_core::claude`, 2 in
+`engines::claude_auth`, 2 in `claude_engine`). An earlier full run had the two new `claude_engine`
+tests fail against ANOTHER worktree's `target\debug\c3.exe` (the shared target directory: that
+binary carried none of the 4g texts) and the timing test `notspooled_parity::f24_1_...` skip on a
+busy spool lock; both files 14/14 and 18/18 on this binary. `cargo clippy --workspace --all-targets
+-- -D warnings` and `cargo fmt --check` clean. Through the shim (pinned v0.6.1, staged per
+`harness-shim.md` section 4, under `HARNESS.lock`, Windows PowerShell 5.1 with `PSModulePath`
+reset):
+
+| harness | 4f | 4g | note |
+|---|---|---|---|
+| claude | 87 / 0 | **87 / 0** | ENDPOINT green: no `auth` start on the route; the E3 dry run's one `version` start is now the endpoint-environment probe the harness string shares |
+
 ## Harnesses through the shim (pinned v0.6.1)
 
 Plugin pinned at v0.6.1, the tree staged per `harness-shim.md` section 4, one harness at a time
@@ -244,16 +347,22 @@ live run (keys).
   says `- at the commit (<why>) and for 5 s after it`. The not-spooled count is kept either way.
 - **The forgetting reason** names `c3 telemetry --forget --local` (wave 3b), so the plugin's
   harness regex on `codex-telemetry.ps1 -Forget -Local is deleting` cannot match a C3 run.
-- **The endpoint preflight runs `claude --version` (4f, F25-1).** The plugin reports an endpoint
-  entry available once its launcher is found and its token variable set; C3 also requires the
-  launcher to run (the harness probe it starts anyway), so a wrong `--engine-exe` or configured
-  launcher is unavailable before any turn instead of failing at the spawn.
+- **The endpoint preflight runs `claude --version` (4f, F25-1; 4g, F32-1).** The plugin reports
+  an endpoint entry available once its launcher is found and its token variable set; C3 also
+  requires the launcher to run - in the endpoint turn's environment minus its token, the probe its
+  harness string comes from too (the plugin probes the harness string in auth subscription's
+  environment for every entry) - so a wrong `--engine-exe`, a configured launcher that does not run
+  or one that fails under the route's variables is unavailable before any turn instead of failing
+  at the spawn.
 - **The transcript guard falls back to the derived projects directory and resolves links (4f,
   F25-2).** The plugin checks the projectsDirectory only when `claude auth status` ran (never on
   the endpoint route, nor after the 60-minute short-circuit or `-SkipPreflight`) and compares
   lexically; C3 derives `<CLAUDE_CONFIG_DIR or ~/.claude>/projects` when no status reported one and
   catches a junction or symbolic link into the repository. Both only add refusals the strict tree
-  check would otherwise turn into a failed run.
+  check would otherwise turn into a failed run. (4g, F32-2) The derivation reads the child's
+  environment with Claude Code's own rule (`USERPROFILE` on Windows, `HOME` elsewhere) and is
+  fail-closed: a location it cannot establish (no `CLAUDE_CONFIG_DIR` and no home variable, or a
+  blank one) refuses the run - the plugin, checking no derived directory, starts it.
 - **Native Messages API** - not here (decision P4): Claude Code is spawned exactly as the plugin
   spawns it; a native route is an improvement candidate for a later wave.
 - Otherwise no deliberate difference: the argv, the child allow list, the init and model proofs,

@@ -2922,14 +2922,21 @@ pub(crate) fn engine_consult_credential(
 /// `reviewer.harness` of a CLI engine run (`Get-EngineHarness`): muse reads its version from the
 /// install directory (`.muse-version` / `.muse-release-info.json` / `<launcher> --version`); agy
 /// has no `--version`, so its version comes from the launcher file's metadata (unavailable on a
-/// `.cmd` shim, hence `(version unknown)`).
-pub(crate) fn engine_harness(engine: &str, launcher: &str) -> String {
+/// `.cmd` shim, hence `(version unknown)`). `auth` / `endpoint`: the claude entry's (wave 4g,
+/// F32-1: its probe environment), ignored by the other engines.
+pub(crate) fn engine_harness(
+    engine: &str,
+    launcher: &str,
+    auth: &str,
+    endpoint: Option<&c3_core::claude::ClaudeEndpoint>,
+) -> String {
     if engine == "muse" {
         return get_muse_harness(launcher);
     }
-    // (0.6.0, wave 29) claude: `<launcher> --version` in the child environment (`Get-ClaudeHarness`)
+    // (0.6.0, wave 29) claude: `<launcher> --version` in the child environment (`Get-ClaudeHarness`);
+    // (wave 4g, F32-1) in the entry's probe environment - the endpoint preflight's probe
     if engine == "claude" {
-        return crate::engines::claude_auth::harness(launcher);
+        return crate::engines::claude_auth::harness(launcher, auth, endpoint);
     }
     // agy (and any other CLI engine): the launcher file's ProductVersion, else version unknown.
     let ver = launcher_file_version(launcher);

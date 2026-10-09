@@ -7,7 +7,8 @@
 //! killed turn judged by its init (E12), a rejecting rate-limit event beside a successful result
 //! (E15: the quota mark in the ledger, the machine-wide record and the listing), the endpoint route
 //! (E3/E4), the roster's claude keys and the providers row; (wave 4f) the endpoint preflight's
-//! launcher probe (F25-1) and its transcript guard (F25-2).
+//! launcher probe (F25-1) and its transcript guard (F25-2); (wave 4g) that probe in the endpoint
+//! turn's environment minus its token (F32-1) and the fail-closed home derivation (F32-2).
 //!
 //! GUARD: every child gets a scratch USERPROFILE/HOME and a PATH without any directory that holds a
 //! claude launcher, so the real CLI can never start; the fake logs every start. Nothing reaches a
@@ -892,6 +893,205 @@ fn endpoint_transcripts_that_would_land_in_the_repository_are_refused() {
             ("CODEX_CONSULT_ROSTER", &roster),
             ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
             ("FAKE_CLAUDE_TOKEN_EXPECT", "fake-token-w4f"),
+        ],
+    );
+    assert_eq!(ok.status.code(), Some(0), "{}", text(&ok));
+    assert_eq!(e.turns().len(), 1);
+    assert_eq!(e.last()["bridge_outcome"], "usable reply");
+}
+
+/// A launcher whose `--version` answers only in one environment, logging every start's arguments
+/// to `<work>/probe-starts.txt`: `endpoint_env` false - only WITHOUT `ANTHROPIC_BASE_URL` (exit 4
+/// under the endpoint turn's environment); true - only WITH it and WITHOUT `ANTHROPIC_AUTH_TOKEN`
+/// (exit 5 / 6 otherwise).
+fn env_launcher(e: &Env, name: &str, endpoint_env: bool) -> PathBuf {
+    let log = e.work.join("probe-starts.txt");
+    let check = if endpoint_env {
+        "@if not defined ANTHROPIC_BASE_URL exit /b 5\r\n@if defined ANTHROPIC_AUTH_TOKEN exit /b 6\r\n"
+    } else {
+        "@if defined ANTHROPIC_BASE_URL exit /b 4\r\n"
+    };
+    let p = e.work.join(name);
+    std::fs::write(
+        &p,
+        format!(
+            "@echo %*>>\"{}\"\r\n{check}@echo 2.1.0-w4g (Claude Code)\r\n@exit /b 0\r\n",
+            log.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    p
+}
+
+/// (wave 4g, F32-1 / RC1) The endpoint preflight probes the launcher as the endpoint turn starts
+/// it - the same launcher, the turn's child environment minus its token: a launcher that answers
+/// `--version` only without the route's variables is unavailable before any turn (the 4f probe,
+/// in auth subscription's environment, called it available); one that answers only with them is
+/// available with its version as the harness string (one `--version` start); the fake's own
+/// probe start carries the roster's base URL and `API_TIMEOUT_MS` and never a token.
+#[test]
+fn the_endpoint_preflight_probes_the_launcher_in_the_endpoint_turns_environment() {
+    let e = setup("epprobeenv");
+    let roster = e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"W4G_FAKE_ZAI_TOKEN"},"plan":"zai"}]}"#);
+    let probe_log = e.work.join("probe-starts.txt");
+    // answers only WITHOUT ANTHROPIC_BASE_URL: unavailable on the endpoint route
+    let off = env_launcher(&e, "off-claude.cmd", false);
+    let off_s = off.to_string_lossy().to_string();
+    let d = e.consult(
+        &["--dry-run", "--provider", "ZAI-claude"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4G_FAKE_ZAI_TOKEN", "fake-token-w4g"),
+            ("CODEX_CONSULT_CLAUDE_EXE", &off_s),
+        ],
+    );
+    let t = text(&d);
+    assert_eq!(d.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("preflight   : unavailable (the claude launcher does not run - `claude --version` exited 4) - a real run is refused"),
+        "{t}"
+    );
+    assert!(!t.contains("fake-token-w4g"));
+    let x = e.consult(
+        &["--reply-name", "off"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4G_FAKE_ZAI_TOKEN", "fake-token-w4g"),
+            ("CODEX_CONSULT_CLAUDE_EXE", &off_s),
+        ],
+    );
+    let tx = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{tx}");
+    assert!(tx.contains("is available; nothing was started: #1 ZAI-claude :: glm-5.3 [claude] (missing: the claude launcher does not run - `claude --version` exited 4)"), "{tx}");
+    let starts = std::fs::read_to_string(&probe_log).unwrap_or_default();
+    assert!(
+        !starts.is_empty() && starts.lines().all(|l| l.trim() == "--version"),
+        "only `--version` probes, never a turn: {starts}"
+    );
+    assert!(e.ledger().is_empty());
+    let _ = std::fs::remove_file(&probe_log);
+    // answers only WITH the route's variables and WITHOUT a token: available, its version the
+    // harness string, one `--version` start
+    let on = env_launcher(&e, "on-claude.cmd", true);
+    let on_s = on.to_string_lossy().to_string();
+    let g = e.consult(
+        &["--dry-run", "--provider", "ZAI-claude"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4G_FAKE_ZAI_TOKEN", "fake-token-w4g"),
+            ("CODEX_CONSULT_CLAUDE_EXE", &on_s),
+        ],
+    );
+    let tg = text(&g);
+    assert!(
+        tg.contains("preflight   : available (ok: env W4G_FAKE_ZAI_TOKEN set)"),
+        "{tg}"
+    );
+    assert!(tg.contains("harness     : claude-cli 2.1.0-w4g"), "{tg}");
+    let starts = std::fs::read_to_string(&probe_log).unwrap_or_default();
+    assert_eq!(starts.lines().count(), 1, "{starts}");
+    // the fake: its `--version` start got the roster's base URL and API_TIMEOUT_MS, never a
+    // token (nor the parent's ANTHROPIC_* values); one start in the dry run of the walk
+    let f = e.consult(
+        &["--dry-run"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4G_FAKE_ZAI_TOKEN", "fake-token-w4g"),
+            ("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/"),
+            ("ANTHROPIC_AUTH_TOKEN", "parent-token-w4g"),
+        ],
+    );
+    let tf = text(&f);
+    assert!(
+        tf.contains("preflight   : available (ok: env W4G_FAKE_ZAI_TOKEN set)"),
+        "{tf}"
+    );
+    let versions: Vec<Value> = e
+        .starts()
+        .into_iter()
+        .filter(|s| s["kind"] == "version")
+        .collect();
+    assert_eq!(versions.len(), 1, "{versions:?}");
+    let v = &versions[0];
+    assert_eq!(v["base_url"], "https://api.z.ai/api/anthropic");
+    assert_eq!(v["api_timeout_ms"], "3000000");
+    assert_eq!(v["has_token"], false);
+    assert!(!has_name(v, "ANTHROPIC_AUTH_TOKEN") && !has_name(v, "W4G_FAKE_ZAI_TOKEN"));
+    assert!(!e.starts().iter().any(|s| s["kind"] == "auth"));
+}
+
+/// (wave 4g, F32-2 / RC2) The transcript guard derives the home as Claude Code's `os.homedir()`
+/// does and is fail-closed: neither `CLAUDE_CONFIG_DIR` nor `USERPROFILE` in the child's
+/// environment (`HOMEDRIVE`/`HOMEPATH` pointing into the repository: not read) - the dry run says
+/// a real run is refused and the run is refused before any turn with `the transcript location
+/// cannot be established (...)`; `USERPROFILE` inside the repository - the plugin's text.
+#[test]
+fn a_transcript_location_that_cannot_be_established_refuses_the_endpoint_run() {
+    let e = setup("epnohome");
+    let roster = e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"W4G_FAKE_ZAI_TOKEN"},"plan":"zai"}]}"#);
+    let home_in = e.repo.join("home");
+    std::fs::create_dir_all(&home_in).unwrap();
+    let home_in_s = home_in.to_string_lossy().to_string();
+    let drive = home_in_s[..2].to_string();
+    let path_rest = home_in_s[2..].to_string();
+    let why = "the transcript location cannot be established (neither CLAUDE_CONFIG_DIR nor USERPROFILE is set: Claude Code would fall back to the account's profile directory from the system, which c3 does not resolve); set CLAUDE_CONFIG_DIR to a directory outside the repository";
+    let no_home: Vec<(&str, &str)> = vec![
+        ("CODEX_CONSULT_ROSTER", &roster),
+        ("W4G_FAKE_ZAI_TOKEN", "fake-token-w4g"),
+        ("CLAUDE_CONFIG_DIR", ""),
+        ("USERPROFILE", ""),
+        ("HOME", ""),
+        ("HOMEDRIVE", &drive),
+        ("HOMEPATH", &path_rest),
+    ];
+    let d = e.consult(&["--dry-run"], &no_home);
+    let t = text(&d);
+    assert_eq!(d.status.code(), Some(0), "{t}");
+    assert!(t.contains(&format!("a real run is refused: {why}")), "{t}");
+    let x = e.consult(&["--reply-name", "nohome"], &no_home);
+    let tx = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{tx}");
+    assert!(
+        tx.contains(&format!(
+            "the claude engine is refused: {why}; nothing was started."
+        )),
+        "{tx}"
+    );
+    assert!(e.turns().is_empty());
+    assert!(!e.starts().iter().any(|s| s["kind"] == "auth"));
+    // USERPROFILE inside the repository (HOME outside: not read on Windows): the plugin's text
+    let derived = home_in.join(".claude").join("projects");
+    let refusal = format!("the claude projectsDirectory ({}) lies inside the repository under review: the engine's transcripts would change the tree", derived.to_string_lossy());
+    let uh = e.work.join("userhome").to_string_lossy().to_string();
+    let y = e.consult(
+        &["--reply-name", "inrepo"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4G_FAKE_ZAI_TOKEN", "fake-token-w4g"),
+            ("CLAUDE_CONFIG_DIR", ""),
+            ("USERPROFILE", &home_in_s),
+            ("HOME", &uh),
+        ],
+    );
+    let ty = text(&y);
+    assert_eq!(y.status.code(), Some(1), "{ty}");
+    assert!(
+        ty.contains(&format!(
+            "the claude engine is refused: {refusal}; nothing was started."
+        )),
+        "{ty}"
+    );
+    assert!(e.turns().is_empty());
+    // USERPROFILE outside (HOME pointing into the repository changes nothing on Windows): usable
+    let ok = e.consult(
+        &["--reply-name", "outside"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4G_FAKE_ZAI_TOKEN", "fake-token-w4g"),
+            ("FAKE_CLAUDE_TOKEN_EXPECT", "fake-token-w4g"),
+            ("CLAUDE_CONFIG_DIR", ""),
+            ("USERPROFILE", &uh),
+            ("HOME", &home_in_s),
         ],
     );
     assert_eq!(ok.status.code(), Some(0), "{}", text(&ok));

@@ -506,6 +506,43 @@ pub fn child_environment(
     }
 }
 
+/// (wave 4g, F32-1) The environment of a launcher probe (`<launcher> --version`) for an entry of
+/// `auth`, over the same inputs as [`child_environment`]. Auth endpoint: the endpoint TURN's
+/// environment without its token - the allow list, `DISABLE_AUTOUPDATER=1`, `ANTHROPIC_BASE_URL`
+/// (the roster's) and `API_TIMEOUT_MS` exactly as the turn gets them, and NO
+/// `ANTHROPIC_AUTH_TOKEN` (a probe never carries a credential, so the token variable is not read
+/// at all); `problem` is only an unusable endpoint, never the absent token. Every other auth: auth
+/// subscription's environment, as the plugin's harness probe (`Invoke-ClaudeProbe` defaults to
+/// it) - so no `ANTHROPIC_API_KEY` either.
+pub fn probe_environment(
+    vars: &[(String, String)],
+    auth: &str,
+    endpoint: Option<&ClaudeEndpoint>,
+    pass_prefix: &str,
+    case_insensitive: bool,
+) -> ChildEnv {
+    if auth != "endpoint" {
+        return child_environment(
+            vars,
+            "subscription",
+            None,
+            pass_prefix,
+            case_insensitive,
+            "",
+        );
+    }
+    let mut e = child_environment(
+        vars,
+        "endpoint",
+        endpoint,
+        pass_prefix,
+        case_insensitive,
+        "",
+    );
+    e.problem = endpoint_problem(endpoint);
+    e
+}
+
 // ------------------------------------------------------------------------- the argv
 
 /// `ConvertTo-CrtArg`: one argument of a CLI that parses its command line by the C runtime rules -
@@ -886,6 +923,70 @@ mod tests {
             "env W29B_TOKEN not set (the token of auth endpoint)"
         );
         assert!(!n.names.iter().any(|x| x == "ANTHROPIC_AUTH_TOKEN"));
+    }
+
+    /// (wave 4g, F32-1) The probe environment of auth endpoint is the turn's without its token:
+    /// the roster's `ANTHROPIC_BASE_URL` and `API_TIMEOUT_MS` (not the parent's), no
+    /// `ANTHROPIC_AUTH_TOKEN` (neither the parent's nor a token), no `ANTHROPIC_API_KEY`, no
+    /// problem for the absent token; every other auth probes in auth subscription's environment.
+    #[test]
+    fn the_probe_environment_is_the_endpoint_turns_without_its_token() {
+        let vars: Vec<(String, String)> = [
+            ("Path", "C:\\x"),
+            ("USERPROFILE", "C:\\u"),
+            ("CLAUDE_CONFIG_DIR", "C:\\c"),
+            ("ANTHROPIC_BASE_URL", "http://127.0.0.1:9/"),
+            ("ANTHROPIC_AUTH_TOKEN", "parent-token-f32-1"),
+            ("API_TIMEOUT_MS", "1"),
+            ("ANTHROPIC_API_KEY", "k"),
+            ("W32_TOKEN", "tok-f32-1"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        let ep = endpoint_from_value(
+            &json!({"base_url":"https://api.z.ai/api/anthropic","env_key":"W32_TOKEN"}),
+            "zai",
+        )
+        .unwrap();
+        let p = probe_environment(&vars, "endpoint", Some(&ep), "", true);
+        let turn = child_environment(&vars, "endpoint", Some(&ep), "", true, "tok-f32-1");
+        let value =
+            |e: &ChildEnv, n: &str| e.env.iter().find(|(k, _)| k == n).map(|(_, v)| v.clone());
+        assert_eq!(
+            value(&p, "ANTHROPIC_BASE_URL").as_deref(),
+            Some("https://api.z.ai/api/anthropic")
+        );
+        assert_eq!(value(&p, "API_TIMEOUT_MS").as_deref(), Some("3000000"));
+        assert_eq!(value(&p, "DISABLE_AUTOUPDATER").as_deref(), Some("1"));
+        for absent in ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "W32_TOKEN"] {
+            assert!(!p.names.iter().any(|n| n == absent), "{absent}");
+        }
+        assert!(!p
+            .env
+            .iter()
+            .any(|(_, v)| v.contains("tok-f32-1") || v.contains("parent-token-f32-1")));
+        assert!(p.problem.is_empty(), "{}", p.problem);
+        // the same shape as the turn's: every name of the turn but the token
+        let mut want = turn.names.clone();
+        want.retain(|n| n != "ANTHROPIC_AUTH_TOKEN");
+        assert_eq!(p.names, want);
+        // an unusable endpoint stays a problem
+        assert!(!probe_environment(&vars, "endpoint", None, "", true)
+            .problem
+            .is_empty());
+        // subscription and api-key: auth subscription's environment, no endpoint variables
+        for auth in ["subscription", "api-key"] {
+            let s = probe_environment(&vars, auth, None, "", true);
+            assert_eq!(s.auth, "subscription");
+            for absent in [
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_API_KEY",
+                "ANTHROPIC_BASE_URL",
+            ] {
+                assert!(!s.names.iter().any(|n| n == absent), "{auth}: {absent}");
+            }
+        }
     }
 
     /// (wave 4f, F25-4) `{:?}` / `{:#?}` of the endpoint child environment name the variables and

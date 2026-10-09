@@ -2065,14 +2065,6 @@ fn build_context(
             .unwrap_or(None)
             .unwrap_or_default()
     };
-    let harness = if is_codex {
-        format!(
-            "codex-cli {}",
-            get_codex_version(&launcher).replace("codex-cli ", "")
-        )
-    } else {
-        providers::engine_harness(&engine_name, &engine_launcher)
-    };
     let sandbox_record = if is_codex {
         sandbox_label(&o)
     } else {
@@ -2097,6 +2089,21 @@ fn build_context(
             None
         };
         (a, ep)
+    };
+    // (wave 4g, F32-1) after the auth: a claude entry's `--version` probe runs in its probe
+    // environment, the one its endpoint preflight shares
+    let harness = if is_codex {
+        format!(
+            "codex-cli {}",
+            get_codex_version(&launcher).replace("codex-cli ", "")
+        )
+    } else {
+        providers::engine_harness(
+            &engine_name,
+            &engine_launcher,
+            &engine_auth,
+            engine_endpoint.as_ref(),
+        )
     };
     let mut identity = c3_core::lineage::resolve_reviewer_identity_auth(
         &config,
