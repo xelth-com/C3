@@ -98,6 +98,8 @@ pub struct TurnResult {
     pub oversized_lines: u64,
     /// Pids that survived the kill (best-effort; empty when the tree died cleanly).
     pub survivors: Vec<u32>,
+    /// (wave 27c D16, 28c D8, 28e E1/E23) What the tree kill could confirm (`None`: no kill).
+    pub kill: Option<c3_core::engine::KillCheck>,
     /// Wall time, rounded to one decimal.
     pub wall_seconds: f64,
     /// The captured stderr text (UTF-8, lossily decoded).
@@ -119,6 +121,7 @@ impl TurnResult {
             open_tools: String::new(),
             oversized_lines: 0,
             survivors: Vec::new(),
+            kill: None,
             wall_seconds: 0.0,
             stderr: String::new(),
             error: Some(error),
@@ -484,6 +487,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     let mut stop = TurnStop::Exited;
     let mut kick_late = false;
     let mut survivors = Vec::new();
+    let mut kill_check: Option<c3_core::engine::KillCheck> = None;
     // Stall tracking (wave 26b D12 + 26c D3): byte offset consumed so far, the last time the
     // stream grew, the count of tool calls currently in flight, and the last event time seen.
     let stall_on = req.stall_sec > 0;
@@ -500,24 +504,13 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     let mut oversized_lines: u64 = 0;
     let mut discarding = false;
     let mut tool_open_since: Option<Instant> = None;
-    let kill_now = |child: &mut Child| -> Vec<u32> {
-        // (wave 27c, D16 / H4) CODEX_CONSULT_TEST_KILL_DENIED simulates a restricted host where
-        // process inspection and taskkill are denied: nothing is enumerated or terminated, the tree
-        // is left running (the root becomes an orphan the harness stops), and the run proceeds with
-        // the kill unconfirmed. Do NOT wait on the child — it is still alive.
-        if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_DENIED")
-            .map(|v| v.trim() == "1")
-            .unwrap_or(false)
-        {
-            let mut s: Vec<u32> = vec![child.id()];
-            for hook in test_survivor_pids() {
-                if crate::liveness::proc::pid_alive(hook, "") && !s.contains(&hook) {
-                    s.push(hook);
-                }
-            }
-            return s;
-        }
-        let mut s = kill_tree(child);
+    let kill_now = |child: &mut Child| -> (Vec<u32>, Option<c3_core::engine::KillCheck>) {
+        // (wave 27c D16, 28c D8, 28e E1/E23) the tree kill, CONFIRMED (`Stop-ProcessTreeChecked`):
+        // the survivors it saw, the descendants it could not verify, why it is not confirmed.
+        // CODEX_CONSULT_TEST_KILL_DENIED=1 (test mode) simulates a restricted host - the children
+        // cannot be enumerated and taskkill fails: only the root is stopped, its children are left
+        // running as orphans and the kill is not confirmed.
+        let (mut s, check) = kill_tree_checked(child);
         // TEST HOOK: CODEX_CONSULT_TEST_SURVIVORS=<pid>[,<pid>] — these pids, when alive, are
         // reported as survivors of this kill (no test can make a real process outlive a kill).
         // Only ever adds (a stricter outcome), matching `$env:CODEX_CONSULT_TEST_SURVIVORS`.
@@ -526,8 +519,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                 s.push(hook);
             }
         }
-        let _ = child.wait();
-        s
+        (s, Some(check))
     };
     // (wave 26c, D1) a kick that arrived before the wait loop, on a live turn, is taken at once.
     if let Some(kp) = req.kick_path {
@@ -535,7 +527,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
             match child.try_wait() {
                 Ok(Some(_)) => {} // already exited — handled after the loop as a late kick
                 _ => {
-                    survivors = kill_now(&mut child);
+                    (survivors, kill_check) = kill_now(&mut child);
                     stop = TurnStop::Kick;
                     confirm_kick(kp, "stopped");
                 }
@@ -551,7 +543,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                 Ok(Some(status)) => break status.code(),
                 Ok(None) => {
                     if start.elapsed() >= req.timeout {
-                        survivors = kill_now(&mut child);
+                        (survivors, kill_check) = kill_now(&mut child);
                         stop = TurnStop::Timeout;
                         break None;
                     }
@@ -559,7 +551,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                     // turn it is taken at once and acknowledged.
                     if let Some(kp) = req.kick_path {
                         if kp.exists() {
-                            survivors = kill_now(&mut child);
+                            (survivors, kill_check) = kill_now(&mut child);
                             stop = TurnStop::Kick;
                             confirm_kick(kp, "stopped");
                             break None;
@@ -605,7 +597,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                                     "codex-consult: no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s: {open_tool_labels})"
                                 );
                             }
-                            survivors = kill_now(&mut child);
+                            (survivors, kill_check) = kill_now(&mut child);
                             stop = TurnStop::Stall;
                             break None;
                         }
@@ -623,6 +615,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         open_tools: String::new(),
                         oversized_lines,
                         survivors: Vec::new(),
+                        kill: None,
                         wall_seconds: round1(start.elapsed().as_secs_f64()),
                         stderr: read_text(req.stderr_path),
                         kick_late: false,
@@ -662,6 +655,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         open_tools: open_tool_labels,
         oversized_lines,
         survivors,
+        kill: kill_check,
         wall_seconds,
         stderr: read_text(req.stderr_path),
         error: None,
@@ -743,31 +737,176 @@ fn iso_now() -> String {
         .to_string()
 }
 
-/// Kill the process tree. On Windows `taskkill /F /T /PID <pid>` kills the whole tree
-/// (the `cmd`/`powershell` wrapper the fakes use plus its grandchildren); on Unix the child
-/// is killed directly. Returns pids that appear to have survived (best-effort; empty here).
-fn kill_tree(child: &mut Child) -> Vec<u32> {
-    #[cfg(windows)]
+/// (wave 28c, D8) `Get-DescendantTree`: the root's descendants from one read of the process table,
+/// each with the start time read at the enumeration (`"<gone>"` when it exited meanwhile, `""` when
+/// it cannot be read), or why the children could not be enumerated. TEST HOOK (test mode only):
+/// `CODEX_CONSULT_TEST_KILL_DENIED=1` - the enumeration is denied.
+fn descendant_tree(root: u32) -> Result<Vec<(u32, String)>, String> {
+    if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_DENIED")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
     {
-        let pid = child.id();
-        let _ = Command::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        let _ = child.kill();
-        Vec::new()
+        return Err(
+            "process inspection denied (test hook CODEX_CONSULT_TEST_KILL_DENIED)".to_string(),
+        );
     }
-    #[cfg(not(windows))]
+    let table = crate::liveness::proc::enumerate_processes_checked()?;
+    Ok(crate::liveness::proc::descendants_in(&table, root)
+        .into_iter()
+        .map(|d| {
+            let st = crate::liveness::proc::process_start_iso(d).unwrap_or_else(|| "<gone>".into());
+            (d, st)
+        })
+        .collect())
+}
+
+/// `Invoke-TaskKillTree`: `taskkill /PID <root> /T /F` - its exit code (`-1` when it could not
+/// run). TEST HOOK (test mode only): `CODEX_CONSULT_TEST_KILL_DENIED=1` or `=taskkill` - it fails
+/// (exit 1) without running.
+#[cfg(windows)]
+fn taskkill_tree(root: u32) -> i32 {
+    if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_DENIED")
+        .map(|v| matches!(v.trim(), "1" | "taskkill"))
+        .unwrap_or(false)
     {
-        // Best effort without `taskkill /T`: the descendants from the process table first (the
-        // launcher's own children would otherwise outlive it as orphans), then the child.
-        for pid in crate::liveness::proc::descendants_of(child.id()) {
-            kill_pid_unix(pid);
+        return 1;
+    }
+    Command::new("taskkill")
+        .args(["/PID", &root.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()
+        .and_then(|s| s.code())
+        .unwrap_or(-1)
+}
+
+/// Whether the root has exited, waiting up to `ms` for it (the handle is immune to pid reuse).
+fn root_exited_within(child: &mut Child, ms: u64) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(ms);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {}
+            // the handle cannot be queried: as the plugin's HasExited throwing - gone
+            Err(_) => return true,
         }
-        let _ = child.kill();
-        Vec::new()
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// (wave 27c D16; 28b D14; 28c D8; 28e E1/E23) `Stop-ProcessTreeChecked`: kill the process AND its
+/// descendants (the launcher is usually a shim: cmd.exe or node in front of the real codex), and
+/// say what the kill could confirm. Windows: `taskkill /T /F` first, then the root by its handle,
+/// then every descendant whose identity is confirmed (the start time read at the enumeration
+/// matches the one read now) by its pid; elsewhere the root and the descendants by pid. The killed
+/// pids are polled (100 ms steps, up to 3 s): only those still alive then are survivors (a process
+/// merely still exiting is none). A descendant whose start time cannot be read is neither killed by
+/// its pid nor counted as gone - it is listed as unverified and the kill is "not confirmed: start
+/// time of pid <n> unreadable". When the children cannot be enumerated (a restricted host) the kill
+/// falls back to `taskkill /T /F` once more while the root is still there; the kill is then
+/// confirmed only when the root exited AND taskkill reported success (outside Windows never).
+/// Returns `(survivors, check)`.
+fn kill_tree_checked(child: &mut Child) -> (Vec<u32>, c3_core::engine::KillCheck) {
+    use crate::liveness::proc::{pid_identity, PidIdentity};
+    let root = child.id();
+    let tree = descendant_tree(root);
+    let (descendants, denied) = match tree {
+        Ok(d) => (d, String::new()),
+        Err(why) => (Vec::new(), why),
+    };
+    #[cfg(windows)]
+    let mut taskkill_exit = taskkill_tree(root);
+    #[cfg(not(windows))]
+    let taskkill_exit = -1;
+    // The root before its descendants: a root that outlives its children reacts to their death (a
+    // shell or node shim carries on and may start new processes).
+    let _ = child.kill();
+    for (d, st0) in &descendants {
+        // (wave 28b, D14) never a pid that meanwhile belongs to another process; (wave 28c, D8)
+        // never one whose identity cannot be confirmed
+        if st0 == "<gone>" || pid_identity(*d, st0) != PidIdentity::Alive {
+            continue;
+        }
+        crate::liveness::proc::terminate_pid(*d);
+    }
+    let _ = root_exited_within(child, 10_000);
+    // The root by its handle; a descendant counts as alive only while a process with its pid exists
+    // WITH the start time read at the enumeration; one whose start time cannot be read is unknown.
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut alive: Vec<u32>;
+    let mut unknown: Vec<u32>;
+    let mut root_gone;
+    loop {
+        alive = Vec::new();
+        unknown = Vec::new();
+        root_gone = root_exited_within(child, 0);
+        if !root_gone {
+            alive.push(root);
+        }
+        for (d, st) in &descendants {
+            if st == "<gone>" {
+                continue;
+            }
+            match pid_identity(*d, st) {
+                PidIdentity::Alive => alive.push(*d),
+                PidIdentity::Unknown => unknown.push(*d),
+                PidIdentity::Gone => {}
+            }
+        }
+        if (alive.is_empty() && unknown.is_empty()) || Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let mut check = c3_core::engine::KillCheck::confirmed(root);
+    if !unknown.is_empty() {
+        check.confirmed = false;
+        check.why = format!(
+            "start time of pid {} unreadable",
+            unknown
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        check.unverified = unknown;
+    }
+    if !denied.is_empty() {
+        // the children are not known: the fallback taskkill once more when the root is still
+        // there, then the root checked again
+        #[cfg(windows)]
+        if !root_gone {
+            taskkill_exit = taskkill_tree(root);
+            root_gone = root_exited_within(child, 3_000);
+            if root_gone {
+                alive.retain(|p| *p != root);
+            }
+        }
+        if !root_gone {
+            check.confirmed = false;
+            check.why = format!(
+                "the children could not be enumerated ({denied}) and the root process did not exit"
+            );
+        } else if !cfg!(windows) || taskkill_exit != 0 {
+            check.confirmed = false;
+            let taskkill = if cfg!(windows) {
+                format!(" and taskkill /T /F failed (exit {taskkill_exit})")
+            } else {
+                String::new()
+            };
+            check.why = format!(
+                "the children could not be enumerated ({denied}){taskkill} - the root exited, its children may not have"
+            );
+        }
+    }
+    if !alive.is_empty() {
+        check.confirmed = false;
+    }
+    (alive, check)
 }
 
 /// `kill -9 <pid>` through the `kill` binary (no libc dependency); best effort.

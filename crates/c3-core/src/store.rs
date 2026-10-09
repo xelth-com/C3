@@ -229,6 +229,10 @@ pub struct PendingRecord {
     /// `{pid, start_time, name}` entries the kill could see; kept raw.
     #[serde(default)]
     pub survivors: Vec<Value>,
+    /// (wave 28e, E1 / F54-1) `{pid, why}` entries: the descendants a kill could not verify (their
+    /// start time could not be read); a new record carries `[]`. Kept raw.
+    #[serde(default)]
+    pub unverified: Vec<Value>,
     #[serde(default)]
     pub note: String,
     /// Present only for a panel member's record.
@@ -244,6 +248,10 @@ pub struct PendingRecord {
     pub reply_json: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub raw_reply: Option<String>,
+    /// (wave 28e, E23 / F30-1) A kill that was not confirmed and named no pid: its why. The tree is
+    /// unknown - the next run releases the record only after a clean scan. Omitted when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kill_unconfirmed: Option<String>,
     /// Unknown members, preserved in place on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -1265,5 +1273,31 @@ mod tests {
         assert_eq!(o, PendingState::Other("paused".into()));
         assert!(PendingState::Survivors.protects_child());
         assert!(!PendingState::Running.protects_child());
+    }
+
+    // (wave 28e, E1 / E23) a record carries `unverified: []` right after `survivors` (the plugin's
+    // New-PendingRecord order); `kill_unconfirmed` only when a kill named no pid.
+    #[test]
+    fn pending_record_carries_unverified_after_survivors() {
+        let mut r = PendingRecord {
+            state: PendingState::Survivors,
+            ..Default::default()
+        };
+        let text = String::from_utf8(r.to_bytes().unwrap()).unwrap();
+        let s = text.find("\"survivors\"").unwrap();
+        let u = text.find("\"unverified\"").unwrap();
+        let n = text.find("\"note\"").unwrap();
+        assert!(s < u && u < n, "{text}");
+        assert!(!text.contains("kill_unconfirmed"), "{text}");
+        r.kill_unconfirmed = Some("denied".into());
+        r.unverified =
+            vec![serde_json::json!({ "pid": 7, "why": "start time of pid 7 unreadable" })];
+        let back: PendingRecord = serde_json::from_slice(&r.to_bytes().unwrap()).unwrap();
+        assert_eq!(back.kill_unconfirmed.as_deref(), Some("denied"));
+        assert_eq!(back.unverified.len(), 1);
+        // an older record without the keys reads with empty ones
+        let old: PendingRecord =
+            serde_json::from_str(r#"{"state":"survivors","survivors":[],"note":""}"#).unwrap();
+        assert!(old.unverified.is_empty() && old.kill_unconfirmed.is_none());
     }
 }

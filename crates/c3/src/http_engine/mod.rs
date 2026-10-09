@@ -907,6 +907,7 @@ impl HttpEngine {
                                 AttemptOutcome::TimedOut {
                                     partial: None,
                                     survivors: Vec::new(),
+                                    kill: None,
                                     conversation: ConversationTrust::Candidate(new_conversation()),
                                     wall_seconds: wall,
                                 },
@@ -970,6 +971,7 @@ impl HttpEngine {
                         AttemptOutcome::TimedOut {
                             partial: None,
                             survivors: Vec::new(),
+                            kill: None,
                             conversation: ConversationTrust::Candidate(new_conversation()),
                             wall_seconds: wall,
                         },

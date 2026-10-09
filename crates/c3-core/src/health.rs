@@ -245,12 +245,24 @@ pub trait ResetZone {
     /// the Berlin fall-back day) as ambiguous and the exact START of a gap (02:00 on the
     /// spring-forward day) as a single wall time at the earlier offset - .NET (the plugin) and the
     /// zone database say: 03:00 is +01:00 only, 02:00 does not exist.
+    ///
+    /// (F06-1) The UTC lookup is the authority only when the round-trip instant `wall - o` falls in
+    /// the SAME calendar year as `wall`. A Windows zone keeps one rule set per year (dynamic DST),
+    /// and its UTC lookup picks the rules by the UTC year (chrono's `Local`, as
+    /// `SystemTimeToTzSpecificLocalTime`) while the wall time belongs to its local year (.NET's
+    /// `TimeZoneInfo` and the zone's own classification pick the rules by the local date). Within
+    /// the hours around New Year where the two years differ, a zone whose rules change between the
+    /// years (Windows' Samoa Standard Time: 2011 bias 660, 2012 bias -780) would lose a genuine
+    /// offset: 2012-01-01 00:00 is +14:00, but its instant 2011-12-31T10:00Z is looked up with the
+    /// 2011 rules (-10:00). There the zone's own (local-year) classification decides. The DST
+    /// edges F04-2 corrects lie far from New Year and keep the round trip.
     fn wall_offsets(&self, wall: NaiveDateTime) -> LocalResult<FixedOffset> {
-        let mut cands: Vec<FixedOffset> = match self.reported_wall_offsets(wall) {
+        let reported: Vec<FixedOffset> = match self.reported_wall_offsets(wall) {
             LocalResult::Single(o) => vec![o],
             LocalResult::Ambiguous(a, b) => vec![a, b],
             LocalResult::None => Vec::new(),
         };
+        let mut cands = reported.clone();
         let probes = [
             wall.checked_sub_signed(Duration::days(1)),
             wall.checked_add_signed(Duration::days(1)),
@@ -258,9 +270,14 @@ pub trait ResetZone {
         cands.extend(probes.into_iter().flatten().map(|p| self.utc_offset(p)));
         let mut genuine: Vec<FixedOffset> = Vec::new();
         for o in cands {
-            let round_trip = wall
-                .checked_sub_offset(o)
-                .is_some_and(|utc| self.utc_offset(utc) == o);
+            let round_trip = wall.checked_sub_offset(o).is_some_and(|utc| {
+                if utc.year() == wall.year() {
+                    self.utc_offset(utc) == o
+                } else {
+                    // (F06-1) another year's rules would answer: the local year's decide
+                    reported.contains(&o)
+                }
+            });
             if round_trip && !genuine.contains(&o) {
                 genuine.push(o);
             }
@@ -2931,6 +2948,109 @@ mod retry_after_tests {
             assert_eq!(z.wall_offsets(wall(w)), want, "{w} (Windows-like)");
             assert_eq!(berlin().wall_offsets(wall(w)), want, "{w} (Europe/Berlin)");
         }
+    }
+
+    /// (F06-1) Windows' `Samoa Standard Time` around New Year 2012, as chrono's Windows `Local`
+    /// reads it: one rule set per year (the registry's Dynamic DST: 2011 Bias 660, DaylightBias -60,
+    /// standard from the first Saturday of April 04:00, daylight from the fourth Saturday of
+    /// September 03:00; 2012 Bias -780, DaylightBias -60, the first Sunday of April 04:00, the last
+    /// Sunday of September 03:00). The wall-time classification takes the rules of the wall time's
+    /// own (local) year, the UTC-to-local lookup the rules of the UTC year (chrono 0.4.45
+    /// `offset_from_utc_datetime`, as `SystemTimeToTzSpecificLocalTime`) - so 2012-01-01 00:00
+    /// (+14:00) has its instant 2011-12-31T10:00Z looked up with the 2011 rules (-10:00).
+    struct WindowsLikeSamoa2012;
+
+    /// One year's rules: (standard, daylight, the DST->standard transition as a daylight wall time,
+    /// the standard->DST transition as a standard wall time). Southern hemisphere: daylight before
+    /// the first and from the second.
+    fn samoa_rules(year: i32) -> (FixedOffset, FixedOffset, NaiveDateTime, NaiveDateTime) {
+        if year <= 2011 {
+            (
+                hours(-11),
+                hours(-10),
+                wall(&format!("{year}-04-02T04:00:00")),
+                wall(&format!("{year}-09-24T03:00:00")),
+            )
+        } else {
+            (
+                hours(13),
+                hours(14),
+                wall(&format!("{year}-04-01T04:00:00")),
+                wall(&format!("{year}-09-30T03:00:00")),
+            )
+        }
+    }
+
+    impl ResetZone for WindowsLikeSamoa2012 {
+        fn reported_wall_offsets(&self, w: NaiveDateTime) -> LocalResult<FixedOffset> {
+            let (std, dst, to_std, to_dst) = samoa_rules(w.year());
+            if w < to_std - Duration::hours(1) {
+                LocalResult::Single(dst)
+            } else if w <= to_std {
+                LocalResult::Ambiguous(dst, std)
+            } else if w <= to_dst {
+                LocalResult::Single(std)
+            } else if w < to_dst + Duration::hours(1) {
+                LocalResult::None
+            } else {
+                LocalResult::Single(dst)
+            }
+        }
+        fn utc_offset(&self, utc: NaiveDateTime) -> FixedOffset {
+            let (std, dst, to_std, to_dst) = samoa_rules(utc.year());
+            let to_std_utc = to_std - Duration::seconds(dst.local_minus_utc() as i64);
+            let to_dst_utc = to_dst - Duration::seconds(std.local_minus_utc() as i64);
+            if utc >= to_std_utc && utc < to_dst_utc {
+                std
+            } else {
+                dst
+            }
+        }
+    }
+
+    #[test]
+    fn samoa_year_boundary_keeps_the_local_years_offset() {
+        let z = WindowsLikeSamoa2012;
+        // the two raw lookups disagree across the year boundary ...
+        assert_eq!(
+            z.reported_wall_offsets(wall("2012-01-01T00:00:00")),
+            LocalResult::Single(hours(14))
+        );
+        assert_eq!(z.utc_offset(wall("2011-12-31T10:00:00")), hours(-10));
+        assert_eq!(z.utc_offset(wall("2012-01-01T10:00:00")), hours(14));
+        // ... the valid midnight keeps +14:00 (.NET: valid and unambiguous at +14:00), the last
+        // local hours of 2011 keep -10:00, the days around stay single
+        let cases = [
+            ("2012-01-01T00:00:00", LocalResult::Single(hours(14))),
+            ("2012-01-01T05:00:00", LocalResult::Single(hours(14))),
+            ("2012-01-01T14:00:00", LocalResult::Single(hours(14))),
+            ("2012-01-02T00:00:00", LocalResult::Single(hours(14))),
+            ("2011-12-31T00:00:00", LocalResult::Single(hours(-10))),
+            ("2011-12-31T20:00:00", LocalResult::Single(hours(-10))),
+        ];
+        for (w, want) in cases {
+            assert_eq!(z.wall_offsets(wall(w)), want, "{w} (Windows-like Samoa)");
+        }
+        // the trigger: the pinned plugin's result (v0.6.1 `Get-RetryAfter -TimeZone` with
+        // `Samoa Standard Time`): tomorrow's midnight, not an artificial gap's end (14:00, passed)
+        let got = retry_after_in(
+            "try again at 12:00 AM",
+            dto("2012-01-01T14:01:00+14:00"),
+            &z,
+        )
+        .map(format_offset_iso);
+        assert_eq!(got.as_deref(), Some("2012-01-02T00:00:00+14:00"));
+        // the zone database agrees (Pacific/Apia skipped 2011-12-30 instead)
+        let apia: chrono_tz::Tz = "Pacific/Apia".parse().expect("the Pacific/Apia zone");
+        let got = retry_after_in(
+            "try again at 12:00 AM",
+            dto("2012-01-01T14:01:00+14:00"),
+            &apia,
+        )
+        .map(format_offset_iso);
+        assert_eq!(got.as_deref(), Some("2012-01-02T00:00:00+14:00"));
+        // and the Berlin edges (F04-2) are untouched by the cross-year rule
+        assert!(boundary_failures(&WindowsLikeBerlin2026).is_empty());
     }
 
     #[test]
