@@ -6,7 +6,8 @@
 //! resolved model, fork answers on a new session), the init proof and the model proof (E13), a
 //! killed turn judged by its init (E12), a rejecting rate-limit event beside a successful result
 //! (E15: the quota mark in the ledger, the machine-wide record and the listing), the endpoint route
-//! (E3/E4), the roster's claude keys and the providers row.
+//! (E3/E4), the roster's claude keys and the providers row; (wave 4f) the endpoint preflight's
+//! launcher probe (F25-1) and its transcript guard (F25-2).
 //!
 //! GUARD: every child gets a scratch USERPROFILE/HOME and a PATH without any directory that holds a
 //! claude launcher, so the real CLI can never start; the fake logs every start. Nothing reaches a
@@ -745,6 +746,157 @@ fn the_endpoint_route_takes_its_own_variables_and_refuses_without_its_token() {
     assert_eq!(n.status.code(), Some(1));
     assert!(text(&n).contains("the claude run is refused before launch: the claude engine's child environment is not usable: env W4_FAKE_ZAI_TOKEN not set (the token of auth endpoint); nothing was started"), "{}", text(&n));
     assert!(e.turns().is_empty());
+}
+
+/// (wave 4f, F25-1 / RC1) A valid endpoint entry with its token variable set but a launcher that
+/// does not run - `--engine-exe` naming a file that is no program, the configured launcher one
+/// whose `--version` fails - is unavailable at the preflight and no turn starts; the fake (a
+/// runnable launcher) is available. Still no `claude auth status` on the route (E3).
+#[test]
+fn an_endpoint_launcher_that_does_not_run_is_unavailable_before_any_turn() {
+    let e = setup("eplaunch");
+    let roster = e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"W4F_FAKE_ZAI_TOKEN"},"plan":"zai"}]}"#);
+    let junk = e.work.join("not-claude.exe");
+    std::fs::write(&junk, "this is not a program\n").unwrap();
+    let junk_s = junk.to_string_lossy().to_string();
+    // --engine-exe names a file that is no program: the dry run of the entry says unavailable
+    let d = e.consult(
+        &[
+            "--dry-run",
+            "--provider",
+            "ZAI-claude",
+            "--engine-exe",
+            &junk_s,
+        ],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
+        ],
+    );
+    let t = text(&d);
+    assert_eq!(d.status.code(), Some(0), "{t}");
+    assert!(t.contains("preflight   : unavailable (the claude launcher does not run - `claude --version` could not be started ("), "{t}");
+    assert!(t.contains(") - a real run is refused"), "{t}");
+    assert!(!t.contains("fake-token-w4f"));
+    // the real run (the roster walk): no available reviewer, nothing started
+    let x = e.consult(
+        &["--engine-exe", &junk_s, "--reply-name", "junk"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
+        ],
+    );
+    let tx = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{tx}");
+    assert!(tx.contains("is available; nothing was started: #1 ZAI-claude :: glm-5.3 [claude] (missing: the claude launcher does not run - `claude --version` could not be started ("), "{tx}");
+    assert!(e.starts().is_empty(), "nothing may start");
+    assert!(e.ledger().is_empty());
+    // the configured launcher (CODEX_CONSULT_CLAUDE_EXE) whose `--version` fails
+    let bad = e.work.join("bad-claude.cmd");
+    std::fs::write(&bad, "@echo not claude\r\n@exit /b 3\r\n").unwrap();
+    let b = e.consult(
+        &["--dry-run", "--provider", "ZAI-claude"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
+            ("CODEX_CONSULT_CLAUDE_EXE", &bad.to_string_lossy()),
+        ],
+    );
+    let tb = text(&b);
+    assert!(
+        tb.contains("preflight   : unavailable (the claude launcher does not run - `claude --version` exited 3) - a real run is refused"),
+        "{tb}"
+    );
+    // the runnable fake: available, one `--version` probe (the harness's), no `claude auth status`
+    let g = e.consult(
+        &["--dry-run"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
+        ],
+    );
+    let tg = text(&g);
+    assert!(
+        tg.contains("preflight   : available (ok: env W4F_FAKE_ZAI_TOKEN set)"),
+        "{tg}"
+    );
+    let starts = e.starts();
+    assert_eq!(
+        starts.iter().filter(|s| s["kind"] == "version").count(),
+        1,
+        "{starts:?}"
+    );
+    assert!(!starts.iter().any(|s| s["kind"] == "auth"));
+}
+
+/// (wave 4f, F25-2 / RC2) Auth endpoint runs no `claude auth status`, so the transcript guard reads
+/// the projects directory Claude Code derives: `CLAUDE_CONFIG_DIR` outside the repository but its
+/// `projects` directory a junction into it - refused before any turn with the plugin's text;
+/// a plain `CLAUDE_CONFIG_DIR` outside - allowed (a usable run).
+#[test]
+fn endpoint_transcripts_that_would_land_in_the_repository_are_refused() {
+    let e = setup("epprojdir");
+    let roster = e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"W4F_FAKE_ZAI_TOKEN"},"plan":"zai"}]}"#);
+    let target = e.repo.join("transcripts");
+    std::fs::create_dir_all(&target).unwrap();
+    let cfg = e.work.join("claude-config-linked");
+    std::fs::create_dir_all(&cfg).unwrap();
+    let link = cfg.join("projects");
+    let st = Command::new("cmd")
+        .args(["/c", "mklink", "/J"])
+        .arg(&link)
+        .arg(&target)
+        .stdout(std::process::Stdio::null())
+        .status()
+        .unwrap();
+    assert!(st.success(), "mklink /J");
+    let cfg_s = cfg.to_string_lossy().to_string();
+    let refusal = format!("the claude projectsDirectory ({}) lies inside the repository under review: the engine's transcripts would change the tree", link.to_string_lossy());
+    let d = e.consult(
+        &["--dry-run"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
+            ("CLAUDE_CONFIG_DIR", &cfg_s),
+        ],
+    );
+    let t = text(&d);
+    assert_eq!(d.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains(&format!("a real run is refused: {refusal}")),
+        "{t}"
+    );
+    let x = e.consult(
+        &["--reply-name", "inside"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
+            ("CLAUDE_CONFIG_DIR", &cfg_s),
+        ],
+    );
+    let tx = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{tx}");
+    assert!(
+        tx.contains(&format!(
+            "the claude engine is refused: {refusal}; nothing was started."
+        )),
+        "{tx}"
+    );
+    assert!(e.turns().is_empty());
+    assert!(!e.starts().iter().any(|s| s["kind"] == "auth"));
+    let _ = std::fs::remove_dir(&link);
+    // CLAUDE_CONFIG_DIR outside with a plain projects directory: the run goes on
+    let ok = e.consult(
+        &["--reply-name", "outside"],
+        &[
+            ("CODEX_CONSULT_ROSTER", &roster),
+            ("W4F_FAKE_ZAI_TOKEN", "fake-token-w4f"),
+            ("FAKE_CLAUDE_TOKEN_EXPECT", "fake-token-w4f"),
+        ],
+    );
+    assert_eq!(ok.status.code(), Some(0), "{}", text(&ok));
+    assert_eq!(e.turns().len(), 1);
+    assert_eq!(e.last()["bridge_outcome"], "usable reply");
 }
 
 // ------------------------------------------------------------------ ROSTER + LISTING

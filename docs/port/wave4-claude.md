@@ -46,7 +46,8 @@ ALLOW-listed child environment (`child_environment`, pure over a variable list),
   endpoint, base_url, env_key, plan}`.
 - **Preflight** (`engines::claude_auth`): no launcher - `claude CLI not found on PATH`; the LOCAL
   check first (api-key: `ANTHROPIC_API_KEY is not set (roster auth api-key)`; endpoint: `env <NAME>
-  not set`), auth endpoint `ok: env <NAME> set` with no probe; a usable reply within 60 minutes;
+  not set`), auth endpoint `ok: env <NAME> set` with no `claude auth status` (4f: the launcher's
+  `--version` must run); a usable reply within 60 minutes;
   `-NoNetwork` not checked; else `claude auth status` in the child environment (15 s, the JSON read
   before the exit code): `ok: signed in (claude.ai subscription)`, `not signed in (...)`, another
   `authMethod` or `apiProvider`, no JSON / a hang - not checked. One probe per launcher and auth per
@@ -110,6 +111,84 @@ fake CLI (`tests/fixtures/fake-claude.{cmd,ps1}`, copied from v0.6.1) with every
 PATH; unit tests in `c3_core::claude`, `engines::claude` and `engine.rs`. README "The `claude`
 engine", `plugin/skills/setup-providers/SKILL.md` section 4c.
 
+## 4f - the diff-review fixes (F25-1..F25-4, 2026-10-09)
+
+Branch `wave4f-claude-fixes`. MiMo's diff review of wave 4 (handoff 25 of
+`parity-0.6.1-2026-10-08`, HOLD: two blockers, two minors). On F25-1 and F25-2 the plugin at v0.6.1
+has the gap the reviewer names: its `Get-ClaudeSignIn` for auth endpoint (E3) checks only that the
+launcher was FOUND, the endpoint parses and the token variable is set ("NO `claude auth status` (it
+reads the local login and ignores the base URL - P12) and no live request"), and
+`Get-ClaudeLaunchProblem` reads the projectsDirectory only from the sign-in cache, which auth
+endpoint never fills. The reviewer's literal remedy - `claude auth status` on the endpoint route -
+would break E3/P12 and three harness-claude ENDPOINT checks (the dry run, the end-to-end run and
+the listing require NO `auth` start on that route), so C3 closes both without it:
+
+- **F25-1 (blocker) - the endpoint preflight proves that the launcher runs.** After the local
+  checks, auth endpoint takes the launcher's `--version` probe - the one `Get-ClaudeHarness` runs
+  for the harness string anyway (`version_probe`, cached per launcher: a dry run still starts
+  exactly one `version` process; in the child environment of auth subscription, as the plugin's
+  harness probe, so no token reaches a launcher not yet proven). Not started -> ``missing: the claude
+  launcher does not run - `claude --version` could not be started (<os error>)``; a non-zero exit
+  -> `missing: ... exited <n>`; no exit within 15 s -> ``unknown: not checked - `claude --version`
+  did not finish within 15 s`` (as a hung `claude auth status`). Success keeps the plugin's `ok: env
+  <NAME> set`; `-NoNetwork` (the SessionStart hook) starts nothing and keeps the local answer. A
+  nonexistent `--engine-exe` was already refused at the resolution (`... is not a file and not an
+  application on PATH.`). Tests: `engines::claude_auth::tests::the_launcher_verdict_of_the_version_probe`,
+  `engines::claude_auth::tests::an_endpoint_launcher_that_does_not_run_is_unavailable` (a text file
+  named `.exe`, a launcher whose `--version` exits 3, a runnable one; `-NoNetwork`) and
+  `claude_engine::an_endpoint_launcher_that_does_not_run_is_unavailable_before_any_turn` (the real
+  binary: `--engine-exe` naming a file that is no program -> `preflight   : unavailable (the claude
+  launcher does not run - ...) - a real run is refused`; the roster walk -> `no reviewer of the
+  roster ... is available; nothing was started: #1 ZAI-claude :: glm-5.3 [claude] (missing: ...)`,
+  exit 1, the fake never started; `CODEX_CONSULT_CLAUDE_EXE` a `.cmd` exiting 3 -> unavailable; the
+  fake -> available, one `version` start, no `auth` start).
+- **F25-2 (blocker) - the transcript guard in every auth mode.** `projects_directory`: the
+  projectsDirectory `claude auth status` reported when it ran, else the one Claude Code derives -
+  `<CLAUDE_CONFIG_DIR>/projects`, or `<home>/.claude/projects` (home `USERPROFILE`, else `HOME`, as
+  node's `os.homedir()`) - so auth endpoint, a preflight answered by a usable reply within 60
+  minutes and `--skip-preflight` are guarded too. `path_inside` decides lexically first (as
+  `Get-RepoRelativePath`), then with the links resolved (the deepest existing ancestor and the root
+  canonicalised), so a junction or a symbolic link into the repository is caught. The refusals are
+  the plugin's texts verbatim (`the claude projectsDirectory (<dir>) lies inside the repository
+  under review: the engine's transcripts would change the tree`; `CLAUDE_CONFIG_DIR (<dir>) lies
+  inside ...; point it elsewhere`). Tests:
+  `engines::claude_auth::tests::the_projects_directory_inside_the_repository_is_refused_in_every_auth_mode`
+  (reported; derived from the home; `CLAUDE_CONFIG_DIR` outside with `projects` a junction inside;
+  outside allowed) and `claude_engine::endpoint_transcripts_that_would_land_in_the_repository_are_refused`
+  (the real binary on the endpoint route: `CLAUDE_CONFIG_DIR` outside, its `projects` a junction
+  into the repository -> the dry run's `a real run is refused: <the refusal>`, the run's `the claude
+  engine is refused: <the refusal>; nothing was started.`, exit 1, no turn, no `auth` start; a
+  plain `CLAUDE_CONFIG_DIR` outside -> a usable run).
+- **F25-3 (minor) - the model table's case: the plugin's rule, kept.** `Get-ClaudeModelProblem`
+  looks the model up with `-cnotcontains` (case-sensitive) after `-replace '\[1m\]$'`
+  (case-insensitive): the plugin refuses `OPUS` and `CLAUDE-HAIKU-5-5` too and takes `opus[1M]`;
+  the lower-casing helpers (`ConvertTo-ClaudeModelBase`, the family and match rules) compare what
+  the CLI served. C3 already did exactly this; the rule is now written on `model_problem`, in the
+  README and in the setup skill (`spelled exactly so`). Test:
+  `c3_core::claude::tests::the_model_table_is_case_sensitive_as_the_plugins` (with the endpoint side:
+  `GLM-5.3` taken, `CLAUDE-HAIKU-5-5` refused as an Anthropic id, `glm-5.3[1M]` refused by the
+  case-sensitive pattern).
+- **F25-4 (minor) - `ChildEnv`'s `Debug` redacts.** `Debug` by hand: every variable by name, every
+  value `<redacted>` (`auth`, `names`, `removed` and `problem` hold names only and print as they
+  are). Test: `c3_core::claude::tests::the_child_environment_debug_never_prints_a_value` (`{:?}` and
+  `{:#?}` of an endpoint environment carry neither the token nor any other value). No other type of
+  the crates holds a credential value under `Debug`/`Display`: `SpawnRequest` (which borrows the
+  environment) derives neither, `HttpConfig` holds the key's variable NAME and never an
+  `Authorization` header, the endpoint object holds `env_key` (a name).
+
+Verification (2026-10-09, the 4f binary): `cargo test --workspace -j 2 --no-fail-fast` 696 passed
+(7 new: 3 in `engines::claude_auth`, 2 in `c3_core::claude`, 2 in `claude_engine`; two index tests -
+`embed_reaches_a_loopback_fake_via_localhost`, `rebuild_then_embed_reproduces_the_vector_count` -
+failed once under a concurrent build's load and passed on the rerun; untouched code), `cargo clippy
+--workspace --all-targets -- -D warnings` and `cargo fmt --check` clean. Through the shim (pinned
+v0.6.1, staged per `harness-shim.md` section 4, one at a time under `HARNESS.lock`, Windows
+PowerShell 5.1):
+
+| harness | wave 4 | 4f | note |
+|---|---|---|---|
+| claude | 87 / 0 | **87 / 0** | ENDPOINT green: still no `auth` start on the route, one `version` start in the dry run |
+| roster | 125 / 0 | **125 / 0** | the claude model texts unchanged (the case rule was already the plugin's) |
+
 ## Harnesses through the shim (pinned v0.6.1)
 
 Plugin pinned at v0.6.1, the tree staged per `harness-shim.md` section 4, one harness at a time
@@ -165,6 +244,16 @@ live run (keys).
   says `- at the commit (<why>) and for 5 s after it`. The not-spooled count is kept either way.
 - **The forgetting reason** names `c3 telemetry --forget --local` (wave 3b), so the plugin's
   harness regex on `codex-telemetry.ps1 -Forget -Local is deleting` cannot match a C3 run.
+- **The endpoint preflight runs `claude --version` (4f, F25-1).** The plugin reports an endpoint
+  entry available once its launcher is found and its token variable set; C3 also requires the
+  launcher to run (the harness probe it starts anyway), so a wrong `--engine-exe` or configured
+  launcher is unavailable before any turn instead of failing at the spawn.
+- **The transcript guard falls back to the derived projects directory and resolves links (4f,
+  F25-2).** The plugin checks the projectsDirectory only when `claude auth status` ran (never on
+  the endpoint route, nor after the 60-minute short-circuit or `-SkipPreflight`) and compares
+  lexically; C3 derives `<CLAUDE_CONFIG_DIR or ~/.claude>/projects` when no status reported one and
+  catches a junction or symbolic link into the repository. Both only add refusals the strict tree
+  check would otherwise turn into a failed run.
 - **Native Messages API** - not here (decision P4): Claude Code is spawned exactly as the plugin
   spawns it; a native route is an improvement candidate for a later wave.
 - Otherwise no deliberate difference: the argv, the child allow list, the init and model proofs,

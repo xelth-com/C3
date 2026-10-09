@@ -87,7 +87,8 @@ prefix `claude` stays the coordinator's default brief prefix). Launcher: `--engi
   `anthropic`). `model` is REQUIRED and one of the closed table: `opus`, `sonnet`, `haiku`,
   `fable`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
   `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5-5`, `claude-sonnet-5`,
-  `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5`, each optionally ending in `[1m]`.
+  `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5`, each optionally ending in `[1m]`
+  - spelled exactly so (the lookup is case-sensitive, as the plugin's: `OPUS` is refused).
   An alias floats: every thread is pinned to the id its first init event resolved
   (`engine_run.model_resolved`), and every later turn of it sends that id.
 - **Three auth modes.** `subscription` (the default): the claude.ai login, checked by
@@ -98,7 +99,8 @@ prefix `claude` stays the coordinator's default brief prefix). Launcher: `--engi
   "https://api.z.ai/api/anthropic", "env_key": "ZAI_API_KEY", "timeout_ms": 3000000}` plus an
   optional `"plan": "zai"`; the model is the provider's own id (`glm-5.3`, never an Anthropic
   one - only a model the subscription cannot serve proves the billing), the preflight is local
-  (`ok: env ZAI_API_KEY set`, no `claude auth status`, no live request), and the child gets
+  (`ok: env ZAI_API_KEY set`, no `claude auth status`, no live request; the launcher must answer
+  `claude --version` - one that does not run is unavailable before any turn), and the child gets
   `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` (the value of the variable `env_key` names, read at
   the launch, never logged) and `API_TIMEOUT_MS` - and nothing else of `ANTHROPIC_*`.
 - **The child environment is an ALLOW list** (system, locale, proxy and trust variables,
@@ -106,6 +108,10 @@ prefix `claude` stays the coordinator's default brief prefix). Launcher: `--engi
   inherited gateway, model override and operator variable is absent - for every turn, the sign-in
   check and the version probe alike. The ledger records the names only
   (`engine_run.child_env_allowed`).
+- **Transcripts outside the tree:** a run is refused before any turn when `CLAUDE_CONFIG_DIR`
+  or the projects directory Claude Code writes its transcripts to (the one `claude auth status`
+  reported, else `<CLAUDE_CONFIG_DIR or ~/.claude>/projects` - every auth mode, links resolved)
+  lies inside the repository under review.
 - **Read-only by evidence:** every init event (a killed turn's too) must list no tool outside
   Read, Grep, Glob, StructuredOutput, no MCP server and the permission mode `dontAsk`; the model
   every assistant message names must be the pinned one; and the strict tree check fails a run
