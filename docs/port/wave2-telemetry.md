@@ -3,7 +3,8 @@
 Branch `wave2-telemetry`, three commits: **2a** the 0.6.1 rating semantics and the ledger shape,
 **2b** a durable outbox and the forget-me retry identity (Astra's F02-1, F02-3), **2c** closed
 telemetry classes and the telemetry shim (F02-2, F02-4); then branch `wave2d-fixes` (**2d**, Astra's
-F09-1..F09-6 - section "2d" below). The specification is the plugin at
+F09-1..F09-6 - section "2d" below; branch `wave2g-deletion`, **2g**, Astra's F19-1..F19-3 - section
+"2g"). The specification is the plugin at
 `v0.6.1` (`codex-consult-common.ps1` telemetry section, `codex-findings.ps1 -Rate`,
 `codex-telemetry.ps1`, `codex-consult.ps1`'s ledger entry, CHANGELOG `[0.6.1]`/`[0.6.0]`, README
 "Telemetry (on by default)").
@@ -276,6 +277,85 @@ parallel suite and passed alone (untouched code, a loopback timing flake).
   `Resolve-CoordinatorIdentity`): the provider stays CASE-SENSITIVE (`OpenAI` is not `openai`, as in
   C3's `-Require` matcher) - the doc now says so; the engine compares case-insensitively (`-eq`).
   Test `coordinator_provider_is_case_sensitive_the_engine_is_not`. Workspace 610 -> 614 tests.
+
+## 2g - Astra's second round on wave 2 (F19-1..F19-3, handoff 19)
+
+Branch `wave2g-deletion`. Each finding has the fixture Astra asked for (RC1-RC3), and each fixture
+was run against the old behaviour re-introduced by hand (the complaint's decision after the
+confirmation skipped; an unreadable salt kept as "another instance"; the original-bytes fast path)
+and fails there.
+
+**F19-1 - the complaint in the deletion protocol (RC1).** `complain_to` built its identity before
+the user's confirmation and then sent and stored the returned reference without the deletion locks
+or the deletion state: a complaint confirmed after a forget posted the forgotten instance (and wrote
+its reference into the cleared directory); one started during a pending deletion sent anyway. Now:
+
+- BEFORE the question, under the spool lock (where a producer makes its salt): refused while a
+  deletion transaction exists - `pending` (or a record that cannot be read), `confirmed`/`cleaning`
+  ("the local deletion ... is not finished") - or while a living forget holds its forgetting
+  marker; the identity is read strictly (made when there is no salt, as a producer makes it; a salt
+  that exists but cannot be read refuses). Every refusal ends "nothing was sent".
+- AFTER the confirmation: the sender lock (10 s) and the spool lock (5 s) - the two that every write
+  of the transaction and every local deletion hold -, the deletion state decided again ("it began
+  while the complaint waited for its confirmation"), and the salt re-read: when it no longer names
+  the instance of the payload the user approved (gone, another instance, blank, unreadable),
+  nothing is sent - the complaint is refused, not re-asked ("run c3 complain again to see the
+  payload of the current instance").
+- The POST and the store of the returned reference run under the sender lock; the spool lock is
+  released after the decision so producers (1 s / 5 s budgets) never wait for the intake's 10 s.
+  This is enough: every writer of `forget-pending.json` and every removal of the salt and of
+  `refs.ndjson` holds BOTH locks, so while the complaint holds the sender lock no forget begins and
+  no cleanup runs until the reference is stored.
+
+Test `a_complaint_confirmed_after_a_forget_never_posts_the_old_instance_rc1`: the confirmation
+callback is a barrier; (1) a remote-plus-local forget the intake confirms runs to its end while the
+complaint waits, then the user confirms - refused, the intake saw only the DELETE, no
+`refs.ndjson`, no new salt; (2) the same with a DELETE that fails (a pending deletion) - refused, no
+POST, the stored reference unchanged; (3) a complaint begun while a `pending` or `cleaning` record
+exists is refused before its question.
+
+**F19-2 - the salt rule (RC2).** The cleanup read the salt with
+`instance_id_if_exists_in(...).unwrap_or_default()`: a read failure became an empty identity, the
+salt was kept as "another instance" and the transaction REMOVED - the old identity came back with
+readability. `telemetry::salt_identity_in` now tells four states apart: `Missing` (no file), `Blank`
+(empty or not UTF-8 - names no instance; a producer replaces it), `Unreadable` (exists, cannot be
+read - share mode, permissions) and `Id` (the instance it names). The cleanup removes the salt when
+it is the transaction's instance (or blank), keeps it as another instance's ONLY when its identity
+was read and differs, and on `Unreadable` stops: an error naming the salt, the record kept
+(`cleaning`, the old identity), spooling and sending blocked - the next flush or forget retries.
+The same rule applies to a forget that has no transaction yet: a salt that exists but cannot be read
+refuses it before it records or removes anything (a local-only forget would otherwise record an
+empty identity and later keep that salt as "another instance"). `instance_id_if_exists_in` keeps
+its contract (`None` for every state but `Id`).
+
+Test `a_cleanup_never_clears_its_transaction_while_the_salt_cannot_be_read_rc2`: the salt held open
+with share mode 0 (Windows; permissions `0o000` elsewhere, skipped for a user who still reads it),
+its metadata visible; a local-only forget is refused with nothing recorded; a `confirmed` record is
+resumed by the sender (fails, posts nothing, record `cleaning` with the old id, salt kept, queued
+data gone, a producer refused) and by a forget (exit 1, "keeps instance ..."); the handle released,
+the next forget removes the salt WHILE the record still exists and then the record; the next event
+is a new instance.
+
+**F19-3 - the sanitiser rule (RC3).** `classes::close_event_body` returned the ORIGINAL queued bytes
+when the parsed event equalled its reconstruction - a duplicate key (`"title":"customer-acme",`
+before the real title: the parse keeps the last) hid a private string in bytes that were sent. Now
+every outbound event is the serialised reconstruction, never the queued bytes. The reconstruction
+keeps the constructors' key order (`preserve_order`), so a current event still leaves byte for byte
+as it was built: `a_current_event_closes_to_its_exact_bytes` keeps its byte comparison (it now checks
+the reconstruction's values and key order) and adds the same event pretty-printed, which leaves as
+the compact original. Tests `a_duplicate_private_title_never_leaves_the_outbox_rc3` (the forged
+duplicate in a queued current event; `flush_with` sends the event without `customer-acme`, exactly
+the bytes it was built with) and the unit test `a_duplicate_key_never_carries_its_hidden_value_out`.
+
+Workspace 658 -> 662 tests (`cargo test --workspace --no-fail-fast`), clippy `-D warnings` and
+`cargo fmt --check` clean. `index::embed::tests::embed_reaches_a_loopback_fake_via_localhost` failed
+once more under the parallel suite and passed on the rerun (the known loopback timing flake).
+
+Not changed (noted): a PRODUCER still reads its salt through `instance_id_in`, which treats an
+unreadable salt as absent and tries to write a new one (the write fails while a handle denies
+sharing, so the event names an instance no salt stands for). Producers are refused during every
+deletion phase, so this cannot revive a deleted identity; it is outside F19 and left for a later
+wave.
 
 ## Tests
 
