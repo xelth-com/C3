@@ -5,8 +5,16 @@
 //! alone, unverified) and a kill whose enumeration and taskkill are denied (the root stopped, its
 //! child left as an orphan, the kill not confirmed and naming no pid).
 //!
+//! (wave 3c, F23-1 / F23-4) Every hooked check proves the hook took effect on the pid it names: the
+//! same call without the hook gives the other verdict (this process's start time is readable, so a
+//! hook that did nothing would show). The name-and-parent lookup failing (`CODEX_CONSULT_TEST_INFO_
+//! UNREADABLE`) never makes a live pid `gone`; a recorded start time with the current one unreadable
+//! is judged by the evidence rule; the pending records that name such a pid stay active.
+//!
 //! Every check that sets a `CODEX_CONSULT_TEST_*` variable runs inside ONE test function: the
 //! environment is process-wide and the test harness runs tests on parallel threads.
+
+use std::path::Path;
 
 use c3::liveness::{pending, proc};
 
@@ -20,6 +28,17 @@ fn unset(k: &str) {
     std::env::remove_var(k);
 }
 
+/// A recovery record (state `survivors`, started 2020, its writer pid 999998 gone) naming
+/// `survivors` and `unverified` (JSON arrays).
+fn record(survivors: &str, unverified: &str) -> serde_json::Value {
+    serde_json::from_str(&format!(
+        r#"{{"state":"survivors","n":2,"nn":"03","reply":"r","started":"2020-01-01T00:00:00+00:00","pid":999998,"host":"{}","launcher":"{}","engine":"codex","child_pid":null,"child_start_time":"","survivors":{survivors},"unverified":{unverified},"note":""}}"#,
+        c3_core::host::machine_name(),
+        NOWHERE.replace('\\', "\\\\")
+    ))
+    .unwrap()
+}
+
 #[test]
 fn hooked_recovery_rules_and_the_confirmed_tree_kill() {
     let me = std::process::id();
@@ -27,30 +46,74 @@ fn hooked_recovery_rules_and_the_confirmed_tree_kill() {
         .ok()
         .map(|d| d.with_timezone(&chrono::Utc));
     let future = Some(chrono::Utc::now() + chrono::Duration::hours(1));
-    let name = proc::process_info(me).expect("this process").name;
+    unset("CODEX_CONSULT_TEST_MODE");
+    let info = proc::process_info(me).expect("this process");
+    let name = info.name.clone();
+    let real = info.start.clone();
+    // every hooked assertion below is non-vacuous only with this process's start time and name
+    // readable: then a hook that did nothing would leave the other verdict
+    assert!(
+        !real.is_empty() && !name.is_empty() && info.inspected,
+        "{info:?}"
+    );
 
     // ---- CODEX_CONSULT_TEST_START_UNREADABLE (wave 28c D8): honoured in test mode only
-    unset("CODEX_CONSULT_TEST_MODE");
     set("CODEX_CONSULT_TEST_START_UNREADABLE", &me.to_string());
-    let real = proc::process_start_iso(me).expect("this process");
+    assert_eq!(proc::process_start_iso(me).as_deref(), Some(real.as_str()));
+    // without the hook taking effect, a record that started after this process drops it ...
+    let v = pending::test_unverified_process(me, future, "", &[]);
+    assert!(
+        !v.alive && v.how.ends_with(", before that run: not its process"),
+        "{v:?}"
+    );
     set("CODEX_CONSULT_TEST_MODE", "1");
     assert_eq!(proc::process_start_iso(me).as_deref(), Some(""));
     assert_eq!(proc::pid_identity(me, &real), proc::PidIdentity::Unknown);
-    // (E1) its start time still unreadable: running, whatever else (fail-closed) - even with a
-    // record that started after it
+    // ... (E1) with it: its start time still unreadable - running, whatever else (fail-closed)
+    let unreadable = pending::Verdict {
+        alive: true,
+        how: "its start time still cannot be read - counted as running (fail-closed)".into(),
+    };
     assert_eq!(
         pending::test_unverified_process(me, future, "", &[]),
-        pending::Verdict {
-            alive: true,
-            how: "its start time still cannot be read - counted as running (fail-closed)".into()
-        }
+        unreadable
+    );
+    // (F23-4) a survivor recorded WITH its start time whose start time cannot be read now: the
+    // evidence rule, never by pid alone - counted as running
+    assert_eq!(
+        pending::test_recorded_process(me, &real, &name, NOWHERE, future, &[]),
+        unreadable
+    );
+    // ... and the record naming it stays active, naming the pid and why
+    let survivor = format!(r#"[{{"pid":{me},"start_time":"{real}","name":"{name}"}}]"#);
+    let c = pending::test_pending_active(&record(&survivor, "[]"), Path::new("x.json"));
+    assert!(c.active, "{}", c.check);
+    assert!(
+        c.message.contains(&format!(
+            "process (pid {me} [its start time still cannot be read - counted as running (fail-closed)]) is still running"
+        )),
+        "{}",
+        c.message
     );
     unset("CODEX_CONSULT_TEST_START_UNREADABLE");
-    if !real.is_empty() {
-        assert_eq!(proc::pid_identity(me, &real), proc::PidIdentity::Alive);
-    }
+    assert_eq!(proc::pid_identity(me, &real), proc::PidIdentity::Alive);
+    assert_eq!(
+        pending::test_recorded_process(me, &real, &name, NOWHERE, future, &[]),
+        pending::Verdict {
+            alive: true,
+            how: "pid + start time".into()
+        }
+    );
 
     // ---- CODEX_CONSULT_TEST_CMDLINE_UNREADABLE (E19): an unreadable command line counts as running
+    let not_codex = pending::Verdict {
+        alive: false,
+        how: format!("start time readable now; pid {me} runs {name}, not codex"),
+    };
+    assert_eq!(
+        pending::test_unverified_process(me, past, NOWHERE, &[]),
+        not_codex
+    );
     set("CODEX_CONSULT_TEST_CMDLINE_UNREADABLE", &me.to_string());
     assert_eq!(
         pending::test_unverified_process(me, past, NOWHERE, &[]),
@@ -69,9 +132,99 @@ fn hooked_recovery_rules_and_the_confirmed_tree_kill() {
     );
     // ... and the hook is ignored without test mode (the command line read: not codex)
     unset("CODEX_CONSULT_TEST_MODE");
-    let v = pending::test_unverified_process(me, past, NOWHERE, &[]);
-    assert!(!v.alive && v.how.ends_with(", not codex"), "{v:?}");
+    assert_eq!(
+        pending::test_unverified_process(me, past, NOWHERE, &[]),
+        not_codex
+    );
     unset("CODEX_CONSULT_TEST_CMDLINE_UNREADABLE");
+
+    // ---- (wave 3c, F23-1, RC1) CODEX_CONSULT_TEST_INFO_UNREADABLE: the start time reads, the name
+    // and parent do not - the process exists, its identity is unknown: running, never `gone`
+    set("CODEX_CONSULT_TEST_INFO_UNREADABLE", &me.to_string());
+    assert!(
+        proc::process_info(me).expect("this process").inspected,
+        "ignored without test mode"
+    );
+    set("CODEX_CONSULT_TEST_MODE", "1");
+    assert_eq!(proc::process_start_iso(me).as_deref(), Some(real.as_str()));
+    let hooked = proc::process_info(me).expect("a live pid is never gone");
+    assert!(
+        !hooked.inspected && hooked.name.is_empty() && hooked.ppid == 0 && hooked.start == real,
+        "{hooked:?}"
+    );
+    let uninspected = pending::Verdict {
+        alive: true,
+        how: format!(
+            "start time readable now; pid {me} runs a process whose name and parent cannot be read - counted as running (fail-closed)"
+        ),
+    };
+    // the same call that dropped it above (`not codex`) now counts it as running
+    assert_eq!(
+        pending::test_unverified_process(me, past, NOWHERE, &[]),
+        uninspected
+    );
+    // ... started before that run: still dropped by its readable start time
+    let v = pending::test_unverified_process(me, future, NOWHERE, &[]);
+    assert!(
+        !v.alive && v.how.ends_with(", before that run: not its process"),
+        "{v:?}"
+    );
+    // a recorded survivor: its start time proves it (a name that cannot be read is never "reused")
+    assert_eq!(
+        pending::test_recorded_process(me, &real, &name, NOWHERE, past, &[]),
+        pending::Verdict {
+            alive: true,
+            how: "pid + start time".into()
+        }
+    );
+    assert_eq!(
+        pending::test_recorded_process(me, &real, "someone-else", NOWHERE, past, &[]),
+        pending::Verdict {
+            alive: true,
+            how: "pid + start time".into()
+        }
+    );
+    // ... recorded without a start time: the evidence rule - running
+    assert_eq!(
+        pending::test_recorded_process(me, "", "", NOWHERE, past, &[]),
+        uninspected
+    );
+    // a pid that does not exist stays gone
+    assert_eq!(
+        pending::test_unverified_process(999_999, past, NOWHERE, &[]),
+        pending::Verdict {
+            alive: false,
+            how: "gone".into()
+        }
+    );
+    // the records: an unverified pid and a survivor without a start time both block
+    let unverified = format!(r#"[{{"pid":{me},"why":"start time of pid {me} unreadable"}}]"#);
+    let c = pending::test_pending_active(&record("[]", &unverified), Path::new("x.json"));
+    assert!(c.active, "{}", c.check);
+    assert!(
+        c.message.contains(&format!(
+            "left a process its kill could not verify (state 'survivors', consult n=2, handoff 03, started 2020-01-01T00:00:00+00:00): pid {me} [{}; at the kill: start time of pid {me} unreadable] - it blocks the task as a survivor does",
+            uninspected.how
+        )),
+        "{}",
+        c.message
+    );
+    let bare = format!(r#"[{{"pid":{me},"start_time":"","name":""}}]"#);
+    let c = pending::test_pending_active(&record(&bare, "[]"), Path::new("x.json"));
+    assert!(c.active, "{}", c.check);
+    assert!(
+        c.message.contains(&format!(
+            "process (pid {me} [{}]) is still running",
+            uninspected.how
+        )),
+        "{}",
+        c.message
+    );
+    unset("CODEX_CONSULT_TEST_INFO_UNREADABLE");
+    assert_eq!(
+        pending::test_unverified_process(me, past, NOWHERE, &[]),
+        not_codex
+    );
 
     #[cfg(windows)]
     tree_kills::run();
@@ -97,12 +250,19 @@ mod tree_kills {
         d
     }
 
-    /// The first descendant of `root` (the batch file's `ping`), waited for up to 5 s.
-    fn first_descendant(root: u32) -> u32 {
+    /// The batch file's `PING.EXE` among the descendants of `root` - picked by its image, never
+    /// another descendant (the console host `cmd` may start first) - waited for up to 5 s; `0` when
+    /// it did not appear.
+    fn ping_descendant(root: u32) -> u32 {
         let until = Instant::now() + Duration::from_secs(5);
         loop {
-            if let Some(d) = proc::descendants_of(root).first() {
-                return *d;
+            let table = proc::enumerate_processes();
+            let tree = proc::descendants_in(&table, root);
+            if let Some(p) = table
+                .iter()
+                .find(|p| tree.contains(&p.pid) && p.name.eq_ignore_ascii_case("PING.EXE"))
+            {
+                return p.pid;
             }
             if Instant::now() >= until {
                 return 0;
@@ -123,7 +283,7 @@ mod tree_kills {
         let child = AtomicU32::new(0);
         let cb = |pid: u32, _start: String| {
             root.store(pid, Ordering::SeqCst);
-            let c = first_descendant(pid);
+            let c = ping_descendant(pid);
             child.store(c, Ordering::SeqCst);
             on_child(pid, c);
         };
@@ -163,7 +323,7 @@ mod tree_kills {
         // (a) a clean tree kill: the root and its child gone - confirmed, nothing named
         let (r, root, child) = hanging_turn("clean", &|_, _| {});
         let k = r.kill.clone().expect("a kill check");
-        assert!(child > 0, "the batch file started its child");
+        assert!(child > 0, "the batch file started its PING.EXE");
         assert!(
             k.confirmed && k.why.is_empty() && k.unverified.is_empty() && r.survivors.is_empty(),
             "{k:?} survivors {:?}",
@@ -184,6 +344,7 @@ mod tree_kills {
         });
         unset("CODEX_CONSULT_TEST_START_UNREADABLE");
         unset("CODEX_CONSULT_TEST_KILL_DENIED");
+        assert!(child > 0, "the batch file started its PING.EXE");
         let k = r.kill.clone().expect("a kill check");
         let alive = proc::process_start_iso(child).is_some();
         stop(child);
@@ -203,6 +364,7 @@ mod tree_kills {
         set("CODEX_CONSULT_TEST_KILL_DENIED", "1");
         let (r, root, child) = hanging_turn("denied", &|_, _| {});
         unset("CODEX_CONSULT_TEST_KILL_DENIED");
+        assert!(child > 0, "the batch file started its PING.EXE");
         let k = r.kill.clone().expect("a kill check");
         let orphan_alive = proc::process_start_iso(child).is_some();
         let root_gone = proc::process_start_iso(root).is_none();

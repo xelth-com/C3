@@ -277,6 +277,12 @@ struct Secondary {
     kill_warnings: Vec<String>,
     /// What a secondary turn's kill left that keeps the recovery record (the last one wins).
     kept_kill: Option<KeptKill>,
+    /// (wave 3c, F23-3) Where a secondary turn's kill writes the record it keeps, AT the kill
+    /// (`None`: nothing is written - the unit tests).
+    kill_site: Option<KillSite>,
+    /// (wave 3c, F23-3) What the main turn's kill kept (its unknown tree's why stays in a secondary
+    /// kill's record).
+    main_kept: Option<KeptKill>,
 }
 
 /// (wave 28e, E1 / E18 / E23) What a tree kill left behind that keeps the recovery record (state
@@ -287,6 +293,9 @@ struct KeptKill {
     survivors: Vec<u32>,
     unverified: Vec<serde_json::Value>,
     kill_unconfirmed: String,
+    /// (wave 3c, F23-3) The survivors' `{pid, start_time, name}` entries, read AT the kill
+    /// (`New-SurvivorEntries` where the plugin calls it); `None` until the kill site reads them.
+    entries: Option<Vec<serde_json::Value>>,
 }
 
 fn join_pids(pids: &[u32]) -> String {
@@ -403,7 +412,71 @@ fn kept_kill(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> Option<KeptKi
         survivors: survivors.to_vec(),
         unverified: unverified_entries(c),
         kill_unconfirmed: unconfirmed,
+        entries: None,
     })
+}
+
+/// (wave 3c, F23-3) What the run's kills keep together: a secondary turn's lists replace the main
+/// turn's; the main turn's unknown-tree why stays when the secondary kill has none.
+fn merged_kept(main: Option<KeptKill>, secondary: Option<KeptKill>) -> Option<KeptKill> {
+    match (main, secondary) {
+        (Some(m), Some(mut s)) => {
+            if s.kill_unconfirmed.is_empty() {
+                s.kill_unconfirmed = m.kill_unconfirmed;
+            }
+            Some(s)
+        }
+        (m, s) => s.or(m),
+    }
+}
+
+/// (wave 3c, F23-3) The recovery record a kill keeps: `on` in state `survivors`, with the kill's
+/// `survivors[]` (the entries read at the kill), `unverified[]` and - an unknown tree -
+/// `kill_unconfirmed`.
+fn kept_record(on: &PendingRecord, k: &KeptKill) -> PendingRecord {
+    let mut r = on.clone();
+    r.state = PendingState::Survivors;
+    r.survivors = k
+        .entries
+        .clone()
+        .unwrap_or_else(|| survivor_entries(&k.survivors));
+    r.unverified = k.unverified.clone();
+    if !k.kill_unconfirmed.is_empty() {
+        r.kill_unconfirmed = Some(k.kill_unconfirmed.clone());
+    }
+    r
+}
+
+/// (wave 3c, F23-3) Where a kill writes the record it keeps. The plugin writes it AT each of its
+/// three kill sites (`$pendingRecord.state = 'survivors'` ... `Write-PendingFile`, right after
+/// `Stop-ProcessTreeChecked`), before the run goes on: a bridge that dies after the kill (a crash,
+/// a forced termination) leaves a record that names what the kill left, never only the killed
+/// child. `on` is the record the run has on disk at that kill (the run's base record; the format
+/// repair's, which names the saved prose). TEST HOOK (test mode only):
+/// `CODEX_CONSULT_TEST_KILL_PAUSE_MS=<ms> | <model>=<ms>[|...]` - a pause held right after that
+/// write (the window a harness terminates the bridge in).
+#[derive(Clone)]
+struct KillSite {
+    store: FilesStore,
+    pending: PendingRef,
+    on: PendingRecord,
+    pause_ms: u64,
+}
+
+impl KillSite {
+    /// Reads the survivors' entries now (once), writes the kept record, then holds the test pause.
+    fn write(&self, k: &mut KeptKill) -> std::io::Result<()> {
+        if k.entries.is_none() {
+            k.entries = Some(survivor_entries(&k.survivors));
+        }
+        let written = self
+            .store
+            .write_pending(&self.pending, &kept_record(&self.on, k));
+        if self.pause_ms > 0 {
+            std::thread::sleep(Duration::from_millis(self.pause_ms));
+        }
+        written
+    }
 }
 
 /// The main turn's kill check: the tree kill's own (`None` - no process, the http engine: a
@@ -492,7 +565,15 @@ fn secondary_kill(
     if let Some(w) = kill_check_warning(&c, survivors, turn) {
         sec.kill_warnings.push(w);
     }
-    if let Some(k) = kept_kill(&c, survivors) {
+    if let Some(mut k) = kept_kill(&c, survivors) {
+        // (wave 3c, F23-3) the record is written HERE, at the kill (the plugin's `catch { }`: a
+        // failed write is retried with the end of the run's)
+        if let Some(site) = sec.kill_site.clone() {
+            if let Some(mut merged) = merged_kept(sec.main_kept.clone(), Some(k.clone())) {
+                let _ = site.write(&mut merged);
+                k.entries = merged.entries;
+            }
+        }
         sec.kept_kill = Some(k);
     }
     let text = format!("{stop} {}", format_kill_text(&c, survivors));
@@ -4488,6 +4569,48 @@ fn finish(
         }
     }
 
+    // (wave 3c, F23-3) The main turn's kill writes the record it keeps NOW - survivors, unverified
+    // pids or an unknown tree - before anything else of the run proceeds (the plugin's kill site):
+    // a bridge that dies from here on leaves that evidence on disk. A failed write is said in the
+    // outcome, as the plugin's (the end of the run writes it again).
+    let kill_site = KillSite {
+        store: store.clone(),
+        pending: pending.clone(),
+        on: base_record.clone(),
+        pause_ms: test_hook_ms(
+            &c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_PAUSE_MS").unwrap_or_default(),
+            &ctx.identity.model,
+        )
+        .unwrap_or(0),
+    };
+    let mut main_kept: Option<KeptKill> = None;
+    if register_failure_text.is_none() {
+        if let Some(mut k) = main_kill
+            .as_ref()
+            .and_then(|c| kept_kill(c, &timeout_survivors))
+        {
+            if let Err(e) = kill_site.write(&mut k) {
+                let what = if !k.survivors.is_empty() {
+                    "survivors"
+                } else if !k.unverified.is_empty() {
+                    "unverified pids"
+                } else {
+                    "unconfirmed kill"
+                };
+                let child = base_record
+                    .child_pid
+                    .or(main_kill.as_ref().map(|c| c.root_pid))
+                    .unwrap_or(0);
+                bridge_outcome += &format!(
+                    "; WARNING: the {what} could not be recorded ({}) - {} still names only child pid {child}",
+                    c3_core::one_line(&e.to_string()),
+                    store_pending_path(&store, &pending).display()
+                );
+            }
+            main_kept = Some(k);
+        }
+    }
+
     // Rollout-file thread verification (`Find-ThreadInRollouts`): when the event stream named
     // no thread, look at codex's rollout files written since the run started. A rollout whose
     // name carries a uuid AND whose content holds this run's consultation id verifies the
@@ -4576,7 +4699,11 @@ fn finish(
     // (one `resume <thread>` turn after the main turn was killed) and the format repair (one
     // `resume <thread>` turn that converts a prose reply into the object). Both run under the
     // same task lock and recovery record, at most once.
-    let mut sec = Secondary::default();
+    let mut sec = Secondary {
+        kill_site: Some(kill_site.clone()),
+        main_kept: main_kept.clone(),
+        ..Secondary::default()
+    };
     let main_events_text = std::fs::read_to_string(&ctx.events_path).unwrap_or_default();
     // (wave 26b, D15) a codex run that failed mid-run still emitted `thread.started`; take that
     // thread so the salvage footer can name it for a resume.
@@ -5108,18 +5235,10 @@ fn finish(
     // kill (`codex-consult.ps1:3375`).
     // (wave 28e, E1 / E18 / E23) what the kills left that keeps the record: the main turn's, then a
     // secondary turn's (whose lists replace the main turn's; an unknown tree's why stays).
-    let main_kept = main_kill
-        .as_ref()
-        .and_then(|c| kept_kill(c, &timeout_survivors));
-    let kept = match (main_kept, sec.kept_kill.clone()) {
-        (Some(m), Some(mut s)) => {
-            if s.kill_unconfirmed.is_empty() {
-                s.kill_unconfirmed = m.kill_unconfirmed;
-            }
-            Some(s)
-        }
-        (m, s) => s.or(m),
-    };
+    // (wave 3c, F23-3) Each kill wrote it already, at the kill; it is written again here, with the
+    // survivors' entries read at the kill, on the run's base record.
+    let kept = merged_kept(main_kept.clone(), sec.kept_kill.clone());
+    let mut kept_rec: Option<PendingRecord> = None;
     let disposition = if register_failure_text.is_some() {
         // (rows (e)) leave the record at `launching` (child cleared) so the next run recovers it;
         // the ledger entry below records the failed outcome.
@@ -5133,14 +5252,9 @@ fn finish(
     } else if let Some(k) = kept {
         // (wave 28e, E1 / E18 / E23) survivors OR descendants the kill could not verify OR an
         // unknown tree (`kill_unconfirmed`): the record is kept in state `survivors`.
-        let mut survivor_rec = base_record.clone();
-        survivor_rec.state = PendingState::Survivors;
-        survivor_rec.survivors = survivor_entries(&k.survivors);
-        survivor_rec.unverified = k.unverified.clone();
-        if !k.kill_unconfirmed.is_empty() {
-            survivor_rec.kill_unconfirmed = Some(k.kill_unconfirmed.clone());
-        }
+        let survivor_rec = kept_record(&base_record, &k);
         let _ = store.write_pending(&pending, &survivor_rec);
+        kept_rec = Some(survivor_rec);
         RecoveryDisposition::Retain
     } else {
         RecoveryDisposition::Remove
@@ -5170,7 +5284,9 @@ fn finish(
         c3_core::paths::repo_relative(&ctx.repo_root, &ctx.reply_json_path)
             .unwrap_or_else(|| ctx.reply_json_path.to_string_lossy().to_string())
     };
-    let mut committing_record = base_record.clone();
+    // (wave 3c, F23-3) a kept record stays the kept one (a blocked commit below rewrites it with
+    // its note, never with the base record that lacks the kill's evidence)
+    let mut committing_record = kept_rec.unwrap_or_else(|| base_record.clone());
     if disposition == RecoveryDisposition::Remove {
         committing_record.state = PendingState::Committing;
         committing_record.note = "the run is over; committing under the write lock".to_string();
@@ -6209,6 +6325,11 @@ fn run_format_repair(
         repair_timeout as f64,
         Some(on_running),
     );
+    // (wave 3c, F23-3) a kill of this turn writes its record on the one this turn has on disk (it
+    // names the saved prose and the repair's pid)
+    if let (Some(site), Ok(r)) = (sec.kill_site.as_mut(), rec_arc.lock()) {
+        site.on = r.clone();
+    }
 
     let mut repair_problem = String::new();
     let mut repair_usage: Option<Usage> = None;
@@ -8781,6 +8902,96 @@ mod kill_record_tests {
         // survivors only, or a confirmed kill: no warning
         assert!(kill_check_warning(&check(false, "", 10, &[]), &[11], "main turn").is_none());
         assert!(kill_check_warning(&KillCheck::confirmed(10), &[], "main turn").is_none());
+    }
+
+    #[test]
+    fn a_kill_writes_the_record_it_keeps_at_the_kill() {
+        // (wave 3c, F23-3) the record is on disk when the kill's handling returns - before the run
+        // goes on - built on the record the run has on disk; the end of the run writes the same
+        let dir = std::env::temp_dir().join(format!(
+            "c3-killsite-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let task = TaskSlug::new("t").unwrap();
+        std::fs::create_dir_all(dir.join("t")).unwrap();
+        let store = FilesStore::new(dir.clone());
+        let pending = PendingRef::single(task);
+        let path = store_pending_path(&store, &pending);
+        let base = PendingRecord {
+            state: PendingState::Running,
+            n: 1,
+            nn: "01".into(),
+            child_pid: Some(999_999),
+            ..Default::default()
+        };
+        let read = || -> serde_json::Value {
+            serde_json::from_slice(&std::fs::read(&path).expect("the record")).unwrap()
+        };
+        let mut sec = Secondary {
+            kill_site: Some(KillSite {
+                store: store.clone(),
+                pending: pending.clone(),
+                on: base.clone(),
+                pause_ms: 0,
+            }),
+            main_kept: Some(KeptKill {
+                kill_unconfirmed: "the main kill".into(),
+                ..Default::default()
+            }),
+            ..Secondary::default()
+        };
+        // a kill that keeps nothing writes nothing
+        let _ = secondary_kill(
+            "timeout after 30 s",
+            Some(KillCheck::confirmed(6)),
+            &[],
+            "timeout continuation",
+            &mut sec,
+        );
+        assert!(!path.exists());
+        // an unverified descendant: written at once; the main turn's unknown-tree why stays
+        let _ = secondary_kill(
+            "timeout after 30 s",
+            Some(check(false, "start time of pid 5 unreadable", 4, &[5])),
+            &[],
+            "timeout continuation",
+            &mut sec,
+        );
+        let r = read();
+        assert_eq!(r["state"], "survivors");
+        assert_eq!(r["child_pid"], 999_999);
+        assert_eq!(r["survivors"], serde_json::json!([]));
+        assert_eq!(
+            r["unverified"],
+            serde_json::json!([{ "pid": 5, "why": "start time of pid 5 unreadable" }])
+        );
+        assert_eq!(r["kill_unconfirmed"], "the main kill");
+        // a survivor (this process): its entry read AT the kill, and reused by the end of the run
+        let me = std::process::id();
+        let _ = secondary_kill(
+            "timeout after 30 s",
+            Some(check(false, "", 4, &[])),
+            &[me],
+            "format repair",
+            &mut sec,
+        );
+        let r = read();
+        let info = crate::liveness::proc::process_info(me).expect("this process");
+        assert_eq!(
+            r["survivors"],
+            serde_json::json!([{ "pid": me, "start_time": info.start, "name": info.name }])
+        );
+        assert_eq!(r["unverified"], serde_json::json!([]));
+        let kept = sec.kept_kill.clone().expect("kept");
+        assert_eq!(kept.entries.as_ref().map(|e| e.len()), Some(1));
+        let end = kept_record(
+            &base,
+            &merged_kept(sec.main_kept.clone(), Some(kept)).expect("merged"),
+        );
+        let end: serde_json::Value = serde_json::from_slice(&end.to_bytes().unwrap()).unwrap();
+        assert_eq!(end, r);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

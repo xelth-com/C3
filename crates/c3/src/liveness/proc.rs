@@ -91,14 +91,35 @@ pub struct ProcessInfo {
     pub cmd: String,
     pub start: String,
     pub ppid: u32,
+    /// (wave 3c, F23-1) `false` when the process EXISTS (its start time reads, or reads `""`) but
+    /// its name and parent could not be read: the process-table lookup failed or did not list it
+    /// while the pid still answers. `name` is `""` and `ppid` `0` then. Its identity is unknown,
+    /// never "gone": a re-check counts such a process as running (fail-closed).
+    pub inspected: bool,
 }
 
-/// `Get-ProcessInfo` (see [`ProcessInfo`]).
+/// `Get-ProcessInfo` (see [`ProcessInfo`]): `None` only when no process has that pid - a process
+/// whose name and parent cannot be read is returned with `inspected: false` (wave 3c, F23-1; the
+/// plugin's `Get-Process` reads the name of any process that exists, its CIM read of the command
+/// line and the parent failing leaves `''` and `0`). TEST HOOK (test mode only):
+/// `CODEX_CONSULT_TEST_INFO_UNREADABLE=<pid>[,<pid>]` - the name-and-parent lookup of these pids
+/// fails (as a failed or incomplete process-table snapshot makes it).
 pub fn process_info(pid: u32) -> Option<ProcessInfo> {
     let start = process_start_iso(pid)?;
-    // gone between the two reads: no such process
-    let (image, ppid) = imp::name_and_parent(pid)?;
-    let name = strip_exe(&image).to_string();
+    let looked_up = if pid_list_hook("CODEX_CONSULT_TEST_INFO_UNREADABLE").contains(&pid) {
+        None
+    } else {
+        imp::name_and_parent(pid)
+    };
+    let (name, ppid, inspected) = match looked_up {
+        Some((image, ppid)) => (strip_exe(&image).to_string(), ppid, true),
+        None => {
+            // gone between the two reads: no such process; still there: not inspectable - the
+            // lookup's failure is never taken for the process's absence
+            process_start_iso(pid)?;
+            (String::new(), 0, false)
+        }
+    };
     let cmd = if pid_list_hook("CODEX_CONSULT_TEST_CMDLINE_UNREADABLE").contains(&pid) {
         String::new()
     } else {
@@ -110,6 +131,7 @@ pub fn process_info(pid: u32) -> Option<ProcessInfo> {
         cmd,
         start,
         ppid,
+        inspected,
     })
 }
 
@@ -691,6 +713,9 @@ pub fn codex_server_exclusion(name: &str, cmd: &str) -> ServerExclusion {
     none
 }
 
+/// (wave 3c, F23-2) What a scan says of a row whose start time could not be read: it is counted.
+pub const START_UNREADABLE_COUNTED: &str = "its start time cannot be read - counted (fail-closed)";
+
 /// `Find-CodexProcesses` over a given process list (pure). `since_text` is the pre-formatted
 /// "started at or after" stamp for the message; `since` is the same instant for the comparison.
 /// With a bridge pid on Windows, a process counts when its parent is that pid and it started at or
@@ -698,7 +723,11 @@ pub fn codex_server_exclusion(name: &str, cmd: &str) -> ServerExclusion {
 /// machine-wide "looks like codex" rule applies (labelled "task not verifiable"); (wave 29, E27) the
 /// Codex desktop app's servers and helpers ([`codex_server_exclusion`]) are left out and named in
 /// `check` ("excluded: pid N codex.exe [codex app-server]", at most 6, then "(+k more)") and in
-/// `excluded`. This process and its ancestors are never counted.
+/// `excluded`. This process and its ancestors are never counted. (wave 3c, F23-2) A row whose start
+/// time could not be read (`created: None`) is never skipped: it counts as started at or after
+/// `since` (and before a reuse of the bridge's pid), its rule says so ([`START_UNREADABLE_COUNTED`]).
+/// The plugin's `Win32_Process.CreationDate` is always read; C3's table (`GetProcessTimes`) cannot
+/// read a protected or another user's process, which must never release a record by being skipped.
 #[allow(clippy::too_many_arguments)]
 pub fn find_codex_processes(
     procs: &[ScanProc],
@@ -749,8 +778,12 @@ pub fn find_codex_processes(
             if excluded.contains(&p.pid) || p.ppid != bridge_pid {
                 continue;
             }
-            match p.created {
-                None => continue,
+            let rule = match p.created {
+                // (wave 3c, F23-2) a child whose start time cannot be read is never filtered out:
+                // it may have started at or after `since` and before any reuse (fail-closed)
+                None => format!(
+                    "child of the interrupted bridge (ppid {bridge_pid}); {START_UNREADABLE_COUNTED}"
+                ),
                 Some(c) if c < since => continue,
                 Some(c) => {
                     if let Some(r) = reused_at {
@@ -758,12 +791,13 @@ pub fn find_codex_processes(
                             continue;
                         }
                     }
+                    format!("child of the interrupted bridge (ppid {bridge_pid})")
                 }
-            }
+            };
             found.push(FoundProc {
                 pid: p.pid,
                 name: p.name.clone(),
-                rule: format!("child of the interrupted bridge (ppid {bridge_pid})"),
+                rule,
             });
         }
     } else {
@@ -771,17 +805,24 @@ pub fn find_codex_processes(
             if excluded.contains(&p.pid) {
                 continue;
             }
-            match p.created {
-                None => continue,
+            // (wave 3c, F23-2) a start time that cannot be read counts as "at or after `since`":
+            // such a process is judged by the rule like any recent one (fail-closed)
+            let start_unknown = match p.created {
+                None => true,
                 Some(c) if c < since => continue,
-                _ => {}
-            }
+                Some(_) => false,
+            };
             let m = codex_match(&p.name, &p.command_line, launcher);
             if !m.rule.is_empty() {
+                let unknown = if start_unknown {
+                    format!("; {START_UNREADABLE_COUNTED}")
+                } else {
+                    String::new()
+                };
                 found.push(FoundProc {
                     pid: p.pid,
                     name: p.name.clone(),
-                    rule: format!("{}, task not verifiable", m.rule),
+                    rule: format!("{}, task not verifiable{unknown}", m.rule),
                 });
             } else if !m.excluded.is_empty() {
                 app_servers.push(ExcludedProc {
@@ -1453,6 +1494,83 @@ mod tests {
         procs2.push(p(1000, 1, "other.exe", 140, ""));
         let out2 = find_codex_processes(&procs2, since, "t", "", 1000, 42, true);
         assert!(out2.found.is_empty(), "child after the reuse is not ours");
+    }
+
+    /// A row whose creation time could not be read (`created: None`).
+    fn unknown_start(pid: u32, ppid: u32, name: &str, cmd: &str) -> ScanProc {
+        ScanProc {
+            created: None,
+            ..p(pid, ppid, name, 0, cmd)
+        }
+    }
+
+    #[test]
+    fn f23_2_a_row_whose_start_cannot_be_read_is_never_skipped() {
+        let since = at(100).unwrap();
+        // by parent: the dead bridge 1000's children - one unreadable (counted, said so), one
+        // started before the run (left out), one after it (counted)
+        let procs = vec![
+            unknown_start(1200, 1000, "node.exe", ""),
+            p(1201, 1000, "ping.exe", 50, ""),
+            p(1202, 1000, "codex.exe", 150, ""),
+            unknown_start(1300, 9, "codex-like.exe", ""),
+        ];
+        let out = find_codex_processes(&procs, since, "t", "", 1000, 42, true);
+        let found: Vec<(u32, &str)> = out.found.iter().map(|f| (f.pid, f.rule.as_str())).collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    1200,
+                    "child of the interrupted bridge (ppid 1000); its start time cannot be read - counted (fail-closed)"
+                ),
+                (1202, "child of the interrupted bridge (ppid 1000)"),
+            ]
+        );
+        // a live process holds the reused bridge pid: a child whose start cannot be read may predate
+        // the reuse - still counted; a readable one after the reuse is not ours
+        let mut reused = procs.clone();
+        reused.push(p(1000, 1, "other.exe", 140, ""));
+        let out = find_codex_processes(&reused, since, "t", "", 1000, 42, true);
+        assert_eq!(
+            out.found.iter().map(|f| f.pid).collect::<Vec<_>>(),
+            vec![1200]
+        );
+
+        // machine-wide: an unreadable codex-like row is counted (and says why), an unreadable row
+        // that is not codex-like is not (no blanket refusal), a codex row before the run is not; an
+        // unreadable app server stays left out (named)
+        let procs = vec![
+            unknown_start(2000, 1, "codex.exe", ""),
+            unknown_start(2001, 1, "csrss.exe", ""),
+            p(2002, 1, "codex.exe", 50, ""),
+            unknown_start(
+                2003,
+                1,
+                "node.exe",
+                r"node C:\x\node_modules\@openai\codex\bin\codex.js exec",
+            ),
+            unknown_start(2004, 1, "codex.exe", "codex.exe app-server"),
+        ];
+        let out = find_codex_processes(&procs, since, "t", "", 0, 42, true);
+        let found: Vec<(u32, &str)> = out.found.iter().map(|f| (f.pid, f.rule.as_str())).collect();
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].0, 2000);
+        assert_eq!(
+            found[0].1,
+            "name codex, task not verifiable; its start time cannot be read - counted (fail-closed)"
+        );
+        assert_eq!(found[1].0, 2003);
+        assert!(
+            found[1].1.ends_with(
+                ", task not verifiable; its start time cannot be read - counted (fail-closed)"
+            ),
+            "{found:?}"
+        );
+        assert_eq!(
+            out.excluded.iter().map(|e| e.pid).collect::<Vec<_>>(),
+            vec![2004]
+        );
     }
 
     #[test]
