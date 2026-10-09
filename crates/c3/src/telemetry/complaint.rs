@@ -228,7 +228,9 @@ pub(crate) struct Cleanup {
 /// is another instance and stays). `own_record`: the transaction is this cleanup's (confirmed, or a
 /// local-only deletion) - it is set to `cleaning` before the first removal and removed after the
 /// last, so an interruption leaves a record that blocks spooling and sending and that the next flush
-/// or forget resumes; `false`: a PENDING deletion's record (the retry's identity) is left as it is.
+/// or forget resumes (a `cleaning` `txn` is on disk already: a resumed cleanup's, or a local-only
+/// deletion's, which its forget records before calling here - F14-1); `false`: a PENDING
+/// deletion's record (the retry's identity) is left as it is.
 /// `remove` removes one file (tests inject a failure).
 pub(crate) fn run_local_cleanup(
     dir: &Path,
@@ -501,8 +503,8 @@ pub fn forget_with(
         out.instance_id = txn.instance_id.clone();
         out.public_ref = Some(txn.public_ref.clone()).filter(|r| !r.is_empty());
         out.lines.push(format!(
-            "{P}: finishing the local deletion of instance {} ({}) - nothing more is asked of the intake.",
-            txn.instance_id,
+            "{P}: finishing the local deletion of {} ({}) - nothing more is asked of the intake.",
+            instance_label(&txn.instance_id),
             if txn.public_ref.is_empty() {
                 "a local-only deletion that did not finish".to_string()
             } else {
@@ -541,6 +543,9 @@ pub fn forget_with(
                 }
             }
             None => {
+                // (F14-1) the local-only transaction is RECORDED, `cleaning`, before the first
+                // removal: an interruption leaves the record that blocks spooling and sending and
+                // that the next flush or forget resumes with this identity
                 let txn = PendingDeletion {
                     instance_id,
                     public_ref: String::new(),
@@ -549,6 +554,13 @@ pub fn forget_with(
                     last_error: String::new(),
                     phase: PHASE_CLEANING.to_string(),
                 };
+                if let Err(e) = write_transaction(dir, &txn) {
+                    out.exit = 1;
+                    out.lines.push(format!(
+                        "{P}: {nothing} - the local deletion could not be recorded before its cleanup ({e})."
+                    ));
+                    return out;
+                }
                 finish_cleanup(&mut out, dir, &txn, true, remove);
             }
         }
@@ -668,11 +680,22 @@ fn finish_cleanup(
         } else {
             format!("; removed so far: {}", c.removed.join(", "))
         };
-        if own_record {
+        // (F14-1) the record is said only when it is there (in any form it blocks spooling and
+        // sending); a cleanup that kept none says so
+        if own_record && dir.join(FORGET_PENDING).exists() {
             out.lines.push(format!(
-                "{P}: the local deletion did not finish ({e}){so_far}; the deletion record {} keeps instance {} - nothing is spooled or sent until the next flush or c3 forget-me finishes it.",
+                "{P}: the local deletion did not finish ({e}){so_far}; the deletion record {} {} - nothing is spooled or sent until the next flush or c3 forget-me finishes it.",
                 dir.join(FORGET_PENDING).display(),
-                txn.instance_id
+                if txn.instance_id.is_empty() {
+                    "stays (begun without a salt, it names no instance)".to_string()
+                } else {
+                    format!("keeps instance {}", txn.instance_id)
+                }
+            ));
+        } else if own_record {
+            out.lines.push(format!(
+                "{P}: the local deletion did not finish ({e}){so_far}; no deletion record is kept ({} is gone), so nothing blocks spooling and sending - run c3 forget-me --local again to finish it.",
+                dir.join(FORGET_PENDING).display()
             ));
         } else {
             out.lines.push(format!(
@@ -692,6 +715,15 @@ fn finish_cleanup(
     ));
     if let Some(k) = &c.kept {
         out.lines.push(format!("{P}: {k}."));
+    }
+}
+
+/// `instance <id>`, or `this machine's data` for a deletion begun without an instance id (no salt).
+fn instance_label(instance_id: &str) -> String {
+    if instance_id.is_empty() {
+        "this machine's data".to_string()
+    } else {
+        format!("instance {instance_id}")
     }
 }
 

@@ -265,6 +265,16 @@ Workspace: 576 -> 586 tests (`cargo test --workspace`), clippy `-D warnings` and
 clean. `index::embed::tests::embed_reaches_a_loopback_fake_via_localhost` failed once under the
 parallel suite and passed alone (untouched code, a loopback timing flake).
 
+- **2f, F14-1 (handoff 14, Kimi's RC1).** A local-only forget (no reference, no record) writes its
+  `cleaning` transaction BEFORE the first removal (a record that cannot be written: nothing removed),
+  so an interrupted cleanup blocks spooling and sending and the next flush or forget finishes it; the
+  failure message names the record only when it exists. Tests `a_local_only_forget_interrupted_keeps_its_record_and_resumes_rc1`,
+  `a_local_only_forget_leaves_no_record_behind`, `a_local_only_forget_that_cannot_record_removes_nothing`.
+- **2f, F14-2.** The resolver's "ordinal" is the plugin's `-ceq` (`Test-ReviewerMatch`,
+  `Resolve-CoordinatorIdentity`): the provider stays CASE-SENSITIVE (`OpenAI` is not `openai`, as in
+  C3's `-Require` matcher) - the doc now says so; the engine compares case-insensitively (`-eq`).
+  Test `coordinator_provider_is_case_sensitive_the_engine_is_not`. Workspace 610 -> 614 tests.
+
 ## Tests
 
 Rust: `crates/c3-cli/tests/telemetry_parity.rs` (the real binary against a fake codex: ledger

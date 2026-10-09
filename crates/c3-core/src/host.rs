@@ -192,6 +192,11 @@ pub fn codex_config_defaults(config: &crate::config::CodexConfig) -> CodexDefaul
 ///   (`defaults.provider`, ordinal) with a configured model and no other engine - that model on
 ///   codex.
 ///
+/// (F14-2) "Ordinal" is the plugin's `-ceq`: the provider - against a roster entry's and against
+/// `defaults.provider` - and a named model compare CASE-SENSITIVELY (`OpenAI` is not `openai`, as
+/// in the roster's `-Require` matcher, `crate::roster::resolve_reviewer_matcher`); an engine
+/// compares case-insensitively (`-eq`).
+///
 /// `roster` is `None` when there is no reviewer roster (then `in_roster` stays unknown). `Err`
 /// carries the plugin's exact `<why>` (the caller wraps it, [`coordinator_refusal`]).
 pub fn resolve_coordinator_match(
@@ -216,7 +221,7 @@ pub fn resolve_coordinator_match(
     let model_of = |e: &RosterEntry| -> String {
         if !e.model.is_empty() {
             e.model.clone()
-        } else if e.engine.is_empty() || e.engine == "codex" {
+        } else if e.engine.is_empty() || e.engine.eq_ignore_ascii_case("codex") {
             defaults.model.clone()
         } else {
             String::new()
@@ -256,14 +261,17 @@ pub fn resolve_coordinator_match(
         });
     }
     let provider = g.provider.unwrap_or_default();
-    // `Test-ReviewerMatch`: the provider and the model (when named) ordinal, the engine when named
+    // `Test-ReviewerMatch`: the provider and the model (when named) ordinal (`-ceq`, case-
+    // sensitive), the engine when named (`-eq`, case-insensitive) - F14-2
     let hits: Vec<&RosterEntry> = roster
         .unwrap_or(&[])
         .iter()
         .filter(|e| {
             e.provider == provider
                 && g.model.as_ref().is_none_or(|m| &e.model == m)
-                && g.engine.as_ref().is_none_or(|en| &engine_of(e) == en)
+                && g.engine
+                    .as_ref()
+                    .is_none_or(|en| engine_of(e).eq_ignore_ascii_case(en))
         })
         .collect();
     let mut model = g.model.clone();
@@ -296,7 +304,9 @@ pub fn resolve_coordinator_match(
         }
     } else if provider == defaults.provider
         && !defaults.model.is_empty()
-        && engine.as_deref().is_none_or(|e| e == "codex")
+        && engine
+            .as_deref()
+            .is_none_or(|e| e.eq_ignore_ascii_case("codex"))
     {
         model = Some(defaults.model.clone());
         engine = Some("codex".to_string());
@@ -645,6 +655,48 @@ mod tests {
         assert!(
             bad.starts_with("CODEX_CONSULT_COORDINATOR='open ai' cannot be used: "),
             "{bad}"
+        );
+    }
+
+    /// (F14-2) The plugin's comparisons (`Test-ReviewerMatch`, `Resolve-CoordinatorIdentity`): the
+    /// provider `-ceq` - a label whose case differs from the config's provider or a roster entry's
+    /// is ANOTHER provider (no model inferred, not in the roster) -, the engine `-eq`.
+    #[test]
+    fn coordinator_provider_is_case_sensitive_the_engine_is_not() {
+        use crate::roster::RosterEntry;
+        let d = CodexDefaults {
+            provider: "openai".into(),
+            model: "gpt-6-astra".into(),
+        };
+        let m = resolve_coordinator_match("OpenAI", None, &d).unwrap();
+        assert_eq!(
+            (
+                m.provider.as_deref(),
+                m.model.as_deref(),
+                m.engine.as_deref()
+            ),
+            (Some("OpenAI"), None, None)
+        );
+        let m = resolve_coordinator_match("openai", None, &d).unwrap();
+        assert_eq!(
+            (m.model.as_deref(), m.engine.as_deref()),
+            (Some("gpt-6-astra"), Some("codex"))
+        );
+        // a roster entry: the label's case is the entry's or it is another provider; its engine
+        // (written in another case) still matches a `[codex]` suffix and counts as codex
+        let roster = [RosterEntry {
+            position: 1,
+            provider: "kimi".into(),
+            model: String::new(),
+            engine: "Codex".into(),
+            ..Default::default()
+        }];
+        let m = resolve_coordinator_match("Kimi", Some(&roster), &d).unwrap();
+        assert_eq!((m.model.as_deref(), m.in_roster), (None, Some(false)));
+        let m = resolve_coordinator_match("kimi [codex]", Some(&roster), &d).unwrap();
+        assert_eq!(
+            (m.model.as_deref(), m.in_roster),
+            (Some("gpt-6-astra"), Some(true))
         );
     }
 

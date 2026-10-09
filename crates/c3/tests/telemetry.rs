@@ -1060,6 +1060,200 @@ fn a_confirmed_transaction_is_finished_by_the_next_forget() {
     assert!(telemetry::pending_deletion_in(&dir).is_none());
 }
 
+// --------------------------------------------------------------------------- wave 2f (F14-1)
+
+/// A telemetry directory with a salt, one queued event of its instance and a stored reference.
+fn local_state(tag: &str) -> (PathBuf, String, Spool) {
+    let dir = temp_dir(tag);
+    let iid = telemetry::instance_id_in(&dir);
+    let spool = Spool::new(&dir, "http://unused.invalid/T");
+    spool.enqueue(&consultation_of(&iid, "framing")).unwrap();
+    std::fs::write(dir.join("refs.ndjson"), "{\"public_ref\":\"CC-7Q\"}\n").unwrap();
+    (dir, iid, spool)
+}
+
+/// (F14-1 / RC1) A LOCAL-ONLY forget (no reference, no transaction recorded) whose cleanup is
+/// interrupted where the spool goes (an injected removal failure - the process dies there): its
+/// transaction is on disk - recorded `cleaning` BEFORE the first removal, with the instance id and
+/// no reference -, the message about it is true, a producer spools nothing and the sender posts
+/// NOTHING; the next flush - or the next forget - finishes the cleanup with that identity, removes
+/// the record last and asks the intake nothing.
+#[test]
+fn a_local_only_forget_interrupted_keeps_its_record_and_resumes_rc1() {
+    for resume_by_flush in [true, false] {
+        let (dir, iid, spool) = local_state(if resume_by_flush {
+            "rc1-local-flush"
+        } else {
+            "rc1-local-forget"
+        });
+        let (hub, log) = scripted_mock(vec![(500, "{}")]);
+        let spool_path = dir.join("spool.ndjson");
+        let phases = std::sync::Mutex::new(Vec::<String>::new());
+        let out = telemetry::forget_with(
+            &hub_at(&hub),
+            &dir,
+            &forget_req(None, true),
+            |_| panic!("-Yes asks nothing"),
+            &|p: &std::path::Path| {
+                phases.lock().unwrap().push(
+                    telemetry::pending_deletion_in(&dir)
+                        .map(|t| t.phase)
+                        .unwrap_or_default(),
+                );
+                if p == spool_path {
+                    Err(std::io::Error::other("injected: the process died here"))
+                } else {
+                    std::fs::remove_file(p)
+                }
+            },
+        );
+        assert_eq!(out.exit, 1, "{:?}", out.lines);
+        assert!(!out.server_requested && out.pending);
+        let t = out.lines.join("\n");
+        assert!(t.contains("the local deletion did not finish"), "{t}");
+        assert!(
+            t.contains(&format!(
+                "forget-pending.json keeps instance {iid} - nothing is spooled or sent"
+            )),
+            "{t}"
+        );
+        assert_eq!(
+            phases.lock().unwrap().clone(),
+            ["cleaning"],
+            "the transaction is recorded before the first removal"
+        );
+        let txn = telemetry::pending_deletion_in(&dir).expect("the local-only transaction");
+        assert_eq!(txn.phase, telemetry::PHASE_CLEANING);
+        assert_eq!(
+            (txn.instance_id.as_str(), txn.public_ref.as_str()),
+            (iid.as_str(), "")
+        );
+        assert_eq!(spool.pending(), 1, "the event is still queued");
+        assert!(dir.join("salt").is_file() && dir.join("refs.ndjson").is_file());
+        // a producer spools nothing
+        assert!(spool.enqueue(&consultation_of(&iid, "decision")).is_err());
+        if resume_by_flush {
+            // the sender posts nothing - it finishes the cleanup instead
+            let r = Spool::new(&dir, hub.clone())
+                .flush_with(|b| panic!("posted while a local deletion's cleanup was due: {b}"))
+                .unwrap();
+            assert!(!r.attempted, "{r:?}");
+            assert!(
+                r.skipped
+                    .contains(&format!("finished the local deletion of instance {iid}")),
+                "{r:?}"
+            );
+        } else {
+            let again = telemetry::forget_at(&hub_at(&hub), &dir, &forget_req(None, true), |_| {
+                panic!("a resumed cleanup asks nothing")
+            });
+            assert_eq!(again.exit, 0, "{:?}", again.lines);
+            assert!(!again.pending);
+            let t = again.lines.join("\n");
+            assert!(
+                t.contains(&format!(
+                    "finishing the local deletion of instance {iid} (a local-only deletion that did not finish)"
+                )),
+                "{t}"
+            );
+            assert!(
+                t.contains("removed locally - spool.ndjson, refs.ndjson, salt"),
+                "{t}"
+            );
+        }
+        assert!(!spool_path.exists() && !dir.join("refs.ndjson").exists());
+        assert!(!dir.join("salt").exists());
+        assert!(
+            !dir.join("forget-pending.json").exists(),
+            "the record is removed last"
+        );
+        assert!(
+            log.lock().unwrap().is_empty(),
+            "a local-only deletion asks the intake nothing"
+        );
+    }
+}
+
+/// (F14-1) A local-only forget that finishes leaves nothing behind: every removal ran under its
+/// `cleaning` record and the record went last; the next event is a new instance's and goes out. A
+/// machine with nothing local (no salt, no spool) finishes the same way, without an instance id.
+#[test]
+fn a_local_only_forget_leaves_no_record_behind() {
+    let (dir, iid, spool) = local_state("f14-local-done");
+    let (hub, log) = scripted_mock(vec![(500, "{}")]);
+    let phases = std::sync::Mutex::new(Vec::<String>::new());
+    let out = telemetry::forget_with(
+        &hub_at(&hub),
+        &dir,
+        &forget_req(None, true),
+        |_| true,
+        &|p: &std::path::Path| {
+            phases.lock().unwrap().push(
+                telemetry::pending_deletion_in(&dir)
+                    .map(|t| t.phase)
+                    .unwrap_or_default(),
+            );
+            std::fs::remove_file(p)
+        },
+    );
+    assert_eq!(out.exit, 0, "{:?}", out.lines);
+    assert!(!out.pending);
+    assert_eq!(out.instance_id, iid);
+    assert_eq!(out.removed, ["spool.ndjson", "refs.ndjson", "salt"]);
+    assert_eq!(
+        phases.lock().unwrap().clone(),
+        ["cleaning", "cleaning", "cleaning"]
+    );
+    assert!(!dir.join("forget-pending.json").exists());
+    assert!(telemetry::pending_deletion_in(&dir).is_none());
+    // the next event: a new instance, spooled and sent
+    let new_iid = telemetry::instance_id_in(&dir);
+    assert_ne!(new_iid, iid);
+    spool
+        .enqueue(&consultation_of(&new_iid, "decision"))
+        .unwrap();
+    assert_eq!(spool.flush_with(|_| true).unwrap().sent, 1);
+    // nothing local at all: no instance id, nothing removed, no record left
+    let empty = temp_dir("f14-local-empty");
+    let none = telemetry::forget_at(&hub_at(&hub), &empty, &forget_req(None, true), |_| true);
+    assert_eq!(none.exit, 0, "{:?}", none.lines);
+    assert!(none.instance_id.is_empty() && none.removed.is_empty() && !none.pending);
+    assert!(none
+        .lines
+        .join("\n")
+        .contains("removed locally - nothing (there was no spool and no salt)"));
+    assert!(!empty.join("forget-pending.json").exists());
+    assert!(log.lock().unwrap().is_empty());
+}
+
+/// (F14-1) A local-only forget whose transaction cannot be recorded (here: a directory stands
+/// where the record goes) removes NOTHING - a cleanup without its record could be interrupted
+/// with nothing to block or resume it.
+#[test]
+fn a_local_only_forget_that_cannot_record_removes_nothing() {
+    let (dir, _iid, spool) = local_state("f14-local-norecord");
+    std::fs::create_dir(dir.join("forget-pending.json")).unwrap();
+    let (hub, _log) = scripted_mock(vec![(500, "{}")]);
+    let out = telemetry::forget_with(
+        &hub_at(&hub),
+        &dir,
+        &forget_req(None, true),
+        |_| true,
+        &|p: &std::path::Path| panic!("removed {} without a record", p.display()),
+    );
+    assert_eq!(out.exit, 1, "{:?}", out.lines);
+    assert!(
+        out.lines
+            .join("\n")
+            .contains("the local deletion could not be recorded before its cleanup"),
+        "{:?}",
+        out.lines
+    );
+    assert!(out.removed.is_empty());
+    assert!(dir.join("salt").is_file() && dir.join("refs.ndjson").is_file());
+    assert_eq!(spool.pending(), 1);
+}
+
 /// (F09-4 / RC3) The sender delivered A; B was appended during the POST; the reread of the
 /// CURRENT spool fails: the flush reports the failure and the spool's bytes are exactly what they
 /// were (A and B) - nothing is replaced from a guess (the failure used to read as an empty file and
