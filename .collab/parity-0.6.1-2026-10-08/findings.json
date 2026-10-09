@@ -1217,7 +1217,7 @@
                      },
                      {
                          "id":  "F06-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -1282,6 +1282,15 @@
                                              "evidence":  "",
                                              "base_commit":  "add198b7b149356a21a6ec4e7e4cec8665475ad5",
                                              "tree_sha256":  "ef3ddd0088d72c8d547e29ac2e752c2165ecf47ee9a67d5a90cfb7be951a2819"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T06:45:37+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3a 954a5e6: a candidate whose UTC instant falls in another calendar year is classified by the zone\u0027s local-year rules; synthetic Windows Samoa 2011/2012 fixture gives 2012-01-02T00:00:00+14:00, Pacific/Apia agrees, Berlin edges unchanged",
+                                             "evidence":  "",
+                                             "base_commit":  "8ff53c4dd330293dbcdc1632ae21752c2c3e1589",
+                                             "tree_sha256":  "d982516f8a92467fd14aafbf9c6e1de907734e018ea7612519353afc0bce3e92"
                                          }
                                      ],
                          "reviewer_checks":  [
