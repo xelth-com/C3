@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "859e5971-69b5-4a22-a3be-aa2f1acdc0c5",
+    "id8":  "859e5971",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-09T04:45:52+02:00",
+    "updated":  "2026-10-09T05:13:22+02:00",
+    "finished":  "2026-10-09T05:13:22+02:00",
+    "wall_seconds":  1650.6,
+    "pid":  2284,
+    "start_time":  "2026-10-09T02:45:54.4587577Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave2-round2-kimi",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\12-claude-wave2-round2.md",
+    "members":  [
+                    {
+                        "position":  8,
+                        "lineage":  "kimi :: k3",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  1624.4,
+                        "n":  8,
+                        "handoff":  "14",
+                        "reply":  "handoffs/14-codex-wave2-round2-kimi.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - kimi :: k3, mode new, thread 01a11e8d-d63f-72f2-945d-71e9a6088e76 (source: events), wall 1624.4 s\nverdict    : HOLD - All six F09 fixes are correctly implemented and adversarially tested, but the deletion transaction never writes its record on the local-only forget branch, so an interrupted local deletion leaves no blocker, no resume, and a false operator message.\nfindings   : 1 blocker, 0 major, 1 minor, 0 note -\u003e F14-1..F14-2 in findings.json\nprior      : F02-1 fixed, F02-3 fixed, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 fixed, F09-2 fixed, F09-3 fixed, F09-4 fixed, F09-5 fixed, F09-6 fixed, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\14-codex-wave2-round2-kimi.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\14-codex-wave2-round2-kimi.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\14-codex-wave2-round2-kimi.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-859e5971.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

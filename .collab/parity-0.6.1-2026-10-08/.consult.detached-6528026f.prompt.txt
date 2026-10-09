@@ -1,1 +1,0 @@
-Second round on wave 2 (0d78ec0..bc8d605: F09-1..F09-6 fixed - the deletion transaction, the two-lock rule, the reread rule, the per-event sanitiser, the shared coordinator resolver); answer Q1-Q3 by number.

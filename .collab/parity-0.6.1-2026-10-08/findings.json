@@ -96,6 +96,14 @@
                                                      "note":  "Retains the previous closure for the original concurrent-append overwrite; the telemetry implementation is unchanged in this range.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Flush snapshot under spool lock, sender lock held across the POST, rewrite removes only delivered lines from the current file; RC2/RC3 exercise the interleavings.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -302,6 +310,14 @@
                                                      "note":  "Retains the previous closure for failed-DELETE retry identity; the separate F09 deletion defects remain open.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Failed DELETE keeps the transaction record with instance_id and public_ref; retries reuse the same identity.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -409,6 +425,14 @@
                                                      "note":  "The coverage map and telemetry shim remain present; harness passes still require interpretation by implementation coverage.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Harness shim files untouched in 0d78ec0..bc8d605.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -507,6 +531,14 @@
                                                      "note":  "The earlier ordering correction remains valid; this range does not change the rating commit-before-spool path.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "findings_tool/state.md not in this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -610,6 +642,14 @@
                                                      "note":  "The inline re-read anchor was not revalidated in this review.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Prompt anchor work not in this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -717,6 +757,14 @@
                                                      "note":  "Full cross-engine and cross-repository plan behavior was not revalidated. Finding #3 identifies a separate new requirement-check interaction with existing plan evaluation.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "roster.rs unchanged in this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -807,6 +855,14 @@
                                                      "note":  "Plan P4 continues to gate native Messages on a separate benchmark rather than inheriting the plugin\u0027s measured savings.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Proposal finding, outside the diff.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -911,6 +967,14 @@
                                                      "note":  "The process-name Unicode fix is outside this range and was not rerun.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "liveness/proc.rs not in this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1019,6 +1083,14 @@
                                                      "note":  "Health-journal changes were reviewed, but Windows local-zone boundary parsing was not revalidated.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "health.rs not in this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1132,6 +1204,14 @@
                                                      "note":  "Required-light execution and ledger metadata were not revalidated.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "panel files not in this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1220,6 +1300,14 @@
                                                      "note":  "The state document retains the historical Samoa case for wave 3; this delta does not correct it.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "health.rs not in this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1299,6 +1387,14 @@
                                                      "note":  "The reviewed revision still slices extra configuration strings at key.len() without a UTF-8 boundary check.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "split_once(\u0027=\u0027) with trimmed case-insensitive key; RC1 test covers the Unicode item.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1378,6 +1474,14 @@
                                                      "note":  "The reviewed revision still checks pending deletion before acquiring flush.lock.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Decision under both locks, sender lock held across the POST, every forget holds both locks across the DELETE; RC2 part 1.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1457,6 +1561,14 @@
                                                      "note":  "Successful DELETE still removes the pending record before local cleanup; telemetry fixes are outside this range.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Transaction record before the DELETE, phase machine, record removed last, resume by flush or forget; but the local-only branch never writes a record - filed as finding #1.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1531,6 +1643,14 @@
                                                      "note":  "The current-spool reread still uses unwrap_or_default before replacement.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Reread error aborts the rewrite and returns the error; NotFound skipped under a documented invariant; RC3.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1610,6 +1730,14 @@
                                                      "note":  "Legacy payload forwarding is unchanged; this range adds no backlog sanitization.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Every queued event closed through classes::close_event_body; unclosable discarded with diagnostic; RC4.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1693,6 +1821,14 @@
                                                      "note":  "Rating actor resolution still uses the incomplete coordinator parser; the brief assigns its correction to wave 2d.",
                                                      "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                                      "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "One shared resolve_coordinator_identity for the ledger and the rating actor, with roster-model and config-default inference; RC5. Minor case-sensitivity doc mismatch filed as finding #2.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                                  }
                                              ]
                      },
@@ -1769,7 +1905,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Assigned to wave2e-fixes, outside this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                                 }
                                              ]
                      },
                      {
@@ -1841,7 +1984,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Assigned to wave2e-fixes, outside this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                                 }
                                              ]
                      },
                      {
@@ -1909,7 +2059,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Assigned to wave2e-fixes, outside this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                                 }
                                              ]
                      },
                      {
@@ -1976,7 +2133,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Assigned to wave2e-fixes, outside this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                                 }
                                              ]
                      },
                      {
@@ -2041,6 +2205,148 @@
                                              "evidence":  "",
                                              "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                              "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-09T05:13:20+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Assigned to wave2e-fixes, outside this range.",
+                                                     "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                                     "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F14-1",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/complaint.rs",
+                                               "line":  542
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/complaint.rs",
+                                               "line":  240
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/complaint.rs",
+                                               "line":  673
+                                           }
+                                       ],
+                         "claim":  "A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase \u0027cleaning\u0027 and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave\u0027s documented invariant (\u0027a local-only deletion starts here\u0027, \u0027an interruption leaves a record that blocks spooling and sending\u0027).",
+                         "trigger":  "c3 forget-me --local (or ForgetRequest{public_ref: None, local: true}) with no pending record, where a file removal fails (Windows file lock, permissions) or the process dies mid-cleanup.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/complaint.rs:542-556",
+                                              "observation":  "The None arm builds PendingDeletion{phase: PHASE_CLEANING} and calls finish_cleanup(own_record=true) without any write_transaction."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/complaint.rs:240-249",
+                                              "observation":  "run_local_cleanup writes the cleaning record only when txn.phase != PHASE_CLEANING; for the local-only caller the condition is false, and the final record removal tolerates NotFound."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/complaint.rs:665-680",
+                                              "observation":  "On cleanup error with own_record the message says \u0027the deletion record ... keeps instance ... - nothing is spooled or sent until the next flush or c3 forget-me finishes it\u0027, which is false on this branch; out.pending is set from pending_deletion_in, which is None."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "docs/port/wave2-telemetry.md section 2d",
+                                              "observation":  "Docs state a local-only forget starts in the cleaning phase of the transaction record."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "rg \u0027PHASE_CLEANING\u0027 crates/c3/tests/telemetry.rs",
+                                              "observation":  "No test exercises a failing local-only cleanup; RC2 tests all use a public_ref path."
+                                          }
+                                      ],
+                         "verification":  "Add a test: forget_with with ForgetRequest{public_ref: None, local: true, yes: true} and an injected remove failing on spool.ndjson; assert whether forget-pending.json exists and whether a subsequent flush posts the retained events.",
+                         "remedy":  "In the None arm, persist the transaction (phase cleaning) via write_transaction before calling finish_cleanup (or pass phase confirmed so run_local_cleanup writes it), so an interruption leaves the blocking, resumable record the docs and the CLI message promise.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/14-codex-wave2-round2-kimi.md",
+                                        "thread":  "01a11e8d-d63f-72f2-945d-71e9a6088e76",
+                                        "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                        "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T05:13:20+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                             "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F14-2",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/host.rs",
+                                               "line":  297
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/host.rs",
+                                               "line":  267
+                                           }
+                                       ],
+                         "claim":  "The new coordinator resolver documents ordinal (case-insensitive) provider matching but compares with case-sensitive ==: provider == defaults.provider and the roster hits filter e.provider == provider. A CODEX_CONSULT_COORDINATOR label whose case differs from the config\u0027s model_provider or the roster entry (\u0027OpenAI\u0027 vs \u0027openai\u0027) silently forgoes the configured-model inference the plugin would make.",
+                         "trigger":  "CODEX_CONSULT_COORDINATOR=\u0027OpenAI\u0027 with model_provider = \"openai\" in config.toml (or the reverse), bare label form.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/host.rs:267-299",
+                                              "observation":  "Doc comment says \u0027Test-ReviewerMatch ... ordinal\u0027 and \u0027(defaults.provider, ordinal)\u0027; the code uses String ==."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/roster.rs:337-347",
+                                              "observation":  "parse_reviewer_matcher_grammar lowercases the engine but keeps the provider as typed."
+                                          }
+                                      ],
+                         "verification":  "Unit test: resolve_coordinator_match(\"OpenAI\", None, \u0026CodexDefaults{provider: \"openai\", model: \"gpt-6-astra\"}) should yield model Some(\"gpt-6-astra\") if ordinal semantics are intended.",
+                         "remedy":  "Use eq_ignore_ascii_case for the provider comparisons (and the engine comparison for symmetry), or correct the doc comments if case-sensitivity is deliberate.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/14-codex-wave2-round2-kimi.md",
+                                        "thread":  "01a11e8d-d63f-72f2-945d-71e9a6088e76",
+                                        "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                        "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-09T05:13:20+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                             "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -2163,6 +2469,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1791512137
+                    },
+                    {
+                        "n":  8,
+                        "consult_id":  "fb034faf-625c-4cba-8eb1-ac3bda0f5247",
+                        "lineage":  "kimi :: k3",
+                        "provider":  "kimi",
+                        "model":  "k3",
+                        "engine":  "codex",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-09T04:46:11+02:00",
+                        "useful":  "yes",
+                        "note":  "second opinion while openai was out: confirmed the six F09 fixes adversarially and found a real blocker the acceptance reviewer\u0027s fixtures did not cover (the local-only forget never writes its transaction record) plus a case-sensitivity mismatch in the resolver; 27 minutes",
+                        "when":  "2026-10-09T05:15:52+02:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "claude-fable-5-1",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1791515754
                     }
                 ]
 }

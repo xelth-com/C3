@@ -1178,6 +1178,430 @@
                                        "wall_seconds":  306.9,
                                        "finished_at":  "2026-10-09T03:59:49+02:00",
                                        "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  7,
+                                       "when":  "2026-10-09T04:28:55+02:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "aa8e56b5-e918-41d9-aade-cc73fca94860",
+                                       "consult_ref":  "4a83134c-c453-441b-bc46-5d67accc4419",
+                                       "reviewer":  {
+                                                        "provider":  "openai",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "gpt-6-astra",
+                                                        "model_source":  "roster",
+                                                        "engine":  "codex",
+                                                        "harness":  "codex-cli 0.155.1",
+                                                        "provider_fingerprint":  "56d97b6ece36e75295a290d931ca6bbe2dd0b1f0807454b21a63a6fd17b32d7c",
+                                                        "provider_config":  {
+                                                                                "builtin":  "openai"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openai :: gpt-6-astra",
+                                       "coordinator":  {
+                                                           "provider":  "anthropic",
+                                                           "model":  "claude-fable-5-1",
+                                                           "engine":  "codex",
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "explicit",
+                                                           "in_roster":  false,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: Logged in using ChatGPT",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json",
+                                                      "position":  1,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "01a11e5e-ac5f-7b31-b3d9-49fd2cd68d88",
+                                       "thread":  "01a11e7e-03ad-7971-9a5f-3576ef761311",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "fork",
+                                       "mode_fallback":  null,
+                                       "command":  "codex exec --sandbox read-only --color never --json -m gpt-6-astra -c model_reasoning_effort=\"high\" -c model_provider=\"openai\" -o C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-last-b48d9eb2d8fe45b9a316774a31d41749.md --output-schema C:\\Users\\Dmytro\\claude-codex-consult\\plugins\\codex-consult\\schemas\\consult-reply.schema.json fork 01a11e5e-ac5f-7b31-b3d9-49fd2cd68d88 -",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/parity-0.6.1-2026-10-08/handoffs/12-claude-wave2-round2.md",
+                                       "range":  {
+                                                     "spec":  "0d78ec0..bc8d605",
+                                                     "files":  11,
+                                                     "insertions":  1888,
+                                                     "deletions":  249,
+                                                     "lines":  2137
+                                                 },
+                                       "prompt_chars":  17611,
+                                       "reply":  "handoffs/13-codex-wave2-round2.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/13-codex-wave2-round2.events.jsonl",
+                                       "partial_reply":  "handoffs/13-codex-wave2-round2.partial.md",
+                                       "model":  "gpt-6-astra",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-09T04:28:55+02:00",
+                                       "structured":  false,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "output-schema",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                       "reviewed_revision":  "a624a3d",
+                                       "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62",
+                                       "tree_sha256_after":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "f3d531bef1f0fb76ec14aaa1d5d4941f1c7d9a4fa7746a5d04f242d7308ced70",
+                                       "brief_sha256_after":  "f3d531bef1f0fb76ec14aaa1d5d4941f1c7d9a4fa7746a5d04f242d7308ced70",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (2 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  null,
+                                       "bridge_outcome":  "failed: codex exit 1 - You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 8:16 AM.",
+                                       "provider_failure":  {
+                                                                "class":  "quota",
+                                                                "kind":  "",
+                                                                "code":  "",
+                                                                "message":  "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 8:16 AM.",
+                                                                "when":  "2026-10-09T04:30:25+02:00",
+                                                                "retry_after":  "2026-10-09T08:16:00+02:00",
+                                                                "hint":  ""
+                                                            },
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  null,
+                                       "engine_run":  null,
+                                       "wall_seconds":  89.3,
+                                       "finished_at":  "2026-10-09T04:30:26+02:00",
+                                       "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  8,
+                                       "when":  "2026-10-09T04:46:11+02:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "fb034faf-625c-4cba-8eb1-ac3bda0f5247",
+                                       "consult_ref":  "32d2f764-f9b5-4535-a197-fb51a9e81b52",
+                                       "reviewer":  {
+                                                        "provider":  "kimi",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "k3",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "codex",
+                                                        "harness":  "codex-cli 0.155.1",
+                                                        "provider_fingerprint":  "8f7901d404b5b5b2de84f2eb7f01cb71862a7125210fdebca1e70b53e1d19575",
+                                                        "provider_config":  {
+                                                                                "base_url":  "https://api.kimi.ai/coding/v1",
+                                                                                "name":  "Kimi Code membership (Moonshot, overseas)",
+                                                                                "wire_api":  "responses"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "kimi :: k3",
+                                       "coordinator":  {
+                                                           "provider":  "anthropic",
+                                                           "model":  "claude-fable-5-1",
+                                                           "engine":  "codex",
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "explicit",
+                                                           "in_roster":  false,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: env KIMI_API_KEY set",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json",
+                                                      "position":  8,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "01a11e8d-d63f-72f2-945d-71e9a6088e76",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "codex exec --sandbox read-only --color never --json -m k3 -c model_reasoning_effort=\"high\" -c model_provider=\"kimi\" -c model_context_window=256000 -c model_auto_compact_token_limit=204800 -o C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-last-1f35abc6f5ea4e8f84331168d3905930.md -",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/parity-0.6.1-2026-10-08/handoffs/12-claude-wave2-round2.md",
+                                       "range":  {
+                                                     "spec":  "0d78ec0..bc8d605",
+                                                     "files":  11,
+                                                     "insertions":  1888,
+                                                     "deletions":  249,
+                                                     "lines":  2137
+                                                 },
+                                       "prompt_chars":  20309,
+                                       "reply":  "handoffs/14-codex-wave2-round2-kimi.md",
+                                       "reply_json":  "handoffs/14-codex-wave2-round2-kimi.reply.json",
+                                       "events":  "handoffs/14-codex-wave2-round2-kimi.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "k3",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "kimi-v1",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  {
+                                                              "tokens":  256000,
+                                                              "auto_compact_limit":  204800,
+                                                              "items":  [
+                                                                            "model_context_window=256000",
+                                                                            "model_auto_compact_token_limit=204800"
+                                                                        ]
+                                                          },
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-09T04:46:11+02:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
+                                       "reviewed_revision":  "a624a3d",
+                                       "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62",
+                                       "tree_sha256_after":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "f3d531bef1f0fb76ec14aaa1d5d4941f1c7d9a4fa7746a5d04f242d7308ced70",
+                                       "brief_sha256_after":  "f3d531bef1f0fb76ec14aaa1d5d4941f1c7d9a4fa7746a5d04f242d7308ced70",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (9 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  null,
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "HOLD",
+                                       "verdict_reason":  "All six F09 fixes are correctly implemented and adversarially tested, but the deletion transaction never writes its record on the local-only forget branch, so an interrupted local deletion leaves no blocker, no resume, and a false operator message.",
+                                       "findings":  {
+                                                        "blocker":  1,
+                                                        "major":  0,
+                                                        "minor":  1,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+                                                           "F14-1",
+                                                           "F14-2"
+                                                       ],
+                                       "prior_findings":  [
+                                                              {
+                                                                  "id":  "F02-1",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-3",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-6",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-7",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-8",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F06-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-1",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-2",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-3",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-4",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-5",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-6",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-5",
+                                                                  "status":  "not-checked"
+                                                              }
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  {
+                                                     "input_tokens":  3392137,
+                                                     "cached_input_tokens":  3236224,
+                                                     "output_tokens":  21358,
+                                                     "reasoning_output_tokens":  14505
+                                                 },
+                                       "compactions":  "unknown",
+                                       "engine_run":  null,
+                                       "wall_seconds":  1624.4,
+                                       "finished_at":  "2026-10-09T05:13:20+02:00",
+                                       "commit_wait_ms":  0
                                    }
                                ]
               }
