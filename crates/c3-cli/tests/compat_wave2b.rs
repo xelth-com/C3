@@ -16,6 +16,12 @@
 //! - companions REQUIRE / ROLE D8: `--require` on a single run, the role and topic slugs;
 //! - host EXPLAIN / HOOK: `--explain`, `--task` required otherwise, the hook's pointer line.
 //!
+//! (wave 2e, Astra's review of wave 2b) F11-2/F11-3: a single run's `--require` sees the
+//! `--engine-exe` launcher and the full roster's plan routes; F11-4: the hook's default pointer
+//! command parses and runs in Windows PowerShell (and pwsh); F11-5: an agy tool step suspends the
+//! stall cut (2 x stall) and a stall names it - against a fake agy `.cmd` (the plugin's
+//! `fake-agy.cmd` shape), with every real `agy` taken off PATH.
+//!
 //! Nothing reaches a real provider or intake. Windows only (the fake codex is a `.cmd` wrapper
 //! around a PowerShell script, as the plugin's `fake-codex3.cmd`).
 #![cfg(windows)]
@@ -616,6 +622,242 @@ fn require_on_a_single_run() {
     assert!(text(&none).contains("-Require none stands alone"));
 }
 
+// ------------------------------------------------------------------ wave 2e: F11-2, F11-3, F11-5
+
+/// A fake agy as ONE batch file - the plugin's `tests/fake-agy.ps1` event shapes, without a
+/// PowerShell start-up inside the timed turn (the stall cases time a few seconds, and a busy
+/// machine can take longer than the stall bound to start PowerShell): `models` lists one model; a
+/// turn reads its stdin, prints init and the user step, then - with `FAKE_AGY_TOOL_PINGS=<n>` - an
+/// ACTIVE `run_command` tool step 2, about n-1 quiet seconds (`ping -n <n>`) and its DONE; then the
+/// result with the ADVISE reply as `structured_output`.
+fn fake_agy_cmd() -> String {
+    const ID: &str = "6f1c2a52-3b7e-4d5f-9a1b-2c3d4e5f6a7b";
+    [
+        "@echo off".to_string(),
+        "if \"%~1\"==\"models\" goto models".to_string(),
+        "more >nul".to_string(),
+        format!(
+            r#"echo {{"event":"init","conversation_id":"{ID}","init":{{"model":"gemini-3.8-flash-high","cwd":"x","tools":["run_command"],"permission_mode":"request-review"}}}}"#
+        ),
+        format!(
+            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":0,"state":"DONE","step_type":"user_input"}}}}"#
+        ),
+        "if not defined FAKE_AGY_TOOL_PINGS goto result".to_string(),
+        format!(
+            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{{"name":"run_command","parameters":{{"CommandLine":"cargo build"}}}}}}}}"#
+        ),
+        "ping -n %FAKE_AGY_TOOL_PINGS% 127.0.0.1 >nul".to_string(),
+        format!(
+            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"DONE","step_type":"tool","tool_name":"run_command"}}}}"#
+        ),
+        ":result".to_string(),
+        format!(
+            r#"echo {{"event":"result","result":{{"conversation_id":"{ID}","status":"SUCCESS","response":"advise","duration_seconds":1.0,"num_turns":1,"structured_output":{ADVISE},"usage":{{"input_tokens":100,"output_tokens":10,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":110}}}}}}"#
+        ),
+        "exit /b 0".to_string(),
+        ":models".to_string(),
+        "echo gemini-3.8-flash-high\tGemini 3.8 Flash High".to_string(),
+        "exit /b 0".to_string(),
+    ]
+    .join("\r\n")
+        + "\r\n"
+}
+
+impl Env {
+    /// The fake agy launcher (`fake-agy.cmd` in the work directory).
+    fn fake_agy(&self) -> String {
+        let cmd = self.work.join("fake-agy.cmd");
+        std::fs::write(&cmd, fake_agy_cmd()).unwrap();
+        cmd.to_string_lossy().to_string()
+    }
+}
+
+/// PATH without every directory that holds an `agy` launcher: normal discovery finds no agy, so
+/// only `--engine-exe` can supply one (and the real CLI never answers a test).
+fn path_without_agy() -> String {
+    let p = std::env::var_os("PATH").unwrap_or_default();
+    let dirs: Vec<PathBuf> = std::env::split_paths(&p)
+        .filter(|d| {
+            !["agy.exe", "agy.cmd", "agy.bat", "agy"]
+                .iter()
+                .any(|n| d.join(n).is_file())
+        })
+        .collect();
+    std::env::join_paths(dirs)
+        .unwrap()
+        .to_string_lossy()
+        .to_string()
+}
+
+// (wave 2e, F11-2 / RC2 case 1) a required agy reviewer whose working launcher comes ONLY through
+// --engine-exe: the requirement check uses that launcher (it is not on PATH) - the run succeeds.
+#[test]
+fn require_on_a_single_run_uses_the_engine_exe_launcher() {
+    let e = setup("reqagy");
+    let agy = e.fake_agy();
+    let roster = e.work.join("roster.json");
+    std::fs::write(
+        &roster,
+        r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-5.1"},{"provider":"gemini","engine":"agy","model":"gemini-3.8-flash-high"}]}"#,
+    )
+    .unwrap();
+    let r = roster.to_string_lossy().to_string();
+    let path = path_without_agy();
+    let x = e.consult(
+        &[
+            "--provider",
+            "gemini",
+            "--engine-exe",
+            &agy,
+            "--require",
+            "#2",
+            "--reply-name",
+            "ra",
+        ],
+        &[("CODEX_CONSULT_ROSTER", &r), ("PATH", &path)],
+    );
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert_eq!(last["bridge_outcome"], "usable reply", "{t}");
+    assert_eq!(last["reviewer"]["engine"], "agy");
+    // the same without --engine-exe: no agy anywhere - the required reviewer is out, exit 5
+    let y = e.consult(
+        &["--provider", "openai", "--require", "#2", "--dry-run"],
+        &[("CODEX_CONSULT_ROSTER", &r), ("PATH", &path)],
+    );
+    let ty = text(&y);
+    assert_eq!(y.status.code(), Some(5), "{ty}");
+    assert!(
+        ty.contains("required reviewer not available (-Require, judged like the roster walk): #2 gemini :: gemini-3.8-flash-high [agy] ("),
+        "{ty}"
+    );
+}
+
+// (wave 2e, F11-3 / RC2 case 2) an active usage limit on #3, NOT required, that shares its plan with
+// the required #2: the plan is out, so #2 is out - exit 5 naming the plan outage (the requirement
+// context keeps the full roster for the plan's routes).
+#[test]
+fn require_on_a_single_run_sees_a_plan_outage_on_a_sibling_route() {
+    let e = setup("reqplan");
+    std::fs::write(
+        e.home.join("config.toml"),
+        format!("{CODEX_TOML}\n[model_providers.ZAIB]\nbase_url = \"https://api.z.ai/api/coding/v1\"\nenv_key = \"RT_ZAI_KEY\"\nwire_api = \"responses\"\n"),
+    )
+    .unwrap();
+    // #3's fingerprint (its identity as a dry run records it)
+    let d = e.consult(
+        &["--provider", "ZAIB", "--model", "glm-5.3", "--dry-run"],
+        &[],
+    );
+    let td = text(&d);
+    assert_eq!(d.status.code(), Some(0), "{td}");
+    let fp = regex::Regex::new(r#""provider_fingerprint":\s*"([0-9a-f]+)""#)
+        .unwrap()
+        .captures(&td)
+        .map(|c| c[1].to_string())
+        .unwrap_or_else(|| panic!("no fingerprint: {td}"));
+    let now = chrono::Utc::now();
+    let iso = |t: chrono::DateTime<chrono::Utc>| t.format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
+    let hit = iso(now - chrono::Duration::minutes(5));
+    let back = iso(now + chrono::Duration::hours(2));
+    let other = e.repo.join(".collab").join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(
+        other.join("sessions.json"),
+        serde_json::json!({"codex": {"consults": [{
+            "n": 1, "when": hit, "finished_at": hit,
+            "bridge_outcome": "failed: provider error",
+            "reviewer": {"provider": "ZAIB", "model": "glm-5.3", "provider_fingerprint": fp},
+            "provider_failure": {"class": "quota", "code": "429", "message": "usage limit reached",
+                "when": hit, "retry_after": back}
+        }]}})
+        .to_string(),
+    )
+    .unwrap();
+    let roster = e.work.join("roster.json");
+    std::fs::write(
+        &roster,
+        r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-5.1"},{"provider":"ZAI","model":"glm-5.3","plan":"zai"},{"provider":"ZAIB","model":"glm-5.3","plan":"zai"}]}"#,
+    )
+    .unwrap();
+    let r = roster.to_string_lossy().to_string();
+    let x = e.consult(
+        &["--provider", "openai", "--require", "#2", "--dry-run"],
+        &[("CODEX_CONSULT_ROSTER", &r)],
+    );
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(5), "{t}");
+    assert!(
+        t.contains("required reviewer not available (-Require, judged like the roster walk): #2 ZAI :: glm-5.3 (plan zai (usage limit on ZAIB until "),
+        "{t}"
+    );
+    assert!(t.contains("; back "), "{t}");
+    // the sibling's own route is not required: requiring #1 alone still runs
+    let ok = e.consult(
+        &["--provider", "openai", "--require", "#1", "--dry-run"],
+        &[("CODEX_CONSULT_ROSTER", &r)],
+    );
+    assert_eq!(ok.status.code(), Some(0), "{}", text(&ok));
+}
+
+/// An agy run of the fake under `--stall-sec 3` whose tool step 2 stays quiet for `pings` - 1
+/// seconds.
+fn agy_quiet_tool_run(e: &Env, tag: &str, pings: &str) -> Output {
+    let agy = e.fake_agy();
+    let path = path_without_agy();
+    e.consult(
+        &[
+            "--provider",
+            "gemini",
+            "--engine",
+            "agy",
+            "--model",
+            "gemini-3.8-flash-high",
+            "--engine-exe",
+            &agy,
+            "--reply-name",
+            tag,
+            "--stall-sec",
+            "3",
+            "--continue-sec",
+            "0",
+        ],
+        &[("PATH", &path), ("FAKE_AGY_TOOL_PINGS", pings)],
+    )
+}
+
+// (wave 2e, F11-5 / RC4) an ACTIVE agy tool step suspends the stall cut: 4 quiet seconds under
+// --stall-sec 3 end in a usable reply.
+#[test]
+fn an_agy_tool_step_suspends_the_stall_cut() {
+    let e = setup("agytool");
+    let x = agy_quiet_tool_run(&e, "at", "5");
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert_eq!(last["bridge_outcome"], "usable reply", "{t}");
+    assert!(last["stall"].is_null(), "{}", last["stall"]);
+}
+
+// (wave 2e, F11-5 / RC4) ... but only for 2 x stall without growth: a tool step quiet for longer is
+// cut after 6 s, and the cut names the open call (`agy tool step 2`).
+#[test]
+fn an_agy_stall_names_the_open_tool_step() {
+    let e = setup("agystall");
+    let x = agy_quiet_tool_run(&e, "as", "13");
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{t}");
+    let last = e.last();
+    let o = last["bridge_outcome"].as_str().unwrap_or("");
+    let re = regex::Regex::new(r"^failed: stalled after 3 s without an event - no output for (\d+) s \(a tool call open for \d+ s: agy tool step 2\) \(process tree killed\)$").unwrap();
+    let silent: i64 = re.captures(o).unwrap_or_else(|| panic!("{o}"))[1]
+        .parse()
+        .unwrap();
+    assert!((6..12).contains(&silent), "{o}");
+    assert_eq!(last["stall"]["seconds"], 3);
+}
+
 // ------------------------------------------------------------------ ROLE / TOPIC (companions D8)
 
 #[test]
@@ -717,6 +959,105 @@ fn explain_and_the_task_requirement() {
     assert_eq!(nt.status.code(), Some(1));
     assert!(text(&nt).contains("codex-consult: -Task <id> is required (a slug: the task directory <CollabDir>/<id>/); the one form without it is -Explain coordinate|consult|providers."));
     assert!(!e.repo.join(".collab").exists());
+}
+
+// (wave 2e, F11-4) the PRODUCTION default pointer command (no --explain-command) parses and runs
+// as written in Windows PowerShell 5.1 - and in pwsh when present - from a binary whose path holds a
+// space and a `$`: the coordinate skill text prints.
+#[test]
+fn the_default_pointer_command_runs_in_powershell() {
+    let e = setup("pointer");
+    let plugin = e.work.join("plugin");
+    std::fs::create_dir_all(plugin.join("skills").join("coordinate")).unwrap();
+    std::fs::write(
+        plugin.join("skills").join("coordinate").join("SKILL.md"),
+        "---\nname: coordinate\n---\n\n# The coordinator rules\nrun ${CLAUDE_PLUGIN_ROOT}/scripts/x\n",
+    )
+    .unwrap();
+    let bin_dir = e.work.join("c3 bin $x");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let exe = bin_dir.join("c3.exe");
+    std::fs::copy(c3_bin(), &exe).unwrap();
+    let p = plugin.to_string_lossy().to_string();
+    // this test's `c3 hook` (its switches and environment), run from the copied binary
+    let base = e.cmd(&["hook"], &[("CLAUDE_PLUGIN_ROOT", p.as_str())]);
+    let mut hook = Command::new(&exe);
+    hook.args(base.get_args()).current_dir(&e.repo);
+    for (k, v) in base.get_envs() {
+        match v {
+            Some(v) => {
+                hook.env(k, v);
+            }
+            None => {
+                hook.env_remove(k);
+            }
+        }
+    }
+    let x = hook.output().unwrap();
+    let out = String::from_utf8_lossy(&x.stdout).replace("\r\n", "\n");
+    let pointer = out
+        .lines()
+        .find(|l| l.starts_with("codex-consult: coordinator rules - "))
+        .unwrap_or_else(|| panic!("{out}"))
+        .to_string();
+    let head = "codex-consult: coordinator rules - skill codex-consult:coordinate (or ";
+    let at = pointer.rfind("); telemetry: ").unwrap();
+    let command = &pointer[head.len()..at];
+    assert_eq!(
+        command,
+        format!(
+            "& \"{}\" consult --explain coordinate",
+            exe.display().to_string().replace('$', "`$")
+        ),
+        "{pointer}"
+    );
+    let script = e.work.join("pointer.ps1");
+    std::fs::write(&script, command).unwrap();
+    let mut shells = vec!["powershell"];
+    if Command::new("pwsh")
+        .args(["-NoProfile", "-Command", "exit 0"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        shells.push("pwsh");
+    }
+    for sh in shells {
+        // parsed: no error
+        let parse = Command::new(sh)
+            .args([
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "$t = $null; $er = $null; $null = [System.Management.Automation.Language.Parser]::ParseFile('{}', [ref]$t, [ref]$er); 'PARSE-ERRORS ' + @($er).Count",
+                    script.display()
+                ),
+            ])
+            .output()
+            .unwrap();
+        let pt = String::from_utf8_lossy(&parse.stdout);
+        assert!(pt.contains("PARSE-ERRORS 0"), "{sh}: {pt}");
+        // run as written: the skill prints
+        let run = Command::new(sh)
+            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+            .arg(&script)
+            .env("CLAUDE_PLUGIN_ROOT", &plugin)
+            .current_dir(&e.repo)
+            .output()
+            .unwrap();
+        let rt = String::from_utf8_lossy(&run.stdout);
+        assert!(
+            run.status.success(),
+            "{sh}: {rt}{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        assert!(
+            rt.starts_with("codex-consult -Explain coordinate: the coordinate skill, "),
+            "{sh}: {rt}"
+        );
+        assert!(rt.contains("# The coordinator rules"), "{sh}: {rt}");
+        assert!(rt.contains(&format!("run {p}/scripts/x")), "{sh}: {rt}");
+    }
 }
 
 #[test]

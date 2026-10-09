@@ -644,10 +644,38 @@ impl Ctx {
         skip_preflight: bool,
         estimate_tokens: i64,
     ) -> PanelSelection {
+        self.panel_members_of(
+            None,
+            model,
+            engine,
+            purpose,
+            all,
+            skip_preflight,
+            estimate_tokens,
+        )
+    }
+
+    /// [`panel_members`] judging only the entries at `positions` (`None`: every entry) - (wave
+    /// 2e, F11-3) the single run's `-Require` check: the context keeps the FULL roster, so a plan's
+    /// quota (`plan_quota`) sees every route of the plan, also one of an entry that is not required.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn panel_members_of(
+        &self,
+        positions: Option<&[i64]>,
+        model: &str,
+        engine: &str,
+        purpose: &str,
+        all: bool,
+        skip_preflight: bool,
+        estimate_tokens: i64,
+    ) -> PanelSelection {
         let purpose_label = if purpose.is_empty() { "none" } else { purpose };
         let weighty_purpose = WEIGHTY_PURPOSES.contains(&purpose);
         let mut members: Vec<PanelMemberRow> = Vec::new();
         for e in &self.roster.entries {
+            if positions.is_some_and(|p| !p.contains(&(e.position as i64))) {
+                continue;
+            }
             let entry_engine = if e.engine.is_empty() {
                 "codex"
             } else {

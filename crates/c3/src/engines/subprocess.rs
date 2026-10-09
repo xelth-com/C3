@@ -1063,6 +1063,94 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // (wave 2e, RC3) The argv-dumping helper of the test below: this test binary itself, re-run by
+    // a batch launcher with `--exact <this test> -- %*` and `C3_TEST_ARGV_DUMP=<file>`. Rust std
+    // parses its command line by the MSVC CRT rules (as node.exe behind `codex.cmd` does); the
+    // helper writes the arguments after the first `--` as a JSON array. Without the variable it
+    // does nothing.
+    #[test]
+    fn argv_dump_helper() {
+        let Ok(out) = std::env::var("C3_TEST_ARGV_DUMP") else {
+            return;
+        };
+        let args: Vec<String> = std::env::args().collect();
+        let rest: Vec<String> = match args.iter().position(|a| a == "--") {
+            Some(p) => args[p + 1..].to_vec(),
+            None => Vec::new(),
+        };
+        std::fs::write(out, serde_json::to_string(&rest).unwrap()).unwrap();
+    }
+
+    // (wave 2e, RC3) What a NATIVE program behind a batch launcher really receives through
+    // `apply_launcher_args` + the launcher's `%*`: every supported argument exactly (the plugin's
+    // bare tokens raw, a literal `%TEMP%` never expanded, a backslash before a quote, a spaced path
+    // ending in a backslash, embedded quotes, an empty argument); a line break is refused at the
+    // spawn (nothing starts). The matrix is in docs/port/wave2b-compat.md section 2.
+    #[cfg(windows)]
+    #[test]
+    fn a_native_program_behind_a_batch_launcher_gets_the_exact_argv() {
+        let dir = std::env::temp_dir().join(format!("c3-argv-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let helper = std::env::current_exe().unwrap();
+        let bat = dir.join("forward.cmd");
+        std::fs::write(
+            &bat,
+            format!(
+                "@echo off\r\n\"{}\" --exact engines::subprocess::tests::argv_dump_helper --quiet -- %*\r\nexit /b %ERRORLEVEL%\r\n",
+                helper.display()
+            ),
+        )
+        .unwrap();
+        let launcher = bat.to_string_lossy().to_string();
+        let mut n = 0;
+        let mut run = |argv: &[&str]| -> Result<Vec<String>, String> {
+            n += 1;
+            let out = dir.join(format!("argv-{n}.json"));
+            let argv: Vec<String> = argv.iter().map(|s| s.to_string()).collect();
+            let mut cmd = Command::new(&launcher);
+            apply_launcher_args(&mut cmd, &launcher, &argv);
+            cmd.env("C3_TEST_ARGV_DUMP", &out)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let st = cmd.status().map_err(|e| e.to_string())?;
+            assert!(st.success(), "{argv:?}: {st:?}");
+            let text = std::fs::read_to_string(&out).map_err(|e| e.to_string())?;
+            Ok(serde_json::from_str(&text).unwrap())
+        };
+        let supported: &[&[&str]] = &[
+            // the plugin's bare tokens (raw), a path without spaces ending in a backslash (raw)
+            &[
+                "-c",
+                "model_context_window=256000",
+                "-p=",
+                "-",
+                r"C:\dir\",
+                "next",
+            ],
+            // a literal %TEMP% (alone and inside a quoted value), never expanded
+            &["%TEMP%", r#"foo="%TEMP%""#, "100%", "%%"],
+            // a backslash before a quote, inside and at the end
+            &[r#"a\"b"#, r#"x\\"y"#, r#"end\""#],
+            // a spaced path ending in one and in two backslashes, then another argument
+            &[r"C:\Program Files\x\", r"C:\Program Files\y\\", "z"],
+            // embedded quotes (the plugin's doubled form), spaces, an empty argument, symbols
+            &[r#"k="v w""#, "a b", "", "x+y", "a&b|c<d>e^f"],
+        ];
+        for argv in supported {
+            let got = run(argv).unwrap();
+            assert_eq!(got, argv.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        }
+        // a line break (CR LF, LF, CR) cannot reach a batch file intact: refused at the spawn
+        for nl in ["a\r\nb", "a\nb", "a\rb"] {
+            let e = run(&["ok", nl]).unwrap_err();
+            assert!(
+                e.contains("batch file arguments are invalid"),
+                "{nl:?}: {e}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // (wave 28b, D12) an open tool call suspends the stall timer for at most 2 x stall without
     // growth - no 1800 s floor.
     #[test]

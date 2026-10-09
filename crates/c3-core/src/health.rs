@@ -1559,6 +1559,40 @@ fn machine_record_key(e: &MachineEndpoint) -> String {
     k
 }
 
+/// (wave 2e, F11-1) Test-only faults in the journal's I/O (this thread only): the RC1 fixtures.
+#[cfg(test)]
+mod journal_faults {
+    use std::cell::Cell;
+    thread_local! {
+        /// `Some(n)`: the journal read gets its first `n` bytes, then fails.
+        pub static READ_FAILS_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
+        /// `true`: the journal's rewrite (emptying it) fails.
+        pub static REWRITE_FAILS: Cell<bool> = const { Cell::new(false) };
+    }
+}
+
+/// (wave 2e, F11-1) Read the whole journal from its start; a seek or read error is returned (the
+/// bytes read so far are in `out` - the caller must not apply them).
+fn read_journal(f: &mut std::fs::File, out: &mut Vec<u8>) -> std::io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    f.seek(SeekFrom::Start(0))?;
+    #[cfg(test)]
+    if let Some(n) = journal_faults::READ_FAILS_AFTER.with(|c| c.get()) {
+        f.take(n as u64).read_to_end(out)?;
+        return Err(std::io::Error::other("injected read fault"));
+    }
+    f.read_to_end(out).map(|_| ())
+}
+
+/// (wave 2e, F11-1) Empty the journal - the only rewrite it ever gets.
+fn empty_journal(f: &std::fs::File) -> std::io::Result<()> {
+    #[cfg(test)]
+    if journal_faults::REWRITE_FAILS.with(|c| c.get()) {
+        return Err(std::io::Error::other("injected write fault"));
+    }
+    f.set_len(0)
+}
+
 /// One unreadable journal line: its byte range (the line end included when there is one).
 struct BadLine {
     start: usize,
@@ -1810,7 +1844,7 @@ fn update_machine_health(
     };
 
     let result = (|| -> Result<(), String> {
-        use std::io::{Read, Seek, SeekFrom, Write};
+        use std::io::Write;
         let current = read_machine_health(path);
         let mut endpoints = current.endpoints;
         let mut keys: std::collections::HashSet<String> =
@@ -1835,8 +1869,15 @@ fn update_machine_health(
                 }
             }
             if let Some(f) = journal.as_mut() {
-                let _ = f.seek(SeekFrom::Start(0));
-                let _ = f.read_to_end(&mut j_bytes);
+                // (wave 2e, F11-1) a seek or read error fails the update before anything is
+                // written: the bytes read so far are not applied and the journal is not touched.
+                read_journal(f, &mut j_bytes).map_err(|e| {
+                    format!(
+                        "journal read failed: {} (the journal {} is kept)",
+                        crate::one_line(&e.to_string()),
+                        journal_path.display()
+                    )
+                })?;
                 let mut pos = 0usize;
                 while pos < j_bytes.len() {
                     let end = match j_bytes[pos..].iter().position(|b| *b == b'\n') {
@@ -1920,10 +1961,14 @@ fn update_machine_health(
             .map_err(|e| format!("write failed: {}", crate::one_line(&e.to_string())))?;
 
         // (D13) applied: the journal is emptied (a crash before this applies it again - no
-        // double); (wave 28c, D10) first the unreadable lines go to <journal>.bad (with the time),
-        // then the journal loses exactly the prefix that was applied or moved.
+        // double); (wave 28c, D10) first the unreadable lines go to <journal>.bad (with the time).
+        // (wave 2e, F11-1) The journal is only ever emptied WHOLE, never rewritten in place: when
+        // a line could not be moved, the whole journal stays (its applied records apply again
+        // next time - the record key makes that a no-op), since an in-place rewrite of the
+        // suffix that failed half-way would lose the bytes not yet rewritten. A failure to empty
+        // it fails the update (the journal is kept whole).
         if let Some(f) = journal.as_mut() {
-            let mut consumed = j_bytes.len();
+            let mut empty_it = true;
             if !j_bad.is_empty() {
                 let mut bad_os = journal_path.as_os_str().to_os_string();
                 bad_os.push(".bad");
@@ -1953,8 +1998,8 @@ fn update_machine_health(
                         bad_path.display()
                     ));
                 } else {
-                    // not moved: they stay in the journal - with everything from the first on
-                    consumed = j_bad[0].start;
+                    // not moved: they stay in the journal - the whole journal stays
+                    empty_it = false;
                     push_journal_note(format!(
                         "health journal: {} unreadable line(s) could not be moved to {} - kept in {}",
                         j_bad.len(),
@@ -1963,15 +2008,15 @@ fn update_machine_health(
                     ));
                 }
             }
-            let rest = j_bytes.len() - consumed;
-            if rest == 0 {
-                let _ = f.set_len(0);
-            } else {
-                let _ = f.seek(SeekFrom::Start(0));
-                let _ = f.write_all(&j_bytes[consumed..]);
-                let _ = f.set_len(rest as u64);
+            if empty_it {
+                empty_journal(f).map_err(|e| {
+                    format!(
+                        "journal not emptied: {} (the journal {} is kept; its records apply again, once)",
+                        crate::one_line(&e.to_string()),
+                        journal_path.display()
+                    )
+                })?;
             }
-            let _ = f.flush();
         }
         Ok(())
     })();
@@ -2140,10 +2185,12 @@ mod machine_health_tests {
     }
 
     // (wave 28c, D10) torn lines go to <journal>.bad ("<time>\t<bytes>"), the good ones are
-    // applied, the journal is emptied by what was applied or moved; a .bad that cannot be written
-    // keeps the unreadable line and everything after it in the journal.
+    // applied, the journal is emptied once everything was applied or moved; (wave 2e, F11-1) a
+    // .bad that cannot be written keeps the WHOLE journal (never rewritten in place) - the applied
+    // records apply again next time without a second record.
     #[test]
     fn torn_journal_lines_are_moved_aside_never_dropped() {
+        let _notes = notes_lock();
         let alive = |_: u32, _: &str| true;
         let dir = journal_scratch("torn");
         let hp = dir.join("health-j.json");
@@ -2191,7 +2238,7 @@ mod machine_health_tests {
         let notes2 = take_machine_health_journal_notes().join("|");
         assert_eq!(
             std::fs::read_to_string(&jp).unwrap(),
-            format!("garbage-line\n{d}\n")
+            format!("{c}\ngarbage-line\n{d}\n")
         );
         assert!(
             notes2.contains("could not be moved to") && notes2.contains(" - kept in "),
@@ -2204,6 +2251,7 @@ mod machine_health_tests {
             HealthUpdate::Written
         );
         assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        assert_eq!(endpoints_of(&hp, "fp-c"), 1);
         assert_eq!(endpoints_of(&hp, "fp-d"), 1);
         assert_eq!(
             take_machine_health_journal_notes(),
@@ -2212,6 +2260,128 @@ mod machine_health_tests {
                 bad_path.display()
             )]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The journal notes are process-wide: the tests that read them run one at a time.
+    fn notes_lock() -> std::sync::MutexGuard<'static, ()> {
+        static L: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        L.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// (wave 2e, F11-1 / RC1) Runs `f` with a journal fault injected on this thread, cleared after.
+    fn with_fault<T>(read_after: Option<usize>, rewrite: bool, f: impl FnOnce() -> T) -> T {
+        journal_faults::READ_FAILS_AFTER.with(|c| c.set(read_after));
+        journal_faults::REWRITE_FAILS.with(|c| c.set(rewrite));
+        let r = f();
+        journal_faults::READ_FAILS_AFTER.with(|c| c.set(None));
+        journal_faults::REWRITE_FAILS.with(|c| c.set(false));
+        r
+    }
+
+    // (wave 2e, F11-1 / RC1) a read that fails after part of the journal: the update fails before
+    // anything is written - no record of the part read is applied, the add is not written either,
+    // the journal keeps every byte; with the fault removed the replay applies everything once.
+    #[test]
+    fn a_partial_journal_read_failure_keeps_every_byte_and_fails() {
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("readfault");
+        let hp = dir.join("health.json");
+        let jp = machine_health_journal_path(&hp);
+        let a = serde_json::to_string(&ok_record("fp-ra", "C:\\repo-a")).unwrap();
+        let b = serde_json::to_string(&ok_record("fp-rb", "C:\\repo-b")).unwrap();
+        let journal = format!("{a}\n{b}\n");
+        std::fs::write(&jp, &journal).unwrap();
+        let direct = ok_record("fp-rdirect", "C:\\repo-d");
+        // the first record and half of the second are read, then the read fails
+        let cut = a.len() + 1 + b.len() / 2;
+        let r = with_fault(Some(cut), false, || {
+            add_machine_health_endpoint(&hp, &direct, &alive)
+        });
+        match &r {
+            HealthUpdate::Failed(why) => assert!(
+                why.starts_with("journal read failed: injected read fault (the journal ")
+                    && why.ends_with(" is kept)"),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal);
+        assert_eq!(endpoints_of(&hp, "fp-ra"), 0);
+        assert_eq!(endpoints_of(&hp, "fp-rdirect"), 0);
+        // the fault removed: the replay applies both records (and the add) once, the journal empties
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &direct, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-ra"), 1);
+        assert_eq!(endpoints_of(&hp, "fp-rb"), 1);
+        assert_eq!(endpoints_of(&hp, "fp-rdirect"), 1);
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 2e, F11-1 / RC1) the journal's rewrite fails after the health file was written: a
+    // failure result, the journal byte for byte as it was (never truncated after a failed
+    // rewrite); a .bad that cannot be written plus the same fault: no rewrite is even attempted -
+    // the whole journal stays; with the faults removed the replay applies every record once and
+    // empties the journal.
+    #[test]
+    fn a_failed_journal_rewrite_keeps_every_byte() {
+        let _notes = notes_lock();
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("writefault");
+        let hp = dir.join("health.json");
+        let jp = machine_health_journal_path(&hp);
+        let bad_path = PathBuf::from(format!("{}.bad", jp.display()));
+        let a = serde_json::to_string(&ok_record("fp-wa", "C:\\repo-a")).unwrap();
+        let b = serde_json::to_string(&ok_record("fp-wb", "C:\\repo-b")).unwrap();
+        let journal = format!("{a}\n{b}\n");
+        std::fs::write(&jp, &journal).unwrap();
+        let r = with_fault(None, true, || apply_machine_health_journal(&hp, &alive));
+        match &r {
+            HealthUpdate::Failed(why) => assert!(
+                why.starts_with("journal not emptied: injected write fault (the journal ")
+                    && why.ends_with(" is kept; its records apply again, once)"),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal);
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(endpoints_of(&hp, "fp-wa"), 1);
+        assert_eq!(endpoints_of(&hp, "fp-wb"), 1);
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        // the archival fails (a directory in the .bad's place) and so would the rewrite
+        std::fs::create_dir_all(&bad_path).unwrap();
+        let c = serde_json::to_string(&ok_record("fp-wc", "C:\\repo-c")).unwrap();
+        let journal2 = format!("{a}\n{c}\ntorn-line\n{b}\n");
+        std::fs::write(&jp, &journal2).unwrap();
+        let _ = take_machine_health_journal_notes();
+        let r2 = with_fault(None, true, || apply_machine_health_journal(&hp, &alive));
+        assert_eq!(r2, HealthUpdate::Written);
+        assert_eq!(std::fs::read_to_string(&jp).unwrap(), journal2);
+        assert!(take_machine_health_journal_notes()
+            .join("|")
+            .contains("could not be moved to"));
+        assert_eq!(endpoints_of(&hp, "fp-wc"), 1);
+        // the faults removed: the torn line goes to .bad, every record stays once, the journal empties
+        std::fs::remove_dir_all(&bad_path).unwrap();
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        for fp in ["fp-wa", "fp-wb", "fp-wc"] {
+            assert_eq!(endpoints_of(&hp, fp), 1, "{fp}");
+        }
+        assert_eq!(std::fs::metadata(&jp).unwrap().len(), 0);
+        assert!(std::fs::read_to_string(&bad_path)
+            .unwrap()
+            .ends_with("\ttorn-line\n"));
+        let _ = take_machine_health_journal_notes();
         let _ = std::fs::remove_dir_all(&dir);
     }
 
