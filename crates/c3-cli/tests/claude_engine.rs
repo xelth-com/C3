@@ -790,3 +790,46 @@ fn the_roster_validates_the_claude_keys() {
         .contains(&fake[fake.len() - 15..]));
     assert_eq!(e.starts().iter().filter(|s| s["kind"] == "auth").count(), 1);
 }
+
+// ------------------------------------------------------------------ TELEMETRY (FORGET D3)
+
+/// (harness-telemetry FORGET D3) a run whose event meets a running `--forget --local` (the marker
+/// of a LIVING owner - this test process) commits its entry, spools nothing and says so with the
+/// plugin's ending: `warning    : telemetry event not spooled (<why>) - dropped`.
+#[test]
+fn an_event_refused_by_a_living_forget_is_said_dropped() {
+    let e = setup("forget");
+    let dir = e.home.join("c3").join("telemetry");
+    std::fs::create_dir_all(&dir).unwrap();
+    let marker = c3::telemetry::notspooled::LocalPaths::in_dir(&dir).marker;
+    std::fs::write(
+        &marker,
+        format!(
+            "{{\"pid\":{},\"start_ticks\":{},\"since\":\"2026-10-09T08:00:00+02:00\"}}\n",
+            std::process::id(),
+            c3::telemetry::notspooled::own_start_ticks()
+        ),
+    )
+    .unwrap();
+    let x = e.consult(
+        &[
+            "--engine",
+            "claude",
+            "--model",
+            "sonnet",
+            "--telemetry",
+            "on",
+        ],
+        &[("CODEX_CONSULT_TELEMETRY", "")],
+    );
+    let out = text(&x);
+    assert_eq!(x.status.code(), Some(0), "{out}");
+    let re = regex::Regex::new(
+        r"(?m)^warning    : telemetry event not spooled \(c3 telemetry --forget --local is deleting .*\) - dropped\r?$",
+    )
+    .unwrap();
+    assert!(re.is_match(&out), "{out}");
+    assert!(!out.contains("- counted (c3 telemetry --status)"), "{out}");
+    assert_eq!(e.ledger().len(), 1, "the entry is committed");
+    assert!(marker.exists(), "the living owner's marker stays");
+}
