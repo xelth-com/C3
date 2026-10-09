@@ -25,7 +25,7 @@ use c3_core::ledger::{ProviderFailure, Usage};
 use serde_json::Value;
 
 use super::codex::TurnFiles;
-use super::subprocess::{run_turn, SpawnRequest};
+use super::subprocess::{run_turn, SpawnRequest, ToolFlight};
 
 /// The runtime `agy` engine: the resolved launcher, the working directory (repo root) and the
 /// per-turn stream files. `plan`/`capabilities` delegate to the core [`SubprocessEngine`] so the
@@ -101,9 +101,9 @@ impl AgyEngine {
             // (wave 26c, D1) the caller scopes `kick_path` (primary always; the format-repair turn
             // so a kicked repair leaves the first reply standing; a continuation passes None).
             kick_path: self.kick_path.as_deref(),
-            // agy step updates grow the stream on every tool step, so the byte-growth reset covers
-            // its tool calls; no separate suspension classifier is needed.
-            tool_flight: None,
+            // (wave 2e, F11-5) an ACTIVE tool step suspends the stall timer (up to 2 x stall
+            // without growth) and a stall cut names it ("agy tool step <n>").
+            tool_flight: Some(&agy_tool_flight),
             on_running: self
                 .on_running
                 .as_ref()
@@ -276,6 +276,54 @@ impl Engine for AgyEngine {
 
     fn continue_turn(&self, turn: &TurnRequest) -> Result<AttemptOutcome, EngineError> {
         self.run_detailed(turn).map(|r| r.outcome)
+    }
+}
+
+// --------------------------------------------------------------------------- tool calls in flight
+
+/// (wave 2e, F11-5) One agy stream-json line's effect on the tool calls in flight
+/// (`Update-ToolFlight`, engine agy): a `step_update` whose `step_type` is `tool` OPENS a call
+/// while its `state` is `ACTIVE` (key `agy:<step_index>`, label `agy tool step <step_index>`) and
+/// CLOSES it in any other state. Any other line changes nothing.
+pub fn agy_tool_flight(line: &str) -> ToolFlight {
+    let t = line.trim();
+    // a cheap test first: most lines are text deltas
+    if !t.starts_with('{') || !t.contains("\"tool\"") {
+        return ToolFlight::None;
+    }
+    let v: Value = match serde_json::from_str(t) {
+        Ok(v) => v,
+        Err(_) => return ToolFlight::None,
+    };
+    if v.get("event").and_then(|e| e.as_str()) != Some("step_update") {
+        return ToolFlight::None;
+    }
+    let su = match v.get("step_update") {
+        Some(s) if s.is_object() => s,
+        _ => return ToolFlight::None,
+    };
+    if su.get("step_type").and_then(|s| s.as_str()) != Some("tool") {
+        return ToolFlight::None;
+    }
+    let index = match su.get("step_index") {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+    };
+    let key = format!("agy:{index}");
+    if su.get("state").and_then(|s| s.as_str()) == Some("ACTIVE") {
+        ToolFlight::Open {
+            label: format!(
+                "agy tool step {}",
+                if index.is_empty() { "?" } else { &index }
+            ),
+            key,
+        }
+    } else {
+        ToolFlight::Close {
+            key,
+            fallback_prefix: String::new(),
+        }
     }
 }
 
@@ -851,6 +899,51 @@ mod tests {
     const OK: &str = include_str!("fixtures/agy_ok.events.jsonl");
     const DENIED: &str = include_str!("fixtures/agy_denied.events.jsonl");
     const DENIED_STDERR: &str = include_str!("fixtures/agy_denied.stderr.txt");
+
+    // (wave 2e, F11-5) the agy tool-call classifier: an ACTIVE tool step opens a call keyed by its
+    // step index, any other state of that step closes it; other steps and events change nothing.
+    #[test]
+    fn agy_tool_steps_open_and_close_calls() {
+        use super::super::subprocess::ToolCalls;
+        let step = |idx: &str, state: &str, ty: &str| {
+            format!(
+                r#"{{"event":"step_update","step_update":{{"conversation_id":"c","step_index":{idx},"state":"{state}","step_type":"{ty}","tool_name":"run_command"}}}}"#
+            )
+        };
+        let mut calls = ToolCalls::default();
+        calls.apply(agy_tool_flight(&step("2", "ACTIVE", "tool")));
+        calls.apply(agy_tool_flight(&step("2", "ACTIVE", "tool")));
+        assert_eq!(calls.count(), 1);
+        assert_eq!(calls.labels(), "agy tool step 2");
+        // a text step, a user step, another event: nothing
+        assert_eq!(
+            agy_tool_flight(&step("1", "ACTIVE", "agent_response")),
+            ToolFlight::None
+        );
+        assert_eq!(
+            agy_tool_flight(r#"{"event":"init","conversation_id":"c","init":{"tools":["tool"]}}"#),
+            ToolFlight::None
+        );
+        assert_eq!(agy_tool_flight("not json \"tool\""), ToolFlight::None);
+        calls.apply(agy_tool_flight(&step("4", "ACTIVE", "tool")));
+        assert_eq!(calls.labels(), "agy tool step 2, agy tool step 4");
+        // DONE (or any other state) of step 2 closes it; a close of a step never opened is a no-op
+        calls.apply(agy_tool_flight(&step("2", "DONE", "tool")));
+        calls.apply(agy_tool_flight(&step("9", "ERROR", "tool")));
+        assert_eq!(calls.labels(), "agy tool step 4");
+        calls.apply(agy_tool_flight(&step("\"4\"", "CANCELED", "tool")));
+        assert_eq!(calls.count(), 0);
+        // without a step index: key "agy:", label "agy tool step ?"
+        assert_eq!(
+            agy_tool_flight(
+                r#"{"event":"step_update","step_update":{"state":"ACTIVE","step_type":"tool"}}"#
+            ),
+            ToolFlight::Open {
+                key: "agy:".into(),
+                label: "agy tool step ?".into()
+            }
+        );
+    }
 
     #[test]
     fn stdin_is_one_ndjson_user_line() {

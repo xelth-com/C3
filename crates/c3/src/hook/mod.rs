@@ -12,9 +12,11 @@
 //!   and single-line, exactly the plugin's guard); anything else, or any failure inside
 //!   the check, becomes `codex-consult: reviewer check failed - <reason>`.
 //! * Then (wave 27, R13 D5) ONE pointer line, always, whatever the first line says - (wave 27c,
-//!   D13) with a command runnable as written on a host that substitutes nothing - and (wave 28,
-//!   R17) ending with the telemetry switch: `codex-consult: coordinator rules - skill
-//!   codex-consult:coordinate (or <command>); telemetry: on|off`.
+//!   D13) with a command runnable as written on a host that substitutes nothing (wave 2e, F11-4:
+//!   by default `& "<this c3>" consult --explain coordinate` on Windows - PowerShell -, `'<this
+//!   c3>' consult --explain coordinate` elsewhere) - and (wave 28, R17) ending with the telemetry
+//!   switch: `codex-consult: coordinator rules - skill codex-consult:coordinate (or <command>);
+//!   telemetry: on|off`.
 //! * Always exactly two lines to stdout, always exit 0.
 
 use c3_core::one_line;
@@ -43,7 +45,7 @@ pub fn pointer_line(explain_command: &str) -> String {
         let exe = std::env::current_exe()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "c3".to_string());
-        format!("\"{exe}\" consult --explain coordinate")
+        default_explain_command(&exe, cfg!(windows))
     } else {
         explain_command.trim().to_string()
     };
@@ -51,6 +53,30 @@ pub fn pointer_line(explain_command: &str) -> String {
         "codex-consult: coordinator rules - skill codex-consult:coordinate (or {cmd}); telemetry: {}",
         crate::telemetry::switch(None).text()
     )
+}
+
+/// (wave 2e, F11-4) The default pointer command - this binary's `consult --explain coordinate` -
+/// runnable as written in the host's shell, as the plugin's `powershell -NoProfile -ExecutionPolicy
+/// Bypass -File "<script>" -Explain coordinate` is: on Windows a PowerShell invocation (the call
+/// operator `&` before the double-quoted path - a quoted path followed by arguments is a parse
+/// error there - with `` ` ``, `$` and the double quotes PowerShell knows escaped by a backtick); on
+/// Unix a POSIX shell's single-quoted path (`'` written `'\''`).
+pub fn default_explain_command(exe: &str, windows: bool) -> String {
+    if windows {
+        let mut quoted = String::with_capacity(exe.len());
+        for c in exe.chars() {
+            if matches!(c, '`' | '$' | '"' | '\u{201C}' | '\u{201D}' | '\u{201E}') {
+                quoted.push('`');
+            }
+            quoted.push(c);
+        }
+        format!("& \"{quoted}\" consult --explain coordinate")
+    } else {
+        format!(
+            "'{}' consult --explain coordinate",
+            exe.replace('\'', "'\\''")
+        )
+    }
 }
 
 /// The line, without printing it (so the behaviour is unit-testable).
@@ -128,6 +154,31 @@ mod tests {
         assert!(
             d.contains("consult --explain coordinate); telemetry: "),
             "{d}"
+        );
+        if cfg!(windows) {
+            assert!(d.contains("(or & \""), "{d}");
+        }
+    }
+
+    // (wave 2e, F11-4) the default command: PowerShell's call operator and an escaped
+    // double-quoted path on Windows, a single-quoted path on Unix.
+    #[test]
+    fn the_default_explain_command_is_runnable_in_the_host_shell() {
+        assert_eq!(
+            default_explain_command(r"C:\Program Files\c3\c3.exe", true),
+            r#"& "C:\Program Files\c3\c3.exe" consult --explain coordinate"#
+        );
+        assert_eq!(
+            default_explain_command(r"C:\a $b`c\c3.exe", true),
+            r#"& "C:\a `$b``c\c3.exe" consult --explain coordinate"#
+        );
+        assert_eq!(
+            default_explain_command("/opt/my c3/c3", false),
+            "'/opt/my c3/c3' consult --explain coordinate"
+        );
+        assert_eq!(
+            default_explain_command("/opt/it's/c3", false),
+            r"'/opt/it'\''s/c3' consult --explain coordinate"
         );
     }
 

@@ -1627,19 +1627,30 @@ fn build_context(
             return Err((format!("{}.", required.error), 1));
         }
         if !required.positions.is_empty() {
-            let mut req_roster = roster.clone();
-            req_roster
-                .entries
-                .retain(|e| required.positions.contains(&(e.position as i64)));
+            // (wave 2e, F11-3) the FULL roster: a plan's quota is judged over every route of the
+            // plan (a usage limit on an entry that is not required still puts its plan out); only
+            // the required entries are judged. (F11-2) The launcher -EngineExe resolved seeds the
+            // context, as for the roster walk.
             let req_ctx = providers::Ctx::for_consult(
                 config.clone(),
                 providers::read_all_task_consults_health(&collab_root),
-                req_roster,
+                roster.clone(),
                 launcher.clone(),
                 openai_base_url.clone(),
                 utc_now,
             );
-            let sel = req_ctx.panel_members("", "", &o.purpose, true, false, 0);
+            if !engine_exe_engine.is_empty() {
+                req_ctx.seed_engine_launcher(&engine_exe_engine, &engine_exe_launcher);
+            }
+            let sel = req_ctx.panel_members_of(
+                Some(&required.positions),
+                "",
+                "",
+                &o.purpose,
+                true,
+                false,
+                0,
+            );
             let out: Vec<String> = sel
                 .members
                 .iter()
