@@ -2220,7 +2220,7 @@
                      },
                      {
                          "id":  "F14-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -2289,6 +2289,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
                                              "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T05:31:44+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2f 5c9f8a0: the local-only forget writes its cleaning record before removing anything; cannot record -\u003e removes nothing; RC1 test with the resume by a flush and by a forget",
+                                             "evidence":  "",
+                                             "base_commit":  "5c9f8a01fef7332058ff40e7a4917351ded1ba4b",
+                                             "tree_sha256":  "383b26f27ecf40be90078facdaeb5c64a1542840df8f20285789812037bb91b6"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -2297,7 +2306,7 @@
                      },
                      {
                          "id":  "F14-2",
-                         "status":  "proposed",
+                         "status":  "wontfix",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -2347,6 +2356,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a624a3d215ef2afc10a3e35777175f131b315e39",
                                              "tree_sha256":  "5e60e364af50372bfad158621a5f129c6726ed434a11adf8c0053da1bef92e62"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T05:31:46+02:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "parity: the plugin\u0027s Test-ReviewerMatch and Resolve-CoordinatorIdentity compare provider and model with -ceq (case-sensitive), only the engine with -eq; C3 now does the same and the doc comment says so (5c9f8a0)",
+                                             "evidence":  "",
+                                             "base_commit":  "5c9f8a01fef7332058ff40e7a4917351ded1ba4b",
+                                             "tree_sha256":  "383b26f27ecf40be90078facdaeb5c64a1542840df8f20285789812037bb91b6"
                                          }
                                      ],
                          "reviewer_checks":  [
