@@ -1254,7 +1254,7 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
 }
 
 fn build_context(
-    o: Options,
+    mut o: Options,
     mut r: Resolved,
     member: Option<&crate::panel::member::MemberSpec>,
 ) -> Result<Context, (String, i32)> {
@@ -1738,12 +1738,19 @@ fn build_context(
             r.transport_override
         ), 1));
     }
-    // -MaxModelSteps: only an engine with a model-step cap (muse, D9).
+    // -MaxModelSteps: only an engine with a model-step cap (muse, D9); a panel member of another
+    // engine drops it (the panel passes it to every member; the members whose engine has a cap
+    // use it - the plugin's `if ($panelMember) { $MaxModelSteps = 0 }`).
     if o.max_model_steps > 0 && spec.steps_flag.is_empty() {
-        return Err((format!(
-            "-MaxModelSteps is for the muse engine (--max-model-steps); the {engine_name} engine has no model-step cap.",
-        ), 1));
+        if member.is_some() {
+            o.max_model_steps = 0;
+        } else {
+            return Err((format!(
+                "-MaxModelSteps is for the muse engine (--max-model-steps); the {engine_name} engine has no model-step cap.",
+            ), 1));
+        }
     }
+
     // (M7b-b) --key-env / --base-url configure the http engine only; on an http run --base-url
     // must be https:// and the reviewer needs a provider label (from -Provider or the roster).
     if (!o.key_env.trim().is_empty() || !o.base_url.trim().is_empty() || o.pack_budget != -1)
@@ -3239,7 +3246,22 @@ fn run_live(mut ctx: Context) -> i32 {
     // A panel member re-checks its parent right before launching its reviewer (D1,
     // `codex-consult.ps1:3973`): if the panel run died during the member's preflight, the member
     // stops here, withdraws its record, and starts nothing.
+    // TEST HOOK (test mode only): CODEX_CONSULT_TEST_MEMBER_LAUNCH_MARK=<file> is written (this pid)
+    // when a member reaches this point, and CODEX_CONSULT_TEST_MEMBER_LAUNCH_PAUSE_MS=<ms> pauses it
+    // here - the harness kills the panel run inside that pause (harness-panel SPEC, D1).
     if let Some(m) = &ctx.panel_member {
+        if let Some(mark) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_MEMBER_LAUNCH_MARK") {
+            if !mark.trim().is_empty() {
+                let _ = std::fs::write(mark.trim(), std::process::id().to_string());
+            }
+        }
+        if let Some(ms) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_MEMBER_LAUNCH_PAUSE_MS") {
+            if let Ok(ms) = ms.trim().parse::<u64>() {
+                if ms > 0 {
+                    std::thread::sleep(Duration::from_millis(ms));
+                }
+            }
+        }
         if !crate::liveness::proc::pid_alive(m.parent_pid as u32, &m.parent_start_time) {
             let path = store_pending_path(&store, &pending);
             let rm = std::fs::remove_file(&path);
@@ -4082,6 +4104,7 @@ fn finish(
                     last_event,
                     silent_seconds,
                     tool_open_seconds,
+                    open_tools,
                 } => {
                     // (wave 26b, D12) a stall is stopped like a timeout: one continuation turn
                     // follows (gated by --continue-sec) and the salvage is written.
@@ -4093,9 +4116,15 @@ fn finish(
                     });
                     let mut stop_text =
                         format!("stalled after {} s without an event", ctx.stall_sec);
-                    if tool_open_seconds > 0 {
+                    // (wave 28b, D12) the cut names the open call(s).
+                    if tool_open_seconds > 0 || !open_tools.is_empty() {
+                        let named = if open_tools.is_empty() {
+                            String::new()
+                        } else {
+                            format!(": {open_tools}")
+                        };
                         stop_text += &format!(
-                            " - no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s)"
+                            " - no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s{named})"
                         );
                     }
                     stall_stop_text = stop_text.clone();
@@ -4322,8 +4351,10 @@ fn finish(
     }
 
     // A failed main turn's outcome (`codex-consult.ps1:3840-3847`): `failed: codex exit N`, with
-    // ` - <detail>` where detail is the event error, else the last non-empty stderr line.
-    if main_provider_failure {
+    // ` - <detail>` where detail is the event error, else the last non-empty stderr line. (rows (e),
+    // wave 28b D19) never over a registration failure: its "could not register" outcome stands (the
+    // child it stopped exits non-zero).
+    if main_provider_failure && register_failure_text.is_none() {
         if let Some(n) = main_pf_exit.filter(|n| *n != 0) {
             let detail = if !main_event_error.is_empty() {
                 main_event_error.clone()
@@ -5371,10 +5402,11 @@ fn run_codex_secondary(
         message: format!("the secondary turn could not be planned ({e:?})"),
     };
     let start = std::time::Instant::now();
-    // (wave 26c, D1) only the FORMAT REPAIR turn watches the kick file (a kicked repair leaves the
-    // first reply standing); a kicked continuation/denial retry fails the run and is handled on the
-    // primary turn's path, so those secondary turns do not watch it.
-    let secondary_kick = if matches!(kind, TurnKind::FormatRepair) {
+    // (wave 26c, D1) the FORMAT REPAIR turn watches the kick file (a kicked repair leaves the first
+    // reply standing); (wave 27c, D2 / F30-5) so does the TIMEOUT CONTINUATION - a kick addresses the
+    // RUN: found during the continuation it cancels it, and the run keeps the main turn's timeout
+    // outcome and its salvage (`run_timeout_continuation`). The denial retry does not watch it.
+    let secondary_kick = if matches!(kind, TurnKind::FormatRepair | TurnKind::TimeoutContinuation) {
         Some(ctx.kick_path.clone())
     } else {
         None
@@ -7907,6 +7939,45 @@ mod member_tests {
         assert_eq!(ctx.role, "adversary");
         assert!(ctx.panel_member.is_some());
 
+        std::env::remove_var("CODEX_CONSULT_ROSTER");
+        std::env::remove_var("CODEX_CONSULT_TELEMETRY");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    // (muse PANEL) a panel passes -MaxModelSteps to every member; a codex member (no step cap)
+    // drops it instead of refusing (`if ($panelMember) { $MaxModelSteps = 0 }`), a single codex run
+    // still refuses it.
+    #[test]
+    fn a_codex_member_drops_the_step_cap() {
+        let _g = super::telemetry_tests::ENV_LOCK.lock().unwrap();
+        let root = scratch();
+        let roster_path = root.join("roster.json");
+        std::fs::write(
+            &roster_path,
+            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-6-astra"}]}"#,
+        )
+        .unwrap();
+        std::env::set_var("CODEX_CONSULT_ROSTER", &roster_path);
+        std::env::set_var("CODEX_CONSULT_TELEMETRY", "off");
+        let mut spec = sample_spec(root.to_str().unwrap(), vec![], "");
+        spec.args["max_model_steps"] = json!(40);
+        let mo = member_options("t", &spec);
+        assert_eq!(mo.max_model_steps, 40);
+        let r = args::validate(&mo, None).unwrap();
+        let ctx = build_context(mo, r, Some(&spec)).expect("a codex member runs");
+        assert_eq!(ctx.o.max_model_steps, 0);
+        let mut single = member_options("t", &spec);
+        single.collab_dir = root.to_str().unwrap().to_string();
+        let r2 = args::validate(&single, None).unwrap();
+        let err = match build_context(single, r2, None) {
+            Ok(_) => panic!("a single codex run refuses -MaxModelSteps"),
+            Err(e) => e,
+        };
+        assert!(
+            err.0.starts_with("-MaxModelSteps is for the muse engine"),
+            "{}",
+            err.0
+        );
         std::env::remove_var("CODEX_CONSULT_ROSTER");
         std::env::remove_var("CODEX_CONSULT_TELEMETRY");
         let _ = std::fs::remove_dir_all(root);

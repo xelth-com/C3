@@ -10,9 +10,14 @@ use crate::consult::args::Options;
 /// parameter becomes a `--kebab-case` flag; `[string[]]` parameters are natively repeatable.
 #[derive(Args, Debug, Default)]
 pub struct ConsultArgs {
-    /// The task slug (letters, digits, dot, dash, underscore).
-    #[arg(long)]
+    /// The task slug (letters, digits, dot, dash, underscore). Required by every form but
+    /// `--explain` (refused with the plugin's text when missing, exit 1).
+    #[arg(long, default_value = "")]
     pub task: String,
+    /// (wave 27, R13 D5) `coordinate | consult | providers`: print that skill of the plugin for a
+    /// host without skills (`-Explain`); takes no other parameter.
+    #[arg(long)]
+    pub explain: Option<String>,
     /// Where consultations are stored; a relative path resolves against the repo root.
     #[arg(long, default_value = ".collab")]
     pub collab_dir: String,
@@ -202,6 +207,16 @@ pub struct ConsultArgs {
 
 /// Run one consultation and return the process exit code.
 pub fn run(args: ConsultArgs) -> i32 {
+    // (wave 27, R13 D5) -Explain: the one form without -Task.
+    if let Some(name) = &args.explain {
+        let raw: Vec<String> = std::env::args().skip(2).collect();
+        return crate::consult::explain::run(name, &crate::consult::explain::other_flags(&raw));
+    }
+    // Every other form needs -Task (the plugin refuses instead of prompting).
+    if args.task.trim().is_empty() {
+        eprintln!("codex-consult: -Task <id> is required (a slug: the task directory <CollabDir>/<id>/); the one form without it is -Explain coordinate|consult|providers.");
+        return 1;
+    }
     // (R17) the run's telemetry switch: on | off or nothing - refused before anything starts.
     let tele = args.telemetry.trim().to_ascii_lowercase();
     if !tele.is_empty() && tele != "on" && tele != "off" {

@@ -44,4 +44,9 @@ if [ -z "$first" ]; then
   first="c3 hook exited $code without output"
 fi
 echo "$first"
+# (wave 27, R13 D5) the second line: the pointer to the coordinator's rules (and the telemetry switch)
+pointer=$(printf '%s\n' "$out" | grep -m1 '^codex-consult: coordinator rules - ')
+if [ -n "$pointer" ] && [ "$pointer" != "$first" ]; then
+  echo "$pointer"
+fi
 exit 0

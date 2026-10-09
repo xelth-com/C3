@@ -595,16 +595,29 @@ pub fn write_text_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         f.flush()?;
         f.sync_all()?;
     }
-    // On a rename failure (e.g. the destination is a directory a test created to block the copy,
-    // F04-11), remove the temp so no `.<name>.<uuid>.tmp` is left behind.
-    match fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            let _ = fs::remove_file(&tmp);
-            Err(e)
+    // (the plugin's Write-TextAtomic) A reader holding the destination open without
+    // FILE_SHARE_DELETE makes the rename fail with a sharing violation / access denied; it is gone
+    // a moment later - up to 8 attempts, 250 ms apart. On the final failure (e.g. the destination is
+    // a directory a test created to block the copy, F04-11), remove the temp so no
+    // `.<name>.<uuid>.tmp` is left behind.
+    let mut last: Option<io::Error> = None;
+    for attempt in 1..=WRITE_ATOMIC_ATTEMPTS {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last = Some(e);
+                if attempt < WRITE_ATOMIC_ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            }
         }
     }
+    let _ = fs::remove_file(&tmp);
+    Err(last.unwrap_or_else(|| io::Error::other("the rename failed")))
 }
+
+/// `Write-TextAtomic`'s rename attempts (250 ms apart).
+const WRITE_ATOMIC_ATTEMPTS: u32 = 8;
 
 /// A cheap unique-ish suffix for temp file names (not a real UUID; only needs to avoid a
 /// collision with a concurrent writer in the same directory).
@@ -1165,6 +1178,43 @@ fn finding_nn(id: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // (wave 2b, muse TREE) a reader holding the destination open without FILE_SHARE_DELETE makes
+    // the rename fail at first; `write_text_atomic` retries (8 x 250 ms, the plugin's
+    // Write-TextAtomic) and succeeds once the reader is gone.
+    #[cfg(windows)]
+    #[test]
+    fn atomic_write_waits_for_a_reader_that_blocks_the_rename() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("c3-atomic-{}-{}", std::process::id(), uuid_like()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("record.json");
+        fs::write(&path, b"old").unwrap();
+        // FILE_SHARE_READ | FILE_SHARE_WRITE, no FILE_SHARE_DELETE: a rename over it fails
+        let reader = OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2)
+            .open(&path)
+            .unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            drop(reader);
+        });
+        let started = std::time::Instant::now();
+        write_text_atomic(&path, b"new").expect("the write waits for the reader");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(200));
+        releaser.join().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        // no temp file is left behind
+        let left: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(left.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn write_order_is_the_documented_sequence() {

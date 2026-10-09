@@ -19,7 +19,7 @@ use c3_core::engine::{
 use c3_core::health::{convert_from_provider_error_text, provider_failure_class};
 use c3_core::ledger::{ProviderFailure, Usage};
 
-use super::subprocess::{run_turn, SpawnRequest};
+use super::subprocess::{run_turn, SpawnRequest, ToolFlight};
 
 /// Where a turn's captured streams go. The orchestrator names the files (they live next to
 /// the handoff); the adapter picks the pair for the turn being run.
@@ -50,31 +50,59 @@ pub struct CodexEngine {
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
 }
 
-/// (wave 26c, D3) One codex `--json` line's effect on the tool-call-in-flight count: `+1` when a
-/// `command_execution` / `mcp_tool_call` / `web_search` item STARTS, `-1` when one COMPLETES,
-/// `0` otherwise. Used to suspend the stall timer while a tool call runs.
-pub fn codex_tool_delta(line: &str) -> i64 {
+/// (wave 26c, D3 / 28b, D12) One codex `--json` line's effect on the tool calls in flight
+/// (`Update-ToolFlight`): a `command_execution` / `mcp_tool_call` / `web_search` item that STARTS
+/// opens a call (key `codex:<id>`, label `codex <type> <id>`), one that COMPLETES closes it (by its
+/// id, else the first open call of its type). Used to suspend the stall timer while a tool call runs
+/// and to name the open call at a stall cut.
+pub fn codex_tool_flight(line: &str) -> ToolFlight {
     let v: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
-        Err(_) => return 0,
+        Err(_) => return ToolFlight::None,
     };
     let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
-    let item_type = v
-        .get("item")
-        .and_then(|i| i.get("type"))
-        .and_then(|t| t.as_str())
-        .unwrap_or("");
+    let item = match v.get("item") {
+        Some(i) if i.is_object() => i,
+        _ => return ToolFlight::None,
+    };
+    let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
     if !matches!(
         item_type,
         "command_execution" | "mcp_tool_call" | "web_search"
     ) {
-        return 0;
+        return ToolFlight::None;
     }
+    let id = item.get("id").and_then(|t| t.as_str()).unwrap_or("");
     match ty {
-        "item.started" => 1,
-        "item.completed" => -1,
-        _ => 0,
+        "item.started" => {
+            if id.is_empty() {
+                ToolFlight::Open {
+                    key: format!("codex-type:{item_type}#"),
+                    label: format!("codex {item_type}"),
+                }
+            } else {
+                ToolFlight::Open {
+                    key: format!("codex:{id}"),
+                    label: format!("codex {item_type} {id}"),
+                }
+            }
+        }
+        "item.completed" => ToolFlight::Close {
+            key: if id.is_empty() {
+                String::new()
+            } else {
+                format!("codex:{id}")
+            },
+            fallback_prefix: format!("codex-type:{item_type}#"),
+        },
+        _ => ToolFlight::None,
     }
+}
+
+/// (wave 26c, D3) The count delta of [`codex_tool_flight`]: `+1` a tool call starts, `-1` one
+/// completes, `0` otherwise.
+pub fn codex_tool_delta(line: &str) -> i64 {
+    codex_tool_flight(line).delta()
 }
 
 impl CodexEngine {
@@ -103,7 +131,7 @@ impl CodexEngine {
         // The stall cut and the operator's kick watch only the primary turn (a continuation /
         // format-repair turn takes neither).
         let is_primary = matches!(turn.kind, TurnKind::Primary);
-        let td = |l: &str| codex_tool_delta(l);
+        let td = |l: &str| codex_tool_flight(l);
         let spawn = SpawnRequest {
             launcher: &self.launcher,
             argv: &args,
@@ -118,7 +146,7 @@ impl CodexEngine {
             // primary turn always, and the FORMAT REPAIR turn (a kicked repair leaves the first
             // reply standing). A continuation/denial retry passes `None`.
             kick_path: self.kick_path.as_deref(),
-            tool_delta: Some(&td),
+            tool_flight: Some(&td),
             on_running: self
                 .on_running
                 .as_ref()
@@ -163,6 +191,7 @@ impl CodexEngine {
                     kind: StopKind::Stall {
                         silent_seconds: result.silent_seconds,
                         tool_open_seconds: result.tool_open_seconds,
+                        open_tools: result.open_tools.clone(),
                         last_event: result.last_event.clone(),
                     },
                     partial: salvage_partial(&events_text),

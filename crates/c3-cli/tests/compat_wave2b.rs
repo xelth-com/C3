@@ -8,14 +8,21 @@
 //!   (`-c k=v`, not `-c "k=v"`), a quoted one with every `"` doubled;
 //! - fixes27c HEALTH D7, fixes28b HEALTH D13, fixes28c JOURNAL D10: the machine-wide health
 //!   journal at a failed commit, the retry after it, an orphan replayed by the next run, a torn
-//!   line moved to `<journal>.bad`.
+//!   line moved to `<journal>.bad`;
+//! - pending (e): a registration failure's outcome is not overwritten by `codex exit 1`;
+//! - fixes27c KICK D2: a kick during the timeout continuation cancels it, the timeout outcome
+//!   stays;
+//! - fixes27c STREAM D6: a stall cut names the open tool call;
+//! - host EXPLAIN / HOOK: `--explain`, `--task` required otherwise, the hook's pointer line.
 //!
 //! Nothing reaches a real provider or intake. Windows only (the fake codex is a `.cmd` wrapper
 //! around a PowerShell script, as the plugin's `fake-codex3.cmd`).
 #![cfg(windows)]
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -411,4 +418,195 @@ fn a_missing_health_directory_is_named_and_the_journal_too() {
         "warning    : machine-wide health not updated by the retry after the commit ({cause})"
     );
     assert!(t.lines().any(|l| l == line), "{t}");
+}
+
+// ------------------------------------------------------------------ pending (e)
+
+#[test]
+fn a_registration_failure_keeps_its_outcome() {
+    let e = setup("register");
+    let x = e.consult(
+        &["--reply-name", "inj"],
+        &[
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("CODEX_CONSULT_TEST_REGISTER_FAIL", "1"),
+            ("FAKE_CODEX_HANG", "1"),
+        ],
+    );
+    assert_eq!(x.status.code(), Some(1), "{}", text(&x));
+    let outcome = e.last()["bridge_outcome"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    assert_eq!(
+        outcome,
+        "failed: could not register the codex process (injected: registration write failed); codex was stopped"
+    );
+}
+
+// ------------------------------------------------------------------ KICK D2 / STREAM D6
+
+#[test]
+fn a_kick_during_the_timeout_continuation_cancels_it() {
+    let e = setup("kickcont");
+    let mut child = e
+        .cmd(
+            &[
+                "consult",
+                "--task",
+                "t",
+                "--prompt",
+                "x",
+                "--reply-name",
+                "kc",
+                "--timeout-sec",
+                "4",
+                "--continue-sec",
+                "60",
+                "--stall-sec",
+                "0",
+            ],
+            &[
+                ("CODEX_CONSULT_TEST_MODE", "1"),
+                ("FAKE_CODEX_HANG", "1"),
+                ("FAKE_CODEX_HANG_RESUME", "1"),
+            ],
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let reader = std::thread::spawn(move || {
+        for l in BufReader::new(stdout).lines().map_while(Result::ok) {
+            let _ = tx.send(l);
+        }
+    });
+    // wait until the continuation turn is announced, then give it a moment to start
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut seen = String::new();
+    let mut cont = false;
+    while Instant::now() < deadline {
+        if let Ok(l) = rx.recv_timeout(Duration::from_millis(200)) {
+            seen.push_str(&l);
+            seen.push('\n');
+            if l.contains("one continuation turn on thread") {
+                cont = true;
+                break;
+            }
+        }
+    }
+    assert!(cont, "no continuation announced: {seen}");
+    std::thread::sleep(Duration::from_millis(1500));
+    let mut kicked = None;
+    let kdeadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < kdeadline {
+        let k = e.c3(
+            &["consult", "--task", "t", "--kick", "--member", "01"],
+            &[("CODEX_CONSULT_TEST_MODE", "1")],
+        );
+        if k.status.code() == Some(0) {
+            kicked = Some(text(&k));
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let status = child.wait().unwrap();
+    let _ = reader.join();
+    assert!(kicked.is_some(), "the kick was never taken: {seen}");
+    assert_eq!(status.code(), Some(1));
+    let last = e.last();
+    assert_eq!(
+        last["bridge_outcome"], "failed: timeout after 4 s (process tree killed)",
+        "{last}"
+    );
+    assert!(
+        last["timeout_continue"]["outcome"]
+            .as_str()
+            .unwrap_or("")
+            .contains("stopped by the operator (-Kick)"),
+        "{}",
+        last["timeout_continue"]
+    );
+    assert_ne!(last["provider_failure"]["class"], "operator");
+    assert!(warnings(&last).iter().any(|w| w
+        == "kick: the operator stopped the timeout continuation (-Kick); the timeout outcome and its salvage stay"));
+}
+
+#[test]
+fn a_stall_cut_names_the_open_tool_call() {
+    let e = setup("toolcap");
+    let x = e.consult(
+        &[
+            "--reply-name",
+            "tc",
+            "--stall-sec",
+            "3",
+            "--continue-sec",
+            "0",
+        ],
+        &[
+            ("CODEX_CONSULT_TEST_MODE", "1"),
+            ("CODEX_CONSULT_TEST_TOOL_CAP_SEC", "4"),
+            ("FAKE_CODEX_TOOL_OPEN", "1"),
+        ],
+    );
+    assert_eq!(x.status.code(), Some(1), "{}", text(&x));
+    let last = e.last();
+    let o = last["bridge_outcome"].as_str().unwrap_or("");
+    let re = regex::Regex::new(r"^failed: stalled after 3 s without an event - no output for \d+ s \(a tool call open for \d+ s: codex command_execution item_9\) \(process tree killed\)$").unwrap();
+    assert!(re.is_match(o), "{o}");
+    assert_eq!(last["stall"]["seconds"], 3);
+}
+
+// ------------------------------------------------------------------ EXPLAIN / -Task / HOOK
+
+#[test]
+fn explain_and_the_task_requirement() {
+    let e = setup("explain");
+    let plugin = e.work.join("plugin");
+    std::fs::create_dir_all(plugin.join("skills").join("coordinate")).unwrap();
+    std::fs::write(
+        plugin.join("skills").join("coordinate").join("SKILL.md"),
+        "---\nname: coordinate\n---\n\n# The rules\nrun ${CLAUDE_PLUGIN_ROOT}/scripts/x\n",
+    )
+    .unwrap();
+    let p = plugin.to_string_lossy().to_string();
+    let env = [("CLAUDE_PLUGIN_ROOT", p.as_str())];
+    let x = e.c3(&["consult", "--explain", "coordinate"], &env);
+    let t = String::from_utf8_lossy(&x.stdout).to_string();
+    assert_eq!(x.status.code(), Some(0), "{}", text(&x));
+    assert!(
+        t.starts_with("codex-consult -Explain coordinate: the coordinate skill, "),
+        "{t}"
+    );
+    assert!(t.contains(&format!("run {p}/scripts/x")), "{t}");
+    let rest = &t[t.find('\n').unwrap()..];
+    assert!(!rest.contains("${CLAUDE_PLUGIN_ROOT}"), "{t}");
+    let y = e.c3(&["consult", "--explain", "coordinate", "--task", "t"], &env);
+    assert_eq!(y.status.code(), Some(1));
+    assert!(text(&y).contains("-Explain takes no other parameter (got -Task)."));
+    let b = e.c3(&["consult", "--explain", "bogus"], &env);
+    assert_eq!(b.status.code(), Some(1));
+    assert!(text(&b).contains("-Explain takes coordinate, consult or providers (got 'bogus')."));
+    let nt = e.c3(&["consult", "--dry-run", "--prompt", "x"], &env);
+    assert_eq!(nt.status.code(), Some(1));
+    assert!(text(&nt).contains("codex-consult: -Task <id> is required (a slug: the task directory <CollabDir>/<id>/); the one form without it is -Explain coordinate|consult|providers."));
+    assert!(!e.repo.join(".collab").exists());
+}
+
+#[test]
+fn the_hook_prints_the_pointer_line() {
+    let e = setup("hook");
+    let x = e.c3(&["hook", "--explain-command", "the-explain-command"], &[]);
+    let t = String::from_utf8_lossy(&x.stdout).replace("\r\n", "\n");
+    assert_eq!(x.status.code(), Some(0));
+    let lines: Vec<&str> = t.lines().filter(|l| !l.is_empty()).collect();
+    assert_eq!(lines.len(), 2, "{t}");
+    assert!(lines[0].starts_with("codex-consult: "), "{t}");
+    assert_eq!(
+        lines[1],
+        "codex-consult: coordinator rules - skill codex-consult:coordinate (or the-explain-command); telemetry: off"
+    );
 }

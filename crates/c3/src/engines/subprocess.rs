@@ -41,16 +41,16 @@ pub struct SpawnRequest<'a> {
     /// (wave 26b, D12) The stall cut in seconds (`0` = off): the turn is stopped like a timeout
     /// when its event stream produces no growth for this long while the process lives. Per wave
     /// 26c D3 the silent timer resets on any growth of the stream in bytes and is SUSPENDED while
-    /// a tool call is in flight (see `tool_delta`).
+    /// a tool call is in flight (see `tool_flight`).
     pub stall_sec: i64,
     /// (wave 26b, D10) The operator's kick file: when it appears the turn is stopped and recorded
     /// as `stopped by the operator (-Kick)`. `None` disables the check.
     pub kick_path: Option<&'a Path>,
-    /// (wave 26c, D3) Classifies one event-stream line for the stall's tool-call suspension:
-    /// `+1` when the line STARTS a tool call, `-1` when it ENDS one, `0` otherwise. While the
-    /// running count is above zero the stall timer is suspended. `None` = no suspension (the
-    /// timer still resets on byte growth).
-    pub tool_delta: Option<&'a dyn Fn(&str) -> i64>,
+    /// (wave 26c, D3 / 28b, D12) Classifies one event-stream line for the stall's tool-call
+    /// suspension (`Update-ToolFlight`): a tool call OPENS (with its key and label), CLOSES, or the
+    /// line is neutral. While a call is open the stall timer is suspended (bounded), and a stall cut
+    /// names the open call(s). `None` = no suspension (the timer still resets on byte growth).
+    pub tool_flight: Option<&'a dyn Fn(&str) -> ToolFlight>,
     /// Called once, right after the child is spawned and before it is waited on, with the
     /// child pid and its start time (.NET `o` string, or empty when unavailable). The
     /// orchestrator uses it to flip the recovery record `launching` -> `running` while the
@@ -88,8 +88,11 @@ pub struct TurnResult {
     /// (wave 26b, D12) Seconds without an event at the stall kill (`0` unless a stall fired).
     pub silent_seconds: i64,
     /// (wave 27c, D6) Seconds a tool call had been open at the stall kill (`0` when none was open);
-    /// the stall outcome names it: `no output for N s (a tool call open for M s)`.
+    /// the stall outcome names it: `no output for N s (a tool call open for M s: <calls>)`.
     pub tool_open_seconds: i64,
+    /// (wave 28b, D12) The tool call(s) open at the stall kill (`codex command_execution item_9`,
+    /// `muse tool.shell t1`; several joined by `, `), `""` when none.
+    pub open_tools: String,
     /// (wave 27c, D5) How many over-long unfinished lines (> 1 MiB with no line end) the bounded
     /// stream reader discarded during the turn; `0` normally. A non-zero count warns once per run.
     pub oversized_lines: u64,
@@ -113,6 +116,7 @@ impl TurnResult {
             last_event: None,
             silent_seconds: 0,
             tool_open_seconds: 0,
+            open_tools: String::new(),
             oversized_lines: 0,
             survivors: Vec::new(),
             wall_seconds: 0.0,
@@ -126,11 +130,12 @@ impl TurnResult {
 /// only up to 1 MiB; a longer unfinished line is discarded up to its end and counted.
 const STREAM_CARRY_CAP: usize = 1024 * 1024;
 
-/// (wave 27c, D6) An open tool call cannot suspend the stall timer for ever: it may hold the timer
-/// for at most `max(3 x stall seconds, 1800 s)` with no growth of the stream at all.
+/// (wave 27c, D6 / 28b, D12 / F36-11, F32-7) An open tool call cannot suspend the stall timer for
+/// ever, and no completion event is needed to end the suspension: while a tool call is open the
+/// stream must still GROW - once it has not grown for 2 x the stall seconds (no floor; the test hook
+/// `CODEX_CONSULT_TEST_TOOL_CAP_SEC` = that bound) the suspension ends and the stall cut follows,
+/// naming the open call.
 fn tool_suspension_cap_secs(stall_sec: i64) -> i64 {
-    // (wave 27c, D6) the cap the stall timer stays suspended while a tool call is in flight:
-    // max(3 x stall, 1800 s), overridable by the test hook `CODEX_CONSULT_TEST_TOOL_CAP_SEC`.
     if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_TOOL_CAP_SEC") {
         if let Ok(n) = v.trim().parse::<i64>() {
             if n > 0 {
@@ -138,7 +143,97 @@ fn tool_suspension_cap_secs(stall_sec: i64) -> i64 {
             }
         }
     }
-    (stall_sec.saturating_mul(3)).max(1800)
+    stall_sec.saturating_mul(2)
+}
+
+/// (wave 26c, D3 / 28b, D12) One event line's effect on the tool calls in flight
+/// (`Update-ToolFlight`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolFlight {
+    /// Not a tool call's start or end.
+    None,
+    /// A tool call starts: its key (a key ending in `#` is made unique by the tracker - a call
+    /// without an id) and the label a stall cut names it by.
+    Open { key: String, label: String },
+    /// A tool call ends: the open call with `key`, else (none open by that key) the first open call
+    /// whose key starts with `fallback_prefix` (`""` = none).
+    Close {
+        key: String,
+        fallback_prefix: String,
+    },
+}
+
+impl ToolFlight {
+    /// The old count delta: `+1` open, `-1` close, `0` neutral.
+    pub fn delta(&self) -> i64 {
+        match self {
+            ToolFlight::None => 0,
+            ToolFlight::Open { .. } => 1,
+            ToolFlight::Close { .. } => -1,
+        }
+    }
+}
+
+/// The tool calls in flight (a set by key, with their labels).
+#[derive(Debug, Clone, Default)]
+pub struct ToolCalls {
+    open: Vec<(String, String)>,
+    seq: u64,
+}
+
+impl ToolCalls {
+    /// Apply one line's [`ToolFlight`].
+    pub fn apply(&mut self, f: ToolFlight) {
+        match f {
+            ToolFlight::None => {}
+            ToolFlight::Open { key, label } => {
+                let key = if key.ends_with('#') {
+                    self.seq += 1;
+                    format!("{key}{}", self.seq)
+                } else {
+                    key
+                };
+                if !self.open.iter().any(|(k, _)| *k == key) {
+                    self.open.push((key, label));
+                }
+            }
+            ToolFlight::Close {
+                key,
+                fallback_prefix,
+            } => {
+                if !key.is_empty() {
+                    if let Some(i) = self.open.iter().position(|(k, _)| *k == key) {
+                        self.open.remove(i);
+                        return;
+                    }
+                }
+                if !fallback_prefix.is_empty() {
+                    if let Some(i) = self
+                        .open
+                        .iter()
+                        .position(|(k, _)| k.starts_with(&fallback_prefix))
+                    {
+                        self.open.remove(i);
+                    }
+                }
+            }
+        }
+    }
+
+    /// How many tool calls are open.
+    pub fn count(&self) -> usize {
+        self.open.len()
+    }
+
+    /// The open calls' labels, by key (ordinal), joined by `, ` (the plugin's `OpenTools`).
+    pub fn labels(&self) -> String {
+        let mut v: Vec<&(String, String)> = self.open.iter().collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v.iter()
+            .map(|(_, l)| l.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 fn round1(secs: f64) -> f64 {
@@ -395,7 +490,8 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     let mut offset: u64 = 0;
     let mut line_buf = String::new();
     let mut last_activity = Instant::now();
-    let mut open_tools: i64 = 0;
+    let mut open_tools = ToolCalls::default();
+    let mut open_tool_labels = String::new();
     let mut last_event: Option<String> = None;
     let mut silent_seconds: i64 = 0;
     let mut tool_open_seconds: i64 = 0;
@@ -475,7 +571,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                             req.events_path,
                             &mut offset,
                             &mut line_buf,
-                            req.tool_delta,
+                            req.tool_flight,
                             &mut open_tools,
                             &mut oversized_lines,
                             &mut discarding,
@@ -485,27 +581,28 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                             last_event = Some(iso_now());
                         }
                         // (wave 27c, D6) track when the current tool-call suspension began.
-                        if open_tools > 0 {
+                        if open_tools.count() > 0 {
                             tool_open_since.get_or_insert_with(Instant::now);
                         } else {
                             tool_open_since = None;
                         }
                         let silent = last_activity.elapsed().as_secs() as i64;
                         // The timer is suspended while a tool call is in flight — but only up to
-                        // `max(3 x stall, 1800 s)` with no growth of the stream at all (wave 27c D6).
-                        let fire = if open_tools <= 0 {
+                        // 2 x stall with no growth of the stream at all (wave 28b D12).
+                        let fire = if open_tools.count() == 0 {
                             silent >= req.stall_sec
                         } else {
                             silent >= tool_suspension_cap_secs(req.stall_sec)
                         };
                         if fire {
                             silent_seconds = silent;
-                            if open_tools > 0 {
+                            if open_tools.count() > 0 {
                                 tool_open_seconds = tool_open_since
                                     .map(|t| t.elapsed().as_secs() as i64)
                                     .unwrap_or(0);
+                                open_tool_labels = open_tools.labels();
                                 eprintln!(
-                                    "codex-consult: no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s)"
+                                    "codex-consult: no output for {silent_seconds} s (a tool call open for {tool_open_seconds} s: {open_tool_labels})"
                                 );
                             }
                             survivors = kill_now(&mut child);
@@ -523,6 +620,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         last_event,
                         silent_seconds: 0,
                         tool_open_seconds: 0,
+                        open_tools: String::new(),
                         oversized_lines,
                         survivors: Vec::new(),
                         wall_seconds: round1(start.elapsed().as_secs_f64()),
@@ -561,6 +659,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         last_event,
         silent_seconds,
         tool_open_seconds,
+        open_tools: open_tool_labels,
         oversized_lines,
         survivors,
         wall_seconds,
@@ -570,16 +669,16 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
 }
 
 /// Read any new bytes of the events stream since `offset`, advancing it and the carried
-/// partial-line buffer. Applies `tool_delta` to each COMPLETE new line to keep `open_tools`
-/// (the count of tool calls in flight) current. Returns whether the stream grew at all (any new
+/// partial-line buffer. Applies `tool_flight` to each COMPLETE new line to keep `open_tools`
+/// (the tool calls in flight) current. Returns whether the stream grew at all (any new
 /// bytes) — the caller resets the silent timer on that (wave 26c D3: reset on byte growth).
 #[allow(clippy::too_many_arguments)]
 fn read_stream_growth(
     path: &Path,
     offset: &mut u64,
     line_buf: &mut String,
-    tool_delta: Option<&dyn Fn(&str) -> i64>,
-    open_tools: &mut i64,
+    tool_flight: Option<&dyn Fn(&str) -> ToolFlight>,
+    open_tools: &mut ToolCalls,
     oversized: &mut u64,
     discarding: &mut bool,
 ) -> bool {
@@ -607,7 +706,7 @@ fn read_stream_growth(
         return false;
     }
     *offset += n as u64;
-    if let Some(delta) = tool_delta {
+    if let Some(flight) = tool_flight {
         let mut chunk = String::from_utf8_lossy(&buf).into_owned();
         // (wave 27c, D5) if we are discarding the tail of an over-long line, skip to its end.
         if *discarding {
@@ -624,7 +723,7 @@ fn read_stream_growth(
             let line: String = line_buf.drain(..=nl).collect();
             let line = line.trim();
             if !line.is_empty() {
-                *open_tools = (*open_tools + delta(line)).max(0);
+                open_tools.apply(flight(line));
             }
         }
         // (wave 27c, D5) the carry is the text after the last line end, capped at 1 MiB: a longer
@@ -737,17 +836,17 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("events.jsonl");
         let mut f = File::create(&path).unwrap();
-        let delta = |line: &str| crate::engines::codex::codex_tool_delta(line);
-        let td: Option<&dyn Fn(&str) -> i64> = Some(&delta);
+        let flight = |line: &str| crate::engines::codex::codex_tool_flight(line);
+        let td: Option<&dyn Fn(&str) -> ToolFlight> = Some(&flight);
 
         let mut offset = 0u64;
         let mut line_buf = String::new();
-        let mut open = 0i64;
+        let mut open = ToolCalls::default();
         let mut oversized = 0u64;
         let mut discarding = false;
         let grow = |offset: &mut u64,
                     line_buf: &mut String,
-                    open: &mut i64,
+                    open: &mut ToolCalls,
                     oversized: &mut u64,
                     discarding: &mut bool| {
             read_stream_growth(&path, offset, line_buf, td, open, oversized, discarding)
@@ -776,7 +875,7 @@ mod tests {
             &mut oversized,
             &mut discarding
         ));
-        assert_eq!(open, 0);
+        assert_eq!(open.count(), 0);
 
         // A tool call starts: the count rises (the timer would suspend).
         writeln!(
@@ -792,7 +891,7 @@ mod tests {
             &mut oversized,
             &mut discarding
         ));
-        assert_eq!(open, 1);
+        assert_eq!(open.count(), 1);
 
         // It completes: back to zero (the timer resumes).
         writeln!(
@@ -808,7 +907,7 @@ mod tests {
             &mut oversized,
             &mut discarding
         ));
-        assert_eq!(open, 0);
+        assert_eq!(open.count(), 0);
 
         // No further growth.
         assert!(!grow(
@@ -829,12 +928,12 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("events.jsonl");
         let mut f = File::create(&path).unwrap();
-        let delta = |line: &str| crate::engines::codex::codex_tool_delta(line);
-        let td: Option<&dyn Fn(&str) -> i64> = Some(&delta);
+        let flight = |line: &str| crate::engines::codex::codex_tool_flight(line);
+        let td: Option<&dyn Fn(&str) -> ToolFlight> = Some(&flight);
 
         let mut offset = 0u64;
         let mut line_buf = String::new();
-        let mut open = 0i64;
+        let mut open = ToolCalls::default();
         let mut oversized = 0u64;
         let mut discarding = false;
 
@@ -876,7 +975,8 @@ mod tests {
         assert_eq!(oversized, 1, "no double-count of the same over-long line");
         assert!(!discarding);
         assert_eq!(
-            open, 1,
+            open.count(),
+            1,
             "the tool-call line after the discard is still parsed"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -963,12 +1063,67 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // (wave 27c, D6) an open tool call suspends the stall timer for at most max(3 x stall, 1800 s).
+    // (wave 28b, D12) an open tool call suspends the stall timer for at most 2 x stall without
+    // growth - no 1800 s floor.
     #[test]
     fn tool_suspension_cap_is_bounded() {
-        assert_eq!(tool_suspension_cap_secs(10), 1800); // 30 < 1800 -> 1800 floor
-        assert_eq!(tool_suspension_cap_secs(0), 1800);
-        assert_eq!(tool_suspension_cap_secs(1000), 3000); // 3 x 1000
+        assert_eq!(tool_suspension_cap_secs(2), 4);
+        assert_eq!(tool_suspension_cap_secs(10), 20);
+        assert_eq!(tool_suspension_cap_secs(1000), 2000);
+    }
+
+    // (wave 28b, D12) the tracker keeps the open calls by key: a completion closes its own call (by
+    // id, else the first open one of its type), a stall names what is still open.
+    #[test]
+    fn tool_calls_name_the_open_call() {
+        let mut t = ToolCalls::default();
+        let start = |id: &str| {
+            crate::engines::codex::codex_tool_flight(&format!(
+                r#"{{"type":"item.started","item":{{"id":"{id}","type":"command_execution"}}}}"#
+            ))
+        };
+        let done = |id: &str| {
+            crate::engines::codex::codex_tool_flight(&format!(
+                r#"{{"type":"item.completed","item":{{"id":"{id}","type":"command_execution"}}}}"#
+            ))
+        };
+        t.apply(start("item_9"));
+        t.apply(start("item_3"));
+        assert_eq!(t.count(), 2);
+        assert_eq!(
+            t.labels(),
+            "codex command_execution item_3, codex command_execution item_9"
+        );
+        t.apply(done("item_3"));
+        assert_eq!(t.labels(), "codex command_execution item_9");
+        // a completion of a call that is not open changes nothing
+        t.apply(done("item_77"));
+        assert_eq!(t.count(), 1);
+        // calls without an id: closed by their type
+        let anon_start = crate::engines::codex::codex_tool_flight(
+            r#"{"type":"item.started","item":{"type":"web_search"}}"#,
+        );
+        let anon_done = crate::engines::codex::codex_tool_flight(
+            r#"{"type":"item.completed","item":{"type":"web_search"}}"#,
+        );
+        t.apply(anon_start.clone());
+        t.apply(anon_start);
+        assert_eq!(t.count(), 3);
+        t.apply(anon_done);
+        assert_eq!(t.count(), 2);
+        // a muse tool task: proposed opens it, its completion (any kind field) closes it
+        let mut m = ToolCalls::default();
+        m.apply(crate::engines::muse::muse_tool_flight(
+            r#"{"payload_type":"task.lifecycle.proposed","payload":{"event":{"task_kind":"tool.shell","task_id":"t1"}}}"#,
+        ));
+        m.apply(crate::engines::muse::muse_tool_flight(
+            r#"{"payload_type":"task.lifecycle.started","payload":{"event":{"task_id":"t1"}}}"#,
+        ));
+        assert_eq!(m.labels(), "muse tool.shell t1");
+        m.apply(crate::engines::muse::muse_tool_flight(
+            r#"{"payload_type":"task.lifecycle.completed","payload":{"event":{"task_id":"t1"}}}"#,
+        ));
+        assert_eq!(m.count(), 0);
     }
 
     // (wave 27c, D1) a kick request carries an id written atomically; the member acknowledges with

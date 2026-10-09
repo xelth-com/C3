@@ -494,6 +494,7 @@ dependencies = [
  "c3-core",
  "chrono",
  "clap",
+ "regex",
  "serde_json",
 ]
 

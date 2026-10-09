@@ -62,7 +62,7 @@ fn on_running_fires_with_child_pid_and_timeout_kills() {
         timeout: Duration::from_secs(1),
         stall_sec: 0,
         kick_path: None,
-        tool_delta: None,
+        tool_flight: None,
         on_running: Some(&cb),
     };
     let result = run_turn(&req);
@@ -109,7 +109,7 @@ fn survivor_hook_adds_a_live_pid_to_the_kill() {
         timeout: Duration::from_secs(1),
         stall_sec: 0,
         kick_path: None,
-        tool_delta: None,
+        tool_flight: None,
         on_running: None,
     };
     let result = run_turn(&req);

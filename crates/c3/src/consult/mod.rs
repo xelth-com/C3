@@ -18,6 +18,7 @@ pub mod args;
 pub mod detach;
 pub mod detached;
 pub mod dryrun;
+pub mod explain;
 pub mod http;
 pub mod ingest;
 pub mod kick;

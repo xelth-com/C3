@@ -25,7 +25,7 @@ use c3_core::health::{convert_from_provider_error_text, provider_failure_class};
 use serde_json::Value;
 
 use super::codex::TurnFiles;
-use super::subprocess::{run_turn, SpawnRequest};
+use super::subprocess::{run_turn, SpawnRequest, ToolFlight};
 
 /// The runtime `muse` engine: the resolved launcher, the working directory (repo root) and the
 /// per-turn stream files. `plan`/`capabilities` delegate to the core [`SubprocessEngine`];
@@ -47,28 +47,88 @@ pub struct MuseEngine {
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
 }
 
-/// (wave 26c, D3) One muse MSP line's effect on the tool-call-in-flight count: `+1` when a
-/// `tool.*` task is proposed/started, `-1` when it completes/fails, `0` otherwise. Suspends the
-/// stall timer while a muse tool task runs.
-pub fn muse_tool_delta(line: &str) -> i64 {
+/// (wave 26c, D3 / 28b, D12) One muse MSP line's effect on the tool calls in flight
+/// (`Update-ToolFlight`): a `task.lifecycle.proposed` of a `tool.*` task opens a call (key
+/// `muse:<task id>`, label `muse <kind> <task id>`); its `completed` / `failed` / `cancelled` /
+/// `canceled` / `rejected` closes it. Suspends the stall timer while a muse tool task runs.
+pub fn muse_tool_flight(line: &str) -> ToolFlight {
     let v: serde_json::Value = match serde_json::from_str(line) {
         Ok(v) => v,
-        Err(_) => return 0,
+        Err(_) => return ToolFlight::None,
     };
     let p_type = v.get("payload_type").and_then(|t| t.as_str()).unwrap_or("");
-    let kind = v
-        .get("payload")
-        .and_then(|p| p.get("event"))
+    if !p_type.starts_with("task.lifecycle.") {
+        return ToolFlight::None;
+    }
+    let payload = v.get("payload");
+    let event = payload.and_then(|p| p.get("event"));
+    let tid = event
+        .and_then(|e| e.get("task_id"))
+        .and_then(|t| t.as_str())
+        .filter(|t| !t.is_empty())
+        .or_else(|| {
+            payload
+                .and_then(|p| p.get("task_id"))
+                .and_then(|t| t.as_str())
+        })
+        .unwrap_or("");
+    let kind = event
         .and_then(|e| e.get("task_kind"))
         .and_then(|t| t.as_str())
         .unwrap_or("");
-    if !kind.starts_with("tool.") {
-        return 0;
-    }
     match p_type {
-        "task.lifecycle.proposed" | "task.lifecycle.started" => 1,
-        "task.lifecycle.completed" | "task.lifecycle.failed" => -1,
-        _ => 0,
+        "task.lifecycle.proposed" if kind.starts_with("tool.") => ToolFlight::Open {
+            key: if tid.is_empty() {
+                format!("muse-kind:{kind}#")
+            } else {
+                format!("muse:{tid}")
+            },
+            label: if tid.is_empty() {
+                format!("muse {kind}")
+            } else {
+                format!("muse {kind} {tid}")
+            },
+        },
+        "task.lifecycle.completed"
+        | "task.lifecycle.failed"
+        | "task.lifecycle.cancelled"
+        | "task.lifecycle.canceled"
+        | "task.lifecycle.rejected" => ToolFlight::Close {
+            key: if tid.is_empty() {
+                String::new()
+            } else {
+                format!("muse:{tid}")
+            },
+            fallback_prefix: if tid.is_empty() && kind.starts_with("tool.") {
+                format!("muse-kind:{kind}#")
+            } else {
+                String::new()
+            },
+        },
+        _ => ToolFlight::None,
+    }
+}
+
+/// (wave 26c, D3) The count delta of [`muse_tool_flight`] for a `tool.*` task: `+1` proposed, `-1`
+/// completed/failed, `0` otherwise (a non-tool task's end is neutral here).
+pub fn muse_tool_delta(line: &str) -> i64 {
+    match muse_tool_flight(line) {
+        ToolFlight::Close { .. } => {
+            let tool = serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| {
+                    v.pointer("/payload/event/task_kind")
+                        .and_then(|k| k.as_str())
+                        .map(|k| k.starts_with("tool."))
+                })
+                .unwrap_or(false);
+            if tool {
+                -1
+            } else {
+                0
+            }
+        }
+        f => f.delta(),
     }
 }
 
@@ -105,7 +165,7 @@ impl MuseEngine {
         let files = self.files_for(turn.kind);
         let timeout = std::time::Duration::from_secs_f64(turn.request.timeout_sec.max(0.0));
         let is_primary = matches!(turn.kind, TurnKind::Primary);
-        let td = |l: &str| muse_tool_delta(l);
+        let td = |l: &str| muse_tool_flight(l);
         let spawn = SpawnRequest {
             launcher: &self.launcher,
             argv: &args,
@@ -119,7 +179,7 @@ impl MuseEngine {
             // (wave 26c, D1) the caller scopes `kick_path` (primary always; the format-repair turn
             // so a kicked repair leaves the first reply standing; a continuation passes None).
             kick_path: self.kick_path.as_deref(),
-            tool_delta: Some(&td),
+            tool_flight: Some(&td),
             on_running: self
                 .on_running
                 .as_ref()
@@ -159,6 +219,7 @@ impl MuseEngine {
                     kind: c3_core::engine::StopKind::Stall {
                         silent_seconds: result.silent_seconds,
                         tool_open_seconds: result.tool_open_seconds,
+                        open_tools: result.open_tools.clone(),
                         last_event: result.last_event.clone(),
                     },
                     partial,
