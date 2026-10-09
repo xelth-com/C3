@@ -342,6 +342,9 @@ pub enum AttemptOutcome {
         conversation: ConversationTrust,
         /// The measured wall time of the killed turn (`[math]::Round(..., 1)`).
         wall_seconds: f64,
+        /// (wave 27c D16, 28c D8, 28e E1/E23) What the process-tree kill could confirm; `None`
+        /// when no process was killed (the http engine has none).
+        kill: Option<KillCheck>,
     },
     /// (wave 26b, D10/D12) A subprocess turn the bridge stopped for a reason other than its
     /// wall-clock timeout: the stall cut (`--stall-sec`: no event for that long while the process
@@ -354,6 +357,8 @@ pub enum AttemptOutcome {
         survivors: Vec<u32>,
         conversation: ConversationTrust,
         wall_seconds: f64,
+        /// What the process-tree kill could confirm (as [`AttemptOutcome::TimedOut`]).
+        kill: Option<KillCheck>,
     },
     LaunchFailed {
         /// Whether a child process was left behind by the failed launch.
@@ -367,6 +372,35 @@ pub enum AttemptOutcome {
         exit_code: Option<i32>,
     },
     Cancelled,
+}
+
+/// (wave 27c D16; 28c D8; 28e E1, E23) What a process-tree kill could confirm
+/// (`Stop-ProcessTreeChecked`'s result; the pids still alive after it travel beside it as the
+/// outcome's `survivors`). `confirmed` only when the root exited and every known descendant is gone
+/// (and, where the children could not be enumerated, the tree-kill fallback reported the whole
+/// tree terminated). A descendant whose start time could not be read is neither killed by its pid
+/// nor counted as gone: it is listed in `unverified` (the kill is then "not confirmed: start time
+/// of pid <n> unreadable"). `why` says why the kill is not confirmed (`""` when it is).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KillCheck {
+    /// The pid of the tree's root (the process the bridge started).
+    pub root_pid: u32,
+    pub confirmed: bool,
+    pub why: String,
+    /// Descendants whose start time could not be read (`Unverified`).
+    pub unverified: Vec<u32>,
+}
+
+impl KillCheck {
+    /// A kill of `root_pid` that is confirmed (nothing left, nothing unverified).
+    pub fn confirmed(root_pid: u32) -> KillCheck {
+        KillCheck {
+            root_pid,
+            confirmed: true,
+            why: String::new(),
+            unverified: Vec::new(),
+        }
+    }
 }
 
 /// Why a subprocess turn was stopped short of a natural exit or a wall-clock timeout

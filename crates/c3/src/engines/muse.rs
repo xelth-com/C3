@@ -213,6 +213,7 @@ impl MuseEngine {
             };
             let partial = muse_salvage(&events_text);
             let survivors = result.survivors.clone();
+            let kill = result.kill.clone();
             let wall_seconds = result.wall_seconds;
             let outcome = match result.stop {
                 TurnStop::Stall => AttemptOutcome::Stopped {
@@ -225,6 +226,7 @@ impl MuseEngine {
                     partial,
                     survivors,
                     conversation,
+                    kill: kill.clone(),
                     wall_seconds,
                 },
                 TurnStop::Kick => AttemptOutcome::Stopped {
@@ -232,12 +234,14 @@ impl MuseEngine {
                     partial,
                     survivors,
                     conversation,
+                    kill: kill.clone(),
                     wall_seconds,
                 },
                 _ => AttemptOutcome::TimedOut {
                     partial,
                     survivors,
                     conversation,
+                    kill: kill.clone(),
                     wall_seconds,
                 },
             };

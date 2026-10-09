@@ -14,12 +14,112 @@
 /// The process's start time as .NET's `o` string in UTC, `Some("")` when the process exists
 /// but its start time is not available, `None` when there is no such process. Mirrors
 /// `Get-ProcessStartIso` (which returns `$null` when `Get-Process` fails, `''` when
-/// `StartTime` throws).
+/// `StartTime` throws). (wave 28e, E1/E19) On Windows a process that exists but denies the query
+/// (a protected or another session's process: `OpenProcess` fails with access denied) reads `""`,
+/// never "gone" - its identity cannot be confirmed, so it is never taken for a dead one.
+/// TEST HOOK (test mode only, wave 28c D8): `CODEX_CONSULT_TEST_START_UNREADABLE=<pid>[,<pid>]` -
+/// these pids, when they exist, read `""` (as access denied makes it). The machine-wide scan's
+/// process table ([`enumerate_processes`]) does not go through the hook (the plugin's scan reads
+/// `Win32_Process.CreationDate`, not `Get-ProcessStartIso`).
 pub fn process_start_iso(pid: u32) -> Option<String> {
     if pid == 0 {
         return None;
     }
-    imp::process_start_iso(pid)
+    let live = imp::process_start_iso(pid)?;
+    if start_unreadable_hook().contains(&pid) {
+        return Some(String::new());
+    }
+    Some(live)
+}
+
+/// The pids of `CODEX_CONSULT_TEST_START_UNREADABLE` (test mode only; empty otherwise).
+fn start_unreadable_hook() -> Vec<u32> {
+    pid_list_hook("CODEX_CONSULT_TEST_START_UNREADABLE")
+}
+
+/// A `CODEX_CONSULT_TEST_*` hook that names pids (`<pid>[,<pid>]`), honoured in test mode only.
+pub fn pid_list_hook(name: &str) -> Vec<u32> {
+    c3_core::test_hooks::hook(name)
+        .map(|v| {
+            v.split(',')
+                .filter_map(|t| t.trim().parse::<u32>().ok())
+                .filter(|p| *p > 0)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// (wave 28c, D8) `Get-PidIdentity`: is `pid` still the process that had `start_time`?
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PidIdentity {
+    /// A process with that pid runs with that start time.
+    Alive,
+    /// No such process, or the pid now belongs to another one (another start time).
+    Gone,
+    /// The process exists but its identity cannot be confirmed: no start time was recorded, or
+    /// its start time cannot be read now.
+    Unknown,
+}
+
+/// `Get-PidIdentity`.
+pub fn pid_identity(pid: u32, start_time: &str) -> PidIdentity {
+    if pid == 0 {
+        return PidIdentity::Gone;
+    }
+    let Some(live) = process_start_iso(pid) else {
+        return PidIdentity::Gone;
+    };
+    if start_time.is_empty() || live.is_empty() {
+        return PidIdentity::Unknown;
+    }
+    if same_start_time(&live, start_time) {
+        PidIdentity::Alive
+    } else {
+        PidIdentity::Gone
+    }
+}
+
+/// (wave 28e, E19) `Get-ProcessInfo`: one process - its name (.NET's `ProcessName`: the image name
+/// without `.exe`), its command line (`""` when it cannot be read - access denied), its start time
+/// (`""` when it cannot be read) and its parent's pid (`0` when unknown) - or `None` when no
+/// process has that pid. TEST HOOK (test mode only): `CODEX_CONSULT_TEST_CMDLINE_UNREADABLE=<pid>
+/// [,<pid>]` - these pids read with the command line `""`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub name: String,
+    pub cmd: String,
+    pub start: String,
+    pub ppid: u32,
+}
+
+/// `Get-ProcessInfo` (see [`ProcessInfo`]).
+pub fn process_info(pid: u32) -> Option<ProcessInfo> {
+    let start = process_start_iso(pid)?;
+    // gone between the two reads: no such process
+    let (image, ppid) = imp::name_and_parent(pid)?;
+    let name = strip_exe(&image).to_string();
+    let cmd = if pid_list_hook("CODEX_CONSULT_TEST_CMDLINE_UNREADABLE").contains(&pid) {
+        String::new()
+    } else {
+        process_command_line(pid)
+    };
+    Some(ProcessInfo {
+        pid,
+        name,
+        cmd,
+        start,
+        ppid,
+    })
+}
+
+/// Terminate one process by its pid (best effort). Callers check its identity first
+/// ([`pid_identity`]): a pid is never killed on a guess.
+pub fn terminate_pid(pid: u32) {
+    if pid == 0 || pid == std::process::id() {
+        return;
+    }
+    imp::terminate_pid(pid)
 }
 
 /// `Test-PidAlive`: a pid is alive when a process with that id exists and — if a start time
@@ -719,7 +819,17 @@ pub fn find_codex_processes(
 /// The whole process table for the scan (Toolhelp names/parents + `GetProcessTimes` start times on
 /// Windows; command lines are left empty and fetched per-candidate by [`process_command_line`]).
 pub fn enumerate_processes() -> Vec<ScanProc> {
-    imp::enumerate_processes()
+    imp::enumerate_processes().unwrap_or_default()
+}
+
+/// [`enumerate_processes`], saying when the table could not be read (`Find-CodexProcesses`'
+/// `Failed`; `Get-DescendantTree`'s `Denied`): the snapshot failed, or it came back empty.
+pub fn enumerate_processes_checked() -> Result<Vec<ScanProc>, String> {
+    let t = imp::enumerate_processes()?;
+    if t.is_empty() {
+        return Err("the process table came back empty".to_string());
+    }
+    Ok(t)
 }
 
 /// A process's command line, best effort (empty when it cannot be read — another user's process, a
@@ -769,6 +879,8 @@ mod imp {
     }
 
     const PROCESS_QUERY_LIMITED_INFORMATION: DWORD = 0x1000;
+    const PROCESS_TERMINATE: DWORD = 0x0001;
+    const ERROR_ACCESS_DENIED: DWORD = 5;
     const SYNCHRONIZE: DWORD = 0x0010_0000;
     const INFINITE: DWORD = 0xFFFF_FFFF;
     const TH32CS_SNAPPROCESS: DWORD = 0x0000_0002;
@@ -799,6 +911,8 @@ mod imp {
             user: *mut FILETIME,
         ) -> BOOL;
         fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
+        fn GetLastError() -> DWORD;
+        fn TerminateProcess(h: HANDLE, code: u32) -> BOOL;
         fn CreateToolhelp32Snapshot(flags: DWORD, pid: DWORD) -> HANDLE;
         fn Process32FirstW(snap: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
         fn Process32NextW(snap: HANDLE, entry: *mut PROCESSENTRY32W) -> BOOL;
@@ -816,15 +930,18 @@ mod imp {
     }
 
     /// The whole process table (pid, ppid, image name, creation time). Command lines are left empty
-    /// and fetched per-candidate later (`process_command_line`).
-    pub fn enumerate_processes() -> Vec<super::ScanProc> {
+    /// and fetched per-candidate later (`process_command_line`). `Err` when the snapshot fails.
+    pub fn enumerate_processes() -> Result<Vec<super::ScanProc>, String> {
         let mut out = Vec::new();
         // SAFETY: the snapshot handle is checked and closed; the PROCESSENTRY32W is owned and its
         // dw_size is set as the API requires.
         unsafe {
             let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
             if snap == INVALID_HANDLE_VALUE || snap == 0 {
-                return out;
+                return Err(format!(
+                    "the process table could not be read (CreateToolhelp32Snapshot failed, error {})",
+                    GetLastError()
+                ));
             }
             let mut entry: PROCESSENTRY32W = std::mem::zeroed();
             entry.dw_size = std::mem::size_of::<PROCESSENTRY32W>() as DWORD;
@@ -838,7 +955,9 @@ mod imp {
                         .position(|&c| c == 0)
                         .unwrap_or(entry.sz_exe_file.len());
                     let name = String::from_utf16_lossy(&entry.sz_exe_file[..n]);
-                    let created = super::process_start_iso(pid).and_then(|s| {
+                    // the start time as the kernel reports it (no test hook: the scan reads the
+                    // creation date, as the plugin's Win32_Process scan does)
+                    let created = process_start_iso(pid).and_then(|s| {
                         if s.is_empty() {
                             None
                         } else {
@@ -861,7 +980,56 @@ mod imp {
             }
             CloseHandle(snap);
         }
-        out
+        Ok(out)
+    }
+
+    /// The image name and the parent pid of `pid` from a Toolhelp snapshot, `None` when no such
+    /// process is listed.
+    pub fn name_and_parent(pid: u32) -> Option<(String, u32)> {
+        // SAFETY: as `parent_pid`.
+        unsafe {
+            let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+            if snap == INVALID_HANDLE_VALUE || snap == 0 {
+                return None;
+            }
+            let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+            entry.dw_size = std::mem::size_of::<PROCESSENTRY32W>() as DWORD;
+            let mut found = None;
+            if Process32FirstW(snap, &mut entry) != 0 {
+                loop {
+                    if entry.th32_process_id == pid {
+                        let n = entry
+                            .sz_exe_file
+                            .iter()
+                            .position(|&c| c == 0)
+                            .unwrap_or(entry.sz_exe_file.len());
+                        found = Some((
+                            String::from_utf16_lossy(&entry.sz_exe_file[..n]),
+                            entry.th32_parent_process_id,
+                        ));
+                        break;
+                    }
+                    if Process32NextW(snap, &mut entry) == 0 {
+                        break;
+                    }
+                }
+            }
+            CloseHandle(snap);
+            found
+        }
+    }
+
+    /// `TerminateProcess` on `pid` (best effort).
+    pub fn terminate_pid(pid: u32) {
+        // SAFETY: OpenProcess returns 0 on failure; the handle is closed after use.
+        unsafe {
+            let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            if h == 0 {
+                return;
+            }
+            TerminateProcess(h, 1);
+            CloseHandle(h);
+        }
     }
 
     /// The command line of `pid` via `NtQueryInformationProcess(ProcessCommandLineInformation)`
@@ -974,7 +1142,9 @@ mod imp {
         unsafe {
             let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if h == 0 {
-                return None;
+                // (wave 28e, E19) a process that exists but denies the query: its start time
+                // cannot be read (`Get-ProcessStartIso`'s ''); any other failure (no such pid): gone
+                return (GetLastError() == ERROR_ACCESS_DENIED).then(String::new);
             }
             let mut creation = FILETIME::default();
             let mut exit = FILETIME::default();
@@ -1023,11 +1193,11 @@ mod imp {
     /// The process table via `/proc` (best effort): pid, ppid, comm, start time. Command lines are
     /// left empty and fetched per-candidate. Non-Windows is a best-effort fallback (the harnesses
     /// run on Windows).
-    pub fn enumerate_processes() -> Vec<super::ScanProc> {
+    pub fn enumerate_processes() -> Result<Vec<super::ScanProc>, String> {
         let mut out = Vec::new();
         let rd = match std::fs::read_dir("/proc") {
             Ok(r) => r,
-            Err(_) => return out,
+            Err(e) => return Err(format!("the process table could not be read (/proc: {e})")),
         };
         for ent in rd.flatten() {
             let name = ent.file_name();
@@ -1039,7 +1209,7 @@ mod imp {
             let comm = std::fs::read_to_string(format!("/proc/{pid}/comm"))
                 .map(|s| s.trim().to_string())
                 .unwrap_or_default();
-            let created = super::process_start_iso(pid).and_then(|s| {
+            let created = process_start_iso(pid).and_then(|s| {
                 if s.is_empty() {
                     None
                 } else {
@@ -1056,7 +1226,22 @@ mod imp {
                 command_line: String::new(),
             });
         }
-        out
+        Ok(out)
+    }
+
+    /// The name (`/proc/<pid>/comm`) and the parent pid of `pid`, `None` when it does not exist.
+    pub fn name_and_parent(pid: u32) -> Option<(String, u32)> {
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+        Some((comm.trim().to_string(), parent_pid(pid).unwrap_or(0)))
+    }
+
+    /// `kill -9 <pid>` (best effort).
+    pub fn terminate_pid(pid: u32) {
+        let _ = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
     }
 
     /// The command line of `pid` from `/proc/<pid>/cmdline` (NUL-separated), best effort.

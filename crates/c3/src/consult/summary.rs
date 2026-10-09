@@ -207,6 +207,10 @@ pub struct SummaryInputs {
     pub engine_warnings: Vec<String>,
     /// The `denial retry: succeeded|failed in N s` line (agy only; empty otherwise).
     pub denial_retry_line: String,
+    /// (`$pendingNote`) `recovery record kept: <path> (state '<state>')` when the run kept its
+    /// recovery record (timeout survivors, unverified descendants, an unknown tree, a failed
+    /// registration); rendered as `pending    : <note>`. Empty otherwise.
+    pub pending_note: String,
 }
 
 /// Render the ordered console lines of a finished run (no colour).
@@ -233,6 +237,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
             } else {
                 out.push("resume     : not possible - the thread of the killed turn is not known (start again with -Mode new)".into());
             }
+        }
+        if !s.pending_note.is_empty() {
+            out.push(format!("pending    : {}", s.pending_note));
         }
         out.extend(s.health_lines.iter().cloned());
         out.push(format!("reply file : {}", s.reply_path));
@@ -305,6 +312,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
     }
     if !s.structured_invalid.is_empty() {
         out.push(s.structured_invalid.clone());
+    }
+    if !s.pending_note.is_empty() {
+        out.push(format!("pending    : {}", s.pending_note));
     }
     if !s.commit_wait_line.is_empty() {
         out.push(s.commit_wait_line.clone());

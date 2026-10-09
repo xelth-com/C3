@@ -313,6 +313,13 @@ fn write_pending_line(task_dir: &Path) {
         if !note.is_empty() {
             line += &format!("; {note}");
         }
+        // (wave 28e, E23) the unknown tree of a kill that was not confirmed: which record, and why
+        let ku = pv_str(&r, "kill_unconfirmed");
+        if !ku.is_empty() {
+            line += &format!(
+                "; the kill of that run was not confirmed ({ku}): its process tree is unknown - the next consultation scans for it and is refused while one of it may run (outside Windows: delete this record by hand once none does)"
+            );
+        }
         println!("{line}");
     }
 }

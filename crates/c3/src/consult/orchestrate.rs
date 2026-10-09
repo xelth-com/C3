@@ -270,6 +270,234 @@ struct Secondary {
     repair_compactions: u64,
     /// (wave 28c, D11) the ledger `compactions` (a number, `"unknown"`, or `None` = null).
     compactions: Option<serde_json::Value>,
+    // --- the secondary turns' kills (wave 27c D16; 28e E1, E18, E23) ---
+    /// Every secondary turn's kill check with its survivors (the ledger's `kill_confirmed`).
+    kill_checks: Vec<(c3_core::engine::KillCheck, Vec<u32>)>,
+    /// `Add-KillCheck`'s warnings of the secondary turns (`kill not confirmed (<turn>): ...`).
+    kill_warnings: Vec<String>,
+    /// What a secondary turn's kill left that keeps the recovery record (the last one wins).
+    kept_kill: Option<KeptKill>,
+}
+
+/// (wave 28e, E1 / E18 / E23) What a tree kill left behind that keeps the recovery record (state
+/// `survivors`): its survivors, the descendants it could not verify (`unverified[]` `{pid, why}`),
+/// and - a kill that was not confirmed and names no pid - its why (`kill_unconfirmed`).
+#[derive(Debug, Clone, Default)]
+struct KeptKill {
+    survivors: Vec<u32>,
+    unverified: Vec<serde_json::Value>,
+    kill_unconfirmed: String,
+}
+
+fn join_pids(pids: &[u32]) -> String {
+    pids.iter()
+        .map(|p| p.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// (wave 28d, D5) `Get-KillUnverifiedText`: the unverified group next to the survivors - `"; <why>;
+/// pid <n> may still run"`, `""` when the kill left no descendant it could not verify.
+fn kill_unverified_text(c: &c3_core::engine::KillCheck) -> String {
+    if c.unverified.is_empty() {
+        return String::new();
+    }
+    format!(
+        "; {}; pid {} may still run",
+        c.why,
+        join_pids(&c.unverified)
+    )
+}
+
+/// `Get-KillMayRunPids`: the unverified pids, else the root.
+fn kill_may_run_pids(c: &c3_core::engine::KillCheck) -> String {
+    if c.unverified.is_empty() {
+        c.root_pid.to_string()
+    } else {
+        join_pids(&c.unverified)
+    }
+}
+
+/// (wave 27c, D16) `Format-KillText`: `(process tree killed)` only when confirmed; else `(kill not
+/// confirmed: <why>; pid <n> may still run)`; with survivors `(process tree killed; <n> processes
+/// survived: pid <n>[; <why>; pid <n> may still run])`.
+fn format_kill_text(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> String {
+    if !survivors.is_empty() {
+        return format!(
+            "(process tree killed; {} processes survived: pid {}{})",
+            survivors.len(),
+            join_pids(survivors),
+            kill_unverified_text(c)
+        );
+    }
+    if c.confirmed {
+        return "(process tree killed)".to_string();
+    }
+    format!(
+        "(kill not confirmed: {}; pid {} may still run)",
+        c.why,
+        kill_may_run_pids(c)
+    )
+}
+
+/// (wave 28e, E23 / F30-1) `Get-KillUnconfirmedWhy`: a kill that was NOT confirmed and names no
+/// pid - neither a survivor nor a descendant it could not verify - its why (`the kill was not
+/// confirmed` when it has none); `""` for any other kill.
+fn kill_unconfirmed_why(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> String {
+    if c.confirmed || !survivors.is_empty() || !c.unverified.is_empty() {
+        return String::new();
+    }
+    if c.why.is_empty() {
+        "the kill was not confirmed".to_string()
+    } else {
+        c.why.clone()
+    }
+}
+
+/// `Add-KillCheck`'s warning for one kill (`turn`: `main turn`, `timeout continuation`, `format
+/// repair`): a kill not confirmed with no survivor names the pid(s) that may still run; one with
+/// survivors AND unverified descendants names both groups.
+fn kill_check_warning(
+    c: &c3_core::engine::KillCheck,
+    survivors: &[u32],
+    turn: &str,
+) -> Option<String> {
+    if c.confirmed {
+        return None;
+    }
+    if survivors.is_empty() {
+        return Some(format!(
+            "kill not confirmed ({turn}): {}; pid {} may still run - check it, and stop it by hand if it does",
+            c.why,
+            kill_may_run_pids(c)
+        ));
+    }
+    if !c.unverified.is_empty() {
+        return Some(format!(
+            "kill not confirmed ({turn}): {} processes survived: pid {}{} - check them, and stop them by hand if they do",
+            survivors.len(),
+            join_pids(survivors),
+            kill_unverified_text(c)
+        ));
+    }
+    None
+}
+
+/// (wave 28e, E1 / F54-1) `New-UnverifiedEntries`: `{pid, why}` per descendant the kill could not
+/// verify (its why is the kill check's).
+fn unverified_entries(c: &c3_core::engine::KillCheck) -> Vec<serde_json::Value> {
+    c.unverified
+        .iter()
+        .map(|p| serde_json::json!({ "pid": p, "why": c.why }))
+        .collect()
+}
+
+/// (wave 28e, E18 / E23) Whether a kill keeps the recovery record: survivors OR descendants it
+/// could not verify OR a kill not confirmed with neither (an unknown tree).
+fn kept_kill(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> Option<KeptKill> {
+    let unconfirmed = kill_unconfirmed_why(c, survivors);
+    if survivors.is_empty() && c.unverified.is_empty() && unconfirmed.is_empty() {
+        return None;
+    }
+    Some(KeptKill {
+        survivors: survivors.to_vec(),
+        unverified: unverified_entries(c),
+        kill_unconfirmed: unconfirmed,
+    })
+}
+
+/// The main turn's kill check: the tree kill's own (`None` - no process, the http engine: a
+/// confirmed kill of the recorded child), then the main-turn test hooks, and survivors - the
+/// hook's too - make it unconfirmed. (wave 28e, E1) TEST HOOK (test mode only):
+/// `CODEX_CONSULT_TEST_UNVERIFIED=<pid>[,<pid>]` - these pids, when alive, are reported as
+/// descendants of this kill whose start time could not be read (only ever stricter). C3's
+/// `CODEX_CONSULT_TEST_KILL_UNCONFIRMED` (test mode only) forces the kill unconfirmed.
+fn main_kill_check(
+    kill: Option<c3_core::engine::KillCheck>,
+    base: &PendingRecord,
+    survivors: &[u32],
+) -> c3_core::engine::KillCheck {
+    let mut c =
+        kill.unwrap_or_else(|| c3_core::engine::KillCheck::confirmed(base.child_pid.unwrap_or(0)));
+    let hooked: Vec<u32> = crate::liveness::proc::pid_list_hook("CODEX_CONSULT_TEST_UNVERIFIED")
+        .into_iter()
+        .filter(|p| crate::liveness::proc::process_start_iso(*p).is_some())
+        .filter(|p| !c.unverified.contains(p))
+        .collect();
+    if !hooked.is_empty() {
+        c.unverified.extend(hooked);
+        c.confirmed = false;
+        if c.why.is_empty() || c.why.starts_with("start time of pid ") {
+            c.why = format!("start time of pid {} unreadable", join_pids(&c.unverified));
+        }
+    }
+    if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_UNCONFIRMED") {
+        let t = v.trim();
+        if !t.is_empty() && t != "0" {
+            c.confirmed = false;
+            if c.why.is_empty() {
+                c.why = "a test hook forced the kill unconfirmed".to_string();
+            }
+        }
+    }
+    if !survivors.is_empty() {
+        c.confirmed = false;
+    }
+    c
+}
+
+/// The main turn's outcome after a kill (`codex-consult.ps1`): survivors - `failed: <stop> (process
+/// tree killed; <n> processes survived: pid ...[; <why>; pid <u> may still run]; the next run for
+/// this task is refused until they exit)`; (wave 28e, E18) no survivor but unverified descendants -
+/// `failed: <stop> (kill not confirmed: <why>; pid <u> may still run; the next run for this task is
+/// refused until it exits)`; else `failed: <stop> <Format-KillText>`.
+fn main_kill_outcome(stop: &str, c: &c3_core::engine::KillCheck, survivors: &[u32]) -> String {
+    if !survivors.is_empty() {
+        return format!(
+            "failed: {stop} (process tree killed; {} processes survived: pid {}{}; the next run for this task is refused until they exit)",
+            survivors.len(),
+            join_pids(survivors),
+            kill_unverified_text(c)
+        );
+    }
+    if !c.unverified.is_empty() {
+        let until = if c.unverified.len() == 1 {
+            "it exits"
+        } else {
+            "they exit"
+        };
+        return format!(
+            "failed: {stop} (kill not confirmed: {}; pid {} may still run; the next run for this task is refused until {until})",
+            c.why,
+            join_pids(&c.unverified)
+        );
+    }
+    format!("failed: {stop} {}", format_kill_text(c, survivors))
+}
+
+/// A secondary turn's kill (`Invoke-EngineTurn`, the format repair): its problem text (`<stop>
+/// <Format-KillText>`), its warning, and - survivors, unverified descendants or an unknown tree -
+/// the record it keeps (wave 28e, E18 / E23 at every kill site).
+fn secondary_kill(
+    stop: &str,
+    kill: Option<c3_core::engine::KillCheck>,
+    survivors: &[u32],
+    turn: &str,
+    sec: &mut Secondary,
+) -> String {
+    let mut c = kill.unwrap_or_else(|| c3_core::engine::KillCheck::confirmed(0));
+    if !survivors.is_empty() {
+        c.confirmed = false;
+    }
+    if let Some(w) = kill_check_warning(&c, survivors, turn) {
+        sec.kill_warnings.push(w);
+    }
+    if let Some(k) = kept_kill(&c, survivors) {
+        sec.kept_kill = Some(k);
+    }
+    let text = format!("{stop} {}", format_kill_text(&c, survivors));
+    sec.kill_checks.push((c, survivors.to_vec()));
+    text
 }
 
 /// The after-run drift (`Compare-TreeContent`, the brief/artifact re-hash).
@@ -3878,10 +4106,13 @@ pub(crate) fn format_write_lock_refusal(wl_path: &Path, task: &str) -> String {
 /// (`New-SurvivorEntries`); a pid already gone is left out so a reused pid is never mistaken
 /// for the survivor later.
 fn survivor_entries(pids: &[u32]) -> Vec<serde_json::Value> {
+    // `New-SurvivorEntries`: { pid, start_time, name } per pid (`Get-ProcessInfo`); a pid that is
+    // already gone is left out
     pids.iter()
         .filter_map(|&pid| {
-            crate::liveness::proc::process_start_iso(pid)
-                .map(|start| serde_json::json!({ "pid": pid, "start_time": start, "name": "" }))
+            crate::liveness::proc::process_info(pid).map(|info| {
+                serde_json::json!({ "pid": pid, "start_time": info.start, "name": info.name })
+            })
         })
         .collect()
 }
@@ -3981,45 +4212,6 @@ fn member_accept(
     Ok(rec)
 }
 
-/// (wave 27c, D16) Confirm a process-tree kill actually stopped the root the bridge started
-/// (`Confirm-TreeKill`). The kill acts only on the tree c3 started, by pid — never by name, never
-/// machine-wide. Returns `Some((pid, why))` when it could NOT be confirmed — the root is still
-/// alive after the kill, or the `CODEX_CONSULT_TEST_KILL_UNCONFIRMED` hook forces it (a fake whose
-/// tree cannot be enumerated) — and adds the root pid to `survivors` so no continuation turn runs
-/// and the next run for the task is refused until it exits.
-fn confirm_tree_kill(base: &PendingRecord, survivors: &mut Vec<u32>) -> Option<(u32, String)> {
-    let pid = base.child_pid.unwrap_or(0);
-    // (D16, H4) `CODEX_CONSULT_TEST_KILL_DENIED=1` simulates a restricted host where process
-    // inspection and taskkill are denied, so the kill can never be confirmed; the generic
-    // `CODEX_CONSULT_TEST_KILL_UNCONFIRMED` hook forces it too (a fake whose tree cannot be
-    // enumerated). Otherwise the root pid is checked directly.
-    let denied = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_DENIED")
-        .map(|v| v.trim() == "1")
-        .unwrap_or(false);
-    let unconfirmed = if denied {
-        // The descendants could not be enumerated (a restricted host): the outcome wraps the denial
-        // reason exactly as the plugin's `Get-DescendantTree` denial does.
-        Some(
-            "the children could not be enumerated (process inspection denied (test hook CODEX_CONSULT_TEST_KILL_DENIED))"
-                .to_string(),
-        )
-    } else if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_UNCONFIRMED") {
-        let t = v.trim();
-        (!t.is_empty() && t != "0").then(|| "a test hook forced the kill unconfirmed".to_string())
-    } else if pid > 0 && crate::liveness::proc::pid_alive(pid, &base.child_start_time) {
-        Some(format!(
-            "the root process {pid} did not exit after the tree kill"
-        ))
-    } else {
-        None
-    };
-    let why = unconfirmed?;
-    if pid > 0 && !survivors.contains(&pid) {
-        survivors.push(pid);
-    }
-    Some((pid, why))
-}
-
 /// (wave 27c, D2) The run warning recorded when the operator kicks the timeout CONTINUATION: the
 /// continuation is cancelled but the run keeps the main turn's timeout outcome and its salvage.
 const CONTINUATION_KICK_WARNING: &str =
@@ -4110,6 +4302,8 @@ fn finish(
     // (recorded as JSON `null`), `Some(true)` when a kill was confirmed to have stopped the root,
     // `Some(false)` when it could not be confirmed.
     let mut kill_confirmed_state: Option<bool> = None;
+    // (wave 28e, E1 / E18 / E23) the main turn's kill check (`None`: no kill).
+    let mut main_kill: Option<c3_core::engine::KillCheck> = None;
 
     match outcome {
         AttemptOutcome::Completed(reply) => {
@@ -4127,6 +4321,7 @@ fn finish(
             survivors,
             wall_seconds: w,
             conversation,
+            kill,
             ..
         } => {
             wall_seconds = w;
@@ -4150,37 +4345,25 @@ fn finish(
                 _ => {}
             }
             timeout_survivors = survivors;
-            // (wave 27c, D16) confirm the tree kill stopped the root the bridge started.
-            kill_unconfirmed = confirm_tree_kill(&base_record, &mut timeout_survivors);
-            kill_confirmed_state = Some(kill_unconfirmed.is_none());
-            bridge_outcome = if let Some((pid, why)) = &kill_unconfirmed {
-                format!(
-                    "failed: timeout after {} s (kill not confirmed: {why}; pid {pid} may still run)",
-                    ctx.r.timeout_sec
-                )
-            } else if timeout_survivors.is_empty() {
-                format!(
-                    "failed: timeout after {} s (process tree killed)",
-                    ctx.r.timeout_sec
-                )
-            } else {
-                format!(
-                    "failed: timeout after {} s (process tree killed; {} processes survived: pid {}; the next run for this task is refused until they exit)",
-                    ctx.r.timeout_sec,
-                    timeout_survivors.len(),
-                    timeout_survivors
-                        .iter()
-                        .map(|p| p.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            };
+            // (wave 27c, D16; 28e, E1/E18) the tree kill CONFIRMED: "(process tree killed)" only
+            // then; survivors and descendants it could not verify are named, and the record is kept.
+            let check = main_kill_check(kill, &base_record, &timeout_survivors);
+            bridge_outcome = main_kill_outcome(
+                &format!("timeout after {} s", ctx.r.timeout_sec),
+                &check,
+                &timeout_survivors,
+            );
+            kill_unconfirmed = (!check.confirmed && timeout_survivors.is_empty())
+                .then(|| (check.root_pid, check.why.clone()));
+            kill_confirmed_state = Some(check.confirmed);
+            main_kill = Some(check);
         }
         AttemptOutcome::Stopped {
             kind,
             survivors,
             wall_seconds: w,
             conversation,
+            kill,
             ..
         } => {
             wall_seconds = w;
@@ -4245,17 +4428,28 @@ fn finish(
                 }
             }
             timeout_survivors = survivors;
-            // (wave 27c, D16) a stall kill is a process-tree kill too — confirm the root stopped
-            // (a kick sets no `main_timed_out`, so its own outcome text is left intact).
+            // (wave 27c, D16; 28e, E1/E18) a stall or kick kill is a process-tree kill too: told
+            // as the timeout's (a kick names the kill only when it was not confirmed, or left
+            // survivors or descendants it could not verify).
+            let check = main_kill_check(kill, &base_record, &timeout_survivors);
+            let unconfirmed_main = !check.confirmed && timeout_survivors.is_empty();
             if main_timed_out {
-                kill_unconfirmed = confirm_tree_kill(&base_record, &mut timeout_survivors);
-                kill_confirmed_state = Some(kill_unconfirmed.is_none());
-                if let Some((pid, why)) = &kill_unconfirmed {
-                    bridge_outcome = format!(
-                        "failed: {stall_stop_text} (kill not confirmed: {why}; pid {pid} may still run)"
-                    );
-                }
+                bridge_outcome = main_kill_outcome(&stall_stop_text, &check, &timeout_survivors);
+            } else if !timeout_survivors.is_empty() || !check.unverified.is_empty() {
+                bridge_outcome = main_kill_outcome(
+                    "stopped by the operator (-Kick)",
+                    &check,
+                    &timeout_survivors,
+                );
+            } else if unconfirmed_main {
+                bridge_outcome = format!(
+                    "failed: stopped by the operator (-Kick) {}",
+                    format_kill_text(&check, &timeout_survivors)
+                );
             }
+            kill_unconfirmed = unconfirmed_main.then(|| (check.root_pid, check.why.clone()));
+            kill_confirmed_state = Some(check.confirmed);
+            main_kill = Some(check);
         }
         AttemptOutcome::ProviderFailure {
             failure: pf,
@@ -4373,6 +4567,7 @@ fn finish(
         timeout_survivors.clear();
         kill_unconfirmed = None;
         kill_confirmed_state = None;
+        main_kill = None;
         stall_record = None;
     }
 
@@ -4847,6 +5042,15 @@ fn finish(
     // `true` when the kill was confirmed, `false` when it could not be. An unconfirmed kill also
     // pushes the warning naming the pid that may still run (the continuation was already
     // suppressed and the outcome already says so).
+    // (wave 27c, D16) every kill of the run counts - the secondary turns' too: confirmed only when
+    // every one was confirmed and left no survivor.
+    if !sec.kill_checks.is_empty() {
+        let secondary_ok = sec
+            .kill_checks
+            .iter()
+            .all(|(c, s)| c.confirmed && s.is_empty());
+        kill_confirmed_state = Some(kill_confirmed_state.unwrap_or(true) && secondary_ok);
+    }
     entry.kill_confirmed = Some(kill_confirmed_state);
     // (wave 28c, D11) the compaction warning in warnings[] (an engine's already came with its turn
     // warnings; a codex entry records the run warnings).
@@ -4856,10 +5060,15 @@ fn finish(
             entry.warnings.push(v);
         }
     }
-    if let Some((pid, why)) = &kill_unconfirmed {
-        entry.warnings.push(serde_json::Value::String(format!(
-            "kill not confirmed (main turn): {why}; pid {pid} may still run - check it, and stop it by hand if it does"
-        )));
+    // `Add-KillCheck`'s warnings: the main turn's, then the secondary turns'.
+    let main_warning = main_kill
+        .as_ref()
+        .and_then(|c| kill_check_warning(c, &timeout_survivors, "main turn"));
+    for w in main_warning
+        .into_iter()
+        .chain(sec.kill_warnings.iter().cloned())
+    {
+        entry.warnings.push(serde_json::Value::String(w));
     }
     // Prior-finding lifecycle records (F04-4): this reply's `prior_findings` reports, the
     // unchecked prior blockers, and — when the semantics contradict the verdict — the blanked
@@ -4897,6 +5106,20 @@ fn finish(
     // this run is still out there) so the commit does not delete it and the next run is
     // refused until they exit. Written before the write lock, as the plugin does after the
     // kill (`codex-consult.ps1:3375`).
+    // (wave 28e, E1 / E18 / E23) what the kills left that keeps the record: the main turn's, then a
+    // secondary turn's (whose lists replace the main turn's; an unknown tree's why stays).
+    let main_kept = main_kill
+        .as_ref()
+        .and_then(|c| kept_kill(c, &timeout_survivors));
+    let kept = match (main_kept, sec.kept_kill.clone()) {
+        (Some(m), Some(mut s)) => {
+            if s.kill_unconfirmed.is_empty() {
+                s.kill_unconfirmed = m.kill_unconfirmed;
+            }
+            Some(s)
+        }
+        (m, s) => s.or(m),
+    };
     let disposition = if register_failure_text.is_some() {
         // (rows (e)) leave the record at `launching` (child cleared) so the next run recovers it;
         // the ledger entry below records the failed outcome.
@@ -4907,14 +5130,34 @@ fn finish(
         launching.note = "the engine process could not be registered; it was stopped".to_string();
         let _ = store.write_pending(&pending, &launching);
         RecoveryDisposition::Retain
-    } else if timeout_survivors.is_empty() {
-        RecoveryDisposition::Remove
-    } else {
+    } else if let Some(k) = kept {
+        // (wave 28e, E1 / E18 / E23) survivors OR descendants the kill could not verify OR an
+        // unknown tree (`kill_unconfirmed`): the record is kept in state `survivors`.
         let mut survivor_rec = base_record.clone();
         survivor_rec.state = PendingState::Survivors;
-        survivor_rec.survivors = survivor_entries(&timeout_survivors);
+        survivor_rec.survivors = survivor_entries(&k.survivors);
+        survivor_rec.unverified = k.unverified.clone();
+        if !k.kill_unconfirmed.is_empty() {
+            survivor_rec.kill_unconfirmed = Some(k.kill_unconfirmed.clone());
+        }
         let _ = store.write_pending(&pending, &survivor_rec);
         RecoveryDisposition::Retain
+    } else {
+        RecoveryDisposition::Remove
+    };
+    // `recovery record kept: <path> (state '<state>')` in the summary (`$pendingNote`).
+    let pending_note = if disposition == RecoveryDisposition::Retain {
+        let state = if register_failure_text.is_some() {
+            "launching"
+        } else {
+            "survivors"
+        };
+        format!(
+            "recovery record kept: {} (state '{state}')",
+            store_pending_path(&store, &pending).display()
+        )
+    } else {
+        String::new()
     };
     // (D2-D4) The run is over and its reply files are on disk. Mark the recovery record
     // `committing`, naming this run's kept `.reply.json` (collab-relative), BEFORE the write lock:
@@ -5290,7 +5533,7 @@ fn finish(
             w
         },
         health_lines,
-
+        pending_note,
         denial_retry_line: sec.denial_console.clone(),
         ..Default::default()
     };
@@ -5774,19 +6017,39 @@ fn run_timeout_continuation(
         }
         AttemptOutcome::Stopped {
             kind: c3_core::engine::StopKind::Kick,
+            survivors,
+            kill,
             ..
         } => {
             // (D2) the operator kicked the continuation: the continuation records the operator
             // stop, but the RUN keeps the main turn's timeout outcome and its salvage. No operator
             // provider_failure (the failure of record is the timeout, not the operator).
+            // (wave 28e, E18/E23) its kill keeps the record as any kill does
+            let _ = secondary_kill(
+                "stopped by the operator (-Kick)",
+                kill,
+                &survivors,
+                "timeout continuation",
+                sec,
+            );
             continue_problem = "stopped by the operator (-Kick)".to_string();
             sec.continue_kicked = true;
             let _ = std::fs::remove_file(&ctx.kick_path);
         }
-        AttemptOutcome::TimedOut { .. } | AttemptOutcome::Stopped { .. } => {
-            continue_problem = format!(
-                "timeout after {} s (process tree killed)",
-                ctx.r.continue_sec
+        AttemptOutcome::TimedOut {
+            survivors, kill, ..
+        }
+        | AttemptOutcome::Stopped {
+            survivors, kill, ..
+        } => {
+            // (wave 27c D16; 28e E1/E18/E23) the kill told as confirmed or not; survivors,
+            // unverified descendants or an unknown tree keep the record
+            continue_problem = secondary_kill(
+                &format!("timeout after {} s", ctx.r.continue_sec),
+                kill,
+                &survivors,
+                "timeout continuation",
+                sec,
             );
             sec.continue_killed = true;
         }
@@ -5980,15 +6243,37 @@ fn run_format_repair(
         }
         AttemptOutcome::Stopped {
             kind: c3_core::engine::StopKind::Kick,
+            survivors,
+            kill,
             ..
         } => {
             // (wave 26c, D1) the operator stopped the format repair only: the first reply STANDS
             // (not converted). No operator class; a warning is emitted in the caller.
+            // (wave 28e, E18/E23) its kill keeps the record as any kill does
+            let _ = secondary_kill(
+                "stopped by the operator (-Kick)",
+                kill,
+                &survivors,
+                "format repair",
+                sec,
+            );
             sec.repair_kicked = true;
             repair_problem = "the operator stopped the format repair (-Kick)".to_string();
         }
-        AttemptOutcome::TimedOut { .. } | AttemptOutcome::Stopped { .. } => {
-            repair_problem = format!("timeout after {repair_timeout} s (process tree killed)");
+        AttemptOutcome::TimedOut {
+            survivors, kill, ..
+        }
+        | AttemptOutcome::Stopped {
+            survivors, kill, ..
+        } => {
+            // (wave 27c D16; 28e E1/E18/E23) as the continuation's kill
+            repair_problem = secondary_kill(
+                &format!("timeout after {repair_timeout} s"),
+                kill,
+                &survivors,
+                "format repair",
+                sec,
+            );
             sec.repair_killed = true;
         }
         AttemptOutcome::ProviderFailure { failure, exit_code } => {
@@ -8363,5 +8648,172 @@ mod parent_walk_tests {
             "{e}"
         );
         assert!(e.contains("start a new thread with -Mode new"), "{e}");
+    }
+}
+
+#[cfg(test)]
+mod kill_record_tests {
+    //! (wave 28e, E1 / E18 / E23) The kill's texts and the record it keeps, against the plugin's
+    //! (`Format-KillText`, `Get-KillUnverifiedText`, `Get-KillUnconfirmedWhy`,
+    //! `New-UnverifiedEntries`, `Add-KillCheck` and the main turn's outcome in `codex-consult.ps1`).
+    use super::*;
+    use c3_core::engine::KillCheck;
+
+    fn check(confirmed: bool, why: &str, root: u32, unverified: &[u32]) -> KillCheck {
+        KillCheck {
+            root_pid: root,
+            confirmed,
+            why: why.to_string(),
+            unverified: unverified.to_vec(),
+        }
+    }
+
+    #[test]
+    fn main_turn_outcomes_name_every_group() {
+        // E1: a survivor AND a descendant whose start time could not be read
+        let k = check(false, "start time of pid 22 unreadable", 10, &[22]);
+        assert_eq!(
+            main_kill_outcome("timeout after 4 s", &k, &[11]),
+            "failed: timeout after 4 s (process tree killed; 1 processes survived: pid 11; start time of pid 22 unreadable; pid 22 may still run; the next run for this task is refused until they exit)"
+        );
+        // E18: zero survivors, one unverified descendant (two: "they exit")
+        assert_eq!(
+            main_kill_outcome("timeout after 4 s", &k, &[]),
+            "failed: timeout after 4 s (kill not confirmed: start time of pid 22 unreadable; pid 22 may still run; the next run for this task is refused until it exits)"
+        );
+        let k2 = check(false, "start time of pid 22, 23 unreadable", 10, &[22, 23]);
+        assert!(main_kill_outcome("timeout after 4 s", &k2, &[]).ends_with(
+            "pid 22, 23 may still run; the next run for this task is refused until they exit)"
+        ));
+        // E23: a kill not confirmed that names no pid - the root may still run
+        let d = check(
+            false,
+            "the children could not be enumerated (process inspection denied (test hook CODEX_CONSULT_TEST_KILL_DENIED)) and taskkill /T /F failed (exit 1) - the root exited, its children may not have",
+            10,
+            &[],
+        );
+        assert_eq!(
+            main_kill_outcome("timeout after 4 s", &d, &[]),
+            "failed: timeout after 4 s (kill not confirmed: the children could not be enumerated (process inspection denied (test hook CODEX_CONSULT_TEST_KILL_DENIED)) and taskkill /T /F failed (exit 1) - the root exited, its children may not have; pid 10 may still run)"
+        );
+        // a confirmed kill, and survivors without unverified descendants
+        assert_eq!(
+            main_kill_outcome("timeout after 4 s", &KillCheck::confirmed(10), &[]),
+            "failed: timeout after 4 s (process tree killed)"
+        );
+        assert_eq!(
+            main_kill_outcome("timeout after 4 s", &check(false, "", 10, &[]), &[11, 12]),
+            "failed: timeout after 4 s (process tree killed; 2 processes survived: pid 11, 12; the next run for this task is refused until they exit)"
+        );
+        // a secondary turn's text has no refusal clause
+        assert_eq!(
+            format_kill_text(&k, &[11]),
+            "(process tree killed; 1 processes survived: pid 11; start time of pid 22 unreadable; pid 22 may still run)"
+        );
+        assert_eq!(
+            format_kill_text(&k, &[]),
+            "(kill not confirmed: start time of pid 22 unreadable; pid 22 may still run)"
+        );
+    }
+
+    #[test]
+    fn kill_unconfirmed_why_only_for_a_kill_that_names_no_pid() {
+        // the harness's Get-KillUnconfirmedWhy table: w1 | confirmed | survivors | unverified | no why
+        let cases = [
+            (check(false, "w1", 1, &[]), vec![]),
+            (KillCheck::confirmed(1), vec![]),
+            (check(false, "w2", 1, &[]), vec![5]),
+            (check(false, "w3", 1, &[6]), vec![]),
+            (check(false, "", 1, &[]), vec![]),
+        ];
+        let got: Vec<String> = cases
+            .iter()
+            .map(|(k, s)| kill_unconfirmed_why(k, s))
+            .collect();
+        assert_eq!(got.join("|"), "w1||||the kill was not confirmed");
+    }
+
+    #[test]
+    fn the_record_is_kept_for_survivors_unverified_pids_or_an_unknown_tree() {
+        // New-UnverifiedEntries: {pid, why} per unverified pid (none: no entry)
+        let k = check(false, "start time of pid 8, 9 unreadable", 1, &[8, 9]);
+        assert_eq!(
+            serde_json::Value::Array(unverified_entries(&k)),
+            serde_json::json!([
+                { "pid": 8, "why": "start time of pid 8, 9 unreadable" },
+                { "pid": 9, "why": "start time of pid 8, 9 unreadable" }
+            ])
+        );
+        assert!(unverified_entries(&check(false, "w", 1, &[])).is_empty());
+        // E18: only unverified pids keep it (survivors [] beside them)
+        let kept = kept_kill(&k, &[]).expect("kept for unverified pids");
+        assert!(kept.survivors.is_empty() && kept.unverified.len() == 2);
+        assert!(kept.kill_unconfirmed.is_empty());
+        // E23: neither survivors nor unverified pids, the kill not confirmed: the unknown tree
+        let kept = kept_kill(&check(false, "denied", 1, &[]), &[]).expect("kept");
+        assert!(kept.survivors.is_empty() && kept.unverified.is_empty());
+        assert_eq!(kept.kill_unconfirmed, "denied");
+        // survivors
+        assert_eq!(
+            kept_kill(&check(false, "", 1, &[]), &[7]).map(|k| k.survivors),
+            Some(vec![7])
+        );
+        // a confirmed kill keeps nothing
+        assert!(kept_kill(&KillCheck::confirmed(1), &[]).is_none());
+    }
+
+    #[test]
+    fn add_kill_check_warnings() {
+        let k = check(false, "start time of pid 22 unreadable", 10, &[22]);
+        assert_eq!(
+            kill_check_warning(&k, &[], "main turn").as_deref(),
+            Some("kill not confirmed (main turn): start time of pid 22 unreadable; pid 22 may still run - check it, and stop it by hand if it does")
+        );
+        assert_eq!(
+            kill_check_warning(&k, &[11], "format repair").as_deref(),
+            Some("kill not confirmed (format repair): 1 processes survived: pid 11; start time of pid 22 unreadable; pid 22 may still run - check them, and stop them by hand if they do")
+        );
+        assert_eq!(
+            kill_check_warning(&check(false, "denied", 10, &[]), &[], "timeout continuation")
+                .as_deref(),
+            Some("kill not confirmed (timeout continuation): denied; pid 10 may still run - check it, and stop it by hand if it does")
+        );
+        // survivors only, or a confirmed kill: no warning
+        assert!(kill_check_warning(&check(false, "", 10, &[]), &[11], "main turn").is_none());
+        assert!(kill_check_warning(&KillCheck::confirmed(10), &[], "main turn").is_none());
+    }
+
+    #[test]
+    fn a_secondary_kill_keeps_the_record_and_warns() {
+        let mut sec = Secondary::default();
+        let text = secondary_kill(
+            "timeout after 30 s",
+            Some(check(false, "start time of pid 5 unreadable", 4, &[5])),
+            &[],
+            "format repair",
+            &mut sec,
+        );
+        assert_eq!(
+            text,
+            "timeout after 30 s (kill not confirmed: start time of pid 5 unreadable; pid 5 may still run)"
+        );
+        assert_eq!(sec.kill_warnings.len(), 1);
+        assert!(sec.kept_kill.is_some());
+        assert_eq!(sec.kill_checks.len(), 1);
+        // a clean kill of the next turn neither warns nor replaces what was kept
+        let text = secondary_kill(
+            "timeout after 30 s",
+            Some(KillCheck::confirmed(6)),
+            &[],
+            "timeout continuation",
+            &mut sec,
+        );
+        assert_eq!(text, "timeout after 30 s (process tree killed)");
+        assert_eq!(sec.kill_warnings.len(), 1);
+        assert_eq!(sec.kill_checks.len(), 2);
+        assert!(sec
+            .kept_kill
+            .as_ref()
+            .is_some_and(|k| k.unverified.len() == 1));
     }
 }

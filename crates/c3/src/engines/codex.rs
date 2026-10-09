@@ -182,6 +182,7 @@ impl CodexEngine {
                 return Ok(AttemptOutcome::TimedOut {
                     partial: salvage_partial(&events_text),
                     survivors: result.survivors,
+                    kill: result.kill.clone(),
                     conversation: conversation(false),
                     wall_seconds: result.wall_seconds,
                 });
@@ -196,6 +197,7 @@ impl CodexEngine {
                     },
                     partial: salvage_partial(&events_text),
                     survivors: result.survivors,
+                    kill: result.kill.clone(),
                     conversation: conversation(false),
                     wall_seconds: result.wall_seconds,
                 });
@@ -205,6 +207,7 @@ impl CodexEngine {
                     kind: StopKind::Kick,
                     partial: salvage_partial(&events_text),
                     survivors: result.survivors,
+                    kill: result.kill.clone(),
                     conversation: conversation(false),
                     wall_seconds: result.wall_seconds,
                 });
