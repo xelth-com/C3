@@ -1289,7 +1289,8 @@ mod tests {
             row(4_000_003, 1, "notepad.exe", Some(60)),
             // recent, the Codex app's server: left out and named (the machine-wide pass ran)
             row(4_000_004, 1, "codex.exe", Some(60)),
-            // its start time unreadable, not codex-like: read, left out (no blanket refusal)
+            // its start time unreadable, not codex-like - its command line READABLE: read, left
+            // out (no blanket refusal; wave 3e, F30-1: an unreadable one would count)
             row(4_000_005, 1, "svchost.exe", None),
         ]
     }
@@ -1297,7 +1298,7 @@ mod tests {
     const QUIET_CMDS: &[(u32, &str)] = &[
         (4_000_003, "notepad.exe x.txt"),
         (4_000_004, "codex.exe app-server"),
-        (4_000_005, ""),
+        (4_000_005, r"C:\Windows\system32\svchost.exe -k netsvcs -p"),
     ];
 
     #[test]
@@ -1394,6 +1395,104 @@ mod tests {
             ) && c.message.contains("could not run: the process table could not be read (test)"),
             "{}",
             c.message
+        );
+    }
+
+    /// (wave 3e, F30-1, RC1) `quiet_table` plus `extra` rows (with their command lines).
+    fn check_with(r: &Value, extra: Vec<(proc::ScanProc, &'static str)>) -> PendingCheck {
+        let mut table = quiet_table();
+        let mut cmds = QUIET_CMDS.to_vec();
+        for (row, cmd) in extra {
+            cmds.push((row.pid, cmd));
+            table.push(row);
+        }
+        check_on(r, Ok(table), &cmds).0
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn f30_1_an_unknown_tree_is_refused_by_a_live_helper_below_an_unreadable_intermediate() {
+        // (wave 3e, F30-1, RC1) a `kill_unconfirmed` record whose recorded root (the writer
+        // 999998) is dead; its tree lives on below an unrecorded wrapper
+        let r = unknown_tree_record();
+        // the wrapper alive, its start time unreadable; below it a helper that is not codex-like
+        // by name, its start time unreadable too: the by-parent pass follows the chain through
+        // the wrapper and names both, whatever their names
+        let c = check_with(
+            &r,
+            vec![
+                (row(4_000_030, 999_998, "cmd.exe", None), ""),
+                (row(4_000_031, 4_000_030, "node.exe", None), ""),
+            ],
+        );
+        assert!(c.active, "{}", c.check);
+        assert!(
+            c.message.contains(
+                "pid 4000030 cmd.exe [child of the interrupted bridge (ppid 999998); its start time cannot be read - counted (fail-closed)], pid 4000031 node.exe [descendant of the interrupted bridge pid 999998 (ppid 4000030); its start time cannot be read - counted (fail-closed)], found by Win32_Process scan (children of the interrupted bridge pid 999998;"
+            ),
+            "{}",
+            c.message
+        );
+        // the wrapper dead (gone from the table): the orphan helper is invisible by parent; its
+        // start time unreadable and its command line too (node, python) - nothing proves it
+        // unrelated: the machine-wide pass counts it, never a release
+        for (pid, name, cmd, what) in [
+            (4_000_032, "node.exe", "", "command line not readable"),
+            (
+                4_000_033,
+                "python.exe",
+                "python",
+                "a generic runtime, no arguments on its command line",
+            ),
+        ] {
+            let c = check_with(&r, vec![(row(pid, 4_000_099, name, None), cmd)]);
+            assert!(c.active, "{}", c.check);
+            assert!(
+                c.message.contains(&format!(
+                    "pid {pid} {name} [{what}, task not verifiable; its start time cannot be read - counted (fail-closed)], found by Win32_Process scan (name codex*"
+                )),
+                "{}",
+                c.message
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn f30_1_the_same_tree_is_released_on_readable_evidence_that_it_is_not_the_runs() {
+        // (wave 3e, F30-1, RC1) the same shapes with positive evidence: the wrapper and its helper
+        // started BEFORE the record (readable start times, readable command lines that are not
+        // codex-like) - not of that run's tree; an orphan helper whose start time cannot be read
+        // but whose command line is READABLE and not codex-like - left out
+        let r = unknown_tree_record();
+        let c = check_with(
+            &r,
+            vec![
+                (
+                    row(4_000_030, 999_998, "cmd.exe", Some(-5)),
+                    r"C:\Windows\system32\cmd.exe /c build.cmd",
+                ),
+                (
+                    row(4_000_031, 4_000_030, "node.exe", Some(-4)),
+                    r"node C:\app\server.js --port 8080",
+                ),
+                (
+                    row(4_000_032, 4_000_099, "node.exe", Some(-3)),
+                    r"node C:\app\worker.js",
+                ),
+                (
+                    row(4_000_033, 4_000_099, "python.exe", None),
+                    r"python C:\tools\indexer.py --watch",
+                ),
+            ],
+        );
+        assert!(!c.active, "{} | {}", c.message, c.check);
+        assert!(
+            c.check.starts_with(
+                "unknown tree after an unconfirmed kill: the scan found no codex-like process under pid 999998"
+            ),
+            "{}",
+            c.check
         );
     }
 

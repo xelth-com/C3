@@ -283,6 +283,9 @@ struct Secondary {
     /// (wave 3c, F23-3) What the main turn's kill kept (its unknown tree's why stays in a secondary
     /// kill's record).
     main_kept: Option<KeptKill>,
+    /// (wave 3e, F30-2) A secondary turn's kill whose record is on disk neither from before nor
+    /// from after the kill: its warning. The run commits nothing unless the end of the run writes it.
+    kill_record_lost: Option<String>,
     // --- (0.6.0, wave 29) the claude engine ---
     /// Every claude turn that ran, in the plugin's order (main, denial retry, continuation,
     /// repair): its events and its outcome - the ledger's `engine_run` evidence.
@@ -466,35 +469,298 @@ fn kept_record(on: &PendingRecord, k: &KeptKill) -> PendingRecord {
     r
 }
 
-/// (wave 3c, F23-3) Where a kill writes the record it keeps. The plugin writes it AT each of its
-/// three kill sites (`$pendingRecord.state = 'survivors'` ... `Write-PendingFile`, right after
-/// `Stop-ProcessTreeChecked`), before the run goes on: a bridge that dies after the kill (a crash,
-/// a forced termination) leaves a record that names what the kill left, never only the killed
-/// child. `on` is the record the run has on disk at that kill (the run's base record; the format
-/// repair's, which names the saved prose). TEST HOOK (test mode only):
-/// `CODEX_CONSULT_TEST_KILL_PAUSE_MS=<ms> | <model>=<ms>[|...]` - a pause held right after that
-/// write (the window a harness terminates the bridge in).
+/// (wave 3c, F23-3; wave 3e, F30-2) Where a turn's kill writes its recovery record - twice. BEFORE
+/// the kill ([`KillSite::hook`]: the tree is enumerated, nothing is stopped yet) the record on disk
+/// becomes state `survivors` naming the root and every descendant with its start time (one whose
+/// start time cannot be read in `unverified[]`) and `kill_unconfirmed` (the kill's result is not
+/// recorded yet): a bridge that dies during the kill, or before its result is written, leaves a
+/// record the next run scans for that tree. AFTER the kill ([`KillSite::record`]) the record says
+/// what the kill kept (survivors, unverified pids, an unknown tree - the plugin's write at its kill
+/// sites, `$pendingRecord.state = 'survivors'` ... `Write-PendingFile`) or, a kill that kept nothing,
+/// is put back as it was before the kill. A write that fails at either point makes the kill NOT
+/// confirmed ([`mark_record_failure`]): warned, no further turn, and no commit unless the end of the
+/// run writes the evidence. `on` is the record a kept kill is built on (the run's base record; the
+/// format repair's, which names the saved prose). TEST HOOKS (test mode only):
+/// `CODEX_CONSULT_TEST_KILL_PAUSE_MS=<ms> | <model>=<ms>[|...]` - a pause held at a kill site (the
+/// window a test terminates the bridge in), placed by
+/// `CODEX_CONSULT_TEST_KILL_PAUSE_AT=<write|kill>[,<main|continuation|repair>]`: `write` (the
+/// default) right after the record's write after the kill, `kill` right after the kill and BEFORE
+/// its result is written (the record on disk is the one written before the kill); at every kill
+/// site unless a turn is named.
 #[derive(Clone)]
 struct KillSite {
     store: FilesStore,
     pending: PendingRef,
     on: PendingRecord,
     pause_ms: u64,
+    /// `true`: the test pause is held right after the kill, before its result is written.
+    pause_at_kill: bool,
+    /// The turn the test pause applies to (`""`: every kill site).
+    pause_turn: String,
+    /// What the current turn's kill wrote before it stopped anything (shared with its hook).
+    armed: std::sync::Arc<std::sync::Mutex<PreKill>>,
+}
+
+/// (wave 3e, F30-2) What a turn's kill wrote BEFORE it stopped anything.
+#[derive(Debug, Clone, Default)]
+struct PreKill {
+    /// The turn: `main turn`, `timeout continuation`, `format repair`.
+    turn: String,
+    /// The kill started (its hook heard [`crate::engines::subprocess::KillEvent::Before`]).
+    fired: bool,
+    /// The record on disk before that write (put back after a kill that keeps nothing).
+    prior: Option<PendingRecord>,
+    /// The record written before the kill is on disk; `error`: why it is not.
+    written: bool,
+    error: Option<String>,
+}
+
+/// (wave 3e, F30-2) The `kill_unconfirmed` of the record written before a kill: until the kill's
+/// result replaces it, the tree counts as unknown.
+fn pre_kill_why(turn: &str, root: u32) -> String {
+    format!("the kill of the {turn} (pid {root}) started and its result was never recorded")
+}
+
+/// (wave 3e, F30-2) The `note` of the record written before a kill.
+fn pre_kill_note(turn: &str, root: u32) -> String {
+    format!("the kill of the {turn} (pid {root}) is in progress; its result is not recorded yet")
+}
+
+/// (wave 3e, F30-2) The record a kill writes BEFORE it stops anything: `prior` (the record on disk)
+/// in state `survivors`, naming the root and every live descendant of the kill's enumeration
+/// (`{pid, start_time, name}`; one whose start time could not be read in `unverified[]` `{pid,
+/// why}`), with `kill_unconfirmed` ([`pre_kill_why`], unless the record already holds one). A tree
+/// that could not be enumerated names the root only - the unknown-tree scan covers the rest.
+fn pre_kill_record(
+    prior: &PendingRecord,
+    turn: &str,
+    root: u32,
+    tree: &Result<Vec<(u32, String)>, String>,
+) -> PendingRecord {
+    let mut r = prior.clone();
+    r.state = PendingState::Survivors;
+    let mut known = vec![root];
+    let mut unknown: Vec<u32> = Vec::new();
+    if let Ok(descendants) = tree {
+        for (pid, start) in descendants {
+            match start.as_str() {
+                "<gone>" => {}
+                "" => unknown.push(*pid),
+                _ => known.push(*pid),
+            }
+        }
+    }
+    let named = |list: &[serde_json::Value], pid: u32| {
+        list.iter()
+            .any(|e| e.get("pid").and_then(|p| p.as_u64()) == Some(u64::from(pid)))
+    };
+    for e in survivor_entries(&known) {
+        let pid = e.get("pid").and_then(|p| p.as_u64()).unwrap_or(0) as u32;
+        if !named(&r.survivors, pid) {
+            r.survivors.push(e);
+        }
+    }
+    if !unknown.is_empty() {
+        let why = format!("start time of pid {} unreadable", join_pids(&unknown));
+        for pid in &unknown {
+            if !named(&r.unverified, *pid) {
+                r.unverified
+                    .push(serde_json::json!({ "pid": pid, "why": why }));
+            }
+        }
+    }
+    if r.kill_unconfirmed.as_deref().unwrap_or("").is_empty() {
+        r.kill_unconfirmed = Some(pre_kill_why(turn, root));
+    }
+    r.note = pre_kill_note(turn, root);
+    r
 }
 
 impl KillSite {
-    /// Reads the survivors' entries now (once), writes the kept record, then holds the test pause.
-    fn write(&self, k: &mut KeptKill) -> std::io::Result<()> {
-        if k.entries.is_none() {
-            k.entries = Some(survivor_entries(&k.survivors));
+    /// The site of a run's kills: the test pause from `CODEX_CONSULT_TEST_KILL_PAUSE_MS` (for
+    /// `model`) and `CODEX_CONSULT_TEST_KILL_PAUSE_AT`.
+    fn new(store: FilesStore, pending: PendingRef, on: PendingRecord, model: &str) -> KillSite {
+        let pause_ms = test_hook_ms(
+            &c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_PAUSE_MS").unwrap_or_default(),
+            model,
+        )
+        .unwrap_or(0);
+        let at = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_PAUSE_AT").unwrap_or_default();
+        let mut parts = at.split(',').map(|t| t.trim().to_ascii_lowercase());
+        let pause_at_kill = parts.next().is_some_and(|p| p == "kill");
+        let pause_turn = match parts.next().as_deref() {
+            Some("main") => "main turn",
+            Some("continuation") => "timeout continuation",
+            Some("repair") => "format repair",
+            _ => "",
         }
-        let written = self
-            .store
-            .write_pending(&self.pending, &kept_record(&self.on, k));
-        if self.pause_ms > 0 {
+        .to_string();
+        KillSite {
+            store,
+            pending,
+            on,
+            pause_ms,
+            pause_at_kill,
+            pause_turn,
+            armed: Default::default(),
+        }
+    }
+
+    /// The test pause, when it is placed here (`at_kill`) for this `turn`.
+    fn pause(&self, at_kill: bool, turn: &str) {
+        if self.pause_ms > 0
+            && self.pause_at_kill == at_kill
+            && (self.pause_turn.is_empty() || self.pause_turn == turn)
+        {
             std::thread::sleep(Duration::from_millis(self.pause_ms));
         }
-        written
+    }
+
+    /// (wave 3e, F30-2) The hook of `turn`'s kills (it arms this site for that turn): BEFORE the
+    /// kill the record that names the tree is written ([`pre_kill_record`], on the record on disk);
+    /// after it, the `kill` test pause.
+    fn hook(&self, turn: &str) -> crate::engines::subprocess::KillHook {
+        if let Ok(mut a) = self.armed.lock() {
+            *a = PreKill {
+                turn: turn.to_string(),
+                ..Default::default()
+            };
+        }
+        let site = self.clone();
+        let turn = turn.to_string();
+        std::sync::Arc::new(move |ev| match ev {
+            crate::engines::subprocess::KillEvent::Before { root, tree } => {
+                site.before_kill(&turn, root, tree)
+            }
+            crate::engines::subprocess::KillEvent::After => site.pause(true, &turn),
+        })
+    }
+
+    fn before_kill(&self, turn: &str, root: u32, tree: &Result<Vec<(u32, String)>, String>) {
+        let path = store_pending_path(&self.store, &self.pending);
+        let prior = crate::liveness::pending::read_pending_file(&path)
+            .record
+            .and_then(|v| serde_json::from_value::<PendingRecord>(v).ok())
+            .unwrap_or_else(|| {
+                let mut r = self.on.clone();
+                r.state = PendingState::Running;
+                r.child_pid = Some(root);
+                r
+            });
+        let written = self
+            .store
+            .write_pending(&self.pending, &pre_kill_record(&prior, turn, root, tree));
+        if let Ok(mut a) = self.armed.lock() {
+            a.turn = turn.to_string();
+            a.fired = true;
+            a.prior = Some(prior);
+            a.written = written.is_ok();
+            a.error = written.err().map(|e| c3_core::one_line(&e.to_string()));
+        }
+    }
+
+    /// What the current turn's kill wrote before it stopped anything.
+    fn armed(&self) -> PreKill {
+        self.armed.lock().map(|a| a.clone()).unwrap_or_default()
+    }
+
+    /// AFTER the kill: the record says what the kill kept (`k`; the survivors' entries are read
+    /// now, once), or - a kill that kept nothing - is put back as it was before the kill; then the
+    /// `write` test pause. `Err`: that write failed.
+    fn record(&self, k: Option<&mut KeptKill>) -> Result<(), String> {
+        let pre = self.armed();
+        let written = match k {
+            Some(k) => {
+                if k.entries.is_none() {
+                    k.entries = Some(survivor_entries(&k.survivors));
+                }
+                Some(
+                    self.store
+                        .write_pending(&self.pending, &kept_record(&self.on, k)),
+                )
+            }
+            None if pre.fired && pre.written => pre
+                .prior
+                .as_ref()
+                .map(|r| self.store.write_pending(&self.pending, r)),
+            None => None,
+        };
+        let Some(written) = written else {
+            return Ok(());
+        };
+        self.pause(false, &pre.turn);
+        written.map_err(|e| c3_core::one_line(&e.to_string()))
+    }
+}
+
+/// (wave 3e, F30-2) A kill whose record could not be written (`err`) is NOT confirmed - whatever it
+/// stopped, the evidence of it may be missing: its why becomes `the kill's record could not be
+/// written (<err>)` (unless it has one) and it keeps the record, an unknown tree.
+fn mark_record_failure(
+    c: &mut c3_core::engine::KillCheck,
+    survivors: &[u32],
+    kept: &mut Option<KeptKill>,
+    err: &str,
+) {
+    let why = format!("the kill's record could not be written ({err})");
+    c.confirmed = false;
+    if c.why.is_empty() {
+        c.why = why.clone();
+    }
+    let k = kept.get_or_insert_with(|| KeptKill {
+        survivors: survivors.to_vec(),
+        ..Default::default()
+    });
+    if k.kill_unconfirmed.is_empty() {
+        k.kill_unconfirmed = why;
+    }
+}
+
+/// (wave 3e, F30-2) What a kill keeps, as the warning names it (`survivors`, `unverified pids`,
+/// `unconfirmed kill`).
+fn kept_what(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> &'static str {
+    if !survivors.is_empty() {
+        "survivors"
+    } else if !c.unverified.is_empty() {
+        "unverified pids"
+    } else {
+        "unconfirmed kill"
+    }
+}
+
+/// (wave 3e, F30-2) The warning of a kill whose record could not be written - before the kill
+/// (`pre`), after it (`post`) or both - and whether the evidence is LOST (no record of the kill on
+/// disk: written neither before nor after it). The plugin's form when it is lost: `the
+/// survivors|unverified pids|unconfirmed kill could not be recorded (<error>) - <path> still names
+/// only child pid <n>`. `None`: both writes succeeded (or none was due).
+fn kill_record_warning(
+    pre: &PreKill,
+    post: &Result<(), String>,
+    what: &str,
+    path: &Path,
+    child: u32,
+) -> Option<(String, bool)> {
+    let path = path.display();
+    match (pre.error.as_deref(), post.as_ref().err()) {
+        (None, None) => None,
+        (_, Some(e)) if pre.written => Some((
+            format!(
+                "the {what} could not be recorded ({e}) - {path} keeps the record written before the kill (its tree unknown: the next run for this task is refused until a scan finds none of it)"
+            ),
+            false,
+        )),
+        (Some(e), None) => Some((
+            format!(
+                "the record could not be written before the kill ({e}) - the kill counts as not confirmed; {path} names what it left"
+            ),
+            false,
+        )),
+        (_, Some(e)) => Some((
+            format!(
+                "the {what} could not be recorded ({e}) - {path} still names only child pid {child}"
+            ),
+            true,
+        )),
     }
 }
 
@@ -581,18 +847,52 @@ fn secondary_kill(
     if !survivors.is_empty() {
         c.confirmed = false;
     }
+    let mut kept = kept_kill(&c, survivors);
+    // (wave 3c, F23-3; wave 3e, F30-2) the record was written BEFORE this kill (its hook); it is
+    // updated HERE, at the kill, with what the kill kept (or put back). A write that failed - before
+    // or now - makes the kill not confirmed: warned, and the run commits nothing unless the end of
+    // the run writes the evidence.
+    let mut record_warning: Option<(String, bool)> = None;
+    if let Some(site) = sec.kill_site.clone() {
+        let pre = site.armed();
+        if let Some(e) = &pre.error {
+            mark_record_failure(&mut c, survivors, &mut kept, e);
+        }
+        let mut merged = kept
+            .clone()
+            .and_then(|k| merged_kept(sec.main_kept.clone(), Some(k)));
+        let post = site.record(merged.as_mut());
+        if let (Some(k), Some(m)) = (kept.as_mut(), merged) {
+            k.entries = m.entries;
+        }
+        if let Err(e) = &post {
+            mark_record_failure(&mut c, survivors, &mut kept, e);
+        }
+        let child = pre
+            .prior
+            .as_ref()
+            .and_then(|r| r.child_pid)
+            .or(site.on.child_pid)
+            .unwrap_or(c.root_pid);
+        record_warning = kill_record_warning(
+            &pre,
+            &post,
+            kept_what(&c, survivors),
+            &store_pending_path(&site.store, &site.pending),
+            child,
+        );
+    }
     if let Some(w) = kill_check_warning(&c, survivors, turn) {
         sec.kill_warnings.push(w);
     }
-    if let Some(mut k) = kept_kill(&c, survivors) {
-        // (wave 3c, F23-3) the record is written HERE, at the kill (the plugin's `catch { }`: a
-        // failed write is retried with the end of the run's)
-        if let Some(site) = sec.kill_site.clone() {
-            if let Some(mut merged) = merged_kept(sec.main_kept.clone(), Some(k.clone())) {
-                let _ = site.write(&mut merged);
-                k.entries = merged.entries;
-            }
+    if let Some((w, lost)) = record_warning {
+        sec.kill_warnings
+            .push(format!("kill not recorded ({turn}): {w}"));
+        if lost {
+            sec.kill_record_lost = Some(w);
         }
+    }
+    if let Some(k) = kept {
         sec.kept_kill = Some(k);
     }
     let text = format!("{stop} {}", format_kill_text(&c, survivors));
@@ -4021,8 +4321,16 @@ fn run_live(mut ctx: Context) -> i32 {
     let _ = std::fs::remove_file(&ctx.kick_path);
     let _ = std::fs::remove_file(crate::engines::subprocess::kick_ack_path(&ctx.kick_path));
 
-    // Run the primary turn through the selected engine adapter.
-    let (outcome, detail) = match run_primary_turn(&ctx, Some(on_running)) {
+    // Run the primary turn through the selected engine adapter. (wave 3e, F30-2) Its kill writes
+    // the record that names the tree BEFORE the kill (the site's hook).
+    let kill_site = KillSite::new(
+        store.clone(),
+        pending.clone(),
+        rec_arc.lock().map(|r| r.clone()).unwrap_or_default(),
+        &ctx.identity.model,
+    );
+    let main_kill_hook = kill_site.hook("main turn");
+    let (outcome, detail) = match run_primary_turn(&ctx, Some(on_running), Some(main_kill_hook)) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_file(store_pending_path(&store, &pending));
@@ -4047,6 +4355,7 @@ fn run_live(mut ctx: Context) -> i32 {
         collab_before,
         when_iso,
         register_failure,
+        kill_site,
     );
     if let Some(hp) = &health_path {
         let _ = c3_core::health::unregister_machine_running(hp, bridge_pid, &|pid, st| {
@@ -4182,6 +4491,8 @@ fn fix_claude_lineage(r: &mut Request) {
 fn run_primary_turn(
     ctx: &Context,
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+    // (wave 3e, F30-2) the main turn's kill writes its record BEFORE the kill
+    on_kill: Option<crate::engines::subprocess::KillHook>,
 ) -> Result<(AttemptOutcome, EngineDetail), String> {
     let primary = TurnFiles {
         events: ctx.events_path.clone(),
@@ -4199,6 +4510,7 @@ fn run_primary_turn(
                 stall_sec: ctx.stall_sec,
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
+                on_kill,
             };
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
             let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
@@ -4224,6 +4536,7 @@ fn run_primary_turn(
                 stall_sec: ctx.stall_sec,
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
+                on_kill,
             };
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
             let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
@@ -4243,6 +4556,7 @@ fn run_primary_turn(
                 ctx.stall_sec,
                 Some(ctx.kick_path.clone()),
                 on_running,
+                on_kill,
             );
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
             let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
@@ -4276,6 +4590,7 @@ fn run_primary_turn(
                 stall_sec: ctx.stall_sec,
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
+                on_kill,
             };
             let request = make_live_request(ctx);
             let turn = TurnRequest {
@@ -4367,6 +4682,7 @@ fn claude_engine(
     stall_sec: i64,
     kick_path: Option<PathBuf>,
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+    on_kill: Option<crate::engines::subprocess::KillHook>,
 ) -> crate::engines::claude::ClaudeEngine {
     crate::engines::claude::ClaudeEngine {
         launcher: ctx.engine_launcher.clone(),
@@ -4376,6 +4692,7 @@ fn claude_engine(
         stall_sec,
         kick_path,
         on_running,
+        on_kill,
         auth: ctx.engine_auth.clone(),
         endpoint: ctx.engine_endpoint.clone(),
     }
@@ -4676,6 +4993,9 @@ fn finish(
     // stopped in the `on_running` callback, so this run fails closed — the outcome names the
     // failure, no findings/verdict, and the recovery record is left at `launching`.
     register_failure: Option<String>,
+    // (wave 3e, F30-2) where the run's kills write their records (the main turn's hook wrote its
+    // record before the kill)
+    kill_site: KillSite,
 ) -> i32 {
     let is_engine = !ctx.is_codex();
     let register_failure_text = register_failure.map(|err| {
@@ -4910,45 +5230,45 @@ fn finish(
         }
     }
 
-    // (wave 3c, F23-3) The main turn's kill writes the record it keeps NOW - survivors, unverified
-    // pids or an unknown tree - before anything else of the run proceeds (the plugin's kill site):
-    // a bridge that dies from here on leaves that evidence on disk. A failed write is said in the
-    // outcome, as the plugin's (the end of the run writes it again).
-    let kill_site = KillSite {
-        store: store.clone(),
-        pending: pending.clone(),
-        on: base_record.clone(),
-        pause_ms: test_hook_ms(
-            &c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_PAUSE_MS").unwrap_or_default(),
-            &ctx.identity.model,
-        )
-        .unwrap_or(0),
-    };
+    // (wave 3c, F23-3; wave 3e, F30-2) The main turn's kill wrote its record BEFORE the kill (the
+    // site's hook); NOW - before anything else of the run proceeds (the plugin's kill site) - the
+    // record says what the kill kept (survivors, unverified pids or an unknown tree) or is put back.
+    // A write that failed, before the kill or now, makes the kill not confirmed: the outcome warns
+    // (the plugin's WARNING), no continuation follows, and the run commits nothing unless the end of
+    // the run writes the evidence.
+    let mut kill_site = kill_site;
+    kill_site.on = base_record.clone();
     let mut main_kept: Option<KeptKill> = None;
+    let mut kill_record_lost: Option<String> = None;
     if register_failure_text.is_none() {
-        if let Some(mut k) = main_kill
-            .as_ref()
-            .and_then(|c| kept_kill(c, &timeout_survivors))
-        {
-            if let Err(e) = kill_site.write(&mut k) {
-                let what = if !k.survivors.is_empty() {
-                    "survivors"
-                } else if !k.unverified.is_empty() {
-                    "unverified pids"
-                } else {
-                    "unconfirmed kill"
-                };
-                let child = base_record
-                    .child_pid
-                    .or(main_kill.as_ref().map(|c| c.root_pid))
-                    .unwrap_or(0);
-                bridge_outcome += &format!(
-                    "; WARNING: the {what} could not be recorded ({}) - {} still names only child pid {child}",
-                    c3_core::one_line(&e.to_string()),
-                    store_pending_path(&store, &pending).display()
-                );
+        if let Some(check) = main_kill.as_mut() {
+            let mut kept = kept_kill(check, &timeout_survivors);
+            let pre = kill_site.armed();
+            if let Some(e) = &pre.error {
+                mark_record_failure(check, &timeout_survivors, &mut kept, e);
             }
-            main_kept = Some(k);
+            let post = kill_site.record(kept.as_mut());
+            if let Err(e) = &post {
+                mark_record_failure(check, &timeout_survivors, &mut kept, e);
+            }
+            let child = base_record.child_pid.unwrap_or(check.root_pid);
+            if let Some((warning, lost)) = kill_record_warning(
+                &pre,
+                &post,
+                kept_what(check, &timeout_survivors),
+                &store_pending_path(&store, &pending),
+                child,
+            ) {
+                kill_confirmed_state = Some(false);
+                if kill_unconfirmed.is_none() && timeout_survivors.is_empty() {
+                    kill_unconfirmed = Some((check.root_pid, check.why.clone()));
+                }
+                bridge_outcome += &format!("; WARNING: {warning}");
+                if lost {
+                    kill_record_lost = Some(warning);
+                }
+            }
+            main_kept = kept;
         }
     }
 
@@ -5677,7 +5997,19 @@ fn finish(
         // (wave 28e, E1 / E18 / E23) survivors OR descendants the kill could not verify OR an
         // unknown tree (`kill_unconfirmed`): the record is kept in state `survivors`.
         let survivor_rec = kept_record(&base_record, &k);
-        let _ = store.write_pending(&pending, &survivor_rec);
+        let written = store.write_pending(&pending, &survivor_rec);
+        // (wave 3e, F30-2) no commit without the kill's evidence on disk: a kill whose record was
+        // written neither before nor after it, and this write failing too, ends the run refused -
+        // nothing is committed (the record on disk may name only the killed child).
+        if let (Err(e), Some(lost)) = (
+            &written,
+            kill_record_lost.as_ref().or(sec.kill_record_lost.as_ref()),
+        ) {
+            return refuse(&format!(
+                "the kill's evidence is not on disk: {lost}; the end of the run could not write it either ({}). This run is not committed: no ledger entry was written and the stores were not touched - make sure no process of it still runs before the next consultation of this task (bridge outcome: {bridge_outcome}).",
+                c3_core::one_line(&e.to_string())
+            ));
+        }
         kept_rec = Some(survivor_rec);
         RecoveryDisposition::Retain
     } else {
@@ -6232,6 +6564,8 @@ fn run_codex_secondary(
     stderr_path: &Path,
     timeout_sec: f64,
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+    // (wave 3e, F30-2) the turn's kill writes its record BEFORE the kill
+    on_kill: Option<crate::engines::subprocess::KillHook>,
 ) -> (AttemptOutcome, f64, String, Option<ClaudeRunDetail>) {
     let engine = engine_kind_of(&ctx.engine);
     // muse takes its prompt through a fresh `--prompt-file` per turn (distinct from the main one).
@@ -6325,6 +6659,7 @@ fn run_codex_secondary(
                 0,
                 secondary_kick.clone(),
                 on_running,
+                on_kill,
             );
             match eng.run_detailed(&turn) {
                 Ok(r) => {
@@ -6349,6 +6684,7 @@ fn run_codex_secondary(
                 stall_sec: 0,
                 kick_path: secondary_kick.clone(),
                 on_running,
+                on_kill,
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, r.turn.outcome),
@@ -6364,6 +6700,7 @@ fn run_codex_secondary(
                 stall_sec: 0,
                 kick_path: secondary_kick.clone(),
                 on_running,
+                on_kill,
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, r.turn.outcome),
@@ -6380,6 +6717,7 @@ fn run_codex_secondary(
                 stall_sec: 0,
                 kick_path: secondary_kick.clone(),
                 on_running,
+                on_kill,
             };
             (eng.run(&turn).unwrap_or_else(plan_err), String::new())
         }
@@ -6576,6 +6914,10 @@ fn run_timeout_continuation(
         &continue_stderr,
         ctx.r.continue_sec as f64,
         on_running,
+        // (wave 3e, F30-2) its kill writes the record that names the tree BEFORE the kill
+        sec.kill_site
+            .as_ref()
+            .map(|s| s.hook("timeout continuation")),
     );
     let is_engine = !ctx.is_codex();
     sec.continue_wall = wall;
@@ -6814,6 +7156,8 @@ fn run_format_repair(
         &repair_stderr,
         repair_timeout as f64,
         Some(on_running),
+        // (wave 3e, F30-2) its kill writes the record that names the tree BEFORE the kill
+        sec.kill_site.as_ref().map(|s| s.hook("format repair")),
     );
     // (wave 3c, F23-3) a kill of this turn writes its record on the one this turn has on disk (it
     // names the saved prose and the repair's pid)
@@ -7213,7 +7557,7 @@ fn run_engine_secondary(
     let start = std::time::Instant::now();
     let (outcome, detail) = match ctx.engine.as_str() {
         "claude" => {
-            let eng = claude_engine(ctx, TurnFiles::default(), files, 0, None, None);
+            let eng = claude_engine(ctx, TurnFiles::default(), files, 0, None, None, None);
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome.clone(), claude_detail(&r)),
                 Err(e) => (
@@ -7236,6 +7580,7 @@ fn run_engine_secondary(
                 stall_sec: 0,
                 kick_path: None,
                 on_running: None,
+                on_kill: None,
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, agy_detail(&r.turn)),
@@ -7257,6 +7602,7 @@ fn run_engine_secondary(
                 stall_sec: 0,
                 kick_path: None,
                 on_running: None,
+                on_kill: None,
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, muse_detail(&r.turn)),
@@ -9692,12 +10038,12 @@ mod kill_record_tests {
             serde_json::from_slice(&std::fs::read(&path).expect("the record")).unwrap()
         };
         let mut sec = Secondary {
-            kill_site: Some(KillSite {
-                store: store.clone(),
-                pending: pending.clone(),
-                on: base.clone(),
-                pause_ms: 0,
-            }),
+            kill_site: Some(KillSite::new(
+                store.clone(),
+                pending.clone(),
+                base.clone(),
+                "",
+            )),
             main_kept: Some(KeptKill {
                 kill_unconfirmed: "the main kill".into(),
                 ..Default::default()
@@ -9755,6 +10101,248 @@ mod kill_record_tests {
         let end: serde_json::Value = serde_json::from_slice(&end.to_bytes().unwrap()).unwrap();
         assert_eq!(end, r);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// (wave 3e, F30-2) A store whose task dir holds a pending record in state `running` naming
+    /// `child`; returns the store, its pending ref and the record's path.
+    fn running_store(tag: &str, child: u32) -> (FilesStore, PendingRef, PathBuf, PendingRecord) {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-{tag}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(dir.join("t")).unwrap();
+        let store = FilesStore::new(dir);
+        let pending = PendingRef::single(TaskSlug::new("t").unwrap());
+        let path = store_pending_path(&store, &pending);
+        let base = PendingRecord {
+            state: PendingState::Running,
+            n: 1,
+            nn: "01".into(),
+            child_pid: Some(child),
+            note: "the timeout continuation turn is running".into(),
+            ..Default::default()
+        };
+        store.write_pending(&pending, &base).unwrap();
+        (store, pending, path, base)
+    }
+
+    fn on_disk(path: &Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(path).expect("the record")).unwrap()
+    }
+
+    #[test]
+    fn a_kill_writes_its_record_before_the_kill_and_puts_it_back_after_a_clean_one() {
+        // (wave 3e, F30-2) the hook writes the record that names the tree BEFORE anything is
+        // stopped: the root and the live descendants with their start times (this process stands
+        // for both), a descendant whose start time cannot be read in unverified[], one that exited
+        // meanwhile left out; the unknown tree until the kill's result is written
+        let me = std::process::id();
+        let (store, pending, path, base) = running_store("prekill", me);
+        let site = KillSite::new(store, pending, base.clone(), "");
+        let hook = site.hook("timeout continuation");
+        let tree: Result<Vec<(u32, String)>, String> = Ok(vec![
+            (4_000_001, String::new()),
+            (4_000_002, "<gone>".into()),
+        ]);
+        hook(crate::engines::subprocess::KillEvent::Before {
+            root: me,
+            tree: &tree,
+        });
+        let r = on_disk(&path);
+        let info = crate::liveness::proc::process_info(me).expect("this process");
+        assert_eq!(r["state"], "survivors");
+        assert_eq!(r["child_pid"], me);
+        assert_eq!(
+            r["survivors"],
+            serde_json::json!([{ "pid": me, "start_time": info.start, "name": info.name }])
+        );
+        assert_eq!(
+            r["unverified"],
+            serde_json::json!([{ "pid": 4_000_001, "why": "start time of pid 4000001 unreadable" }])
+        );
+        assert_eq!(
+            r["kill_unconfirmed"],
+            format!("the kill of the timeout continuation (pid {me}) started and its result was never recorded")
+        );
+        assert_eq!(
+            r["note"],
+            format!("the kill of the timeout continuation (pid {me}) is in progress; its result is not recorded yet")
+        );
+        let pre = site.armed();
+        assert!(pre.fired && pre.written && pre.error.is_none());
+        // a clean kill keeps nothing: the record is put back as it was before the kill
+        let mut sec = Secondary {
+            kill_site: Some(site.clone()),
+            ..Secondary::default()
+        };
+        let text = secondary_kill(
+            "timeout after 30 s",
+            Some(KillCheck::confirmed(me)),
+            &[],
+            "timeout continuation",
+            &mut sec,
+        );
+        assert_eq!(text, "timeout after 30 s (process tree killed)");
+        let back: serde_json::Value = serde_json::from_slice(&base.to_bytes().unwrap()).unwrap();
+        assert_eq!(on_disk(&path), back);
+        assert!(sec.kept_kill.is_none() && sec.kill_warnings.is_empty());
+        assert!(sec.kill_record_lost.is_none());
+        // a kill that keeps something: the kept record replaces the one written before the kill
+        let hook = site.hook("format repair");
+        hook(crate::engines::subprocess::KillEvent::Before {
+            root: me,
+            tree: &Err("denied (test)".into()),
+        });
+        assert_eq!(
+            on_disk(&path)["survivors"].as_array().map(|a| a.len()),
+            Some(1)
+        );
+        let _ = secondary_kill(
+            "timeout after 30 s",
+            Some(check(false, "start time of pid 5 unreadable", me, &[5])),
+            &[],
+            "format repair",
+            &mut sec,
+        );
+        let r = on_disk(&path);
+        assert_eq!(r["state"], "survivors");
+        assert_eq!(r["survivors"], serde_json::json!([]));
+        assert_eq!(
+            r["unverified"],
+            serde_json::json!([{ "pid": 5, "why": "start time of pid 5 unreadable" }])
+        );
+        assert!(r.get("kill_unconfirmed").is_none(), "{r}");
+        assert_eq!(r["note"], base.note.as_str());
+    }
+
+    #[test]
+    fn a_kill_whose_record_cannot_be_written_is_not_confirmed_and_loses_nothing_silently() {
+        // (wave 3e, F30-2) the record path blocked (a directory stands where the file goes): the
+        // write before the kill and the one after it fail - the kill is NOT confirmed, it keeps the
+        // record (an unknown tree), the warning names the path, and the evidence is LOST (the run
+        // must not commit unless the end of the run writes it)
+        let (store, pending, path, base) = running_store("killrec-blocked", 7_000_001);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        let site = KillSite::new(store, pending, base, "");
+        let hook = site.hook("timeout continuation");
+        hook(crate::engines::subprocess::KillEvent::Before {
+            root: 7_000_002,
+            tree: &Ok(Vec::new()),
+        });
+        assert!(site.armed().error.is_some());
+        let mut sec = Secondary {
+            kill_site: Some(site),
+            ..Secondary::default()
+        };
+        let text = secondary_kill(
+            "timeout after 30 s",
+            Some(KillCheck::confirmed(7_000_002)),
+            &[],
+            "timeout continuation",
+            &mut sec,
+        );
+        assert!(
+            text.starts_with(
+                "timeout after 30 s (kill not confirmed: the kill's record could not be written ("
+            ),
+            "{text}"
+        );
+        let (c, _) = sec.kill_checks.last().expect("the check");
+        assert!(!c.confirmed);
+        let kept = sec.kept_kill.clone().expect("the record is kept");
+        assert!(kept
+            .kill_unconfirmed
+            .starts_with("the kill's record could not be written ("));
+        let lost = sec.kill_record_lost.clone().expect("the evidence is lost");
+        assert!(
+            lost.starts_with("the unconfirmed kill could not be recorded (")
+                && lost.ends_with(&format!(
+                    "{} still names only child pid 7000002",
+                    path.display()
+                )),
+            "{lost}"
+        );
+        assert!(sec.kill_warnings.iter().any(|w| w.starts_with(
+            "kill not confirmed (timeout continuation): the kill's record could not be written ("
+        )));
+        assert!(sec
+            .kill_warnings
+            .contains(&format!("kill not recorded (timeout continuation): {lost}")));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn a_kill_record_written_only_before_or_only_after_the_kill_is_warned_not_lost() {
+        // (wave 3e, F30-2) one of the two writes failed: the kill is not confirmed and warned, the
+        // evidence stays on disk - the record written before the kill, or the one after it
+        let me = std::process::id();
+        // the write BEFORE the kill fails, the one after it succeeds: the record says the unknown
+        // tree with why
+        let (store, pending, path, base) = running_store("killrec-prefail", me);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        let site = KillSite::new(store, pending, base, "");
+        site.hook("timeout continuation")(crate::engines::subprocess::KillEvent::Before {
+            root: me,
+            tree: &Ok(Vec::new()),
+        });
+        std::fs::remove_dir_all(&path).unwrap();
+        let mut sec = Secondary {
+            kill_site: Some(site),
+            ..Secondary::default()
+        };
+        let _ = secondary_kill(
+            "timeout after 30 s",
+            Some(KillCheck::confirmed(me)),
+            &[],
+            "timeout continuation",
+            &mut sec,
+        );
+        assert!(sec.kill_record_lost.is_none());
+        let r = on_disk(&path);
+        assert_eq!(r["state"], "survivors");
+        assert!(r["kill_unconfirmed"]
+            .as_str()
+            .is_some_and(|w| w.starts_with("the kill's record could not be written (")));
+        assert!(sec.kill_warnings.iter().any(|w| w.starts_with(
+            "kill not recorded (timeout continuation): the record could not be written before the kill ("
+        )));
+        // (Windows: a read-only file cannot be replaced) the write before the kill succeeds, the
+        // one after it fails: the record written before the kill stays
+        if cfg!(windows) {
+            let (store, pending, path, base) = running_store("killrec-postfail", me);
+            let site = KillSite::new(store, pending, base, "");
+            site.hook("format repair")(crate::engines::subprocess::KillEvent::Before {
+                root: me,
+                tree: &Ok(Vec::new()),
+            });
+            let before = on_disk(&path);
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(&path, perms).unwrap();
+            let mut sec = Secondary {
+                kill_site: Some(site),
+                ..Secondary::default()
+            };
+            let _ = secondary_kill(
+                "timeout after 30 s",
+                Some(KillCheck::confirmed(me)),
+                &[],
+                "format repair",
+                &mut sec,
+            );
+            let mut perms = std::fs::metadata(&path).unwrap().permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            std::fs::set_permissions(&path, perms).unwrap();
+            assert!(sec.kill_record_lost.is_none());
+            assert_eq!(on_disk(&path), before);
+            assert!(sec.kill_warnings.iter().any(|w| w.contains(
+                "keeps the record written before the kill (its tree unknown: the next run for this task is refused until a scan finds none of it)"
+            )));
+        }
     }
 
     #[test]

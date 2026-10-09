@@ -716,6 +716,26 @@ pub fn codex_server_exclusion(name: &str, cmd: &str) -> ServerExclusion {
 /// (wave 3c, F23-2) What a scan says of a row whose start time could not be read: it is counted.
 pub const START_UNREADABLE_COUNTED: &str = "its start time cannot be read - counted (fail-closed)";
 
+/// (wave 3e, F30-1) Why the machine-wide rule counts a row that is not codex-like by name or
+/// command line but whose start time cannot be read: nothing proves it unrelated - its command line
+/// cannot be read (`""`, ps's `[name]`), names a generic runtime with no arguments, or cannot be
+/// split with certainty. `None`: a READABLE command line that is not codex-like - the one evidence
+/// that leaves such a row out.
+fn unproven_identity(name: &str, cmd: &str) -> Option<String> {
+    match command_line_gap(name, cmd) {
+        "unreadable" => return Some("command line not readable".to_string()),
+        "no arguments" => {
+            return Some("a generic runtime, no arguments on its command line".to_string())
+        }
+        _ => {}
+    }
+    let (_, ambiguous) = split_command_line_tokens(cmd);
+    if !ambiguous.is_empty() {
+        return Some(format!("command line ambiguous: {ambiguous}"));
+    }
+    None
+}
+
 /// `Find-CodexProcesses` over a given process list (pure). `since_text` is the pre-formatted
 /// "started at or after" stamp for the message; `since` is the same instant for the comparison.
 /// With a bridge pid on Windows, a process counts when its parent is that pid and it started at or
@@ -726,8 +746,17 @@ pub const START_UNREADABLE_COUNTED: &str = "its start time cannot be read - coun
 /// `excluded`. This process and its ancestors are never counted. (wave 3c, F23-2) A row whose start
 /// time could not be read (`created: None`) is never skipped: it counts as started at or after
 /// `since` (and before a reuse of the bridge's pid), its rule says so ([`START_UNREADABLE_COUNTED`]).
-/// The plugin's `Win32_Process.CreationDate` is always read; C3's table (`GetProcessTimes`) cannot
-/// read a protected or another user's process, which must never release a record by being skipped.
+/// (wave 3e, F30-1) By parent, the whole subtree under the bridge's pid counts, whatever its names:
+/// a grandchild below a live intermediate too (`descendant of the interrupted bridge pid <p> (ppid
+/// <q>)`); a link is left out only on positive evidence that it is not the tree's - a row (with its
+/// subtree) that started before `since`, after a reuse of the bridge's pid, or before its own
+/// listed parent (that pid's earlier owner was its parent); a start time that cannot be read proves
+/// nothing, so the walk goes through it. Machine-wide, a row whose start time cannot be read and
+/// that is not codex-like counts unless its command line is READABLE ([`unproven_identity`]):
+/// `<what>, task not verifiable; its start time cannot be read - counted (fail-closed)`. The idle
+/// process (pid 0) is never a candidate. C3's table reads every start time as the plugin's
+/// `Win32_Process.CreationDate` does (`NtQuerySystemInformation`); one it cannot read must never
+/// release a record by being skipped.
 #[allow(clippy::too_many_arguments)]
 pub fn find_codex_processes(
     procs: &[ScanProc],
@@ -768,37 +797,71 @@ pub fn find_codex_processes(
         guard += 1;
     }
 
+    // (wave 3e, F30-1) the idle process (pid 0, no start time, no command line) is not a process
+    // of anyone's tree
+    excluded.insert(0);
+
     let mut found = Vec::new();
     let mut app_servers: Vec<ExcludedProc> = Vec::new();
     if by_parent {
         // A live process holding the bridge's pid now is a reuse; only children created before it
         // started are ours.
         let reused_at = by_id.get(&bridge_pid).and_then(|p| p.created);
+        // (wave 3e, F30-1) the subtree under the bridge's pid, breadth first in table order (its
+        // children first): every row under it counts whatever its name - only positive evidence
+        // that a link is not the tree's leaves a row (and what hangs below it) out
+        let mut children: HashMap<u32, Vec<&ScanProc>> = HashMap::new();
         for p in procs {
-            if excluded.contains(&p.pid) || p.ppid != bridge_pid {
-                continue;
-            }
-            let rule = match p.created {
-                // (wave 3c, F23-2) a child whose start time cannot be read is never filtered out:
-                // it may have started at or after `since` and before any reuse (fail-closed)
-                None => format!(
-                    "child of the interrupted bridge (ppid {bridge_pid}); {START_UNREADABLE_COUNTED}"
-                ),
-                Some(c) if c < since => continue,
-                Some(c) => {
-                    if let Some(r) = reused_at {
-                        if c >= r {
+            children.entry(p.ppid).or_default().push(p);
+        }
+        let mut seen: HashSet<u32> = HashSet::from([bridge_pid]);
+        let mut level: Vec<(u32, Option<chrono::DateTime<chrono::Utc>>)> = vec![(bridge_pid, None)];
+        let mut depth = 0;
+        while !level.is_empty() {
+            depth += 1;
+            let mut next = Vec::new();
+            for (parent, parent_created) in level {
+                for p in children.get(&parent).map(Vec::as_slice).unwrap_or_default() {
+                    if excluded.contains(&p.pid) || !seen.insert(p.pid) {
+                        continue;
+                    }
+                    if let Some(c) = p.created {
+                        // started before the run: not of its tree (nor is anything below it)
+                        if c < since {
+                            continue;
+                        }
+                        // a child of the process that reused the bridge's pid
+                        if depth == 1 && reused_at.is_some_and(|r| c >= r) {
+                            continue;
+                        }
+                        // started before its listed parent: that pid's earlier owner was its parent
+                        if parent_created.is_some_and(|pc| c < pc) {
                             continue;
                         }
                     }
-                    format!("child of the interrupted bridge (ppid {bridge_pid})")
+                    // (wave 3c, F23-2) a start time that cannot be read is never filtered out: it
+                    // may have started at or after `since` and before any reuse (fail-closed)
+                    let unknown = if p.created.is_none() {
+                        format!("; {START_UNREADABLE_COUNTED}")
+                    } else {
+                        String::new()
+                    };
+                    let rule = if depth == 1 {
+                        format!("child of the interrupted bridge (ppid {bridge_pid}){unknown}")
+                    } else {
+                        format!(
+                            "descendant of the interrupted bridge pid {bridge_pid} (ppid {parent}){unknown}"
+                        )
+                    };
+                    found.push(FoundProc {
+                        pid: p.pid,
+                        name: p.name.clone(),
+                        rule,
+                    });
+                    next.push((p.pid, p.created));
                 }
-            };
-            found.push(FoundProc {
-                pid: p.pid,
-                name: p.name.clone(),
-                rule,
-            });
+            }
+            level = next;
         }
     } else {
         for p in procs {
@@ -830,6 +893,16 @@ pub fn find_codex_processes(
                     name: p.name.clone(),
                     why: m.excluded,
                 });
+            } else if start_unknown {
+                // (wave 3e, F30-1) not codex-like, its start time unknown: left out only on a
+                // READABLE command line (fail-closed)
+                if let Some(what) = unproven_identity(&p.name, &p.command_line) {
+                    found.push(FoundProc {
+                        pid: p.pid,
+                        name: p.name.clone(),
+                        rule: format!("{what}, task not verifiable; {START_UNREADABLE_COUNTED}"),
+                    });
+                }
             }
         }
         // (wave 29, E27) what was left out, said where the scan is reported (at most 6 named)
@@ -970,9 +1043,128 @@ mod imp {
         ) -> i32;
     }
 
-    /// The whole process table (pid, ppid, image name, creation time). Command lines are left empty
-    /// and fetched per-candidate later (`process_command_line`). `Err` when the snapshot fails.
+    extern "system" {
+        // ntdll: NTSTATUS NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS, PVOID, ULONG, PULONG)
+        fn NtQuerySystemInformation(
+            class: u32,
+            info: *mut core::ffi::c_void,
+            info_len: u32,
+            ret_len: *mut u32,
+        ) -> i32;
+    }
+
+    /// The head of one `SYSTEM_PROCESS_INFORMATION` entry (winternl.h; `Reserved1[48]` there holds
+    /// WorkingSetPrivateSize, HardFaultCount, NumberOfThreadsHighWatermark, CycleTime, then the
+    /// CreateTime, UserTime and KernelTime spelled out here). `repr(C)` gives the documented
+    /// offsets on 64- and 32-bit Windows alike.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct SystemProcessInformation {
+        next_entry_offset: u32,
+        number_of_threads: u32,
+        reserved1: [u8; 24],
+        create_time: i64,
+        user_time: i64,
+        kernel_time: i64,
+        image_name_length: u16,
+        image_name_maximum_length: u16,
+        image_name_buffer: *const u16,
+        base_priority: i32,
+        unique_process_id: usize,
+        inherited_from_unique_process_id: usize,
+    }
+
+    /// (wave 3e, F30-1) The whole process table from ONE `NtQuerySystemInformation
+    /// (SystemProcessInformation)` read: pid, parent pid, image name and the kernel's creation time
+    /// of EVERY process - read without opening it, as `Win32_Process.CreationDate` (the plugin's
+    /// scan) is, so a protected or another user's process (which `GetProcessTimes` denies) has its
+    /// start time too. `created` is `None` only where the kernel reports none (the idle process).
+    fn nt_process_table() -> Result<Vec<super::ScanProc>, String> {
+        const SYSTEM_PROCESS_INFORMATION: u32 = 5;
+        const STATUS_INFO_LENGTH_MISMATCH: i32 = i32::from_ne_bytes(0xC000_0004u32.to_ne_bytes());
+        let head = std::mem::size_of::<SystemProcessInformation>();
+        let mut words: usize = 64 * 1024; // u64 words: 512 KiB to start
+        for _ in 0..8 {
+            let mut buf: Vec<u64> = vec![0; words];
+            let len = buf.len() * 8;
+            let mut ret: u32 = 0;
+            // SAFETY: the kernel writes at most `len` bytes into the buffer we own (8-byte aligned)
+            // and reports the length it needs through `ret`.
+            let status = unsafe {
+                NtQuerySystemInformation(
+                    SYSTEM_PROCESS_INFORMATION,
+                    buf.as_mut_ptr() as *mut core::ffi::c_void,
+                    len as u32,
+                    &mut ret,
+                )
+            };
+            if status == STATUS_INFO_LENGTH_MISMATCH {
+                words = (ret as usize).max(len) / 8 * 2;
+                continue;
+            }
+            if status != 0 {
+                return Err(format!(
+                    "NtQuerySystemInformation failed (status 0x{:08X})",
+                    status as u32
+                ));
+            }
+            let base = buf.as_ptr() as *const u8;
+            let mut out = Vec::new();
+            let mut offset = 0usize;
+            loop {
+                if offset + head > len {
+                    return Err("NtQuerySystemInformation returned a truncated entry".to_string());
+                }
+                // SAFETY: `offset + head` is within the buffer (checked above); the read is
+                // unaligned-safe.
+                let e: SystemProcessInformation = unsafe {
+                    std::ptr::read_unaligned(base.add(offset) as *const SystemProcessInformation)
+                };
+                let pid = e.unique_process_id as u32;
+                let mut name = String::new();
+                let bytes = e.image_name_length as usize;
+                let start = e.image_name_buffer as usize;
+                // the kernel points the name INTO this buffer: read it only when it lies there
+                if bytes > 0 && start >= base as usize && start + bytes <= base as usize + len {
+                    // SAFETY: the range was just checked to lie inside the buffer we own.
+                    let units =
+                        unsafe { std::slice::from_raw_parts(e.image_name_buffer, bytes / 2) };
+                    name = String::from_utf16_lossy(units);
+                }
+                if pid == 0 && name.is_empty() {
+                    name = "[System Process]".to_string(); // as the Toolhelp snapshot names it
+                }
+                out.push(super::ScanProc {
+                    pid,
+                    ppid: e.inherited_from_unique_process_id as u32,
+                    name,
+                    created: filetime_to_utc(e.create_time.max(0) as u64),
+                    command_line: String::new(),
+                });
+                if e.next_entry_offset == 0 {
+                    break;
+                }
+                offset += e.next_entry_offset as usize;
+            }
+            return Ok(out);
+        }
+        Err("NtQuerySystemInformation kept asking for a larger buffer".to_string())
+    }
+
+    /// The whole process table (pid, ppid, image name, creation time). (wave 3e, F30-1) From
+    /// [`nt_process_table`] - every start time read, as the plugin's `Win32_Process` scan reads
+    /// `CreationDate` -; should that read fail, from a Toolhelp snapshot with `GetProcessTimes`
+    /// (whose start time a protected or another user's process denies: `None`). Command lines are
+    /// left empty and fetched per-candidate later (`process_command_line`). `Err` when both fail.
     pub fn enumerate_processes() -> Result<Vec<super::ScanProc>, String> {
+        match nt_process_table() {
+            Ok(t) => Ok(t),
+            Err(_) => toolhelp_table(),
+        }
+    }
+
+    /// The process table from a Toolhelp snapshot, each start time through `GetProcessTimes`.
+    fn toolhelp_table() -> Result<Vec<super::ScanProc>, String> {
         let mut out = Vec::new();
         // SAFETY: the snapshot handle is checked and closed; the PROCESSENTRY32W is owned and its
         // dw_size is set as the API requires.
@@ -1206,6 +1398,28 @@ mod imp {
             let ft = ((creation.high as u64) << 32) | (creation.low as u64);
             Some(filetime_to_iso(ft))
         }
+    }
+
+    /// (wave 3e, F30-1) A creation `FILETIME` as an instant (`None` for 0 or before 1970).
+    fn filetime_to_utc(ft: u64) -> Option<chrono::DateTime<chrono::Utc>> {
+        const UNIX_OFFSET_100NS: u64 = 116_444_736_000_000_000;
+        if ft < UNIX_OFFSET_100NS {
+            return None;
+        }
+        let ticks = ft - UNIX_OFFSET_100NS;
+        chrono::DateTime::from_timestamp(
+            (ticks / 10_000_000) as i64,
+            (ticks % 10_000_000) as u32 * 100,
+        )
+    }
+
+    /// (wave 3e, F30-1) The two table readers agree (a fixture: this machine's own table).
+    #[cfg(test)]
+    pub(super) fn tables_for_test() -> (
+        Result<Vec<super::ScanProc>, String>,
+        Result<Vec<super::ScanProc>, String>,
+    ) {
+        (nt_process_table(), toolhelp_table())
     }
 
     /// A creation `FILETIME` (100 ns ticks since 1601-01-01 UTC) as .NET's `o` string in
@@ -1538,11 +1752,17 @@ mod tests {
         );
 
         // machine-wide: an unreadable codex-like row is counted (and says why), an unreadable row
-        // that is not codex-like is not (no blanket refusal), a codex row before the run is not; an
-        // unreadable app server stays left out (named)
+        // that is not codex-like and whose command line is READABLE is not (no blanket refusal -
+        // wave 3e, F30-1: one whose command line cannot be read is), a codex row before the run is
+        // not; an unreadable app server stays left out (named)
         let procs = vec![
             unknown_start(2000, 1, "codex.exe", ""),
-            unknown_start(2001, 1, "csrss.exe", ""),
+            unknown_start(
+                2001,
+                1,
+                "csrss.exe",
+                r"%SystemRoot%\system32\csrss.exe ObjectDirectory=\Windows",
+            ),
             p(2002, 1, "codex.exe", 50, ""),
             unknown_start(
                 2003,
@@ -1570,6 +1790,145 @@ mod tests {
         assert_eq!(
             out.excluded.iter().map(|e| e.pid).collect::<Vec<_>>(),
             vec![2004]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn f30_1_the_table_reads_every_start_time_as_the_plugins_wmi_scan() {
+        // (wave 3e, F30-1) the scan's table: NtQuerySystemInformation, one read, every start time
+        // (as Win32_Process.CreationDate); the Toolhelp + GetProcessTimes table it replaces cannot
+        // read a protected or another user's process's start time
+        let (nt, toolhelp) = imp::tables_for_test();
+        let nt = nt.expect("NtQuerySystemInformation reads the table");
+        let toolhelp = toolhelp.expect("the Toolhelp snapshot reads the table");
+        // this process: the same row in both, the same kernel start time
+        let me = std::process::id();
+        let a = nt
+            .iter()
+            .find(|p| p.pid == me)
+            .expect("this process, by NtQuery");
+        let b = toolhelp
+            .iter()
+            .find(|p| p.pid == me)
+            .expect("this process, by Toolhelp");
+        assert_eq!((a.ppid, &a.name, a.created), (b.ppid, &b.name, b.created));
+        assert!(a.created.is_some());
+        // every pid both list: the same parent and name (two snapshots - a pid that exited or was
+        // reused in between aside)
+        let differ: Vec<(u32, &str, &str)> = nt
+            .iter()
+            .filter_map(|p| {
+                toolhelp
+                    .iter()
+                    .find(|q| q.pid == p.pid)
+                    .filter(|q| q.ppid != p.ppid || q.name != p.name)
+                    .map(|q| (p.pid, p.name.as_str(), q.name.as_str()))
+            })
+            .collect();
+        assert!(differ.len() <= 2, "{differ:?}");
+        // a start time for every process but the idle one - the Toolhelp table has holes
+        let unknown: Vec<(u32, &str)> = nt
+            .iter()
+            .filter(|p| p.pid != 0 && p.created.is_none())
+            .map(|p| (p.pid, p.name.as_str()))
+            .collect();
+        assert!(unknown.is_empty(), "{unknown:?}");
+        let holes = toolhelp
+            .iter()
+            .filter(|p| p.pid != 0 && p.created.is_none())
+            .count();
+        println!(
+            "NtQuery: {} rows, every start time read; Toolhelp + GetProcessTimes: {} rows, {holes} without one",
+            nt.len(),
+            toolhelp.len()
+        );
+    }
+
+    #[test]
+    fn f30_1_the_whole_subtree_counts_by_parent_through_an_unreadable_intermediate() {
+        let since = at(100).unwrap();
+        // the dead bridge 1000: a wrapper (start unreadable) with a node grandchild (start
+        // unreadable, its name not codex-like) and a great-grandchild started after the run
+        let procs = vec![
+            unknown_start(1100, 1000, "cmd.exe", ""),
+            unknown_start(1101, 1100, "node.exe", ""),
+            p(1102, 1101, "python.exe", 150, "python helper.py"),
+            // unrelated: a row under another parent, and one under the wrapper's pid that started
+            // before the run (not the tree's - nor is its child)
+            p(1300, 9, "node.exe", 150, ""),
+        ];
+        let out = find_codex_processes(&procs, since, "t", "", 1000, 42, true);
+        let found: Vec<(u32, &str)> = out.found.iter().map(|f| (f.pid, f.rule.as_str())).collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    1100,
+                    "child of the interrupted bridge (ppid 1000); its start time cannot be read - counted (fail-closed)"
+                ),
+                (
+                    1101,
+                    "descendant of the interrupted bridge pid 1000 (ppid 1100); its start time cannot be read - counted (fail-closed)"
+                ),
+                (
+                    1102,
+                    "descendant of the interrupted bridge pid 1000 (ppid 1101)"
+                ),
+            ]
+        );
+        // positive evidence cuts a link (and what hangs below it): a row started before the run, a
+        // row started before its listed parent (that pid's earlier owner was its parent), a child
+        // of the process that reused the bridge's pid
+        let procs = vec![
+            p(1100, 1000, "cmd.exe", 120, ""),
+            p(1101, 1100, "node.exe", 110, ""), // before its parent 1100 (120)
+            p(1102, 1101, "python.exe", 150, ""),
+            p(1200, 1000, "old.exe", 50, ""), // before the run
+            p(1201, 1200, "node.exe", 150, ""),
+            p(1000, 1, "other.exe", 140, ""), // the bridge's pid reused at 140
+            p(1203, 1000, "child-of-reuse.exe", 145, ""),
+        ];
+        let out = find_codex_processes(&procs, since, "t", "", 1000, 42, true);
+        assert_eq!(
+            out.found.iter().map(|f| f.pid).collect::<Vec<_>>(),
+            vec![1100]
+        );
+    }
+
+    #[test]
+    fn f30_1_an_unreadable_start_is_left_out_only_on_a_readable_command_line() {
+        let since = at(100).unwrap();
+        // machine-wide, not codex-like, the start time unreadable: counted unless the command line
+        // is readable (an orphan grandchild whose wrapper died is invisible by parent)
+        let procs = vec![
+            unknown_start(2000, 77, "node.exe", ""),
+            unknown_start(2001, 77, "python.exe", "python"),
+            unknown_start(2002, 77, "helper.exe", r#"helper.exe "unbalanced"#),
+            unknown_start(2003, 77, "node.exe", r"node C:\app\server.js --port 1"),
+            unknown_start(0, 0, "[System Process]", ""),
+            // the start readable and before the run: never a candidate
+            p(2004, 77, "node.exe", 50, ""),
+        ];
+        let out = find_codex_processes(&procs, since, "t", "", 0, 42, true);
+        let found: Vec<(u32, &str)> = out.found.iter().map(|f| (f.pid, f.rule.as_str())).collect();
+        assert_eq!(
+            found,
+            vec![
+                (
+                    2000,
+                    "command line not readable, task not verifiable; its start time cannot be read - counted (fail-closed)"
+                ),
+                (
+                    2001,
+                    "a generic runtime, no arguments on its command line, task not verifiable; its start time cannot be read - counted (fail-closed)"
+                ),
+                (
+                    2002,
+                    "command line ambiguous: unbalanced quoting (the command line ends inside quotes), task not verifiable; its start time cannot be read - counted (fail-closed)"
+                ),
+            ],
+            "{found:?}"
         );
     }
 
