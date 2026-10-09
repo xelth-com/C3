@@ -1225,7 +1225,7 @@
                      },
                      {
                          "id":  "F09-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1280,6 +1280,15 @@
                                              "evidence":  "",
                                              "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
                                              "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T04:28:27+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2d bc8d605 (merged 1c8c6f8) with Astra\u0027s fixtures RC1-RC5",
+                                             "evidence":  "",
+                                             "base_commit":  "1c8c6f87febd181728c5f4ffebe8cdf33e91ba46",
+                                             "tree_sha256":  "f07d09b419542598d9a81d4e57106d92d7d2c8a832db9d8e74f8c63e5c30afcd"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1295,7 +1304,7 @@
                      },
                      {
                          "id":  "F09-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1350,6 +1359,15 @@
                                              "evidence":  "",
                                              "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
                                              "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T04:28:29+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2d bc8d605 (merged 1c8c6f8) with Astra\u0027s fixtures RC1-RC5",
+                                             "evidence":  "",
+                                             "base_commit":  "1c8c6f87febd181728c5f4ffebe8cdf33e91ba46",
+                                             "tree_sha256":  "f07d09b419542598d9a81d4e57106d92d7d2c8a832db9d8e74f8c63e5c30afcd"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1365,7 +1383,7 @@
                      },
                      {
                          "id":  "F09-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1420,6 +1438,15 @@
                                              "evidence":  "",
                                              "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
                                              "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T04:28:31+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2d bc8d605 (merged 1c8c6f8) with Astra\u0027s fixtures RC1-RC5",
+                                             "evidence":  "",
+                                             "base_commit":  "1c8c6f87febd181728c5f4ffebe8cdf33e91ba46",
+                                             "tree_sha256":  "f07d09b419542598d9a81d4e57106d92d7d2c8a832db9d8e74f8c63e5c30afcd"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1435,7 +1462,7 @@
                      },
                      {
                          "id":  "F09-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1485,6 +1512,15 @@
                                              "evidence":  "",
                                              "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
                                              "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T04:28:32+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2d bc8d605 (merged 1c8c6f8) with Astra\u0027s fixtures RC1-RC5",
+                                             "evidence":  "",
+                                             "base_commit":  "1c8c6f87febd181728c5f4ffebe8cdf33e91ba46",
+                                             "tree_sha256":  "f07d09b419542598d9a81d4e57106d92d7d2c8a832db9d8e74f8c63e5c30afcd"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1500,7 +1536,7 @@
                      },
                      {
                          "id":  "F09-5",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1555,6 +1591,15 @@
                                              "evidence":  "",
                                              "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
                                              "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T04:28:35+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2d bc8d605 (merged 1c8c6f8) with Astra\u0027s fixtures RC1-RC5",
+                                             "evidence":  "",
+                                             "base_commit":  "1c8c6f87febd181728c5f4ffebe8cdf33e91ba46",
+                                             "tree_sha256":  "f07d09b419542598d9a81d4e57106d92d7d2c8a832db9d8e74f8c63e5c30afcd"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1570,7 +1615,7 @@
                      },
                      {
                          "id":  "F09-6",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -1629,6 +1674,15 @@
                                              "evidence":  "",
                                              "base_commit":  "254265a68d2495bf3fe4e93931951ccaff3018a9",
                                              "tree_sha256":  "a4156c9ef96ac7afd92bfd7270ed1f7b574f0b65358cf75547b2f74410e048f4"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T04:28:38+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2d bc8d605 (merged 1c8c6f8) with Astra\u0027s fixtures RC1-RC5",
+                                             "evidence":  "",
+                                             "base_commit":  "1c8c6f87febd181728c5f4ffebe8cdf33e91ba46",
+                                             "tree_sha256":  "f07d09b419542598d9a81d4e57106d92d7d2c8a832db9d8e74f8c63e5c30afcd"
                                          }
                                      ],
                          "reviewer_checks":  [
