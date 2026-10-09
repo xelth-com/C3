@@ -5774,7 +5774,9 @@ fn finish(
     // event is never spooled for an uncommitted entry. The run's switch is re-checked inside
     // `record_consultation`; a dry run never reaches this point.
     // (wave 2b) an event that is not spooled is never lost silently: said on the console and
-    // counted (`c3 telemetry --status`); the entry is already committed.
+    // counted (`c3 telemetry --status`); the entry is already committed. The wording is the
+    // plugin's for an event it gives up on (`- dropped`, harness-telemetry FORGET D3): C3 does not
+    // retry it after the commit.
     if let Some(entry) = &entry_for_telemetry {
         if let Err(e) = telemetry::record_consultation(
             entry,
@@ -5784,9 +5786,7 @@ fn finish(
             },
         ) {
             telemetry::note_not_spooled(&e.to_string());
-            println!(
-                "warning    : telemetry event not spooled ({e}) - counted (c3 telemetry --status)"
-            );
+            println!("warning    : telemetry event not spooled ({e}) - dropped");
         }
     }
 
