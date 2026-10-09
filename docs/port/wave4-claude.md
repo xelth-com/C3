@@ -112,8 +112,61 @@ engine", `plugin/skills/setup-providers/SKILL.md` section 4c.
 
 ## Harnesses through the shim (pinned v0.6.1)
 
-RESULTS-PLACEHOLDER
+Plugin pinned at v0.6.1, the tree staged per `harness-shim.md` section 4, one harness at a time
+under `%TEMP%\codex-consult-tests\HARNESS.lock`, Windows PowerShell 5.1 (2026-10-09). The claude,
+roster, engines, muse and panel rows ran on the wave 4b binary (`1ca23d6`); claude and telemetry ran
+again on the binary with main merged (`115f015`, wave 3b and 2g in), with the same results.
+
+| harness | before (RC2 / last recorded) | after | note |
+|---|---|---|---|
+| claude | 17 / 5, crash at `unknown engine 'claude'` | **87 / 0** | every category green: UNIT, ROSTER, DRYRUN, ENGINEEXE, RUN, BILLING, PREFLIGHT, FAIL, TOOLSET, TREE, RESUME, REPAIR, TIMEOUT, STALL, PANEL, LISTING, ENDPOINT, ACCEPT |
+| roster | 124 / 1 | **125 / 0** | FILE green (the claude auth and model texts, the engine list naming claude) |
+| engines | 95 / 2 | **97 / 0** | ROSTER refused and DRYRUN refused name claude |
+| muse | 69 / 5 | **73 / 1** | the claude-wording rows green (ROSTER, DRYRUN one message each, ENGINEEXE two engines, PANEL -MaxModelSteps) |
+| panel | 62 / 0 | 62 / 0 | no regression |
+| telemetry | 47 / 96 (main after wave 3b) | 47 / 96 | the same 96 checks; FORGET D3 below |
+
+Remaining failures, classified:
+
+- **muse UNIT D2 (every engine)** - shim artifact: a code grep over `codex-consult.ps1`'s source
+  (`$engineSpec.Adapter`, the Argv/Events/Outcome calls), which is the C3 shim here. C3's
+  equivalent is the engine dispatch in `consult/orchestrate.rs` (`engine_turn` and the `match ctx.engine` arms).
+- **telemetry FORGET D3** - shim artifact: the consult shim forces `CODEX_CONSULT_TELEMETRY=off`
+  when the caller leaves it unset (its safety net), so the run spools nothing and prints no
+  telemetry line (`run exit 0 nosalt True | | forget exit 0`); the reason text also names
+  `c3 telemetry --forget --local` (wave 3b's decision), not `codex-telemetry.ps1 -Forget -Local`.
+  The wording this wave owed - the run's line ends `- dropped`, no longer `- counted (c3
+  telemetry --status)` - is proven by `claude_engine::an_event_refused_by_a_living_forget_is_said_dropped`
+  (a living marker of the test process: exit 0, the entry committed, the marker kept).
+- **telemetry, the other 95** - unchanged from main (wave 3b's table: plugin path by design (P7),
+  COMPLAIN x10, DOCS, DRYRUN).
+
+Live smoke (the real Claude Code 2.1.294 on the claude.ai subscription, a scratch repository and a
+scratch roster `[{"provider":"anthropic","engine":"claude","model":"haiku","auth":"subscription"}]`,
+telemetry off, a scratch machine-health file): the dry run showed `preflight   : available (ok:
+signed in (claude.ai subscription))`, `harness     : claude-cli 2.1.294`, the allow-listed child
+environment and `claude -p --output-format stream-json --verbose --restricted --strict-mcp-config
+--disable-slash-commands --tools Read,Grep,Glob --permission-mode dontAsk --model haiku --effort low
+--session-id <uuid>` (chore is raw: no `--json-schema`). One real `--purpose chore --max-words 50`
+consultation: usable reply in 6.3 s (8.9 s with the process start), `Engine turns: 1 (claude -p, auth
+subscription; model claude-haiku-5-5; init tools Glob, Grep, Read; permission denials 0)`, a seven-day
+`allowed_warning` rate-limit warning (the plugin's wording), `cost_usd` 0.0008; the ledger's
+reviewer `{provider anthropic, model haiku, engine claude, harness claude-cli 2.1.294,
+provider_config {engine claude, launcher, credential_mechanism subscription, auth_method claude.ai,
+api_provider firstParty}}` and `engine_run {auth subscription, model_resolved claude-haiku-5-5,
+mcp_servers 0, permission_mode dontAsk, api_key_source none, quota_mark null}`. No endpoint-mode
+live run (keys).
 
 ## What differs from the plugin, and why
 
-DIFFS-PLACEHOLDER
+- **The not-spooled run warning.** C3 says `warning    : telemetry event not spooled (<why>) -
+  dropped` for every event that did not reach the spool: it does not retry after the commit. The
+  plugin says `- dropped` only for a forgetting-marker refusal and otherwise retries for 5 s and
+  says `- at the commit (<why>) and for 5 s after it`. The not-spooled count is kept either way.
+- **The forgetting reason** names `c3 telemetry --forget --local` (wave 3b), so the plugin's
+  harness regex on `codex-telemetry.ps1 -Forget -Local is deleting` cannot match a C3 run.
+- **Native Messages API** - not here (decision P4): Claude Code is spawned exactly as the plugin
+  spawns it; a native route is an improvement candidate for a later wave.
+- Otherwise no deliberate difference: the argv, the child allow list, the init and model proofs,
+  the killed-turn rules, the quota mark, the roster texts and the providers row are the plugin's,
+  as the five harnesses above check through the shim.
