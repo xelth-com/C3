@@ -259,3 +259,17 @@ plugin's `<codex home>/telemetry-spool/`, `telemetry-salt`, `.last` or `telemetr
 files, or walks an event against the plugin's `app_id` `codex-consult` allowlist, fails by design
 against C3; the checks that run C3's own surface (the ledger's `consult_ref`, the marks'
 `rating_rev` / `judge`, the refusals, the status lines) are real C3 oracles.
+
+### The plugin-home test hook (wave 3b)
+
+C3's not-spooled count, its forgetting marker and its last flush's record live under C3's own
+telemetry root (P7). In TEST MODE only, `C3_TEST_TELEMETRY_PLUGIN_HOME=<codex home>` moves exactly
+those three to the plugin's places under that home - `<home>/telemetry-not-spooled-*.ndjson`,
+`<home>/telemetry-forgetting`, `<home>/telemetry-spool/.last` - and the `codex-telemetry.ps1`,
+`codex-consult.ps1` and `codex-findings.ps1` shims set it to `CODEX_HOME` when the caller has test
+mode on (a caller-set value wins). harness-fixes28e NOTSPOOLED/MARKER and harness-fixes28d
+NOTSPOOLED/MARKER then run C3's count, fold and marker on the plugin's own files, interleaved with
+the plugin's own library functions (the harness's in-process `Add-TelemetryNotSpooled`,
+`Invoke-TelemetryFlush`): the two implementations read and write the same files. C3's outbox, salt,
+references, locks and deletion transaction stay under `<codex home>/c3/telemetry/` either way. See
+`wave3b-notspooled.md`.

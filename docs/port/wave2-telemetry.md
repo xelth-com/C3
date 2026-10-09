@@ -105,7 +105,9 @@ Files under `<codex home>/c3/telemetry/` (`telemetry/spool.rs`):
   1 s at a rating's commit, 5 s otherwise; it builds its event and the instance id UNDER the lock),
   by the sender's snapshot read and its rewrite, and by the local deletion of a forget.
 - `flush.lock`: the sender lock, held for a whole flush; a second sender that finds it busy skips.
-- `last-flush.json`, `not-spooled.ndjson` (one `{time, why}` line per event not spooled, reset by a
+- (superseded by wave 3b - `wave3b-notspooled.md`: one not-spooled file per producer process, the
+  fold into `last-flush.json`, the forgetting marker; `not-spooled.ndjson` is read as a legacy file)
+  `last-flush.json`, `not-spooled.ndjson` (one `{time, why}` line per event not spooled, reset by a
   flush that ran), `forget-pending.json` (below).
 
 The rule: (1) under the spool lock, read a snapshot; (2) drop unreadable and stale lines, batch up

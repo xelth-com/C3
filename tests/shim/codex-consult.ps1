@@ -222,6 +222,11 @@ if ($PSBoundParameters.ContainsKey('Explain')) {
 # The harnesses run fake consultations: nothing of them may reach the telemetry hub and no
 # priors download may start. A value set by the caller wins.
 if (-not $env:CODEX_CONSULT_TELEMETRY) { $env:CODEX_CONSULT_TELEMETRY = "off" }
+# (wave 3b) C3 keeps its telemetry under <codex home>\c3\telemetry\ (P7); in TEST MODE its not-spooled
+# count, its forgetting marker and its last flush's record go to the plugin's places under the codex
+# home instead (C3_TEST_TELEMETRY_PLUGIN_HOME - c3 honours it in test mode only), so the plugin's
+# harnesses run C3's count, fold and marker on the plugin's own files. A caller-set value wins.
+if (-not $env:C3_TEST_TELEMETRY_PLUGIN_HOME -and $env:CODEX_HOME -and ([string]$env:CODEX_CONSULT_TEST_MODE).Trim() -match '^(?i:1|true|yes|on)$') { $env:C3_TEST_TELEMETRY_PLUGIN_HOME = $env:CODEX_HOME }
 
 # (wave 26b, D10) -Kick / -Member: a control action, not a run. Forward only the flags c3's kick
 # dispatch reads (task, collab-dir, kick, member, id) so the run-path defaults never reach it.

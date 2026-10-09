@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::telemetry::event::APP_VERSION;
+use crate::telemetry::notspooled::{self, ForgettingMarker};
 use crate::telemetry::spool::{
     lock_within, replace_atomic, FLUSH_LOCK, FORGET_PENDING, LAST_FLUSH, SPOOL_FILE, SPOOL_LOCK,
 };
@@ -265,11 +266,21 @@ pub(crate) fn run_local_cleanup(
         tmps.sort();
         targets.extend(tmps);
     }
-    targets.extend(
-        ["not-spooled.ndjson", LAST_FLUSH, "refs.ndjson"]
-            .iter()
-            .map(|n| dir.join(n)),
-    );
+    // (wave 3b, E2) every not-spooled file - each producer's, the legacy files and their staged
+    // generations - and the last flush's record (C3's places, and the plugin's under the test hook)
+    let paths = notspooled::local_paths(dir);
+    let mut ns_dirs = vec![paths.ns_dir.clone()];
+    if paths.ns_dir != dir {
+        ns_dirs.push(dir.to_path_buf());
+    }
+    for d in &ns_dirs {
+        targets.extend(notspooled::list_files(d).into_iter().map(|f| f.path));
+    }
+    targets.push(paths.last.clone());
+    if paths.last != dir.join(LAST_FLUSH) {
+        targets.push(dir.join(LAST_FLUSH));
+    }
+    targets.push(dir.join("refs.ndjson"));
     for p in targets {
         if !p.exists() {
             continue;
@@ -498,6 +509,27 @@ pub fn forget_with(
     };
     // the transaction as it is NOW
     let current = pending_deletion_in(dir);
+    // (wave 3b, E3) a forget that may delete local data holds the forgetting marker `{pid,
+    // start_time, start_ticks, since}` from here to its end (dropped - removed - on every path): a
+    // producer that meets it while its owner lives drops its event at once; one a killed forget
+    // left (its owner gone) is removed by the next producer or sender
+    let _marker = if req.local || resume || current.as_ref().is_some_and(|t| t.cleanup_due()) {
+        let marker = notspooled::local_paths(dir).marker;
+        match ForgettingMarker::write(&marker) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                out.exit = 1;
+                out.lines.push(format!(
+                    "{P}: {nothing} - the marker {} could not be written ({}).",
+                    marker.display(),
+                    c3_core::one_line(&e.to_string())
+                ));
+                return out;
+            }
+        }
+    } else {
+        None
+    };
     if let Some(txn) = current.as_ref().filter(|t| t.cleanup_due()) {
         // (F09-3) a confirmed deletion whose local cleanup did not finish: only that is left
         out.instance_id = txn.instance_id.clone();
