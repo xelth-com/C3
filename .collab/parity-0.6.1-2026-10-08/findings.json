@@ -6623,7 +6623,7 @@
                      },
                      {
                          "id":  "F31-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -6682,6 +6682,15 @@
                                              "evidence":  "",
                                              "base_commit":  "c8f099712ae2aa9127a1c7b73cc997e77441ef55",
                                              "tree_sha256":  "56d7ef6cea2eff096d51e01ffbd7c23130a37922b445c6b250b626c0568dd35f"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T14:07:34+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 3f 73ed5fe: a lock-busy flush counts nothing and carries the last fold\u0027s baseline forward; only a fold under the lock changes the seen count; real-producer fixtures N, N+M, crash 87/88 once",
+                                             "evidence":  "",
+                                             "base_commit":  "b683dc65a60f000643e0825e8f65bb9319777ef5",
+                                             "tree_sha256":  "eafba436bae418c82ba4a3ae03dc56c2151d709fe6e04ff63aa0ad96fa65d8b7"
                                          }
                                      ],
                          "reviewer_checks":  [
