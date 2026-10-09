@@ -300,6 +300,7 @@ mod tree_kills {
             kick_path: None,
             tool_flight: None,
             on_running: Some(&cb),
+            on_kill: None,
             env: None,
             crt_quote: false,
         };

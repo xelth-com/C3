@@ -56,6 +56,12 @@ pub struct SpawnRequest<'a> {
     /// orchestrator uses it to flip the recovery record `launching` -> `running` while the
     /// child is live (`codex-consult.ps1:3330-3339`).
     pub on_running: Option<&'a dyn Fn(u32, String)>,
+    /// (wave 3e, F30-2) Called around a tree kill of this turn (the timeout, the stall cut, the
+    /// kick): [`KillEvent::Before`] once the tree is enumerated and BEFORE anything is stopped -
+    /// the orchestrator writes the recovery record that names it there, so a bridge that dies
+    /// during the kill (or before the kill's result is recorded) leaves that record -, then
+    /// [`KillEvent::After`] once the kill returned. `None`: nothing is told.
+    pub on_kill: Option<&'a dyn Fn(KillEvent<'_>)>,
     /// (0.6.0, wave 29, D2) The child's WHOLE environment (an allow list: claude) - the inherited
     /// environment is cleared and only these variables are set; `None` inherits this process's
     /// environment minus the host markers and the test-mode variables.
@@ -65,6 +71,23 @@ pub struct SpawnRequest<'a> {
     /// [`c3_core::claude::crt_arg`] verbatim.
     pub crt_quote: bool,
 }
+
+/// (wave 3e, F30-2) What a turn's tree kill tells its caller ([`SpawnRequest::on_kill`]).
+#[derive(Debug)]
+pub enum KillEvent<'a> {
+    /// The tree is about to be killed: the root and its descendants from the kill's one read of the
+    /// process table, each with the start time read then (`""` unreadable, `"<gone>"` exited
+    /// meanwhile), or why they could not be enumerated. Nothing is stopped yet.
+    Before {
+        root: u32,
+        tree: &'a Result<Vec<(u32, String)>, String>,
+    },
+    /// The kill returned (its check is known); the caller has not recorded its result yet.
+    After,
+}
+
+/// (wave 3e, F30-2) A turn's kill hook as the engines carry it (see [`SpawnRequest::on_kill`]).
+pub type KillHook = std::sync::Arc<dyn Fn(KillEvent<'_>) + Send + Sync>;
 
 /// Why [`run_turn`] stopped watching the child.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -539,7 +562,8 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         // CODEX_CONSULT_TEST_KILL_DENIED=1 (test mode) simulates a restricted host - the children
         // cannot be enumerated and taskkill fails: only the root is stopped, its children are left
         // running as orphans and the kill is not confirmed.
-        let (mut s, check) = kill_tree_checked(child);
+        // (wave 3e, F30-2) the caller writes the record that names the tree BEFORE the kill
+        let (mut s, check) = kill_tree_checked(child, req.on_kill);
         // TEST HOOK: CODEX_CONSULT_TEST_SURVIVORS=<pid>[,<pid>] — these pids, when alive, are
         // reported as survivors of this kill (no test can make a real process outlive a kill).
         // Only ever adds (a stricter outcome), matching `$env:CODEX_CONSULT_TEST_SURVIVORS`.
@@ -547,6 +571,9 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
             if crate::liveness::proc::pid_alive(hook, "") && !s.contains(&hook) {
                 s.push(hook);
             }
+        }
+        if let Some(cb) = req.on_kill {
+            cb(KillEvent::After);
         }
         (s, Some(check))
     };
@@ -838,11 +865,18 @@ fn root_exited_within(child: &mut Child, ms: u64) -> bool {
 /// time of pid <n> unreadable". When the children cannot be enumerated (a restricted host) the kill
 /// falls back to `taskkill /T /F` once more while the root is still there; the kill is then
 /// confirmed only when the root exited AND taskkill reported success (outside Windows never).
-/// Returns `(survivors, check)`.
-fn kill_tree_checked(child: &mut Child) -> (Vec<u32>, c3_core::engine::KillCheck) {
+/// (wave 3e, F30-2) `on_kill` hears [`KillEvent::Before`] once the tree is enumerated, before
+/// anything is stopped. Returns `(survivors, check)`.
+fn kill_tree_checked(
+    child: &mut Child,
+    on_kill: Option<&dyn Fn(KillEvent<'_>)>,
+) -> (Vec<u32>, c3_core::engine::KillCheck) {
     use crate::liveness::proc::{pid_identity, PidIdentity};
     let root = child.id();
     let tree = descendant_tree(root);
+    if let Some(cb) = on_kill {
+        cb(KillEvent::Before { root, tree: &tree });
+    }
     let (descendants, denied) = match tree {
         Ok(d) => (d, String::new()),
         Err(why) => (Vec::new(), why),

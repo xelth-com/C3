@@ -1247,6 +1247,9 @@ pub struct ClaudeEngine {
     pub stall_sec: i64,
     pub kick_path: Option<PathBuf>,
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+    /// (wave 3e, F30-2) Told around every tree kill of a turn (`SpawnRequest::on_kill`): the
+    /// orchestrator writes the recovery record that names the tree BEFORE the kill. `None`: nothing.
+    pub on_kill: Option<super::subprocess::KillHook>,
     /// The roster's auth (`subscription` | `api-key` | `endpoint`).
     pub auth: String,
     /// The roster entry's endpoint (auth `endpoint`).
@@ -1333,6 +1336,10 @@ impl ClaudeEngine {
                 .on_running
                 .as_ref()
                 .map(|a| a.as_ref() as &dyn Fn(u32, String)),
+            on_kill: self
+                .on_kill
+                .as_ref()
+                .map(|a| a.as_ref() as &dyn Fn(super::subprocess::KillEvent<'_>)),
             env: Some(&env.env),
             crt_quote: true,
         };

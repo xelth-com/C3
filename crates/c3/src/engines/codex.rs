@@ -48,6 +48,9 @@ pub struct CodexEngine {
     /// child pid and its start time — the orchestrator flips the recovery record `launching`
     /// -> `running` (`codex-consult.ps1:3330`). `None` leaves the record `launching`.
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+    /// (wave 3e, F30-2) Told around every tree kill of a turn (`SpawnRequest::on_kill`): the
+    /// orchestrator writes the recovery record that names the tree BEFORE the kill. `None`: nothing.
+    pub on_kill: Option<super::subprocess::KillHook>,
 }
 
 /// (wave 26c, D3 / 28b, D12) One codex `--json` line's effect on the tool calls in flight
@@ -151,6 +154,10 @@ impl CodexEngine {
                 .on_running
                 .as_ref()
                 .map(|a| a.as_ref() as &dyn Fn(u32, String)),
+            on_kill: self
+                .on_kill
+                .as_ref()
+                .map(|a| a.as_ref() as &dyn Fn(super::subprocess::KillEvent<'_>)),
             env: None,
             crt_quote: false,
         };

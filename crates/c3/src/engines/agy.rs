@@ -50,6 +50,9 @@ pub struct AgyEngine {
     /// Called once per turn, right after the child spawns and before it is waited on
     /// (recovery record `launching` -> `running`). `None` leaves the record `launching`.
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
+    /// (wave 3e, F30-2) Told around every tree kill of a turn (`SpawnRequest::on_kill`): the
+    /// orchestrator writes the recovery record that names the tree BEFORE the kill. `None`: nothing.
+    pub on_kill: Option<super::subprocess::KillHook>,
 }
 
 impl AgyEngine {
@@ -108,6 +111,10 @@ impl AgyEngine {
                 .on_running
                 .as_ref()
                 .map(|a| a.as_ref() as &dyn Fn(u32, String)),
+            on_kill: self
+                .on_kill
+                .as_ref()
+                .map(|a| a.as_ref() as &dyn Fn(super::subprocess::KillEvent<'_>)),
             env: None,
             crt_quote: false,
         };

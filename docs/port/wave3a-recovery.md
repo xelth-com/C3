@@ -313,6 +313,126 @@ time under `HARNESS.lock`, Windows PowerShell 5.1, 2026-10-09):
 | panel | 62 / 0 | **62 / 0** | |
 | 3b | 12 / 0 | **12 / 0** | |
 
+## Wave 3e: the second round's fixes (handoff 30, F30-1..F30-3; branch `wave3e-recovery-r2`)
+
+The second review of this wave (mimo, handoff 30, HOLD) found the recovery invariant still
+fail-open in two places and its proof incomplete. The invariant stays: **a pid or a tree is released
+only on positive evidence that it is gone or not ours; a read that fails counts as running** - and
+now also: **a kill's evidence is on disk before the kill, and a run whose kill evidence is on disk
+neither before nor after the kill commits nothing.**
+
+### F30-2 (blocker): the record is written BEFORE the kill
+
+Wave 3c wrote the kept record after the turn returned to the orchestrator - a bridge that died
+between `kill_tree_checked` and that write left the `running` record naming only the killed child,
+and a failed write was ignored while the run went on. Now every kill site (the main turn, the
+timeout continuation, the format repair; a kick, a stall cut and a timeout alike) writes twice:
+
+- **Before the kill.** `subprocess::run_turn` tells its caller `KillEvent::Before { root, tree }`
+  through the new `SpawnRequest::on_kill` (the engines carry it as `on_kill: Option<KillHook>`)
+  once the tree is enumerated and BEFORE anything is stopped. The orchestrator's `KillSite::hook`
+  writes the record on disk (the turn's own `running` record, read back) in state `survivors`:
+  `survivors[]` names the root and every live descendant of that one enumeration (`{pid,
+  start_time, name}`, the root first), `unverified[]` the descendants whose start time could not be
+  read (`start time of pid <n> unreadable`), `kill_unconfirmed: "the kill of the <turn> (pid
+  <root>) started and its result was never recorded"` (kept when the record already holds one) and
+  `note: "the kill of the <turn> (pid <root>) is in progress; its result is not recorded yet"`. A
+  bridge that dies during the kill, or before its result is written, leaves this record: the next
+  run checks every named pid (pid + start time) and then - an unknown tree - scans by parent and
+  machine-wide (section 3) before it releases anything.
+- **After the kill** (`KillSite::record`, before anything else of the run, as wave 3c): the record
+  says what the kill kept (survivors, unverified pids, an unknown tree - the plugin's write at its
+  kill sites) or, a kill that kept nothing, is put back exactly as it was before the kill (the
+  turn's `running` record), so a clean kill changes nothing the rest of the run sees.
+- **A write that fails is fail-closed** (`mark_record_failure`): the kill is NOT confirmed (its why,
+  when it had none: `the kill's record could not be written (<error>)`), it keeps the record (an
+  unknown tree with that why), the ledger's `kill_confirmed` is false and no continuation follows.
+  The warning (`kill_record_warning`; the main turn's in the outcome after `; WARNING: `, a secondary
+  turn's in `warnings[]` as `kill not recorded (<turn>): ...`):
+  - only the write after the kill failed - `the <survivors|unverified pids|unconfirmed kill> could
+    not be recorded (<error>) - <path> keeps the record written before the kill (its tree unknown:
+    the next run for this task is refused until a scan finds none of it)`;
+  - only the write before the kill failed (the kept record was written after it) - `the record could
+    not be written before the kill (<error>) - the kill counts as not confirmed; <path> names what it
+    left`;
+  - both failed - the plugin's `the <...> could not be recorded (<error>) - <path> still names only
+    child pid <n>`: the evidence is LOST. The end of the run writes the kept record once more; when
+    that fails too the run ends REFUSED before its commit (exit 1, `the kill's evidence is not on
+    disk: <warning>; the end of the run could not write it either (<error>). This run is not
+    committed: no ledger entry was written and the stores were not touched - make sure no process of
+    it still runs before the next consultation of this task (bridge outcome: ...)`).
+- TEST HOOKS (test mode only, C3's): `CODEX_CONSULT_TEST_KILL_PAUSE_MS=<ms> | <model>=<ms>[|...]`
+  as before, now placed by `CODEX_CONSULT_TEST_KILL_PAUSE_AT=<write|kill>[,<main|continuation|repair>]`:
+  `write` (the default) right after the record's write after the kill, `kill` right after the kill
+  and BEFORE its result is written; at every kill site unless a turn is named.
+
+### F30-1 (blocker): the unknown-tree scan, fail-closed
+
+Wave 3c counted a row whose start time cannot be read as recent but still left out every row that
+is not codex-like, and the by-parent pass saw only direct children: a live helper below an
+unrecorded wrapper (a `node.exe` / `python.exe` with an unreadable start time and command line)
+could be released.
+
+- **C3's table reads every start time** (`proc::enumerate_processes` on Windows): ONE
+  `NtQuerySystemInformation(SystemProcessInformation)` read gives pid, parent, image name and the
+  kernel's creation time of EVERY process without opening it - what the plugin's
+  `Win32_Process.CreationDate` reads. The Toolhelp + `GetProcessTimes` table it replaces (still the
+  fallback when that read fails) could not read the start time of 163 of 397 processes on this
+  machine (services, other sessions, protected processes - all of them with unreadable command lines
+  too). `created: None` now means: the kernel reports none (the idle process, pid 0, which no scan
+  counts any more) or the fallback table could not read it.
+- **By parent, the whole subtree** (`find_codex_processes` with a recorded pid): every row under the
+  recorded pid by the parent chain counts, whatever its name (`child of the interrupted bridge (ppid
+  <p>)`, deeper `descendant of the interrupted bridge pid <p> (ppid <q>)`); the walk goes THROUGH a
+  row whose start time cannot be read (nothing proves the link false) and stops only on positive
+  evidence - a row (and its subtree) that started before the record, after a reuse of the recorded
+  pid (first level), or before its own listed parent (that pid's earlier owner was its parent).
+- **Machine-wide, an unreadable start time is left out only on a READABLE command line**: a row that
+  is not codex-like and whose start time cannot be read counts (`<what>, task not verifiable; its
+  start time cannot be read - counted (fail-closed)`) when its command line cannot be read (`command
+  line not readable`), names a generic runtime with no arguments (`a generic runtime, no arguments
+  on its command line`) or cannot be split with certainty (`command line ambiguous: <why>`); only a
+  readable command line that is not codex-like leaves it out. A readable start time keeps the
+  plugin's rule (recent and codex-like, or by parent).
+
+### F30-3 (major): the proof
+
+| test | proves |
+|---|---|
+| `liveness::proc::tests::f30_1_the_table_reads_every_start_time_as_the_plugins_wmi_scan` (Windows) | the NtQuery table agrees with the Toolhelp table (this process: parent, name, start time; every pid both list) and reads the start time of every process but the idle one - the Toolhelp table has holes |
+| `liveness::proc::tests::f30_1_the_whole_subtree_counts_by_parent_through_an_unreadable_intermediate` | the chain through an unreadable wrapper (child, grandchild, great-grandchild named); the cuts on positive evidence |
+| `liveness::proc::tests::f30_1_an_unreadable_start_is_left_out_only_on_a_readable_command_line` | the machine-wide rule's three counted forms, the readable command line left out, pid 0 never counted |
+| `liveness::pending::tests::f30_1_an_unknown_tree_is_refused_by_a_live_helper_below_an_unreadable_intermediate` (RC1) | a `kill_unconfirmed` record, its recorded root dead: a live wrapper + `node.exe` grandchild with unreadable start times - refused by the by-parent pass, both named; the wrapper dead - the orphan `node.exe` (command line unreadable) and `python.exe` (no arguments) refused by the machine-wide pass |
+| `liveness::pending::tests::f30_1_the_same_tree_is_released_on_readable_evidence_that_it_is_not_the_runs` (RC1) | the same shapes with readable start times before the record and readable command lines that are not codex-like (and an orphan with an unreadable start time but a readable command line): released |
+| `consult::orchestrate::kill_record_tests::a_kill_writes_its_record_before_the_kill_and_puts_it_back_after_a_clean_one` | the record before the kill (root with its entry, an unreadable descendant in `unverified[]`, an exited one left out, the pre-kill why and note); a clean kill puts the `running` record back byte for byte; a kept kill replaces it |
+| `consult::orchestrate::kill_record_tests::a_kill_whose_record_cannot_be_written_is_not_confirmed_and_loses_nothing_silently` | both writes blocked: not confirmed, kept (unknown tree), both warnings, the evidence LOST (the run would refuse its commit) |
+| `consult::orchestrate::kill_record_tests::a_kill_record_written_only_before_or_only_after_the_kill_is_warned_not_lost` | one write failed: warned, not lost; the record on disk is the one after the kill, or (Windows, read-only file) the one before it |
+| `c3-cli/tests/kill_record_durable.rs` (6 tests, Windows, a real `c3 consult` against a fake codex) | the two wave 3c fixtures (the main turn, the bridge killed after the record's write); RC2: the bridge killed in the pause right after the MAIN kill, before its result is written - the record before the kill is on disk unchanged (root `cmd` first, the fake's `powershell` below it, start times, the pre-kill why), nothing committed; the same at the TIMEOUT CONTINUATION's kill (the record names the continuation's own child, not the main turn's) and at the FORMAT REPAIR's kill (the record names the repair's child AND the saved prose, `first_reply`); RC3: the record made read-only once the main turn runs - the run ends refused (exit 1, the warning naming `.consult.pending.json` and the child pid), no continuation, nothing committed, the record on disk still the `running` one |
+
+The integration tests take `C3_TEST_EXE` (a copy of this build's `c3.exe`) over `CARGO_BIN_EXE_c3`:
+the target directory the C3 checkouts share hashes their artifacts alike, so another checkout's build
+can replace (or lock) `target/debug/c3.exe` and the test executables between a `cargo test`'s build
+and its run - a `cargo test --workspace` here ran two other checkouts' executables (a 14-test
+`claude_engine`, the 2-test `kill_record_durable` of wave 3c). The numbers below are this branch's
+executables (the crate roots touched, built, copied aside), each run against this branch's `c3.exe`
+(`target/debug/c3.exe` unchanged across the run, checked).
+
+`cargo test` (every test executable of the workspace): 728 passed, 0 failed (`index::embed::tests::
+embed_reaches_a_loopback_fake_via_localhost` and `index_embeddings::rebuild_then_embed_reproduces_the
+_vector_count` failed once under the parallel load - a loopback embedder unavailable, a SurrealDB
+transaction conflict - and passed on a rerun; untouched by this wave). `cargo clippy --workspace
+--all-targets -- -D warnings`: clean. `cargo fmt --all -- --check`: clean.
+
+Harnesses through the shim (staging as above, `C3_EXE` a copy of this branch's build, one at a time
+under `HARNESS.lock`, Windows PowerShell 5.1 with `PSModulePath` reset, 2026-10-09):
+
+| harness | expected | wave 3e | note |
+|---|---|---|---|
+| fixes28e | 63 / 2 | **63 / 2** | the two RECORD code greps over the shim (shim artifacts, as above) |
+| fixes | 56 / 0 | **56 / 0** | E28 x2 (released with the app servers excluded) on the NtQuery table |
+| pending | 26 / 0 | **26 / 0** | |
+| panel | 62 / 0 | **62 / 0** | |
+
 ## What differs from the plugin
 
 - The `CODEX_CONSULT_TEST_SURVIVORS` hook applies at every kill (C3 adds it inside the turn's kill,
@@ -325,8 +445,18 @@ time under `HARNESS.lock`, Windows PowerShell 5.1, 2026-10-09):
   `child_pid`). The continuation's kill builds on the base record too (the plugin's record names the
   continuation's child there).
 - (wave 3c, F23-2) C3's scans count a row whose start time cannot be read; the plugin's never meet
-  one (WMI reads every creation date).
+  one (WMI reads every creation date) - since wave 3e C3's table rarely has one either.
 - A kicked continuation or repair keeps C3's own problem text (`stopped by the operator (-Kick)`);
   its kill check is recorded and keeps the record as the plugin's.
 - `Get-ProcessInfo`'s name on Linux is `/proc/<pid>/comm` (15 characters at most), .NET's
   `ProcessName` there is the same source.
+- (wave 3e, F30-2) Every kill site writes its record BEFORE the kill too (the plugin writes it after
+  the kill only), and a kill whose record could not be written is not confirmed - no continuation;
+  when its evidence is on disk neither before nor after the kill and the end of the run cannot write
+  it, the run ends refused before its commit (the plugin warns and commits). A kill that keeps
+  nothing puts the run's `running` record back, so the rest of the run is unchanged.
+- (wave 3e, F30-1) C3's by-parent pass counts the whole subtree under a recorded pid (the plugin's:
+  its direct children); its machine-wide pass counts a row whose start time cannot be read unless
+  its command line is readable (the plugin's table never has such a row). C3's Windows table now
+  reads every start time without opening the process (`NtQuerySystemInformation`, as WMI does) -
+  the Toolhelp + `GetProcessTimes` table is the fallback.
