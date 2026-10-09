@@ -136,6 +136,13 @@ pub fn model_match(pinned: &str, served: &str, exact: bool) -> bool {
 /// `Get-ClaudeModelProblem`: `""` when a roster or `-Model` value names a model of the table (a
 /// trailing `[1m]` allowed), else why not. (E2) auth `endpoint`: the open id pattern instead of
 /// the table, and (E11) never an Anthropic id - the billing proof.
+///
+/// Case (wave 4f, F25-3 - the plugin's rule, kept): the table lookup is CASE-SENSITIVE
+/// (`$script:ClaudeModels -cnotcontains $b`), so `OPUS` or `CLAUDE-HAIKU-5-5` is refused although
+/// [`model_base`], [`model_family`] and [`model_match`] lower-case (they compare what the CLI
+/// SERVED, which a roster never spells); only the `[1m]` strip ignores case (PowerShell's
+/// `-replace`), so `opus[1M]` passes. The endpoint pattern is case-sensitive (`-cnotmatch`, which
+/// its classes make moot except for `[1m]`) and the E11 Anthropic-id refusal lower-cases first.
 pub fn model_problem(model: &str, auth: &str) -> String {
     if model.trim().is_empty() {
         return "is empty".to_string();
@@ -387,8 +394,10 @@ pub fn valid_pass_prefix(value: &str) -> String {
     p.to_string()
 }
 
-/// THE child environment of a claude process (`Get-ClaudeChildEnvironment`).
-#[derive(Debug, Clone, Default)]
+/// THE child environment of a claude process (`Get-ClaudeChildEnvironment`). Its `Debug` prints
+/// the variable names only - every value `<redacted>` (wave 4f, F25-4: with auth endpoint `env`
+/// holds `ANTHROPIC_AUTH_TOKEN`'s value, which no log, panic or error text may carry).
+#[derive(Clone, Default)]
 pub struct ChildEnv {
     pub auth: String,
     /// name -> value, every allowed variable plus the set ones (`DISABLE_AUTOUPDATER=1`; with auth
@@ -400,6 +409,27 @@ pub struct ChildEnv {
     pub removed: Vec<String>,
     /// `""` or why no child may start with it (auth endpoint without a usable endpoint or token).
     pub problem: String,
+}
+
+impl std::fmt::Debug for ChildEnv {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        /// The variables as `name: <redacted>` - never a value.
+        struct Redacted<'a>(&'a [(String, String)]);
+        impl std::fmt::Debug for Redacted<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_map()
+                    .entries(self.0.iter().map(|(k, _)| (k, format_args!("<redacted>"))))
+                    .finish()
+            }
+        }
+        f.debug_struct("ChildEnv")
+            .field("auth", &self.auth)
+            .field("env", &Redacted(&self.env))
+            .field("names", &self.names)
+            .field("removed", &self.removed)
+            .field("problem", &self.problem)
+            .finish()
+    }
 }
 
 /// `Get-ClaudeChildEnvironment` over the parent's variables `vars` (name, value), for `auth`
@@ -700,6 +730,36 @@ mod tests {
         assert!(!model_match("sonnet", "claude-opus-5-5", false));
     }
 
+    /// (wave 4f, F25-3) The plugin's case rule: the table lookup is case-sensitive
+    /// (`-cnotcontains`), the `[1m]` strip is not; the endpoint's E11 refusal lower-cases.
+    #[test]
+    fn the_model_table_is_case_sensitive_as_the_plugins() {
+        let refused = "is not in the claude engine's model table (";
+        for m in [
+            "OPUS",
+            "Opus",
+            "CLAUDE-HAIKU-5-5",
+            "Claude-Sonnet-5-5[1m]",
+            " opus",
+        ] {
+            for auth in ["subscription", "api-key", ""] {
+                assert!(model_problem(m, auth).starts_with(refused), "{m} {auth}");
+            }
+        }
+        for m in ["opus[1M]", "claude-haiku-5-5[1M]", "opus"] {
+            assert!(model_problem(m, "subscription").is_empty(), "{m}");
+        }
+        // the normalisation that compares a SERVED model stays case-insensitive
+        assert_eq!(model_base("CLAUDE-HAIKU-5-5[1M]"), "claude-haiku-5-5");
+        assert!(model_match("OPUS", "claude-opus-5-5", false));
+        // endpoint: a provider's id in capitals is taken; an Anthropic id in any case is not
+        assert!(model_problem("GLM-5.3", "endpoint").is_empty());
+        assert!(
+            model_problem("CLAUDE-HAIKU-5-5", "endpoint").starts_with("is an Anthropic model id")
+        );
+        assert!(model_problem("glm-5.3[1M]", "endpoint").starts_with("is not a model id"));
+    }
+
     #[test]
     fn the_endpoint_route_takes_the_providers_own_ids_only() {
         assert!(model_problem("glm-5.3", "endpoint").is_empty());
@@ -826,6 +886,43 @@ mod tests {
             "env W29B_TOKEN not set (the token of auth endpoint)"
         );
         assert!(!n.names.iter().any(|x| x == "ANTHROPIC_AUTH_TOKEN"));
+    }
+
+    /// (wave 4f, F25-4) `{:?}` / `{:#?}` of the endpoint child environment name the variables and
+    /// never print a value - the token least of all.
+    #[test]
+    fn the_child_environment_debug_never_prints_a_value() {
+        let token = "tok-F25-4-0a1b2c3d4e5f";
+        let vars: Vec<(String, String)> = [
+            ("Path", "C:\\f25-4-path"),
+            ("CLAUDE_CONFIG_DIR", "C:\\f25-4-config"),
+            ("ANTHROPIC_AUTH_TOKEN", "parent-token-f25-4"),
+        ]
+        .iter()
+        .map(|(a, b)| (a.to_string(), b.to_string()))
+        .collect();
+        let ep = endpoint_from_value(
+            &json!({"base_url":"https://api.z.ai/api/anthropic","env_key":"W29B_TOKEN"}),
+            "zai",
+        )
+        .unwrap();
+        let e = child_environment(&vars, "endpoint", Some(&ep), "", true, token);
+        assert!(e
+            .env
+            .iter()
+            .any(|(k, v)| k == "ANTHROPIC_AUTH_TOKEN" && v == token));
+        for text in [format!("{e:?}"), format!("{e:#?}")] {
+            assert!(!text.contains(token), "{text}");
+            assert!(!text.contains("parent-token-f25-4"), "{text}");
+            assert!(
+                !text.contains("f25-4-path") && !text.contains("f25-4-config"),
+                "{text}"
+            );
+            assert!(!text.contains("api.z.ai"), "{text}");
+            assert!(text.contains("ANTHROPIC_AUTH_TOKEN"), "{text}");
+            assert!(text.contains("<redacted>"), "{text}");
+            assert!(text.contains("auth") && text.contains("endpoint"), "{text}");
+        }
     }
 
     #[test]

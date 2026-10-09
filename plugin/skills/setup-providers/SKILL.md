@@ -259,7 +259,7 @@ API itself for this engine. Full contract: the README, "The `claude` engine".
    `haiku`, `fable`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
    `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5-5`,
    `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5` - each may
-   end with `[1m]`. An alias floats; c3 pins each thread to the id its first turn resolved.
+   end with `[1m]`; spelled exactly so (lower case: `OPUS` is refused). An alias floats; c3 pins each thread to the id its first turn resolved.
 5. **Roster entry:** `{ "provider": "anthropic", "engine": "claude", "model": "claude-opus-5-5",
    "auth": "subscription", "panel": "weighty" }` - `codex_config` is refused, `auth` is never
    `none`. The claude members of one panel run one at a time; `"parallel": {"anthropic": 2}`
@@ -277,7 +277,7 @@ API itself for this engine. Full contract: the README, "The `claude` engine".
    as one scheduling group across engines.
 7. **Check:** `c3 providers` shows the claude row `engine claude` with `ok: signed in
    (claude.ai subscription)` (an endpoint row: `ok: env ZAI_API_KEY set` - no `claude auth
-   status`, no live request). Then a dry run: `c3 consult --task setup-check --prompt ping
+   status`, no live request; only `claude --version`, which must run). Then a dry run: `c3 consult --task setup-check --prompt ping
    --dry-run --engine claude --model sonnet` - its `preflight :`, `child env :` and `command :`
    lines; an endpoint entry adds an `endpoint    :` line.
 8. **Read-only:** the reviewer has Read, Grep and Glob only; c3 FAILS a claude run when the
