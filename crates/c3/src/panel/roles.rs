@@ -106,14 +106,16 @@ pub fn role_file_problem(path: &Path, root: &Path) -> String {
 }
 
 /// The plugin root whose `templates/role-<name>.md` files ship the built-in roles (edge-cases,
-/// security, tests, docs). Resolved the way the plugin's own root is known at run time:
-/// `CLAUDE_PLUGIN_ROOT` (Claude Code sets it for a plugin's hooks and skills) if set, else the
-/// parent of `CODEX_CONSULT_SCRIPTS_DIR` (what the harness points at the shim copy), else empty.
-/// C3 ships the templates under `plugin/templates/` in the repository.
+/// security, tests, docs) and whose `skills/` the `--explain` form reads. Resolved the way the
+/// plugin's own root is known at run time: `CLAUDE_PLUGIN_ROOT` (Claude Code sets it for a
+/// plugin's hooks and skills; the harness shims set it to the staged plugin tree) if set, else the
+/// parent of `CODEX_CONSULT_SCRIPTS_DIR`, else (wave 2b) a `plugin/` directory with `templates/`
+/// beside the binary or up to four directories above it (C3's repository layout,
+/// `target/debug/c3.exe` -> `plugin/`), else empty.
 pub fn plugin_root() -> String {
     if let Ok(v) = std::env::var("CLAUDE_PLUGIN_ROOT") {
         if !v.trim().is_empty() {
-            return v;
+            return v.trim().to_string();
         }
     }
     if let Ok(v) = std::env::var("CODEX_CONSULT_SCRIPTS_DIR") {
@@ -121,6 +123,17 @@ pub fn plugin_root() -> String {
             if let Some(parent) = Path::new(v.trim()).parent() {
                 return parent.to_string_lossy().to_string();
             }
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(Path::to_path_buf);
+        for _ in 0..5 {
+            let Some(d) = dir else { break };
+            let cand = d.join("plugin");
+            if cand.join("templates").is_dir() {
+                return cand.to_string_lossy().to_string();
+            }
+            dir = d.parent().map(Path::to_path_buf);
         }
     }
     String::new()

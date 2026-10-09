@@ -146,6 +146,22 @@ pub struct Resolved {
     /// The verdict rule phrase for the resolved purpose.
     pub verdict_rule: String,
     pub purpose_label: String,
+    /// (wave 26, R14-R16) `-Topic` canonical (`ConvertTo-SlugList`: lower-cased, deduped).
+    pub topics: Vec<String>,
+    /// (wave 26, D8) `-Role` canonical (one slug, lower-cased; `""` without one).
+    pub role: String,
+    /// (wave 26, D8) `-Roles` canonical (slugs, lower-cased, deduped).
+    pub roles: Vec<String>,
+}
+
+impl Resolved {
+    /// Put the canonical companions (`-Topic`, `-Role`, `-Roles`) back on the options the run
+    /// carries on (the panel, a member, the dry run and the ledger read them from there).
+    pub fn apply_companions(&self, o: &mut Options) {
+        o.topic = self.topics.clone();
+        o.role = self.role.clone();
+        o.roles = self.roles.clone();
+    }
 }
 
 const VALID_EFFORTS: [&str; 4] = ["low", "medium", "high", "xhigh"];
@@ -332,6 +348,38 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
             "-PanelSeed must be a number or a token (letters, digits, dot, dash, underscore, colon; got '{panel_seed}')."
         ));
     }
+    // (wave 26, R14-R16, D8) the companions: -Topic, -Role, -Roles - lower-cased, slug-checked
+    // (`ConvertTo-SlugList`), refused with the plugin's texts.
+    let (topics, topic_err) = c3_core::roster::convert_to_slug_list(&o.topic, "-Topic");
+    if !topic_err.is_empty() {
+        return Err(format!("{topic_err}."));
+    }
+    let mut role = o.role.trim().to_string();
+    let roles_given = o.roles.iter().any(|r| !r.trim().is_empty());
+    if !role.is_empty() && roles_given {
+        return Err("-Role and -Roles exclude each other: -Role gives the reviewer (every member) one role, -Roles one role per member.".into());
+    }
+    if !role.is_empty() {
+        let (items, err) =
+            c3_core::roster::convert_to_slug_list(std::slice::from_ref(&role), "role");
+        if !err.is_empty() {
+            return Err(format!("-Role: {err}."));
+        }
+        if items.len() != 1 {
+            return Err(
+                "-Role takes one role (one role per member: -Panel -Roles <a>,<b>).".into(),
+            );
+        }
+        role = items[0].clone();
+    }
+    let mut roles: Vec<String> = Vec::new();
+    if roles_given {
+        let (items, err) = c3_core::roster::convert_to_slug_list(&o.roles, "role");
+        if !err.is_empty() {
+            return Err(format!("-Roles: {err}."));
+        }
+        roles = items;
+    }
 
     // -CodexConfig expansion + identity/effort-key refusal.
     let (extra_config, cfg_err) =
@@ -417,6 +465,9 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         } else {
             o.purpose.clone()
         },
+        topics,
+        role,
+        roles,
     })
 }
 

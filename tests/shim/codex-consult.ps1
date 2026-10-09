@@ -11,15 +11,32 @@
     passthrough) - this file repeats that pattern verbatim, extended for `c3 consult`'s
     much larger parameter surface.
 
+    A consultation is started the same way from any coordinator: neither the shim nor c3
+    assumes a host for the run itself.
+
     THIN FORWARDER ONLY: no TOML scanning, no preflight, no ledger/lock logic here. It
     locates the `c3` binary, maps this script's named parameters onto `c3 consult`
     flags, runs it with stdin/stdout/stderr connected straight through, and exits with
     the binary's own exit code.
 
-    `-CodexConfig`/`-Artifact` accept the plugin's comma-joined single-string form (a
-    `-File` invocation can only bind a `[string[]]` parameter once) and are split on
-    comma here into repeatable `--codex-config`/`--artifact` flags for `c3`, which is
-    the more expressive native form (see cli-surface.md's naming rule).
+    `-Artifact` accepts the plugin's comma-joined single-string form (a `-File` invocation
+    can only bind a `[string[]]` parameter once) and is split on comma here into repeatable
+    `--artifact` flags. (wave 2b) `-CodexConfig` is passed through WHOLE, one `--codex-config`
+    per bound string: c3 splits a comma-separated value itself, keeping a comma inside
+    brackets or quotes (`model_x=[1,2]`), exactly as the plugin does - the shim's own comma
+    split broke such a value (harness-0.3 CFG).
+
+    (wave 2b) `-Task` is optional, as in the plugin (0.6.x): `-Explain coordinate|consult|
+    providers` is the one form without it, and every other form reaches c3 without `--task`,
+    which refuses it with the plugin's text (exit 1) - a Mandatory parameter made PowerShell
+    PROMPT on the harness's open stdin and hung harness-host. `-Explain` is forwarded with
+    every other bound parameter (c3 refuses "-Explain takes no other parameter").
+
+    (wave 2b) The plugin's own directory: this shim sets CLAUDE_PLUGIN_ROOT to the parent of
+    its directory (the staged plugin tree - its templates/ for the role files, its skills/ for
+    -Explain), as the plugin resolves `Split-Path -Parent $PSScriptRoot`; and C3_SCHEMA_FILE to
+    `<scripts>\..\schemas\consult-reply.schema.json` when that file exists (c3 passes it to
+    the engine - `--output-schema` / `--json-schema` - when it holds the embedded schema).
 
     `-FormatRetry`/`-DenialRetry` are ported from the plugin's `int` (0/1) parameters to
     boolean `--format-retry`/`--no-format-retry` and `--denial-retry`/`--no-denial-retry`
@@ -42,8 +59,8 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Task,
+    # (wave 2b) not Mandatory: -Explain is the one form without it; c3 refuses the others.
+    [string]$Task = '',
 
     # Position 0 so a bare positional (e.g. `-Status abcd1234`) binds here, as the plugin's own
     # param block does - c3 then refuses it with the -Id hint.
@@ -109,7 +126,10 @@ param(
 
     # (wave 26b, D10) -Kick -Member <NN> [-Id <id8>]: stop one running member of -Task.
     [switch]$Kick,
-    [string]$Member = ''
+    [string]$Member = '',
+
+    # (wave 27, R13 D5) coordinate | consult | providers: a skill's text for a host without skills.
+    [string]$Explain = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -130,6 +150,34 @@ function Resolve-C3Exe {
     return $null
 }
 
+# (wave 2b) Windows PowerShell 5.1 (and pwsh before 7.3, or $PSNativeCommandArgumentPassing Legacy)
+# hands a native command its arguments without escaping an embedded quote - it only wraps an
+# argument that holds whitespace in quotes - so `a "b" c` reached c3 as `a b c` (engines RUN A8,
+# the hook's pointer command). Each argument is pre-escaped by the C runtime's rules (a quote as \",
+# the backslashes before it doubled; trailing backslashes doubled when the host wraps the argument),
+# so c3 receives it exactly as it was given. A newer host escapes by itself: nothing is changed.
+function Get-NativeArgs {
+    param([string[]]$List)
+    $v = $PSVersionTable.PSVersion
+    $legacy = ($v.Major -lt 7) -or ($v.Major -eq 7 -and $v.Minor -lt 3) -or ((Get-Variable -Name PSNativeCommandArgumentPassing -ValueOnly -ErrorAction SilentlyContinue) -eq 'Legacy')
+    if (-not $legacy) { return , ([string[]]$List) }
+    $out = foreach ($a in $List) {
+        $ws = $a -match '\s'
+        if ($a -notmatch '"' -and -not ($ws -and $a.EndsWith('\'))) { $a; continue }
+        $sb = New-Object System.Text.StringBuilder
+        $bs = 0
+        foreach ($ch in $a.ToCharArray()) {
+            if ($ch -eq [char]'\') { $bs++; continue }
+            if ($ch -eq [char]'"') { [void]$sb.Append('\', 2 * $bs + 1); [void]$sb.Append('"'); $bs = 0; continue }
+            if ($bs -gt 0) { [void]$sb.Append('\', $bs); $bs = 0 }
+            [void]$sb.Append($ch)
+        }
+        if ($bs -gt 0) { [void]$sb.Append('\', $(if ($ws) { 2 * $bs } else { $bs })) }
+        $sb.ToString()
+    }
+    return , ([string[]]$out)
+}
+
 $c3 = Resolve-C3Exe
 if (-not $c3) {
     Write-Error "codex-consult shim: could not locate the c3 binary (checked `$env:C3_EXE, target\debug\c3.exe relative to the repo root, and PATH)."
@@ -147,6 +195,30 @@ if (-not $c3) {
 # ignored) must reach c3 with the mode off. The caller's value is passed through untouched.
 $env:CODEX_CONSULT_TEST_BRIDGE_PID = "$PID"
 
+# (wave 2b) the plugin's root is the directory above its scripts (the staged plugin tree): its
+# templates/ (role files) and skills/ (-Explain). The plugin derives it from $PSScriptRoot, never
+# from the environment, so the shim sets it whatever the caller had.
+$env:CLAUDE_PLUGIN_ROOT = Split-Path -Parent $PSScriptRoot
+# (wave 2b) the plugin's schema file beside its scripts: c3 names it in the engine's argv
+# (--output-schema / --json-schema) when it holds exactly the embedded schema.
+$schemaFile = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\consult-reply.schema.json'))
+if (-not $env:C3_SCHEMA_FILE -and (Test-Path -LiteralPath $schemaFile -PathType Leaf)) { $env:C3_SCHEMA_FILE = $schemaFile }
+
+# (wave 27, R13 D5) -Explain: forwarded with every other bound parameter (c3 refuses those).
+if ($PSBoundParameters.ContainsKey('Explain')) {
+    $x = New-Object System.Collections.Generic.List[string]
+    $x.Add('consult'); $x.Add('--explain'); $x.Add($Explain)
+    foreach ($kv in $PSBoundParameters.GetEnumerator()) {
+        if ($kv.Key -eq 'Explain') { continue }
+        $flag = '--' + (($kv.Key -creplace '([a-z0-9])([A-Z])', '$1-$2').ToLowerInvariant())
+        if ($kv.Value -is [System.Management.Automation.SwitchParameter]) { $x.Add($flag) }
+        else { $x.Add($flag); $x.Add((@($kv.Value) -join ',')) }
+    }
+    $x = Get-NativeArgs $x
+    & $c3 @x
+    exit $LASTEXITCODE
+}
+
 # The harnesses run fake consultations: nothing of them may reach the telemetry hub and no
 # priors download may start. A value set by the caller wins.
 if (-not $env:CODEX_CONSULT_TELEMETRY) { $env:CODEX_CONSULT_TELEMETRY = "off" }
@@ -155,11 +227,12 @@ if (-not $env:CODEX_CONSULT_TELEMETRY) { $env:CODEX_CONSULT_TELEMETRY = "off" }
 # dispatch reads (task, collab-dir, kick, member, id) so the run-path defaults never reach it.
 if ($Kick -or $PSBoundParameters.ContainsKey('Member')) {
     $k = New-Object System.Collections.Generic.List[string]
-    $k.Add('consult'); $k.Add('--task'); $k.Add($Task)
+    $k.Add('consult'); if ($Task) { $k.Add('--task'); $k.Add($Task) }
     if ($PSBoundParameters.ContainsKey('CollabDir')) { $k.Add('--collab-dir'); $k.Add($CollabDir) }
     if ($Kick) { $k.Add('--kick') }
     if ($PSBoundParameters.ContainsKey('Member')) { $k.Add('--member'); $k.Add($Member) }
     if ($PSBoundParameters.ContainsKey('Id')) { $k.Add('--id'); $k.Add($Id) }
+    $k = Get-NativeArgs $k
     & $c3 @k
     exit $LASTEXITCODE
 }
@@ -169,7 +242,7 @@ if ($Kick -or $PSBoundParameters.ContainsKey('Member')) {
 # forwarded so c3's "-Status and -Wait take only ..." check sees exactly what the caller passed.
 if ($Status -or $Wait) {
     $q = New-Object System.Collections.Generic.List[string]
-    $q.Add('consult'); $q.Add('--task'); $q.Add($Task)
+    $q.Add('consult'); if ($Task) { $q.Add('--task'); $q.Add($Task) }
     if ($PSBoundParameters.ContainsKey('CollabDir')) { $q.Add('--collab-dir'); $q.Add($CollabDir) }
     if ($Status) { $q.Add('--status') }
     if ($Wait) { $q.Add('--wait') }
@@ -188,6 +261,7 @@ if ($Status -or $Wait) {
     if ($PSBoundParameters.ContainsKey('Engine')) { $q.Add('--engine'); $q.Add($Engine) }
     if ($Panel) { $q.Add('--panel') }
     if ($PanelAll) { $q.Add('--panel-all') }
+    $q = Get-NativeArgs $q
     & $c3 @q
     exit $LASTEXITCODE
 }
@@ -195,7 +269,7 @@ if ($Status -or $Wait) {
 $c3Args = New-Object System.Collections.Generic.List[string]
 $c3Args.Add('consult')
 
-$c3Args.Add('--task'); $c3Args.Add($Task)
+if ($Task) { $c3Args.Add('--task'); $c3Args.Add($Task) }
 if ($CollabDir) { $c3Args.Add('--collab-dir'); $c3Args.Add($CollabDir) }
 if ($Mode) { $c3Args.Add('--mode'); $c3Args.Add($Mode) }
 if ($Thread) { $c3Args.Add('--thread'); $c3Args.Add($Thread) }
@@ -222,10 +296,9 @@ if ($Provider) { $c3Args.Add('--provider'); $c3Args.Add($Provider) }
 if ($NativeEffort) { $c3Args.Add('--native-effort'); $c3Args.Add($NativeEffort) }
 if ($OffPeakOnly) { $c3Args.Add('--off-peak-only') }
 if ($SkipPreflight) { $c3Args.Add('--skip-preflight') }
+# (wave 2b) whole: c3 splits a comma-separated value itself (a comma inside [..] or quotes stays)
 foreach ($c in $CodexConfig) {
-    foreach ($piece in ($c -split ',')) {
-        if ($piece) { $c3Args.Add('--codex-config'); $c3Args.Add($piece) }
-    }
+    if ($c) { $c3Args.Add('--codex-config'); $c3Args.Add($c) }
 }
 if ($SchemaTransport) { $c3Args.Add('--schema-transport'); $c3Args.Add($SchemaTransport) }
 # c3's --format-retry takes a value (0|1); it is NOT a boolean --format-retry/--no-format-retry
@@ -274,5 +347,6 @@ if ($Prune) { $c3Args.Add('--prune') }
 
 # Forward stdout/stderr unchanged so a harness's captured 2>&1 text is exactly what c3
 # printed - no Write-Host wrapping, no re-encoding.
+$c3Args = Get-NativeArgs $c3Args
 & $c3 @c3Args
 exit $LASTEXITCODE

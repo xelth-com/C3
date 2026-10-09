@@ -13,6 +13,7 @@
 //! - fixes27c KICK D2: a kick during the timeout continuation cancels it, the timeout outcome
 //!   stays;
 //! - fixes27c STREAM D6: a stall cut names the open tool call;
+//! - companions REQUIRE / ROLE D8: `--require` on a single run, the role and topic slugs;
 //! - host EXPLAIN / HOOK: `--explain`, `--task` required otherwise, the hook's pointer line.
 //!
 //! Nothing reaches a real provider or intake. Windows only (the fake codex is a `.cmd` wrapper
@@ -558,6 +559,128 @@ fn a_stall_cut_names_the_open_tool_call() {
     let re = regex::Regex::new(r"^failed: stalled after 3 s without an event - no output for \d+ s \(a tool call open for \d+ s: codex command_execution item_9\) \(process tree killed\)$").unwrap();
     assert!(re.is_match(o), "{o}");
     assert_eq!(last["stall"]["seconds"], 3);
+}
+
+// ------------------------------------------------------------------ REQUIRE (companions D7/D9)
+
+#[test]
+fn require_on_a_single_run() {
+    let e = setup("require");
+    let roster = e.work.join("roster.json");
+    std::fs::write(
+        &roster,
+        r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-5.1"},{"provider":"ZAI","model":"glm-5.3"}]}"#,
+    )
+    .unwrap();
+    let r = roster.to_string_lossy().to_string();
+    // a roster walk takes whichever reviewer is available: refused
+    let walk = e.consult(
+        &["--require", "#2", "--dry-run"],
+        &[("CODEX_CONSULT_ROSTER", &r)],
+    );
+    assert_eq!(walk.status.code(), Some(1), "{}", text(&walk));
+    assert!(text(&walk).contains("codex-consult: -Require goes with -Panel, or with -Provider (a single run of a chosen reviewer); a roster walk takes whichever reviewer is available."));
+    // the required #2 is out (its key is not set): exit 5, nothing started
+    let out = e.consult(
+        &["--provider", "openai", "--require", "#2", "--dry-run"],
+        &[("CODEX_CONSULT_ROSTER", &r), ("RT_ZAI_KEY", "")],
+    );
+    let to = text(&out);
+    assert_eq!(out.status.code(), Some(5), "{to}");
+    assert!(
+        to.contains("required reviewer not available (-Require, judged like the roster walk): #2 ZAI :: glm-5.3 ("),
+        "{to}"
+    );
+    assert!(
+        to.contains("; nothing was started - wait for it, or run without -Require (exit 5)."),
+        "{to}"
+    );
+    // available: the dry run says so
+    let ok = e.consult(
+        &["--provider", "openai", "--require", "#2", "--dry-run"],
+        &[("CODEX_CONSULT_ROSTER", &r)],
+    );
+    let tk = text(&ok);
+    assert_eq!(ok.status.code(), Some(0), "{tk}");
+    assert!(
+        tk.lines()
+            .any(|l| l == "required    : #2 available (-Require)"),
+        "{tk}"
+    );
+    // "none" stands alone
+    let none = e.consult(
+        &["--provider", "openai", "--require", "none,#2", "--dry-run"],
+        &[("CODEX_CONSULT_ROSTER", &r)],
+    );
+    assert_eq!(none.status.code(), Some(1));
+    assert!(text(&none).contains("-Require none stands alone"));
+}
+
+// ------------------------------------------------------------------ ROLE / TOPIC (companions D8)
+
+#[test]
+fn role_and_topic_are_slugs_lowercased_and_resolved() {
+    let e = setup("role");
+    let plugin = e.work.join("plugin");
+    std::fs::create_dir_all(plugin.join("templates")).unwrap();
+    std::fs::write(
+        plugin.join("templates").join("role-edge-cases.md"),
+        "Hunt the edge cases.\n",
+    )
+    .unwrap();
+    let p = plugin.to_string_lossy().to_string();
+    let env = [("CLAUDE_PLUGIN_ROOT", p.as_str())];
+    let o = e.consult(
+        &[
+            "--role",
+            "Edge-Cases",
+            "--topic",
+            "Security,tests,security",
+            "--dry-run",
+        ],
+        &env,
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let tmpl = plugin.join("templates").join("role-edge-cases.md");
+    assert!(
+        t.lines().any(|l| l
+            == format!(
+                "role        : edge-cases (plugin: {}) - in the prompt after the ask",
+                tmpl.display()
+            )),
+        "{t}"
+    );
+    assert!(
+        t.lines().any(|l| l == "topics      : security, tests"),
+        "{t}"
+    );
+    assert!(t.contains("Your role in this review: edge-cases."), "{t}");
+    // the ledger preview (the plugin's ConvertTo-Json layout: two spaces after the colon)
+    assert!(
+        regex::Regex::new(r#""role":\s+"edge-cases""#)
+            .unwrap()
+            .is_match(&t),
+        "{t}"
+    );
+    let refused = |args: &[&str], want: &str| {
+        let mut a = args.to_vec();
+        a.push("--dry-run");
+        let x = e.consult(&a, &env);
+        let tx = text(&x);
+        assert_eq!(x.status.code(), Some(1), "{args:?}: {tx}");
+        assert!(tx.contains(want), "{args:?}: {tx}");
+    };
+    refused(
+        &["--role", "../brief"],
+        "-Role: role '../brief' is not a slug",
+    );
+    refused(&["--role", "nope"], "-Role: unknown role 'nope'");
+    refused(
+        &["--panel", "--role", "docs", "--roles", "tests"],
+        "-Role and -Roles exclude each other",
+    );
+    refused(&["--topic", "a/b"], "-Topic 'a/b' is not a slug");
 }
 
 // ------------------------------------------------------------------ EXPLAIN / -Task / HOOK

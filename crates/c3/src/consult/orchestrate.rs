@@ -710,8 +710,14 @@ pub(crate) struct Context {
     /// (wave 1b, 0.6.0 E16) the run's roster entry's plan (`""` without one): its machine-wide
     /// running row carries it, so a panel elsewhere counts this run against the plan's limit.
     pub(crate) plan: String,
-    /// The member's role name (empty when none), for the ledger `role` field.
+    /// The role name (a member's, or a single run's `-Role`; empty when none), for the ledger
+    /// `role` field.
     pub(crate) role: String,
+    /// (wave 26, R16) the resolved role file (name, source, path) for the dry run's `role :` line.
+    pub(crate) role_info: Option<crate::panel::roles::RoleInfo>,
+    /// (wave 26, D7) a single run's `-Require` positions, all available (the dry run's
+    /// `required    :` line); empty without `-Require`.
+    pub(crate) single_required: Vec<i64>,
     /// The panel-wide roles note (ledger `panel.roles_note`), if any.
     pub(crate) roles_note: String,
     /// (wave 26b, D16) a fork/resume the reviewer's context window forced down to a new thread
@@ -821,7 +827,7 @@ fn run_inner(o: Options) -> i32 {
 }
 
 /// The normal run flow (a single run or a panel), reused by the detached background.
-fn run_normal(o: Options) -> i32 {
+fn run_normal(mut o: Options) -> i32 {
     let home = std::env::var("HOME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -830,6 +836,7 @@ fn run_normal(o: Options) -> i32 {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
+    r.apply_companions(&mut o);
     if o.panel || o.panel_all {
         return crate::panel::run::run(o, r, home.as_deref());
     }
@@ -838,7 +845,7 @@ fn run_normal(o: Options) -> i32 {
 
 /// The foreground of `-Detach` (D2, D8): make every check a real run makes before its lock, then
 /// spawn the background — or refuse with nothing left behind.
-fn detach_foreground(o: Options, home: Option<&str>) -> i32 {
+fn detach_foreground(mut o: Options, home: Option<&str>) -> i32 {
     if !o.panel_spec.is_empty() {
         return refuse("-Detach does not go with -PanelSpec (internal to -Panel).");
     }
@@ -851,6 +858,7 @@ fn detach_foreground(o: Options, home: Option<&str>) -> i32 {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
+    r.apply_companions(&mut o);
     if o.panel || o.panel_all {
         return crate::panel::run::detach_foreground(o, r, home);
     }
@@ -953,11 +961,12 @@ fn run_member(o: Options, home: Option<&str>) -> i32 {
             "-PanelSpec is internal to -Panel and does not name this member's numbers and parent (n, nn, parent_pid); this panel member was not started.",
         );
     }
-    let mo = member_options(&o.task, &spec);
+    let mut mo = member_options(&o.task, &spec);
     let r = match args::validate(&mo, home) {
         Ok(r) => r,
         Err(msg) => return refuse(&msg),
     };
+    r.apply_companions(&mut mo);
     // The member rewrites its reserved record as its own, waits the test-pause, and checks the
     // parent is alive — all BEFORE its preflight (`codex-consult.ps1:2074-2113`), so the
     // kill-after-rewrite window (F07-1/F11-6) is real and a parent that dies during the preflight
@@ -1299,6 +1308,14 @@ fn build_context(
         None
     })?;
     let child_env_scrubbed = c3_core::host::host_marker_names();
+    // (wave 26, D7) -Require: a panel, or a single run of a chosen reviewer (-Provider).
+    let require_given = o.require.iter().any(|v| !v.trim().is_empty());
+    if require_given && !(o.panel || o.panel_all) && member.is_none() && o.provider.is_empty() {
+        return Err((
+            "-Require goes with -Panel, or with -Provider (a single run of a chosen reviewer); a roster walk takes whichever reviewer is available.".to_string(),
+            1,
+        ));
+    }
 
     let utc_now = c3_core::peak::consult_clock(0)
         .map(|(u, _, _)| u)
@@ -1577,6 +1594,67 @@ fn build_context(
                 stall_sec = e.stall_sec;
                 roster_applied.push("stall_sec".into());
             }
+        }
+    }
+
+    // (wave 26, D7) -Require on a single run (with -Provider): every required reviewer must be
+    // available by the roster walk's verdict (stricter than a plain -Provider run: a usage limit
+    // without a reset time is out) - else the run is refused before anything starts, exit 5 (a dry
+    // run too).
+    let mut single_required: Vec<i64> = Vec::new();
+    if require_given && !(o.panel || o.panel_all) && member.is_none() {
+        if !roster.exists {
+            return Err((
+                format!(
+                    "-Require names reviewers of the roster, and there is no reviewer roster{}.",
+                    if roster.disabled {
+                        " (CODEX_CONSULT_ROSTER=none)"
+                    } else {
+                        ""
+                    }
+                ),
+                1,
+            ));
+        }
+        let required = crate::panel::plan::resolve_required_reviewers(
+            &roster, &o.require, &o.purpose, true, false,
+        );
+        if !required.error.is_empty() {
+            return Err((format!("{}.", required.error), 1));
+        }
+        if !required.positions.is_empty() {
+            let mut req_roster = roster.clone();
+            req_roster
+                .entries
+                .retain(|e| required.positions.contains(&(e.position as i64)));
+            let req_ctx = providers::Ctx::for_consult(
+                config.clone(),
+                providers::read_all_task_consults_health(&collab_root),
+                req_roster,
+                launcher.clone(),
+                openai_base_url.clone(),
+                utc_now,
+            );
+            let sel = req_ctx.panel_members("", "", &o.purpose, true, false, 0);
+            let out: Vec<String> = sel
+                .members
+                .iter()
+                .filter(|m| m.state != "run")
+                .map(|m| providers::format_required_outage(m, utc_now))
+                .collect();
+            if !out.is_empty() {
+                let plural = out.len() != 1;
+                return Err((
+                    format!(
+                        "required reviewer{} not available (-Require, judged like the roster walk): {}; nothing was started - wait for {}, or run without -Require (exit 5).",
+                        if plural { "s" } else { "" },
+                        out.join("; "),
+                        if plural { "them" } else { "it" }
+                    ),
+                    5,
+                ));
+            }
+            single_required = required.positions.clone();
         }
     }
 
@@ -2202,39 +2280,35 @@ fn build_context(
     // and before the brief. A bad/unknown role refuses (naming the member); no role → empty.
     let mut role_line = String::new();
     let mut roles_note = String::new();
-    if let Some(m) = member {
-        roles_note = m.roles_note.clone();
-        if !m.role.is_empty() {
-            let ri = crate::panel::roles::resolve_role_file(
-                &m.role,
-                &collab_root,
-                &crate::panel::roles::plugin_root(),
-            );
-            // A safety problem (reparse/containment) refuses; a role that resolves only as a plugin
-            // template (unknown to c3, which ships none) is tolerated with no role paragraph.
-            if crate::panel::roles::is_role_refusal(&ri.error) {
-                return Err((
-                    format!("-Role: {}; this panel member was not started.", ri.error),
-                    1,
-                ));
-            }
-            if ri.error.is_empty() {
-                role_line = crate::panel::roles::role_prompt_line(&ri);
-            }
+    let mut role_info: Option<crate::panel::roles::RoleInfo> = None;
+    // (wave 26, R16) the role block - <CollabDir>/roles/<name>.md, else the plugin's
+    // templates/role-<name>.md - is resolved now: an unknown role refuses the run, nothing started.
+    // Without a known plugin root (no CLAUDE_PLUGIN_ROOT, no scripts dir, no plugin directory
+    // beside the binary) only a safety problem refuses: the built-in roles cannot be told apart
+    // from unknown ones there, and the role is left out.
+    let role_name = match member {
+        Some(m) => {
+            roles_note = m.roles_note.clone();
+            m.role.clone()
         }
-    } else if !o.role.is_empty() {
-        // (wave 26b, D1) a single run's -Role resolves its role file too: a bad/reparse role file
-        // (or a junctioned roles directory) refuses before anything is written.
-        let ri = crate::panel::roles::resolve_role_file(
-            &o.role,
-            &collab_root,
-            &crate::panel::roles::plugin_root(),
-        );
-        if crate::panel::roles::is_role_refusal(&ri.error) {
-            return Err((format!("-Role: {}", ri.error), 1));
+        None => o.role.clone(),
+    };
+    if !role_name.is_empty() {
+        let plugin_root = crate::panel::roles::plugin_root();
+        let ri = crate::panel::roles::resolve_role_file(&role_name, &collab_root, &plugin_root);
+        if !ri.error.is_empty()
+            && (!plugin_root.is_empty() || crate::panel::roles::is_role_refusal(&ri.error))
+        {
+            let tail = if member.is_some() {
+                "; this panel member was not started"
+            } else {
+                ""
+            };
+            return Err((format!("-Role: {}{tail}.", ri.error), 1));
         }
         if ri.error.is_empty() {
             role_line = crate::panel::roles::role_prompt_line(&ri);
+            role_info = Some(ri);
         }
     }
 
@@ -2459,7 +2533,12 @@ fn build_context(
             .as_ref()
             .map(|e| e.plan.clone())
             .unwrap_or_default(),
-        role: member.map(|m| m.role.clone()).unwrap_or_default(),
+        role: role_info
+            .as_ref()
+            .map(|ri| ri.name.clone())
+            .unwrap_or_else(|| role_name.clone()),
+        role_info,
+        single_required,
         roles_note,
         mode_fallback,
         stall_sec,
@@ -2907,11 +2986,22 @@ fn select_parent_thread(
 }
 
 fn schema_file(_repo_root: &Path) -> Option<PathBuf> {
-    // The reply schema is embedded in the binary (`c3_core::schema::REPLY_SCHEMA_V1`, the
-    // plugin's file byte-for-byte). Materialise it under `<CODEX_HOME>/c3/schemas/
-    // consult-reply.v1.json` (rewritten only when missing/different) and pass THAT path to
-    // `--output-schema`, mirroring the plugin passing its own on-disk schema file. With no
-    // resolvable codex home, name the would-be path without writing (a dry run still shows it).
+    // (wave 2b) `C3_SCHEMA_FILE` names an on-disk copy of the reply schema to pass instead - the
+    // plugin's own `<scripts>\..\schemas\consult-reply.schema.json` when the harness shim fronts
+    // the plugin's script (`--json-schema`/`--output-schema` then name the file the plugin would).
+    // Honoured only when the file holds exactly the embedded schema (CRLF read as LF), so what the
+    // engine is given and what C3 validates against never differ.
+    if let Ok(v) = std::env::var("C3_SCHEMA_FILE") {
+        let p = PathBuf::from(v.trim());
+        if !v.trim().is_empty() {
+            if let Ok(bytes) = std::fs::read(&p) {
+                let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+                if text == c3_core::schema::REPLY_SCHEMA_V1 {
+                    return Some(p);
+                }
+            }
+        }
+    }
     let home = providers::get_codex_home();
     if home.is_empty() {
         return None;

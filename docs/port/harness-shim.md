@@ -171,19 +171,68 @@ plugin at **v0.6.1** that directory holds:
 from the tag (`git show v0.6.1:plugins/codex-consult/scripts/<file>`) rather than checking
 anything out in the plugin repository.
 
-The staging recipe (wave 2, Git Bash; `$S` a scratch directory):
+The staging recipe (wave 2b, Git Bash; `$S` a scratch directory) stages the WHOLE plugin tree of
+the tag - `scripts/`, `skills/`, `templates/`, `schemas/`, `hooks/`, `README.md`, `agents/` - and
+puts the six shims over the plugin's scripts of the same names. The harnesses read the tree beside
+the scripts directory (harness-host and fixes27c the README, the skills and `hooks/hooks.json`;
+companions and fixes26b the role templates; engines and muse the schema path), and the consult shim
+takes the plugin root from it (below):
 
 ```
-mkdir -p "$S/scripts" "$S/schemas"
-cp tests/shim/*.ps1 "$S/scripts/"                       # the six shims
-for f in codex-consult-common.ps1 codex-consult-detached.ps1; do
-  git -C <plugin checkout> show v0.6.1:plugins/codex-consult/scripts/$f > "$S/scripts/$f"; done
-git -C <plugin checkout> show v0.6.1:plugins/codex-consult/schemas/consult-reply.schema.json   > "$S/schemas/consult-reply.schema.json"
-C3_EXE=<copy of c3.exe> powershell -NoProfile -ExecutionPolicy Bypass -File   <plugin checkout>/tests/run-all.ps1 -ScriptsDir "$S/scripts" -Only harness-telemetry
+mkdir -p "$S"
+git -C <plugin checkout> archive v0.6.1 plugins/codex-consult | tar -x -C "$S" --strip-components=2
+cp tests/shim/*.ps1 "$S/scripts/"                       # the six shims over the plugin's scripts
+# kept from the tag: scripts/codex-consult-common.ps1 and scripts/codex-consult-detached.ps1
+cp target/debug/c3.exe "$TEMP/c3-wave2b/c3.exe"        # a copy: cargo cannot replace it mid-run
+C3_EXE=<that copy> powershell -NoProfile -ExecutionPolicy Bypass -File   <plugin checkout>/tests/run-all.ps1 -ScriptsDir "$S/scripts" -Only harness-telemetry
 ```
 
 (under the machine's harness mutex `%TEMP%\codex-consult-tests\HARNESS.lock`, held open
-exclusively for one harness at a time).
+exclusively for one harness at a time; host Windows PowerShell 5.1).
+
+### The shim fixes (wave 2b)
+
+- **`-Task` is optional** in `codex-consult.ps1` (it was `Mandatory`): PowerShell then PROMPTED for
+  it on the harness's open stdin and harness-host hung (RC2) on `-DryRun -Prompt x`. Without it the
+  shim sends no `--task` and c3 refuses with the plugin's text (`-Task <id> is required (a slug:
+  ...); the one form without it is -Explain coordinate|consult|providers.`, exit 1).
+- **`-Explain coordinate|consult|providers`** is forwarded as `c3 consult --explain <name>` with
+  every other bound parameter (c3 refuses those: `-Explain takes no other parameter (got -Task)`).
+- **The plugin root:** the consult shim sets `CLAUDE_PLUGIN_ROOT` to the parent of its own
+  directory (the staged tree), as the plugin derives `Split-Path -Parent $PSScriptRoot`: c3 resolves
+  the role templates (`templates/role-<name>.md`) and the `-Explain` skills from it.
+- **The schema path:** the consult shim sets `C3_SCHEMA_FILE` to
+  `<scripts>\..\schemas\consult-reply.schema.json` when it exists; c3 names that file in the
+  engine's argv (`--output-schema`, `--json-schema`) instead of its materialised
+  `<codex home>\c3\schemas\consult-reply.v1.json` when the file holds exactly the embedded schema
+  (it does at v0.6.1 - byte for byte).
+- **`-CodexConfig` passes through whole** (one `--codex-config` per bound string): c3 splits a
+  comma-separated value itself, keeping a comma inside brackets or quotes; the shim's own split on
+  every comma broke `model_x=[1,2]` (0.3 CFG).
+- **`-By purpose|topic`** in `codex-scoreboard.ps1` -> `c3 scoreboard --by`.
+- **The arguments on Windows PowerShell 5.1:** a legacy host (5.1, pwsh before 7.3, or
+  `$PSNativeCommandArgumentPassing` Legacy) hands a native command an argument with an embedded `"`
+  unescaped - it only wraps one that holds whitespace in quotes - so `a "b" c` reached c3 as `a b c`
+  (engines RUN A8, the hook's pointer command). The consult and hook shims pre-escape every argument
+  by the C runtime's rules there (`Get-NativeArgs`: a quote as `\"`, the backslashes before it
+  doubled, trailing backslashes doubled when the host wraps the argument); a newer host is left
+  alone.
+- **The hook's pointer line:** `codex-consult-hook.ps1` passes `--explain-command` (the plugin's
+  form: `powershell -NoProfile -ExecutionPolicy Bypass -File "<scripts>\codex-consult.ps1" -Explain
+  coordinate`) and prints c3's second line (`codex-consult: coordinator rules - ...; telemetry:
+  on|off`) after the availability line.
+
+### Not applicable to C3: the Z Code (and Codex CLI) host checks
+
+C3 is a Claude Code bridge only (the single-host decision of 2026-09-29): its coordinator host is
+`claude-code` or `unknown` - it infers no Z Code and no Codex CLI host from their markers (it still
+scrubs `ZCODE_*` and the Codex markers from an engine child as host markers). The checks that expect
+another host - fixes27c ZCODE D20/D21, and in harness-host WARN D3 (`host codex (inferred, a
+hint)`), WARN wave 27b (a Z Code session: `host zcode`), ENV D4/27b, ENV D4 detached and ENV D3/D4
+panel (`coordinator.host codex` - "codex wins over zcode and claude-code") - are NOT APPLICABLE to C3
+and are recorded as such, not as gaps. (Run from inside a Claude Code session, the harness also
+inherits `CLAUDECODE`, so C3 reports `claude-code` where the plugin's multi-host order says
+`codex`.)
 
 ### The telemetry shim (wave 2c)
 
