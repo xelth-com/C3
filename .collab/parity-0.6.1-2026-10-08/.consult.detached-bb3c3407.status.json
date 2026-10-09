@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "bb3c3407-1eb7-48a6-bd13-76fc6461c54d",
+    "id8":  "bb3c3407",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "starting",
+    "exit":  null,
+    "started":  "2026-10-09T09:53:33+02:00",
+    "updated":  "2026-10-09T09:53:33+02:00",
+    "finished":  null,
+    "wall_seconds":  null,
+    "pid":  null,
+    "start_time":  null,
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave4-diff-review-mimo",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\24-claude-wave4-diff-review.md",
+    "members":  [
+                    {
+                        "position":  3,
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "state":  "pending",
+                        "outcome":  "",
+                        "wall_seconds":  null,
+                        "n":  null,
+                        "handoff":  "",
+                        "reply":  ""
+                    }
+                ],
+    "summary":  "",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-bb3c3407.log",
+    "args":  "PE9ianMgVmVyc2lvbj0iMS4xLjAuMSIgeG1sbnM9Imh0dHA6Ly9zY2hlbWFzLm1pY3Jvc29mdC5jb20vcG93ZXJzaGVsbC8yMDA0LzA0Ij4NCiAgPE9iaiBSZWZJZD0iMCI+DQogICAgPFROIFJlZklkPSIwIj4NCiAgICAgIDxUPlN5c3RlbS5Db2xsZWN0aW9ucy5IYXNodGFibGU8L1Q+DQogICAgICA8VD5TeXN0ZW0uT2JqZWN0PC9UPg0KICAgIDwvVE4+DQogICAgPERDVD4NCiAgICAgIDxFbj4NCiAgICAgICAgPFMgTj0iS2V5Ij5Nb2RlPC9TPg0KICAgICAgICA8UyBOPSJWYWx1ZSI+Zm9yazwvUz4NCiAgICAgIDwvRW4+DQogICAgICA8RW4+DQogICAgICAgIDxTIE49IktleSI+UHVycG9zZTwvUz4NCiAgICAgICAgPFMgTj0iVmFsdWUiPmRpZmYtcmV2aWV3PC9TPg0KICAgICAgPC9Fbj4NCiAgICAgIDxFbj4NCiAgICAgICAgPFMgTj0iS2V5Ij5CcmllZjwvUz4NCiAgICAgICAgPFMgTj0iVmFsdWUiPkM6XFVzZXJzXERteXRyb1xDM1wuY29sbGFiXHBhcml0eS0wLjYuMS0yMDI2LTEwLTA4XGhhbmRvZmZzXDI0LWNsYXVkZS13YXZlNC1kaWZmLXJldmlldy5tZDwvUz4NCiAgICAgIDwvRW4+DQogICAgICA8RW4+DQogICAgICAgIDxTIE49IktleSI+UHJvbXB0RmlsZTwvUz4NCiAgICAgICAgPFMgTj0iVmFsdWUiPkM6XFVzZXJzXERteXRyb1xDM1wuY29sbGFiXHBhcml0eS0wLjYuMS0yMDI2LTEwLTA4XC5jb25zdWx0LmRldGFjaGVkLWJiM2MzNDA3LnByb21wdC50eHQ8L1M+DQogICAgICA8L0VuPg0KICAgICAgPEVuPg0KICAgICAgICA8UyBOPSJLZXkiPlJhbmdlPC9TPg0KICAgICAgICA8UyBOPSJWYWx1ZSI+NmJmYzA4MC4uMWZkYjhiZDwvUz4NCiAgICAgIDwvRW4+DQogICAgICA8RW4+DQogICAgICAgIDxTIE49IktleSI+VGFzazwvUz4NCiAgICAgICAgPFMgTj0iVmFsdWUiPnBhcml0eS0wLjYuMS0yMDI2LTEwLTA4PC9TPg0KICAgICAgPC9Fbj4NCiAgICAgIDxFbj4NCiAgICAgICAgPFMgTj0iS2V5Ij5SZXBseU5hbWU8L1M+DQogICAgICAgIDxTIE49IlZhbHVlIj53YXZlNC1kaWZmLXJldmlldy1taW1vPC9TPg0KICAgICAgPC9Fbj4NCiAgICAgIDxFbj4NCiAgICAgICAgPFMgTj0iS2V5Ij5Qcm92aWRlcjwvUz4NCiAgICAgICAgPFMgTj0iVmFsdWUiPm1pbW88L1M+DQogICAgICA8L0VuPg0KICAgICAgPEVuPg0KICAgICAgICA8UyBOPSJLZXkiPkNvbGxhYkRpcjwvUz4NCiAgICAgICAgPFMgTj0iVmFsdWUiPkM6XFVzZXJzXERteXRyb1xDM1wuY29sbGFiPC9TPg0KICAgICAgPC9Fbj4NCiAgICA8L0RDVD4NCiAgPC9PYmo+DQo8L09ianM+",
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

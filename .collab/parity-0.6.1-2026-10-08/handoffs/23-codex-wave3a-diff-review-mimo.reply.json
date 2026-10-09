@@ -1,0 +1,354 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "HOLD — findings #1-#3 leave E19 and the recovery release rule fail-open, and the kept recovery evidence is not durable at the kill.",
+  "reply_markdown": "**Q1.** The documented E19 order matches the plugin, but C3 has an additional fail-open path: `process_info` treats a Toolhelp/name-and-parent lookup failure as `None`, and `test_unverified_process`/`test_recorded_process` then return `gone`. A live reviewer with a readable start time can therefore be dropped when the second inspection fails transiently. A process whose start time remains unreadable correctly blocks rather than being dropped.\n\n**Q2.** Yes. `find_codex_processes` skips rows whose creation/start time is unknown (`created: None`), so both release scans can be clean while such a process still runs. Separately, the `survivors`/`unverified`/`kill_unconfirmed` record is written only at the end of the run; a bridge crash after the tree kill but before that write leaves the on-disk record without the new evidence. Combined with the scan gap, the record can be released or inadequately recorded while an orphan remains.\n\n**Q3.** HOLD. The Samoa change addresses F06-1, but findings #1-#3 violate the fail-closed recovery invariant and must be fixed before acceptance.\n\n## Requested checks\n`RC1` (finding #1) — In `C:\\Users\\Dmytro\\C3`, workspace-write, add a fault-injection test where `process_start_iso` returns `Some(start)` but `name_and_parent` returns `None`; call `test_unverified_process` and require a blocking/running verdict, not `gone`. Budget: 20 minutes.\n\n`RC2` (finding #2) — In `C:\\Users\\Dmytro\\C3`, workspace-write, run a pending/unknown-tree fixture containing a live process row with `created: None`; require `test_pending_active` to refuse or fail the scan rather than release. Budget: 20 minutes.\n\n`RC3` (finding #3) — In `C:\\Users\\Dmytro\\C3`, workspace-write, pause after `kill_tree_checked` and before `write_pending`, terminate the bridge, then inspect `.consult.pending.json`; require persisted `unverified`/`kill_unconfirmed` evidence. Budget: 30 minutes.\n\n`RC4` (finding #5) — On Windows with Samoa Standard Time, workspace-write, run the production `chrono::Local` fixture for 2012-01-01/02 and the Samoa DST edges and compare with the pinned plugin. Budget: 20 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/liveness/proc.rs",
+          "line": 97
+        },
+        {
+          "path": "crates/c3/src/liveness/proc.rs",
+          "line": 100
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 283
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 344
+        }
+      ],
+      "claim": "E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time.",
+      "trigger": "A recorded or unverified pid remains alive and its start time is readable, but `CreateToolhelp32Snapshot`/`name_and_parent` fails transiently or cannot list the pid.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/proc.rs:97-100",
+          "observation": "`process_info` returns `None` on `name_and_parent(pid)?`, conflating lookup failure with process absence."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/pending.rs:283-285 and 344-345",
+          "observation": "Both E19 re-check entry points map `process_info == None` directly to `gone`."
+        },
+        {
+          "kind": "inferred",
+          "reference": "E19 fail-closed invariant",
+          "observation": "A readable live start followed by failed inspection must remain blocking, but this path drops it."
+        }
+      ],
+      "verification": "Inject `name_and_parent -> None` while `process_start_iso -> Some(start)` and require `test_unverified_process`/`test_recorded_process` to return running or an explicit inspection failure.",
+      "remedy": "Distinguish process absence from inspection failure; return an unknown/running verdict when the pid exists but metadata cannot be read.",
+      "supersedes": []
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/liveness/proc.rs",
+          "line": 753
+        },
+        {
+          "path": "crates/c3/src/liveness/proc.rs",
+          "line": 775
+        },
+        {
+          "path": "crates/c3/src/liveness/proc.rs",
+          "line": 827
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 790
+        }
+      ],
+      "claim": "The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs.",
+      "trigger": "A kill leaves `kill_unconfirmed`, and an orphan or descendant is live but its creation/start time cannot be read, yielding a scan row with `created: None`.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/proc.rs:753-755 and 774-777",
+          "observation": "Both scan branches `continue` when `p.created` is `None`."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/proc.rs:819-832",
+          "observation": "The process-table builders map an unreadable start time to `created: None`."
+        },
+        {
+          "kind": "inferred",
+          "reference": "pending.rs unknown-tree branch",
+          "observation": "Two clean scans can therefore coexist with a live unverifiable process."
+        }
+      ],
+      "verification": "Run `test_pending_active` on a `kill_unconfirmed` record with a live scan row whose `created` is `None`; require refusal/failed verification, never release.",
+      "remedy": "Treat unknown creation/start as blocking evidence or fail the scan; do not silently filter those rows.",
+      "supersedes": []
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 5105
+        },
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 5143
+        },
+        {
+          "path": "docs/port/wave3a-recovery.md",
+          "line": 59
+        }
+      ],
+      "claim": "The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree.",
+      "trigger": "The bridge is killed after `kill_tree_checked` returns but before `store.write_pending(...)` writes the survivor record.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:5105-5144",
+          "observation": "The survivor/unknown-tree record is assembled and written in `finish`, not at the kill sites."
+        },
+        {
+          "kind": "read-code",
+          "reference": "docs/port/wave3a-recovery.md:59-65",
+          "observation": "The documentation explicitly records this once-at-end difference from the plugin."
+        },
+        {
+          "kind": "inferred",
+          "reference": "crash-safety invariant",
+          "observation": "A process death in the interval preserves only the older running/launching record."
+        }
+      ],
+      "verification": "Add a pause between the kill and the end-of-run pending write, terminate the bridge there, and inspect the recovery record for the expected `unverified`/`kill_unconfirmed` fields.",
+      "remedy": "Persist the kill disposition at each kill site, or write a durable kill journal before continuing the run.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/tests/recovery_wave3a.rs",
+          "line": 35
+        },
+        {
+          "path": "crates/c3/tests/recovery_wave3a.rs",
+          "line": 100
+        },
+        {
+          "path": "crates/c3/tests/recovery_wave3a.rs",
+          "line": 163
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 1162
+        }
+      ],
+      "claim": "The new tests do not prove the fail-closed recovery invariant: the start-unreadable assertion can be vacuous, descendant selection is unfiltered and timing-dependent, and the unknown-tree release test uses a future `started` timestamp that filters every candidate.",
+      "trigger": "Run the tests on a machine without readable `/proc`/btime, with multiple descendants, or with either scan accidentally skipped.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/tests/recovery_wave3a.rs:35-51",
+          "observation": "The post-hook Alive assertion is skipped when `real` is empty."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/tests/recovery_wave3a.rs:100-129",
+          "observation": "`first_descendant()` takes the first descendant without checking its image or role."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/pending.rs:1162-1193",
+          "observation": "The release fixture sets `started` one day in the future, making the scan assertions vacuous."
+        }
+      ],
+      "verification": "Add deterministic fixtures for metadata lookup failure, `created: None`, and non-empty recorded start with current unreadable start; assert blocking behavior and actual pending-record writes.",
+      "remedy": "Make the fixtures identify their target pid deterministically and assert both scan passes plus persisted record state.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 3123
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 3157
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 3204
+        }
+      ],
+      "claim": "F06-1 is fixed in the synthetic path but production Samoa behavior remains unproven: the fixture hard-codes registry-derived rules, samples no DST edges, and marks the exact fall-back end ambiguous despite the F04-2 boundary semantics.",
+      "trigger": "Run against a real Windows Samoa Standard Time registry or at the synthetic zone's exact transition boundaries.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:3123-3178",
+          "observation": "The Samoa fixture hard-codes 2011/2012 rules and has an `Ambiguous` exact `to_std` case."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:3204-3221",
+          "observation": "Only one retry-after trigger and one IANA comparison are asserted; production `chrono::Local` is not exercised."
+        }
+      ],
+      "verification": "Run a production Windows `chrono::Local` Samoa test at the 2012 year boundary and both DST edges and compare with the pinned plugin.",
+      "remedy": "Validate against the actual registry rules and add exact edge assertions consistent with F04-2.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F04-1",
+      "status": "fixed",
+      "note": "Unicode-safe `strip_exe` and classifier/scan fixtures are present."
+    },
+    {
+      "id": "F04-2",
+      "status": "fixed",
+      "note": "Boundary normalization and Berlin edge fixtures address the original issue."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Panel light-gate behavior is outside this range."
+    },
+    {
+      "id": "F06-1",
+      "status": "fixed",
+      "note": "The Samoa local-year rule is implemented and has a synthetic fixture."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Outside this recovery range."
+    },
+    {
+      "id": "F22-1",
+      "status": "still-open",
+      "note": "The journal retention/replay issue remains unaddressed by this recovery range."
+    }
+  ],
+  "unproven": [
+    "No tests or harnesses were run in this read-only consultation.",
+    "The process-info lookup-failure and created-unknown scan paths have not been reproduced dynamically.",
+    "The end-of-run recovery-record crash window has not been reproduced.",
+    "Production Windows Samoa registry behavior and transition edges remain unverified."
+  ],
+  "first_run_checklist": []
+}

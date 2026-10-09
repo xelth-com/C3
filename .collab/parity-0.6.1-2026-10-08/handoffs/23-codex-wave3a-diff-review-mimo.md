@@ -1,14 +1,22 @@
-codex-consult: detached run 152011e0 (detach id 152011e0-6c44-4c44-a1e8-3d0fb80a3a60) - pid 22968 on LAPTOP-9SGIHQ03, started 2026-10-09T08:50:04+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-152011e0.status.json
-Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 3 of 12 for -Provider mimo (model, codex_config applied)
-codex-consult: usable reply - mimo :: mimo-v2.6-pro, mode fork, thread 01a11f6d-21b1-7052-b198-b30a2a3549c7 (source: events), wall 1501.9 s
-verdict    : HOLD - HOLD — findings #1-#3 leave E19 and the recovery release rule fail-open, and the kept recovery evidence is not durable at the kill.
-findings   : 3 blocker, 1 major, 1 minor, 0 note -> F23-1..F23-5 in findings.json
-prior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 fixed, F04-2 fixed, F04-3 not-checked, F06-1 fixed, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 still-open
+# Handoff 23 - Codex: wave3a-diff-review-mimo
+
+Date: 2026-10-09 08:50 local. Author: Codex (model mimo-v2.6-pro, effort high), Codex CLI 0.155.1.
+Reviewer: mimo :: mimo-v2.6-pro (provider from -Provider, model from roster; endpoint https://token-plan-ams.xiaomimimo.com/v1, wire_api: responses; provider fingerprint 47cd6ee7e4ff; harness codex-cli 0.155.1).
+Preflight: ok: env MIMO_API_KEY set.
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 3 of 12 for -Provider mimo (model, codex_config applied).
+Effort: high sent (requested high, mapping mimo-v1, by caps-v1: token-plan-ams.xiaomimimo.com, mimo-v2.6-pro; not confirmed by the provider). Consultation id: 37cd6a9c-f9e5-4c0d-ae9e-5c5c5a20d89c.
+Invocation: `codex-consult.ps1` (mode: fork, sandbox: read-only, purpose: diff-review). Argv: `codex exec --sandbox read-only --color never --json -m mimo-v2.6-pro -c model_reasoning_effort="high" -c model_provider="mimo" -c model_catalog_json="C:/Users/Dmytro/.codex/model-catalogs.json" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-3cc92e64087e4d9b99a23a8bbcd0adbe.md fork 01a11f5c-bb07-7bd0-b5fe-55b02fbe4c10 -` (prompt on stdin).
+Parent thread: `01a11f5c-bb07-7bd0-b5fe-55b02fbe4c10`. Result thread: `01a11f6d-21b1-7052-b198-b30a2a3549c7` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/17-claude-wave3a-diff-review.md` (sha256 43c1bddfff78). Reviewed: a2943d8, base a2943d8a447c643d25fca481351693f6493508ab, tree sha256 1ac9e910cd6a, 0 changed files.
 WARNING: working tree changed during the review (fingerprint before/after differ).
 Note: HEAD moved during the review (a2943d8 -> 6bfc080).
-reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\23-codex-wave3a-diff-review-mimo.md
-reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\23-codex-wave3a-diff-review-mimo.reply.json
-events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\23-codex-wave3a-diff-review-mimo.events.jsonl
+Bridge outcome: usable reply. Wall time: 1501.9 s. Tokens: in 5296312 (cached 2558464), out 35736, reasoning 24210.
+Timeout: 2400 s (the default of purpose diff-review); continuation after a timeout kill: up to 900 s. Range: `6a5f838..1081079` - the range changes 15 files, 2679 lines (2406 insertions, 273 deletions).
+Verdict: HOLD - HOLD — findings #1-#3 leave E19 and the recovery release rule fail-open, and the kept recovery evidence is not durable at the kill. Findings: 3 blocker, 1 major, 1 minor, 0 note (F23-1..F23-5, tracked in `findings.json`). Structured reply (prompt-only transport): `handoffs/23-codex-wave3a-diff-review-mimo.reply.json`.
+Raw event stream: `handoffs/23-codex-wave3a-diff-review-mimo.events.jsonl`.
+Verbatim reply follows.
+
+---
 
 **Q1.** The documented E19 order matches the plugin, but C3 has an additional fail-open path: `process_info` treats a Toolhelp/name-and-parent lookup failure as `None`, and `test_unverified_process`/`test_recorded_process` then return `gone`. A live reviewer with a readable start time can therefore be dropped when the second inspection fails transiently. A process whose start time remains unreadable correctly blocks rather than being dropped.
 
@@ -24,6 +32,8 @@ events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\23-code
 `RC3` (finding #3) — In `C:\Users\Dmytro\C3`, workspace-write, pause after `kill_tree_checked` and before `write_pending`, terminate the bridge, then inspect `.consult.pending.json`; require persisted `unverified`/`kill_unconfirmed` evidence. Budget: 30 minutes.
 
 `RC4` (finding #5) — On Windows with Samoa Standard Time, workspace-write, run the production `chrono::Local` fixture for 2012-01-01/02 and the Samoa DST edges and compare with the pinned plugin. Budget: 20 minutes.
+
+---
 
 ### Findings
 
