@@ -1,0 +1,1 @@
+Diff-review wave 2b of the compatibility track (0d78ec0..1fa1ba7: the pre-0.6 parity gaps - test mode, launcher quoting, the health journal, kick/pending/store/member/hook fixes, --require and role validation); answer Q1-Q4 by number.
