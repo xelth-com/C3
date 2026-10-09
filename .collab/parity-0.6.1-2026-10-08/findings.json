@@ -1834,7 +1834,7 @@
                      },
                      {
                          "id":  "F11-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1902,6 +1902,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                              "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T06:00:57+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2e 4b51226 with Astra\u0027s fixtures RC1-RC4 (F11-3 fixed better than the plugin: full roster kept for plan evaluation, plugin TECH_DEBT T11)",
+                                             "evidence":  "",
+                                             "base_commit":  "4597ec521a6b9aac3007a5e969d85282d2faf830",
+                                             "tree_sha256":  "72a506b96ab8478b9ea6987cf31607197228961f1a60abbe0c42be8c2101eb21"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1917,7 +1926,7 @@
                      },
                      {
                          "id":  "F11-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1981,6 +1990,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                              "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T06:01:04+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2e 4b51226 with Astra\u0027s fixtures RC1-RC4 (F11-3 fixed better than the plugin: full roster kept for plan evaluation, plugin TECH_DEBT T11)",
+                                             "evidence":  "",
+                                             "base_commit":  "4597ec521a6b9aac3007a5e969d85282d2faf830",
+                                             "tree_sha256":  "72a506b96ab8478b9ea6987cf31607197228961f1a60abbe0c42be8c2101eb21"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -1996,7 +2014,7 @@
                      },
                      {
                          "id":  "F11-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -2056,6 +2074,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                              "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T06:01:08+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2e 4b51226 with Astra\u0027s fixtures RC1-RC4 (F11-3 fixed better than the plugin: full roster kept for plan evaluation, plugin TECH_DEBT T11)",
+                                             "evidence":  "",
+                                             "base_commit":  "4597ec521a6b9aac3007a5e969d85282d2faf830",
+                                             "tree_sha256":  "72a506b96ab8478b9ea6987cf31607197228961f1a60abbe0c42be8c2101eb21"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -2071,7 +2098,7 @@
                      },
                      {
                          "id":  "F11-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -2130,6 +2157,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                              "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T06:01:12+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2e 4b51226 with Astra\u0027s fixtures RC1-RC4 (F11-3 fixed better than the plugin: full roster kept for plan evaluation, plugin TECH_DEBT T11)",
+                                             "evidence":  "",
+                                             "base_commit":  "4597ec521a6b9aac3007a5e969d85282d2faf830",
+                                             "tree_sha256":  "72a506b96ab8478b9ea6987cf31607197228961f1a60abbe0c42be8c2101eb21"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -2145,7 +2181,7 @@
                      },
                      {
                          "id":  "F11-5",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -2205,6 +2241,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6a5f838d8f15dcbca25f8e901561ebfe41975997",
                                              "tree_sha256":  "185ba27012b1c9d0950f91beb005db38698fd630c5f00cf49c64f963e73f0c39"
+                                         },
+                                         {
+                                             "when":  "2026-10-09T06:01:17+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 2e 4b51226 with Astra\u0027s fixtures RC1-RC4 (F11-3 fixed better than the plugin: full roster kept for plan evaluation, plugin TECH_DEBT T11)",
+                                             "evidence":  "",
+                                             "base_commit":  "4597ec521a6b9aac3007a5e969d85282d2faf830",
+                                             "tree_sha256":  "72a506b96ab8478b9ea6987cf31607197228961f1a60abbe0c42be8c2101eb21"
                                          }
                                      ],
                          "reviewer_checks":  [
