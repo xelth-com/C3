@@ -1,0 +1,142 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "HOLD — findings #1 and #2 leave the endpoint launcher and transcript-safety verdicts capable of being wrong.",
+  "reply_markdown": "**Q1.** Yes. The `--version` probe proves only that one command dispatch works, and it runs in the subscription child environment without the endpoint variables. A wrapper can answer `--version` but reject `-p`, require endpoint startup variables, or dispatch the turn differently, so preflight reports available and the real turn later fails. Conversely, a launcher whose `--version` requires endpoint credentials can be rejected even though its turn would work.\n\nThe derived projects directory is also incomplete. `home_dir` considers `USERPROFILE`/`HOME` but not Windows `HOMEDRIVE`+`HOMEPATH` or the OS account home used by Node. If neither preferred variable is set, `projects_directory` returns empty and the transcript guard is skipped, even though Claude Code may derive an in-repository `~/.claude/projects` path. A wrapper that injects `CLAUDE_CONFIG_DIR` only into the child can produce the same wrong safe verdict.\n\n**Q2.** HOLD. F25-3 and F25-4 are fixed, but the F25-1/F25-2 safety guarantees remain incomplete.\n\n## Requested checks\n`RC1` (finding #1) — In `C:\\Users\\Dmytro\\C3`, workspace-write, use a fake launcher that succeeds for `--version` and fails for `-p`, then run endpoint preflight and one turn; require preflight not to report available. Budget: 20 minutes.\n\n`RC2` (finding #2) — In `C:\\Users\\Dmytro\\C3`, workspace-write, clear `USERPROFILE` and `HOME`, set `HOMEDRIVE`/`HOMEPATH` so the OS home resolves to a directory whose `.claude/projects` is inside the repository, and run endpoint preflight; require refusal. Budget: 20 minutes.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 185
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 488
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 527
+        }
+      ],
+      "claim": "Endpoint preflight validates `claude --version` in the subscription environment, not the actual endpoint turn entrypoint, so a launcher that answers `--version` but cannot execute `-p` is reported available while a launcher whose version command depends on endpoint variables can be rejected incorrectly.",
+      "trigger": "Use a wrapper that exits 0 for `--version` but rejects `-p`, or one that only runs when `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` are present.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:185-210",
+          "observation": "The endpoint branch calls `launcher_problem` and otherwise returns `ok: env <NAME> set`."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:488-553",
+          "observation": "`version_probe` runs only `--version` using `child_env(\"subscription\", None)`, and its exit-zero result is accepted as launcher proof."
+        },
+        {
+          "kind": "inferred",
+          "reference": "F25-1 corrected claim",
+          "observation": "The probe does not establish that the turn argv is accepted or that the endpoint child environment can run it."
+        }
+      ],
+      "verification": "Run endpoint preflight and a turn with the two fake launchers above; require the first to be unavailable and the second not to be falsely rejected.",
+      "remedy": "Probe the turn interface in the exact endpoint child environment, for example by validating `--help`/turn flags or a no-network dry invocation; otherwise report unknown rather than available when only `--version` succeeds.",
+      "supersedes": ["F25-1"]
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 383
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 399
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 417
+        }
+      ],
+      "claim": "The derived transcript guard can return no problem when Claude Code derives a projects directory from an OS home source that `home_dir` does not implement, allowing transcripts inside the repository to be treated as safe.",
+      "trigger": "Run endpoint mode with `USERPROFILE` and `HOME` unset but `HOMEDRIVE`/`HOMEPATH` set to a home whose `.claude/projects` is inside the repository, or with a launcher that injects the effective config directory only into the child.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:399-425",
+          "observation": "`projects_directory` returns empty when both preferred home variables are absent, causing `launch_problem_of` to skip the projects check."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:417-432",
+          "observation": "`home_dir` implements only `USERPROFILE`/`HOME`, omitting Windows `HOMEDRIVE`+`HOMEPATH` and the system-account home fallback."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:383-397",
+          "observation": "An empty derived projects directory produces no refusal."
+        }
+      ],
+      "verification": "Run endpoint preflight under the environment above and require refusal before any turn when the OS-derived projects path is inside the repository.",
+      "remedy": "Resolve the home exactly as the child runtime does, including `HOMEDRIVE`+`HOMEPATH` and the system home fallback; fail closed when the effective config/home cannot be established, and recheck the child’s final environment before launch.",
+      "supersedes": ["F25-2"]
+    }
+  ],
+  "prior_findings": [
+    {"id": "F02-1", "status": "not-checked", "note": "Outside 6f7a8f7..fe2fea9."},
+    {"id": "F02-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-7", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-8", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F06-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F14-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F22-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-1", "status": "fixed", "note": "The non-starting/non-zero-exit launcher case is fixed; the corrected turn-interface claim is finding #1."},
+    {"id": "F25-2", "status": "fixed", "note": "A derived projects path and link resolution were added; the corrected home-resolution claim is finding #2."},
+    {"id": "F25-3", "status": "fixed", "note": "The plugin’s case-sensitive model-table rule is documented and tested."},
+    {"id": "F25-4", "status": "fixed", "note": "ChildEnv Debug redacts every environment value."},
+    {"id": "F29-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F30-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F30-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F30-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F31-1", "status": "not-checked", "note": "Outside this range."}
+  ],
+  "unproven": [
+    "No tests were run in this read-only consultation.",
+    "The fake launcher cases for `--version` versus `-p` were reasoned from code, not executed.",
+    "The Windows `HOMEDRIVE`+`HOMEPATH` and child-only config-directory cases were not executed.",
+    "No real endpoint-mode Claude Code run was performed."
+  ],
+  "first_run_checklist": []
+}

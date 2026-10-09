@@ -1,18 +1,28 @@
-codex-consult: detached run 2ec928a8 (detach id 2ec928a8-748b-407b-9466-ea20e33a1694) - pid 10024 on LAPTOP-9SGIHQ03, started 2026-10-09T11:02:03+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-2ec928a8.status.json
-Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 3 of 12 for -Provider mimo (model, codex_config applied)
-codex-consult: usable reply - mimo :: mimo-v2.6-pro, mode fork, thread 01a11fe6-04c9-7fd3-9523-f023d1e4f653 (source: events), wall 1235.2 s
-verdict    : HOLD - HOLD — finding #1 supersedes F22-1: the applied-key ledger is not durable across the plugin’s shared-journal writer.
-findings   : 1 blocker, 0 major, 0 minor, 0 note -> F29-1 in findings.json
-prior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 fixed, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-1 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked
+# Handoff 29 - Codex: wave2b-round3-mimo
+
+Date: 2026-10-09 11:02 local. Author: Codex (model mimo-v2.6-pro, effort high), Codex CLI 0.155.1.
+Reviewer: mimo :: mimo-v2.6-pro (provider from -Provider, model from roster; endpoint https://token-plan-ams.xiaomimimo.com/v1, wire_api: responses; provider fingerprint 47cd6ee7e4ff; harness codex-cli 0.155.1).
+Preflight: ok: env MIMO_API_KEY set.
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 3 of 12 for -Provider mimo (model, codex_config applied).
+Effort: high sent (requested high, mapping mimo-v1, by caps-v1: token-plan-ams.xiaomimimo.com, mimo-v2.6-pro; not confirmed by the provider). Consultation id: 3a82326d-2e9c-4ca8-b02f-4b8b5d538b6b.
+Invocation: `codex-consult.ps1` (mode: fork, sandbox: read-only, purpose: diff-review). Argv: `codex exec --sandbox read-only --color never --json -m mimo-v2.6-pro -c model_reasoning_effort="high" -c model_provider="mimo" -c model_catalog_json="C:/Users/Dmytro/.codex/model-catalogs.json" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-6e21ce56ae6e4564ac1c82ef7bb689e6.md fork 01a11fa7-8a2c-7322-90b3-9a5b8710f70d -` (prompt on stdin).
+Parent thread: `01a11fa7-8a2c-7322-90b3-9a5b8710f70d`. Result thread: `01a11fe6-04c9-7fd3-9523-f023d1e4f653` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/26-claude-wave2b-round3.md` (sha256 bfa2a35d629f). Reviewed: 70e74c7, base 70e74c76faf9bc9b765569a5ca5ce195a3a4028d, tree sha256 700af582d85d, 0 changed files.
 WARNING: working tree changed during the review (fingerprint before/after differ).
 Note: HEAD moved during the review (70e74c7 -> c8f0997).
-reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\29-codex-wave2b-round3-mimo.md
-reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\29-codex-wave2b-round3-mimo.reply.json
-events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\29-codex-wave2b-round3-mimo.events.jsonl
+Bridge outcome: usable reply. Wall time: 1235.2 s. Tokens: in 20634684 (cached 14354176), out 71684, reasoning 44478.
+Timeout: 2400 s (the default of purpose diff-review); continuation after a timeout kill: up to 900 s. Range: `6bfc080..c5d8b28` - the range changes 2 files, 485 lines (459 insertions, 26 deletions).
+Verdict: HOLD - HOLD — finding #1 supersedes F22-1: the applied-key ledger is not durable across the plugin’s shared-journal writer. Findings: 1 blocker, 0 major, 0 minor, 0 note (F29-1, tracked in `findings.json`). Structured reply (prompt-only transport): `handoffs/29-codex-wave2b-round3-mimo.reply.json`.
+Raw event stream: `handoffs/29-codex-wave2b-round3-mimo.events.jsonl`.
+Verbatim reply follows.
+
+---
 
 **Q1.** Two C3 updaters are serialized by the health lock, and a crash between the health write and list write is safe for C3 because the next update applies the journal before retention and the endpoint key suppresses a duplicate. However, the schedule fails across writers: after C3 lists a kept journal record and the 500-record cap evicts its endpoint, a plugin update that ignores or deletes `.journal.applied` can replay the retained journal record as new. A missing or malformed list is also treated as empty, producing the same resurrection. This can apply the record twice and displace a newer endpoint. A stale surviving list can conversely suppress a later same-key record until it is removed.
 
 **Q2.** HOLD until the ledger is authoritative across C3/plugin updates or mixed-writer replay is otherwise prevented and tested.
+
+---
 
 ### Findings
 

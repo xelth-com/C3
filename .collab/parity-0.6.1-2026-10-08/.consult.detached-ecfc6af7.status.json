@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "ecfc6af7-0ef2-407a-b98f-57b7c75e630d",
+    "id8":  "ecfc6af7",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-09T11:23:14+02:00",
+    "updated":  "2026-10-09T11:46:23+02:00",
+    "finished":  "2026-10-09T11:46:23+02:00",
+    "wall_seconds":  1389.5,
+    "pid":  23816,
+    "start_time":  "2026-10-09T09:23:16.7021789Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave3a-round2-mimo",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\27-claude-wave3a-round2.md",
+    "members":  [
+                    {
+                        "position":  3,
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  1372.5,
+                        "n":  17,
+                        "handoff":  "30",
+                        "reply":  "handoffs/30-codex-wave3a-round2-mimo.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - mimo :: mimo-v2.6-pro, mode fork, thread 01a11ff9-827f-7623-9c7e-575292039954 (source: events), wall 1372.5 s\nverdict    : HOLD - HOLD — findings #1 and #2 keep the fail-closed recovery invariant broken.\nfindings   : 2 blocker, 1 major, 0 minor, 0 note -\u003e F30-1..F30-3 in findings.json\nprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 fixed, F04-2 not-checked, F04-3 not-checked, F06-1 fixed, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 fixed, F23-1 fixed, F23-2 fixed, F23-3 fixed, F23-4 fixed, F23-5 still-open, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-1 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F29-1 not-checked\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\30-codex-wave3a-round2-mimo.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\30-codex-wave3a-round2-mimo.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\30-codex-wave3a-round2-mimo.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-ecfc6af7.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

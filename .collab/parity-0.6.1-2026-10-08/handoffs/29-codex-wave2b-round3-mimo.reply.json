@@ -1,0 +1,103 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "HOLD — finding #1 supersedes F22-1: the applied-key ledger is not durable across the plugin’s shared-journal writer.",
+  "reply_markdown": "**Q1.** Two C3 updaters are serialized by the health lock, and a crash between the health write and list write is safe for C3 because the next update applies the journal before retention and the endpoint key suppresses a duplicate. However, the schedule fails across writers: after C3 lists a kept journal record and the 500-record cap evicts its endpoint, a plugin update that ignores or deletes `.journal.applied` can replay the retained journal record as new. A missing or malformed list is also treated as empty, producing the same resurrection. This can apply the record twice and displace a newer endpoint. A stale surviving list can conversely suppress a later same-key record until it is removed.\n\n**Q2.** HOLD until the ledger is authoritative across C3/plugin updates or mixed-writer replay is otherwise prevented and tested.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1682
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2017
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2045
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2189
+        }
+      ],
+      "claim": "The applied-key list is only a C3-local replay guard: it is silently ignored when missing or malformed, and the plugin’s shared journal updater neither reads nor preserves it, so a retained journal record can still be replayed after endpoint-key eviction and applied twice.",
+      "trigger": "A journal is kept and its key list written; the endpoint cap evicts the corresponding endpoint; a plugin update then deletes or ignores `.journal.applied` and processes the retained journal, or the list becomes unreadable-as-valid while the journal remains.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1682-1698",
+          "observation": "Missing or unparsable applied lists are converted to an empty set."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:2017-2045",
+          "observation": "Replay suppression depends solely on that optional list plus mutable endpoint keys."
+        },
+        {
+          "kind": "read-code",
+          "reference": "docs/port/wave2b-compat.md",
+          "observation": "The documentation states that the plugin neither reads nor writes the applied-key list."
+        }
+      ],
+      "verification": "Create a kept journal record, evict its endpoint through the cap, remove or invalidate `.journal.applied`, run the plugin journal updater and then an update, and assert the record is neither re-added nor allowed to displace a newer endpoint.",
+      "remedy": "Make consumed-journal state authoritative in the shared journal protocol, or fail closed when the retained journal has no trustworthy ledger; add a mixed C3/plugin crash-and-eviction fixture.",
+      "supersedes": [
+        "F22-1"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {"id": "F02-1", "status": "not-checked", "note": "Outside this two-file range."},
+    {"id": "F02-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-7", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-8", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F06-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F14-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F22-1", "status": "fixed", "note": "C3-only cap-eviction replay is addressed; the corrected mixed-writer claim is finding #1, which supersedes it."},
+    {"id": "F23-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-4", "status": "not-checked", "note": "Outside this range."}
+  ],
+  "unproven": [
+    "No tests were run in this read-only consultation.",
+    "The mixed C3/plugin deletion-or-ignoring schedule was reasoned from code and documentation, not executed.",
+    "The crash-between-write schedule was not dynamically reproduced."
+  ],
+  "first_run_checklist": []
+}

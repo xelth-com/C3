@@ -1,0 +1,172 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "HOLD — findings #1 and #2 keep the fail-closed recovery invariant broken.",
+  "reply_markdown": "**Q1.** Yes. Treating an unreadable start time as recent is safe only for rows the scans can attribute. A live reviewer helper can still be released early when it is a grandchild below an unrecorded wrapper and its name/command line do not look codex-like. The by-parent passes miss it, and the machine-wide pass excludes non-codex rows even when `created` is unknown. Blocking every unknown-start row would avoid that release but would also block protected system processes; the safer rule is to block unknown-start rows unless readable identity and command-line evidence proves they are unrelated.\n\n**Q2.** Yes. The tree kill happens inside `run_turn`; the kept record is written only after the engine outcome returns to `KillSite::write` or `secondary_kill`. A bridge termination in that interval leaves only the old running record. Additionally, several `write_pending` errors are ignored, so failed persistence does not stop continuation, repair, or commit.\n\n**Q3.** HOLD. F23-1 is fixed, but F23-2, F23-3, and the recovery proof remain incomplete.\n\n## Requested checks\n`RC1` (finding #1) — In `C:\\Users\\Dmytro\\C3`, workspace-write, run `test_pending_active_with` with `kill_unconfirmed`, a dead recorded root, and an unrecorded wrapper plus `node.exe` child whose `created` is `None`; require active, never release. Budget: 20 minutes.\n\n`RC2` (finding #2) — In `C:\\Users\\Dmytro\\C3`, workspace-write, pause immediately after `kill_tree_checked` and before `KillSite::write`, terminate the bridge, and require the pending file to contain `survivors`, `unverified`, or `kill_unconfirmed`. Budget: 20 minutes.\n\n`RC3` (finding #3) — In `C:\\Users\\Dmytro\\C3`, workspace-write, extend `kill_record_durable` to continuation and format-repair kills and inject `write_pending` failure; require no further turn or commit without durable evidence. Budget: 30 minutes.\n\n`RC4` (`F23-5`) — On Windows configured for Samoa Standard Time, workspace-write, run the production `chrono::Local` Samoa boundary and reset fixtures against the pinned plugin. Budget: 20 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/liveness/proc.rs",
+          "line": 815
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 297
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 902
+        }
+      ],
+      "claim": "Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process.",
+      "trigger": "A `kill_unconfirmed` record has a dead recorded root; the process table contains an unrecorded wrapper and a live `node.exe` or `python.exe` grandchild with `created: None` and an unreadable or unrelated command line.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/proc.rs:780-833",
+          "observation": "Unknown-start rows are considered recent, but only codex-like rows enter `found`; non-codex rows are excluded."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/pending.rs:847-905",
+          "observation": "The unknown-tree branch releases after the parent and machine-wide scans return no matching rows."
+        },
+        {
+          "kind": "inferred",
+          "reference": "F23-2 invariant",
+          "observation": "An unrecorded grandchild is invisible to the parent passes and can be excluded by the name rule despite being part of the reviewer tree."
+        }
+      ],
+      "verification": "Run `test_pending_active_with` with the wrapper/helper synthetic table and require the record to remain active; repeat with a readable non-codex command line.",
+      "remedy": "Scan full descendant relationships and treat unknown-start or command-line-unreadable/generic-runtime rows as blocking unless positive evidence proves they are unrelated.",
+      "supersedes": ["F23-2"]
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 536
+        },
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 587
+        },
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 4927
+        },
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 5674
+        }
+      ],
+      "claim": "Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues.",
+      "trigger": "Terminate the bridge after `kill_tree_checked` returns but before `KillSite::write`, or force `write_pending` to fail and continue to a later turn or commit.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/subprocess.rs:536-552",
+          "observation": "The tree kill completes inside `run_turn` before outcome handling returns."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:587-596",
+          "observation": "`secondary_kill` performs the record write after the turn returns and discards its error."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:4927-4953",
+          "observation": "The main kill write occurs only after outcome handling, and failures only warn."
+        }
+      ],
+      "verification": "Add a pause between `kill_tree_checked` and `KillSite::write`, terminate there, and separately inject `write_pending` errors before continuation or commit.",
+      "remedy": "Persist the kill record synchronously from the kill path or an append-only sidecar before returning, and fail closed when that persistence fails.",
+      "supersedes": ["F23-3"]
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-cli/tests/kill_record_durable.rs",
+          "line": 68
+        },
+        {
+          "path": "crates/c3-cli/tests/kill_record_durable.rs",
+          "line": 180
+        }
+      ],
+      "claim": "The recovery proof covers only a successful main-turn write followed by a pause; it does not prove continuation, format-repair, write-failure, or pre-write crash durability.",
+      "trigger": "Exercise a killed continuation or repair turn, or terminate the bridge before `KillSite::write` completes.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/kill_record_durable.rs:68-165",
+          "observation": "The bridge is killed only after the pending record already reports `survivors`."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/kill_record_durable.rs:180-221",
+          "observation": "Only main-turn unconfirmed and unverified cases are asserted."
+        }
+      ],
+      "verification": "Add fixtures for each kill site plus injected `write_pending` failure and assert durable evidence before any subsequent turn or commit.",
+      "remedy": "Extend RC3 to all three kill sites and persistence failures before claiming the invariant proven.",
+      "supersedes": ["F23-4"]
+    }
+  ],
+  "prior_findings": [
+    {"id": "F02-1", "status": "not-checked", "note": "Outside 6bfc080..b649e96."},
+    {"id": "F02-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-7", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-8", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-1", "status": "fixed", "note": "Unicode-safe process-name handling is present."},
+    {"id": "F04-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F06-1", "status": "fixed", "note": "Samoa local-year normalization is implemented and exercised with registry-derived fixtures."},
+    {"id": "F09-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F14-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F22-1", "status": "fixed", "note": "The applied-key replay guard addresses the C3-local eviction replay."},
+    {"id": "F23-1", "status": "fixed", "note": "Process lookup failure now returns `inspected: false` and counts as running."},
+    {"id": "F23-2", "status": "fixed", "note": "Unknown-start rows are no longer skipped; the corrected residual claim is finding #1."},
+    {"id": "F23-3", "status": "fixed", "note": "Records are written after each kill site; the corrected durability claim is finding #2."},
+    {"id": "F23-4", "status": "fixed", "note": "The specific vacuous and timing-dependent fixtures were rewritten; remaining proof gaps are finding #3."},
+    {"id": "F23-5", "status": "still-open", "note": "Registry-derived Samoa fixtures are stronger, but production `chrono::Local` remains unrun except on a Samoa-zone machine."},
+    {"id": "F24-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F29-1", "status": "not-checked", "note": "Outside this range."}
+  ],
+  "unproven": [
+    "No tests were run in this read-only consultation.",
+    "The unrecorded-grandchild release path and the pre-write kill window were reasoned from code, not executed.",
+    "Continuation and format-repair kill durability remains unproved.",
+    "Production Samoa `chrono::Local` behavior remains unproved on a non-Samoa machine."
+  ],
+  "first_run_checklist": []
+}

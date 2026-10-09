@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "3ebeb728-db9b-41c1-96ee-ff5ab48dd0ab",
+    "id8":  "3ebeb728",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-09T11:59:43+02:00",
+    "updated":  "2026-10-09T12:14:11+02:00",
+    "finished":  "2026-10-09T12:14:11+02:00",
+    "wall_seconds":  868.5,
+    "pid":  6112,
+    "start_time":  "2026-10-09T09:59:43.8338433Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave4-round2-mimo",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\29-claude-wave4-round2.md",
+    "members":  [
+                    {
+                        "position":  3,
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  844.4,
+                        "n":  19,
+                        "handoff":  "32",
+                        "reply":  "handoffs/32-codex-wave4-round2-mimo.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - mimo :: mimo-v2.6-pro, mode fork, thread 01a1201a-d4e0-7cc2-af04-2612f874b8ff (source: events), wall 844.4 s\nverdict    : HOLD - HOLD — findings #1 and #2 leave the endpoint launcher and transcript-safety verdicts capable of being wrong.\nfindings   : 1 blocker, 1 major, 0 minor, 0 note -\u003e F32-1..F32-2 in findings.json\nprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-1 fixed, F25-2 fixed, F25-3 fixed, F25-4 fixed, F29-1 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\32-codex-wave4-round2-mimo.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\32-codex-wave4-round2-mimo.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\32-codex-wave4-round2-mimo.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-3ebeb728.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

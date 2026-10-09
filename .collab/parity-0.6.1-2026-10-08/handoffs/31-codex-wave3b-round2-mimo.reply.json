@@ -1,0 +1,101 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "HOLD — finding #1 supersedes F24-1: a producer that is live during a lock-busy flush and gone at the next fold can still be accounted twice.",
+  "reply_markdown": "**Q1.** Yes. During a lock-busy flush, `kept_seen` correctly records the live producer’s lines as seen and leaves gone files unseen. If that producer exits before the next successful fold, however, `merge` treats its whole file as a gone file and counts every line in the fold note, including the lines already recorded as seen by the earlier fallback. The same N events are therefore represented once in `not_spooled_seen` and again in `folded N ...`; the count is not lost, but it is doubled in the accounting history.\n\n**Q2.** HOLD until the live-to-gone transition is accounted exactly once. F24-2, F24-3, F24-4, F24-5, and F24-6 otherwise look materially improved.\n\n## Requested checks\n`RC1` (finding #1) — In `C:\\Users\\Dmytro\\C3`, workspace-write, hold `spool.lock` through flush 1 with one live producer file containing N lines, let that producer exit, then run flush 2 and inspect `last-flush.json`; require N total accounting, not `not_spooled_seen=N` plus `folded N`. Budget: 20 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/telemetry/spool.rs",
+          "line": 668
+        },
+        {
+          "path": "crates/c3/src/telemetry/notspooled.rs",
+          "line": 886
+        },
+        {
+          "path": "crates/c3/src/telemetry/notspooled.rs",
+          "line": 950
+        }
+      ],
+      "claim": "The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history.",
+      "trigger": "A producer has N not-spooled lines while `spool.lock` is busy during flush 1, then exits before flush 2 obtains the lock and folds its file.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/telemetry/spool.rs:668",
+          "observation": "The no-lock fallback writes only `not_spooled_seen` for files a fold would keep, with no durable per-file prefix record."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/telemetry/notspooled.rs:886-950",
+          "observation": "A gone producer file is counted in full by `merge`, regardless of lines previously included in `not_spooled_seen`."
+        },
+        {
+          "kind": "inferred",
+          "reference": "never-lose-a-count invariant",
+          "observation": "The live-to-gone transition makes the same N lines appear in both the earlier seen baseline and the later fold note."
+        }
+      ],
+      "verification": "Run the RC1 schedule and compare the first record’s `not_spooled_seen`, the second record’s fold note, and the total accounting for the N lines.",
+      "remedy": "Persist per-file seen byte/line prefixes or carry the fallback’s kept-file provenance into the next fold, and subtract those already-seen lines when folding a formerly-live producer.",
+      "supersedes": ["F24-1"]
+    }
+  ],
+  "prior_findings": [
+    {"id": "F02-1", "status": "not-checked", "note": "Outside fda1f33..e9f3127."},
+    {"id": "F02-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-7", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F02-8", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F04-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F06-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F09-6", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F11-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F14-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F19-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F22-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F23-5", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F24-1", "status": "fixed", "note": "The original fallback-wide seen bug is fixed; the corrected live-to-gone claim is finding #1, which supersedes it."},
+    {"id": "F24-2", "status": "fixed", "note": "Recorded-file tails are counted."},
+    {"id": "F24-3", "status": "fixed", "note": "Counts are gated during deletion and cleanup rescans files."},
+    {"id": "F24-4", "status": "fixed", "note": "Status selects an unseen line."},
+    {"id": "F24-5", "status": "fixed", "note": "Plugin-home marker and production-root fixtures are added."},
+    {"id": "F24-6", "status": "fixed", "note": "Post-delete rewrite failures are surfaced and staged names avoid stale names."},
+    {"id": "F25-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-3", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F25-4", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F29-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F30-1", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F30-2", "status": "not-checked", "note": "Outside this range."},
+    {"id": "F30-3", "status": "not-checked", "note": "Outside this range."}
+  ],
+  "unproven": [
+    "No tests were run in this read-only consultation.",
+    "The live-to-gone double-accounting schedule was reasoned from code and documentation, not executed.",
+    "Concurrent legacy/plugin producers during cleanup remain outside the C3-only append contract."
+  ],
+  "first_run_checklist": []
+}
