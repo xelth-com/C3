@@ -7,7 +7,7 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
-## [0.2.0] - unreleased
+## [0.2.0] - 2026-10-14
 
 The compatibility release: parity with claude-codex-consult 0.6.1, measured by the plugin's pinned
 v0.6.1 harnesses through the shim (`docs/port/harness-shim.md`).
