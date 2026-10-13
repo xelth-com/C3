@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "d2e9978b-2795-4217-ba15-f8c66e6c3e3d",
+    "id8":  "d2e9978b",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  1,
+    "started":  "2026-10-13T17:54:05+02:00",
+    "updated":  "2026-10-13T17:54:20+02:00",
+    "finished":  "2026-10-13T17:54:20+02:00",
+    "wall_seconds":  15.2,
+    "pid":  27072,
+    "start_time":  "2026-10-13T15:54:05.9252290Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  5100,
+    "purpose":  "acceptance",
+    "reply_name":  "0.2.0-acceptance",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\33-claude-0.2.0-acceptance.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "failed",
+                        "outcome":  "failed: codex exit 1 - You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 6:32 PM.",
+                        "wall_seconds":  7.6,
+                        "n":  21,
+                        "handoff":  "35",
+                        "reply":  "handoffs/35-codex-0.2.0-acceptance.md"
+                    }
+                ],
+    "summary":  "codex-consult: failed: codex exit 1 - You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 6:32 PM. (wall 7.6 s)\nquota      : no window in the rollout\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\35-codex-0.2.0-acceptance.md\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\35-codex-0.2.0-acceptance.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-d2e9978b.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

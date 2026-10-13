@@ -1,0 +1,7 @@
+codex-consult: detached run d2e9978b (detach id d2e9978b-2795-4217-ba15-f8c66e6c3e3d) - pid 27072 on LAPTOP-9SGIHQ03, started 2026-10-13T17:54:07+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-d2e9978b.status.json
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied)
+WARNING: provider openai: its 5-hour window 99 % used (observed 258 min ago) until the window resets at 2026-10-13T18:32:16+02:00
+codex-consult: failed: codex exit 1 - You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 6:32 PM. (wall 7.6 s)
+quota      : no window in the rollout
+reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\35-codex-0.2.0-acceptance.md
+events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\35-codex-0.2.0-acceptance.events.jsonl
