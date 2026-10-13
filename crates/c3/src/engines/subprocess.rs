@@ -60,8 +60,10 @@ pub struct SpawnRequest<'a> {
     /// kick): [`KillEvent::Before`] once the tree is enumerated and BEFORE anything is stopped -
     /// the orchestrator writes the recovery record that names it there, so a bridge that dies
     /// during the kill (or before the kill's result is recorded) leaves that record -, then
-    /// [`KillEvent::After`] once the kill returned. `None`: nothing is told.
-    pub on_kill: Option<&'a dyn Fn(KillEvent<'_>)>,
+    /// [`KillEvent::After`] once the kill returned. `None`: nothing is told. (Wave 7, F30-2) The
+    /// caller answers [`KillEvent::Before`] with what its write came to ([`KillRecord`]): the
+    /// killer knows whether the evidence is on disk before it stops anything.
+    pub on_kill: Option<&'a dyn Fn(KillEvent<'_>) -> KillRecord>,
     /// (0.6.0, wave 29, D2) The child's WHOLE environment (an allow list: claude) - the inherited
     /// environment is cleared and only these variables are set; `None` inherits this process's
     /// environment minus the host markers and the test-mode variables.
@@ -86,8 +88,25 @@ pub enum KillEvent<'a> {
     After,
 }
 
+/// (Wave 7, F30-2) What the caller's write at [`KillEvent::Before`] came to - told back to the
+/// killer before it stops anything.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum KillRecord {
+    /// Nothing was due ([`KillEvent::After`]; a caller that writes nothing).
+    #[default]
+    NotDue,
+    /// The record that names the tree is on disk: in the recovery record or - that write failed -
+    /// in its fallback file (`fallback`, read by the recovery too).
+    Durable { fallback: bool },
+    /// Neither the recovery record nor its fallback could be written (why). The kill still
+    /// happens - a hung tree must not outlive the run - but it is NOT confirmed; the next run's
+    /// recovery judges the launch record on disk (its child pid and start) with the fail-closed
+    /// scans.
+    Lost(String),
+}
+
 /// (wave 3e, F30-2) A turn's kill hook as the engines carry it (see [`SpawnRequest::on_kill`]).
-pub type KillHook = std::sync::Arc<dyn Fn(KillEvent<'_>) + Send + Sync>;
+pub type KillHook = std::sync::Arc<dyn Fn(KillEvent<'_>) -> KillRecord + Send + Sync>;
 
 /// Why [`run_turn`] stopped watching the child.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -573,7 +592,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
             }
         }
         if let Some(cb) = req.on_kill {
-            cb(KillEvent::After);
+            let _ = cb(KillEvent::After);
         }
         (s, Some(check))
     };
@@ -866,17 +885,20 @@ fn root_exited_within(child: &mut Child, ms: u64) -> bool {
 /// falls back to `taskkill /T /F` once more while the root is still there; the kill is then
 /// confirmed only when the root exited AND taskkill reported success (outside Windows never).
 /// (wave 3e, F30-2) `on_kill` hears [`KillEvent::Before`] once the tree is enumerated, before
-/// anything is stopped. Returns `(survivors, check)`.
+/// anything is stopped; (wave 7) its answer comes back here: a record written neither to the
+/// recovery record nor to its fallback ([`KillRecord::Lost`]) leaves the kill going ahead - a hung
+/// tree must not outlive the run - and NOT confirmed (`the kill's record could not be written
+/// before the kill (<why>)`, unless the kill has its own why). Returns `(survivors, check)`.
 fn kill_tree_checked(
     child: &mut Child,
-    on_kill: Option<&dyn Fn(KillEvent<'_>)>,
+    on_kill: Option<&dyn Fn(KillEvent<'_>) -> KillRecord>,
 ) -> (Vec<u32>, c3_core::engine::KillCheck) {
     use crate::liveness::proc::{pid_identity, PidIdentity};
     let root = child.id();
     let tree = descendant_tree(root);
-    if let Some(cb) = on_kill {
-        cb(KillEvent::Before { root, tree: &tree });
-    }
+    let record = on_kill
+        .map(|cb| cb(KillEvent::Before { root, tree: &tree }))
+        .unwrap_or_default();
     let (descendants, denied) = match tree {
         Ok(d) => (d, String::new()),
         Err(why) => (Vec::new(), why),
@@ -968,6 +990,12 @@ fn kill_tree_checked(
     }
     if !alive.is_empty() {
         check.confirmed = false;
+    }
+    if let KillRecord::Lost(why) = record {
+        check.confirmed = false;
+        if check.why.is_empty() {
+            check.why = format!("the kill's record could not be written before the kill ({why})");
+        }
     }
     (alive, check)
 }
@@ -1418,6 +1446,54 @@ mod tests {
 
     // (wave 27c, D1) a kick request carries an id written atomically; the member acknowledges with
     // `<kick>.ack` holding that id and the result; the id round-trips through the helpers.
+    /// (Wave 7, F30-2) The caller's answer to `KillEvent::Before` reaches the killer: a record
+    /// written nowhere (`KillRecord::Lost`) leaves the kill going ahead - the tree is stopped - but
+    /// not confirmed, with the why; a durable record leaves a clean kill confirmed.
+    #[test]
+    fn a_kill_whose_record_is_lost_still_kills_and_is_not_confirmed() {
+        fn sleeper() -> Child {
+            let mut cmd = if cfg!(windows) {
+                let mut c = Command::new("ping");
+                c.args(["-n", "60", "127.0.0.1"]);
+                c
+            } else {
+                let mut c = Command::new("sleep");
+                c.arg("60");
+                c
+            };
+            cmd.stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("a sleeper")
+        }
+        let told = std::cell::Cell::new(0u32);
+        let lost = |ev: KillEvent<'_>| match ev {
+            KillEvent::Before { root, .. } => {
+                told.set(root);
+                KillRecord::Lost("disk full (test)".to_string())
+            }
+            KillEvent::After => KillRecord::NotDue,
+        };
+        let mut child = sleeper();
+        let root = child.id();
+        let (survivors, check) = kill_tree_checked(&mut child, Some(&lost));
+        assert_eq!(told.get(), root, "the hook heard the kill before it");
+        assert!(survivors.is_empty(), "{survivors:?}");
+        assert!(
+            child.try_wait().ok().flatten().is_some(),
+            "the tree was stopped"
+        );
+        assert!(!check.confirmed);
+        assert_eq!(
+            check.why,
+            "the kill's record could not be written before the kill (disk full (test))"
+        );
+        let durable = |_: KillEvent<'_>| KillRecord::Durable { fallback: true };
+        let mut child = sleeper();
+        let (_, check) = kill_tree_checked(&mut child, Some(&durable));
+        assert!(check.confirmed, "{check:?}");
+    }
+
     #[test]
     fn kick_request_and_ack_carry_the_request_id() {
         let dir = std::env::temp_dir().join(format!("c3-kick-{}", std::process::id()));

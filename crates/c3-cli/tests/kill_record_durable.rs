@@ -10,6 +10,12 @@
 //! root and its descendants with their start times, `kill_unconfirmed`). A record path that cannot
 //! be written ends the run refused, nothing committed, the warning naming the path.
 //!
+//! (Wave 7, F30-2 failure path, RC2) A record that cannot be replaced: the record before the kill
+//! goes into its fallback file `.consult.pending-kill.json` (read by the recovery as any record), and
+//! with the bridge terminated right after the kill, a process of the killed tree still running and
+//! the file access restored, the next run is refused - from the fallback and the launch record, and
+//! (the fallback blocked too) from the launch record alone.
+//!
 //! Nothing reaches a real provider or intake. Windows only (the fake codex is a `.cmd` wrapper
 //! around a PowerShell script, as the plugin's `fake-codex3.cmd`).
 #![cfg(windows)]
@@ -76,7 +82,10 @@ if ($mode -eq 'prose') {
     [Console]::Out.Write("{""type"":""turn.completed"",""usage"":{""input_tokens"":1,""cached_input_tokens"":0,""output_tokens"":1}}`n")
     exit 0
 }
-Start-Sleep -Seconds 60
+if ($env:FAKE_PID_FILE) { [IO.File]::WriteAllText($env:FAKE_PID_FILE, [string]$PID) }
+$sleep = 60
+if ($env:FAKE_SLEEP_SEC) { $sleep = [int]$env:FAKE_SLEEP_SEC }
+Start-Sleep -Seconds $sleep
 exit 0
 "#;
 
@@ -85,6 +94,7 @@ const CODEX_TOML: &str = "model = \"gpt-5.1\"\n";
 /// One running `c3 consult` against the fake codex.
 struct Run {
     child: Child,
+    work: PathBuf,
     repo: PathBuf,
     /// The run's recovery record.
     path: PathBuf,
@@ -94,6 +104,12 @@ struct Run {
 /// name) and the environment `env` (the fake's modes, the test hooks).
 fn start(tag: &str, args: &[&str], env: &[(&str, &str)], capture: bool) -> Run {
     let work = scratch(tag);
+    prepare(&work);
+    launch(&work, args, env, capture)
+}
+
+/// The scratch repository, the codex home and the fake codex under `work`.
+fn prepare(work: &Path) {
     let repo = work.join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q"]);
@@ -109,7 +125,14 @@ fn start(tag: &str, args: &[&str], env: &[(&str, &str)], capture: bool) -> Run {
     let fake = work.join("fake-codex.cmd");
     std::fs::write(&fake, FAKE_CMD).unwrap();
     std::fs::write(work.join("fake-codex.ps1"), FAKE_PS1).unwrap();
+}
 
+/// Starts one consultation in the repository `prepare` made under `work` (a first one, or the next
+/// one after an interrupted run).
+fn launch(work: &Path, args: &[&str], env: &[(&str, &str)], capture: bool) -> Run {
+    let repo = work.join("repo");
+    let home = work.join("home");
+    let fake = work.join("fake-codex.cmd");
     let mut cmd = Command::new(c3_bin());
     // the run sees only this test's switches: no inherited bridge, fake or C3 variable
     for (k, _) in std::env::vars() {
@@ -158,7 +181,12 @@ fn start(tag: &str, args: &[&str], env: &[(&str, &str)], capture: bool) -> Run {
         .spawn()
         .expect("run c3 consult");
     let path = repo.join(".collab").join("t").join(".consult.pending.json");
-    Run { child, repo, path }
+    Run {
+        child,
+        work: work.to_path_buf(),
+        repo,
+        path,
+    }
 }
 
 fn read_record(path: &Path) -> Option<Value> {
@@ -425,13 +453,14 @@ fn a_bridge_that_dies_during_the_format_repairs_kill_leaves_its_record() {
 
 #[test]
 fn a_kill_record_that_cannot_be_written_ends_the_run_refused() {
-    // (F30-2 / F30-3) the record path read-only once the main turn runs: the write before the
-    // kill, the one after it and the end of the run's all fail - the run ends refused, the warning
+    // (F30-2 / F30-3) the record path read-only once the main turn runs and - wave 7 - the
+    // fallback file blocked (test hook): the write before the kill, its retry into the fallback,
+    // the one after the kill and the end of the run's all fail - the run ends refused, the warning
     // names the record, nothing is committed
     let mut run = start(
         "killrec-readonly",
         &["--timeout-sec", "3", "--continue-sec", "3"],
-        &[],
+        &[("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL", "1")],
         true,
     );
     let running = wait_record(&mut run, "the main turn running", |v| {
@@ -464,4 +493,247 @@ fn a_kill_record_that_cannot_be_written_ends_the_run_refused() {
     let r = read_record(&run.path).unwrap();
     assert_eq!(r["state"], "running", "{r}");
     assert_eq!(r["child_pid"], child, "{r}");
+}
+
+/// The record path made read-only (`true`) or writable again.
+fn set_readonly(path: &Path, on: bool) {
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(on);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
+/// A process this test left running is stopped when the test ends, however it ends.
+struct Reaper(Option<u64>);
+
+impl Drop for Reaper {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0 {
+            let _ = Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+}
+
+/// The run's text (stdout and stderr).
+fn output_text(o: &std::process::Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    )
+}
+
+#[test]
+fn a_kill_record_that_cannot_be_written_is_kept_in_its_fallback() {
+    // (wave 7, F30-2) the record path read-only once the main turn runs: the write before the kill
+    // is retried ONCE into `.consult.pending-kill.json`, which keeps the record written before the
+    // kill; the evidence is on disk, so the run is not refused - the kill is not confirmed (no
+    // continuation), the outcome warns naming the fallback, the run commits
+    let mut run = start(
+        "killrec-fallback",
+        &["--timeout-sec", "3", "--continue-sec", "3"],
+        &[],
+        true,
+    );
+    let running = wait_record(&mut run, "the main turn running", |v| {
+        v["state"] == "running" && v["child_pid"].as_u64().is_some()
+    });
+    let child = running["child_pid"].as_u64().unwrap();
+    set_readonly(&run.path, true);
+    let out = run.child.wait_with_output().expect("the run ends");
+    set_readonly(&run.path, false);
+    let text = output_text(&out);
+    let fallback = run.path.with_file_name(".consult.pending-kill.json");
+    assert!(
+        text.contains("the unconfirmed kill could not be recorded (")
+            && text.contains(&format!(
+                "{} keeps the record written before the kill (its tree unknown",
+                fallback.display()
+            ))
+            && text.contains(&format!(
+                ".consult.pending.json still names only child pid {child}"
+            )),
+        "{text}"
+    );
+    assert!(!text.contains("This run is not committed"), "{text}");
+    assert!(!text.contains("one continuation turn"), "{text}");
+    let r = read_record(&fallback).expect("the fallback keeps the record written before the kill");
+    assert_the_record_written_before_the_kill(&r, "main turn");
+    assert_eq!(r["child_pid"], child, "{r}");
+    let p = read_record(&run.path).unwrap();
+    assert_eq!(p["state"], "running", "{p}");
+    let sessions = run.repo.join(".collab").join("t").join("sessions.json");
+    let ledger: Value = serde_json::from_slice(&std::fs::read(sessions).unwrap()).unwrap();
+    let last = ledger["codex"]["consults"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["kill_confirmed"], false, "{last}");
+    let _ = std::fs::remove_dir_all(&run.work);
+}
+
+/// (Wave 7, F30-2 failure path, RC2) The read-only fixture with the bridge terminated in the pause
+/// right after the MAIN kill (the kill's result never written), on a host where the kill cannot
+/// enumerate the children (`CODEX_CONSULT_TEST_KILL_DENIED=1`: only the launcher is stopped, the
+/// fake's PowerShell below it survives - the surviving helper). `fallback_ok`: the record before
+/// the kill went into the fallback file; else the fallback is blocked too (test hook) and only the
+/// launch record (`running`, child pid and start) is on disk. File access restored, the next run of
+/// the task must be refused while the helper runs - and, `fallback_ok`, the fallback is consumed
+/// once it no longer does.
+fn rc2_recovery_after_a_lost_kill_record(tag: &str, fallback_ok: bool) {
+    let work = scratch(tag);
+    prepare(&work);
+    let pid_file = work.join("helper.pid");
+    let pid_file_s = pid_file.to_string_lossy().to_string();
+    let mut env = vec![
+        ("CODEX_CONSULT_TEST_KILL_PAUSE_MS", "120000"),
+        ("CODEX_CONSULT_TEST_KILL_PAUSE_AT", "kill,main"),
+        ("CODEX_CONSULT_TEST_KILL_DENIED", "1"),
+        ("FAKE_SLEEP_SEC", "600"),
+        ("FAKE_PID_FILE", pid_file_s.as_str()),
+    ];
+    if !fallback_ok {
+        env.push(("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL", "1"));
+    }
+    let mut run = launch(
+        &work,
+        &["--timeout-sec", "3", "--continue-sec", "0"],
+        &env,
+        false,
+    );
+    let mut reaper = Reaper(None);
+    let launch_rec = wait_record(&mut run, "the main turn running", |v| {
+        v["state"] == "running" && v["child_pid"].as_u64().is_some()
+    });
+    let root = launch_rec["child_pid"].as_u64().unwrap();
+    set_readonly(&run.path, true);
+    let fallback = run.path.with_file_name(".consult.pending-kill.json");
+    if fallback_ok {
+        // the record before the kill, in the fallback file
+        let deadline = Instant::now() + Duration::from_secs(90);
+        while read_record(&fallback).is_none() {
+            assert!(Instant::now() < deadline, "no fallback record within 90 s");
+            if let Ok(Some(st)) = run.child.try_wait() {
+                panic!("the run ended ({st}) before its fallback record");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    // the kill went through (the bridge now holds in the pause right after it)
+    wait_gone(root);
+    std::thread::sleep(Duration::from_millis(1000));
+    let _ = run.child.kill();
+    let _ = run.child.wait();
+    set_readonly(&run.path, false);
+    let helper: u64 = std::fs::read_to_string(&pid_file)
+        .expect("the fake wrote its pid")
+        .trim()
+        .parse()
+        .unwrap();
+    reaper.0 = Some(helper);
+    assert!(alive(helper), "the helper survived the kill");
+    // what is on disk: the launch record, unchanged; the fallback (or nothing)
+    let left = read_record(&run.path).expect("the launch record stays");
+    assert_eq!(left, launch_rec, "nothing replaced the launch record");
+    if fallback_ok {
+        let r = read_record(&fallback).unwrap();
+        assert_eq!(r["state"], "survivors", "{r}");
+        assert_eq!(r["survivors"][0]["pid"], root, "{r}");
+        assert_eq!(
+            r["kill_unconfirmed"],
+            format!(
+                "the kill of the main turn (pid {root}) started and its result was never recorded"
+            ),
+            "{r}"
+        );
+    } else {
+        assert!(!fallback.exists(), "the fallback was blocked");
+    }
+    assert_nothing_committed(&run.repo);
+    // the next run of the task: refused while the helper runs - the dry run names every record
+    let dry = launch(&work, &["--dry-run"], &[("FAKE_MAIN", "prose")], true)
+        .child
+        .wait_with_output()
+        .unwrap();
+    let dry_text = output_text(&dry);
+    assert!(
+        dry_text.contains(".consult.pending.json (state 'running'")
+            && dry_text.contains("the next run would be REFUSED"),
+        "{dry_text}"
+    );
+    if fallback_ok {
+        assert!(
+            dry_text.contains(".consult.pending-kill.json (state 'survivors'"),
+            "{dry_text}"
+        );
+        assert_eq!(
+            dry_text.matches("the next run would be REFUSED").count(),
+            2,
+            "both records refuse: {dry_text}"
+        );
+    }
+    let next = launch(
+        &work,
+        &["--timeout-sec", "30"],
+        &[("FAKE_MAIN", "prose")],
+        true,
+    )
+    .child
+    .wait_with_output()
+    .unwrap();
+    let next_text = output_text(&next);
+    assert_eq!(next.status.code(), Some(1), "{next_text}");
+    assert!(
+        next_text.contains("an interrupted consultation (state 'running'")
+            && next_text.contains(&format!("pid {helper} ")),
+        "refused for the surviving helper: {next_text}"
+    );
+    assert_nothing_committed(&run.repo);
+    assert_eq!(read_record(&run.path).unwrap(), launch_rec);
+    if fallback_ok {
+        assert!(fallback.exists(), "the fallback stays while it refuses");
+        // the helper gone: both records are consumed, the fallback removed, the run goes on
+        drop(reaper);
+        wait_gone(helper);
+        let ok = launch(
+            &work,
+            &["--timeout-sec", "30"],
+            &[("FAKE_MAIN", "prose")],
+            true,
+        )
+        .child
+        .wait_with_output()
+        .unwrap();
+        let ok_text = output_text(&ok);
+        if ok.status.code() == Some(1) && ok_text.contains("task not verifiable") {
+            // a real codex process of this machine, started meanwhile, holds the machine-wide rule
+            // (fail-closed, as designed): the release cannot be shown here
+            eprintln!("release not shown - a codex-like process of this machine runs: {ok_text}");
+            let _ = std::fs::remove_dir_all(&work);
+            return;
+        }
+        assert_eq!(ok.status.code(), Some(0), "{ok_text}");
+        assert!(
+            ok_text.contains(".consult.pending-kill.json: state 'survivors'"),
+            "{ok_text}"
+        );
+        assert!(!fallback.exists(), "the consumed fallback is removed");
+    }
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[test]
+fn rc2_a_lost_kill_record_leaves_its_fallback_and_the_next_run_is_refused() {
+    rc2_recovery_after_a_lost_kill_record("killrec-rc2-fallback", true);
+}
+
+#[test]
+fn rc2_a_kill_record_lost_with_its_fallback_is_refused_from_the_launch_record_alone() {
+    rc2_recovery_after_a_lost_kill_record("killrec-rc2-launch", false);
 }

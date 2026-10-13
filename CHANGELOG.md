@@ -76,6 +76,16 @@ v0.6.1 harnesses through the shim (`docs/port/harness-shim.md`).
 - Wave 6: telemetry is sent by a detached `c3 telemetry --flush` started right after a
   consultation's, a panel's, a rating's or a backfill's commit (not waited for, allow-listed
   environment), not at the start of the next run.
+- Wave 7 (`wave7-acceptance-fixes.md`), acceptance round 1 fixes: F36-1, F36-2, F30-2 failure
+  path, F29-1/F32-2 documented. F36-1 - a repository-relative path strips the root char by char
+  (a Unicode `CLAUDE_CONFIG_DIR` outside the repository no longer panics the Claude transcript
+  guard; Windows folds every letter as `OrdinalIgnoreCase`). F36-2 - the guard compares the NFC
+  form Claude Code writes under as well as the path as written, the root likewise; any form inside
+  refuses. F30-2 - the write before a kill reports its result to the killer; a failed one is
+  retried once into `.consult.pending-kill.json`, which the recovery reads as a record; both
+  failing, the kill still runs, not confirmed, and the next run is refused from the launch record
+  and its fail-closed scans. F29-1 (the shared journal with plugin 0.6.1) and F25-1/F32-1/F32-2
+  (what the endpoint preflight and the transcript guard cannot see) are stated as known limits.
 
 ### Changed
 

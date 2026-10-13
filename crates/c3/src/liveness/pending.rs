@@ -75,7 +75,8 @@ pub struct TaskPending {
 }
 
 /// `Get-PendingPaths`: `.consult.pending.json` first, then `.consult.pending-*.json` sorted
-/// (ordinal, case-insensitive).
+/// (ordinal, case-insensitive) - (wave 7, F30-2) a kill's fallback file
+/// ([`kill_fallback_path`]) among them.
 pub fn pending_paths(task_dir: &Path) -> Vec<PathBuf> {
     let mut single: Vec<PathBuf> = Vec::new();
     let mut members: Vec<PathBuf> = Vec::new();
@@ -99,6 +100,21 @@ pub fn pending_paths(task_dir: &Path) -> Vec<PathBuf> {
             .to_lowercase()
     });
     single.into_iter().chain(members).collect()
+}
+
+/// (Wave 7, F30-2) The fallback file of the recovery record `record` (`<name>.json` ->
+/// `<name>-kill.json`: `.consult.pending-kill.json`, a panel member's
+/// `.consult.pending-<NN>-kill.json`): where a kill writes the record that names its tree when the
+/// recovery record cannot be replaced. Its name is one of `.consult.pending-*.json`, so
+/// [`pending_paths`] - and the plugin's `Get-PendingPaths` - read and judge it as any record: it
+/// refuses while its tree may live, and the recovery consumes (removes) it once it is released.
+pub fn kill_fallback_path(record: &Path) -> PathBuf {
+    let name = record
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let stem = name.strip_suffix(".json").unwrap_or(&name);
+    record.with_file_name(format!("{stem}-kill.json"))
 }
 
 /// `Read-PendingFile`.
@@ -1025,6 +1041,55 @@ mod tests {
     //! harness-fixes28e RECORD samples that need no test hook; the hooked ones run in
     //! `tests/recovery_wave3a.rs`).
     use super::*;
+
+    /// (Wave 7, F30-2) A kill's fallback file is `<name>-kill.json` next to its record - a name the
+    /// recovery of both bridges reads (`.consult.pending-*.json`): listed after the classic record
+    /// and beside the members, read as any record.
+    #[test]
+    fn a_kills_fallback_file_is_read_as_a_record() {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-killfb-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let single = dir.join(".consult.pending.json");
+        let member = dir.join(".consult.pending-07.json");
+        assert_eq!(
+            kill_fallback_path(&single),
+            dir.join(".consult.pending-kill.json")
+        );
+        assert_eq!(
+            kill_fallback_path(&member),
+            dir.join(".consult.pending-07-kill.json")
+        );
+        let rec = br#"{"state":"survivors","n":3,"nn":"05","survivors":[{"pid":4000123,"start_time":"","name":"cmd"}],"kill_unconfirmed":"the kill of the main turn (pid 4000123) started and its result was never recorded"}"#;
+        for p in [
+            &single,
+            &member,
+            &kill_fallback_path(&single),
+            &kill_fallback_path(&member),
+        ] {
+            std::fs::write(p, rec).unwrap();
+        }
+        let names: Vec<String> = pending_paths(&dir)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ".consult.pending.json",
+                ".consult.pending-07-kill.json",
+                ".consult.pending-07.json",
+                ".consult.pending-kill.json"
+            ]
+        );
+        let rd = read_pending_file(&kill_fallback_path(&single));
+        assert!(rd.error.is_none());
+        assert_eq!(rd.record.unwrap()["state"], "survivors");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn me() -> u32 {
         std::process::id()

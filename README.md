@@ -262,6 +262,20 @@ The plugin's harnesses can drive the binary through `tests/shim/` (see
 `docs/port/harness-shim.md`); `docs/port/m1-acceptance.md` lists the assertions milestone 1
 answers to.
 
+### Known limits (0.2.0)
+
+- **Shared health journal with plugin 0.6.1:** with plugin 0.6.1 on the same machine the
+  once-only replay of a kept journal record holds only for C3's own updates; the plugin's updater
+  can re-apply a record the cap evicted until plugin 0.6.2 (its T14) - `docs/port/wave2b-compat.md`,
+  "Limits".
+- **Claude endpoint preflight:** the `claude --version` probe proves the launcher runs, not that it
+  takes a `-p` turn; a launcher that answers `--version` but rejects the turn fails its first turn,
+  and one whose `--version` needs the token is reported unavailable - `docs/port/wave4-claude.md`.
+- **Claude transcript guard:** the derived location reads the child's `CLAUDE_CONFIG_DIR`, else
+  `USERPROFILE` (Windows) or `HOME` (elsewhere) - Claude Code's `os.homedir()` sources - and
+  refuses when neither is set; a wrapper launcher that sets `CLAUDE_CONFIG_DIR` inside itself is
+  not seen before the spawn (the strict tree check fails such a run after its turn).
+
 ## Install into Claude Code
 
 `plugin/` is a Claude Code plugin directory: a `SessionStart` hook and three skills

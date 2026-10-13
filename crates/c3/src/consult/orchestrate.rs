@@ -486,7 +486,11 @@ fn kept_record(on: &PendingRecord, k: &KeptKill) -> PendingRecord {
 /// `CODEX_CONSULT_TEST_KILL_PAUSE_AT=<write|kill>[,<main|continuation|repair>]`: `write` (the
 /// default) right after the record's write after the kill, `kill` right after the kill and BEFORE
 /// its result is written (the record on disk is the one written before the kill); at every kill
-/// site unless a turn is named.
+/// site unless a turn is named. (Wave 7, F30-2) The write before the kill that fails is retried ONCE
+/// into the record's fallback file ([`crate::liveness::pending::kill_fallback_path`], read by the
+/// recovery as any record), and what it came to goes back to the killer
+/// ([`crate::engines::subprocess::KillRecord`]); TEST HOOK (test mode only):
+/// `CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL=1` - the fallback write fails too.
 #[derive(Clone)]
 struct KillSite {
     store: FilesStore,
@@ -513,6 +517,24 @@ struct PreKill {
     /// The record written before the kill is on disk; `error`: why it is not.
     written: bool,
     error: Option<String>,
+    /// (wave 7, F30-2) That write failed and the record went into its fallback file - here.
+    fallback: Option<PathBuf>,
+}
+
+/// (wave 7, F30-2) The record written before a kill, into the fallback file `path` (the recovery
+/// record could not be replaced). `Err`: why not.
+fn write_kill_fallback(path: &Path, record: &PendingRecord) -> Result<(), String> {
+    if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL")
+        .is_some_and(|v| v.trim() == "1")
+    {
+        return Err(
+            "the write failed (test hook CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL)".to_string(),
+        );
+    }
+    let bytes = record
+        .to_bytes()
+        .map_err(|e| c3_core::one_line(&e.to_string()))?;
+    c3_core::store::write_text_atomic(path, &bytes).map_err(|e| c3_core::one_line(&e.to_string()))
 }
 
 /// (wave 3e, F30-2) The `kill_unconfirmed` of the record written before a kill: until the kill's
@@ -632,11 +654,22 @@ impl KillSite {
             crate::engines::subprocess::KillEvent::Before { root, tree } => {
                 site.before_kill(&turn, root, tree)
             }
-            crate::engines::subprocess::KillEvent::After => site.pause(true, &turn),
+            crate::engines::subprocess::KillEvent::After => {
+                site.pause(true, &turn);
+                crate::engines::subprocess::KillRecord::NotDue
+            }
         })
     }
 
-    fn before_kill(&self, turn: &str, root: u32, tree: &Result<Vec<(u32, String)>, String>) {
+    /// The write before the kill; (wave 7, F30-2) a failed one retried ONCE into the fallback file,
+    /// and what it came to returned to the killer.
+    fn before_kill(
+        &self,
+        turn: &str,
+        root: u32,
+        tree: &Result<Vec<(u32, String)>, String>,
+    ) -> crate::engines::subprocess::KillRecord {
+        use crate::engines::subprocess::KillRecord;
         let path = store_pending_path(&self.store, &self.pending);
         let prior = crate::liveness::pending::read_pending_file(&path)
             .record
@@ -647,16 +680,34 @@ impl KillSite {
                 r.child_pid = Some(root);
                 r
             });
+        let record = pre_kill_record(&prior, turn, root, tree);
         let written = self
             .store
-            .write_pending(&self.pending, &pre_kill_record(&prior, turn, root, tree));
+            .write_pending(&self.pending, &record)
+            .map_err(|e| c3_core::one_line(&e.to_string()));
+        let mut fallback: Option<PathBuf> = None;
+        let outcome = match &written {
+            Ok(()) => KillRecord::Durable { fallback: false },
+            Err(e) => {
+                let fb = crate::liveness::pending::kill_fallback_path(&path);
+                match write_kill_fallback(&fb, &record) {
+                    Ok(()) => {
+                        fallback = Some(fb);
+                        KillRecord::Durable { fallback: true }
+                    }
+                    Err(f) => KillRecord::Lost(format!("{e}; its fallback {}: {f}", fb.display())),
+                }
+            }
+        };
         if let Ok(mut a) = self.armed.lock() {
             a.turn = turn.to_string();
             a.fired = true;
             a.prior = Some(prior);
             a.written = written.is_ok();
-            a.error = written.err().map(|e| c3_core::one_line(&e.to_string()));
+            a.error = written.err();
+            a.fallback = fallback;
         }
+        outcome
     }
 
     /// What the current turn's kill wrote before it stopped anything.
@@ -730,9 +781,10 @@ fn kept_what(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> &'static str 
 
 /// (wave 3e, F30-2) The warning of a kill whose record could not be written - before the kill
 /// (`pre`), after it (`post`) or both - and whether the evidence is LOST (no record of the kill on
-/// disk: written neither before nor after it). The plugin's form when it is lost: `the
-/// survivors|unverified pids|unconfirmed kill could not be recorded (<error>) - <path> still names
-/// only child pid <n>`. `None`: both writes succeeded (or none was due).
+/// disk: written neither before nor after it, nor - wave 7 - into the fallback file). The plugin's
+/// form when it is lost: `the survivors|unverified pids|unconfirmed kill could not be recorded
+/// (<error>) - <path> still names only child pid <n>`. `None`: both writes succeeded (or none was
+/// due).
 fn kill_record_warning(
     pre: &PreKill,
     post: &Result<(), String>,
@@ -749,9 +801,20 @@ fn kill_record_warning(
             ),
             false,
         )),
+        (_, Some(e)) if pre.fallback.is_some() => Some((
+            format!(
+                "the {what} could not be recorded ({e}) - {} keeps the record written before the kill (its tree unknown: the next run for this task is refused until a scan finds none of it); {path} still names only child pid {child}",
+                pre.fallback.as_deref().unwrap_or(Path::new("")).display()
+            ),
+            false,
+        )),
         (Some(e), None) => Some((
             format!(
-                "the record could not be written before the kill ({e}) - the kill counts as not confirmed; {path} names what it left"
+                "the record could not be written before the kill ({e}) - the kill counts as not confirmed; {path} names what it left{}",
+                pre.fallback
+                    .as_deref()
+                    .map(|f| format!(" ({} keeps the record written before the kill until the next run consumes it)", f.display()))
+                    .unwrap_or_default()
             ),
             false,
         )),
@@ -10248,20 +10311,31 @@ mod kill_record_tests {
 
     #[test]
     fn a_kill_whose_record_cannot_be_written_is_not_confirmed_and_loses_nothing_silently() {
-        // (wave 3e, F30-2) the record path blocked (a directory stands where the file goes): the
-        // write before the kill and the one after it fail - the kill is NOT confirmed, it keeps the
-        // record (an unknown tree), the warning names the path, and the evidence is LOST (the run
-        // must not commit unless the end of the run writes it)
+        // (wave 3e, F30-2) the record path blocked (a directory stands where the file goes) and -
+        // wave 7 - its fallback too: the write before the kill, its retry into the fallback and the
+        // write after the kill fail - the killer is told (`KillRecord::Lost`), the kill is NOT
+        // confirmed, it keeps the record (an unknown tree), the warning names the path, and the
+        // evidence is LOST (the run must not commit unless the end of the run writes it)
         let (store, pending, path, base) = running_store("killrec-blocked", 7_000_001);
         std::fs::remove_file(&path).unwrap();
         std::fs::create_dir_all(&path).unwrap();
+        let fallback = crate::liveness::pending::kill_fallback_path(&path);
+        std::fs::create_dir_all(&fallback).unwrap();
         let site = KillSite::new(store, pending, base, "");
         let hook = site.hook("timeout continuation");
-        hook(crate::engines::subprocess::KillEvent::Before {
+        let told = hook(crate::engines::subprocess::KillEvent::Before {
             root: 7_000_002,
             tree: &Ok(Vec::new()),
         });
+        match &told {
+            crate::engines::subprocess::KillRecord::Lost(why) => assert!(
+                why.contains(&format!("; its fallback {}: ", fallback.display())),
+                "{why}"
+            ),
+            other => panic!("the killer must be told the record is lost: {other:?}"),
+        }
         assert!(site.armed().error.is_some());
+        assert!(site.armed().fallback.is_none());
         let mut sec = Secondary {
             kill_site: Some(site),
             ..Secondary::default()
@@ -10373,6 +10447,81 @@ mod kill_record_tests {
                 "keeps the record written before the kill (its tree unknown: the next run for this task is refused until a scan finds none of it)"
             )));
         }
+    }
+
+    /// (Wave 7, F30-2, RC2) The write before the kill fails: it is retried ONCE into the record's
+    /// fallback file (`.consult.pending-kill.json`), the killer is told the record is durable there,
+    /// the kill is not confirmed and - the write after it failing too - the evidence is NOT lost:
+    /// the warning names the fallback that keeps the record written before the kill. The recovery
+    /// reads that file as a record of the task.
+    #[test]
+    fn a_kill_whose_record_cannot_be_written_keeps_it_in_its_fallback() {
+        let (store, pending, path, base) = running_store("killrec-fallback", 7_000_011);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        let fallback = crate::liveness::pending::kill_fallback_path(&path);
+        assert_eq!(
+            fallback.file_name().unwrap().to_string_lossy(),
+            ".consult.pending-kill.json"
+        );
+        let site = KillSite::new(store, pending, base, "");
+        let told = site.hook("main turn")(crate::engines::subprocess::KillEvent::Before {
+            root: 7_000_012,
+            tree: &Ok(Vec::new()),
+        });
+        assert_eq!(
+            told,
+            crate::engines::subprocess::KillRecord::Durable { fallback: true }
+        );
+        let pre = site.armed();
+        assert!(!pre.written && pre.error.is_some());
+        assert_eq!(pre.fallback.as_deref(), Some(fallback.as_path()));
+        let r = on_disk(&fallback);
+        assert_eq!(r["state"], "survivors", "{r}");
+        assert_eq!(r["n"], 1);
+        assert_eq!(r["nn"], "01");
+        // the record on disk could not be read back (a directory): built on the run's record, the
+        // killed root as its child (no live process: no survivor entry)
+        assert_eq!(r["child_pid"], 7_000_012, "{r}");
+        assert_eq!(
+            r["kill_unconfirmed"],
+            "the kill of the main turn (pid 7000012) started and its result was never recorded"
+        );
+        // the kill's handling: not confirmed, the write after it fails too - warned, not lost
+        let mut sec = Secondary {
+            kill_site: Some(site),
+            ..Secondary::default()
+        };
+        let text = secondary_kill(
+            "timeout after 30 s",
+            Some(KillCheck::confirmed(7_000_012)),
+            &[],
+            "main turn",
+            &mut sec,
+        );
+        assert!(text.contains("kill not confirmed"), "{text}");
+        assert!(sec.kill_record_lost.is_none());
+        let w = sec
+            .kill_warnings
+            .iter()
+            .find(|w| w.starts_with("kill not recorded (main turn): "))
+            .expect("the record warning");
+        assert!(
+            w.contains(&format!(
+                "{} keeps the record written before the kill (its tree unknown",
+                fallback.display()
+            )) && w.ends_with(&format!(
+                "{} still names only child pid 7000012",
+                path.display()
+            )),
+            "{w}"
+        );
+        // the recovery reads the fallback as a record of the task
+        let task_dir = path.parent().unwrap();
+        assert!(crate::liveness::pending::pending_paths(task_dir).contains(&fallback));
+        let rd = crate::liveness::pending::read_pending_file(&fallback);
+        assert!(rd.error.is_none() && rd.record.is_some());
+        let _ = std::fs::remove_dir_all(task_dir.parent().unwrap());
     }
 
     #[test]

@@ -111,10 +111,10 @@ impl AgyEngine {
                 .on_running
                 .as_ref()
                 .map(|a| a.as_ref() as &dyn Fn(u32, String)),
-            on_kill: self
-                .on_kill
-                .as_ref()
-                .map(|a| a.as_ref() as &dyn Fn(super::subprocess::KillEvent<'_>)),
+            on_kill: self.on_kill.as_ref().map(|a| {
+                a.as_ref()
+                    as &dyn Fn(super::subprocess::KillEvent<'_>) -> super::subprocess::KillRecord
+            }),
             env: None,
             crt_quote: false,
         };

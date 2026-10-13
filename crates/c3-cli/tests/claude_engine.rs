@@ -63,12 +63,17 @@ struct Env {
 }
 
 fn setup(tag: &str) -> Env {
+    setup_named(tag, "repo")
+}
+
+/// [`setup`] with the repository's directory named `repo_name`.
+fn setup_named(tag: &str, repo_name: &str) -> Env {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let work = std::env::temp_dir().join(format!("c3-w4-{tag}-{}-{nanos}", std::process::id()));
-    let repo = work.join("repo");
+    let repo = work.join(repo_name);
     std::fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q"]);
     git(&repo, &["config", "user.email", "t@e.com"]);
@@ -1092,6 +1097,64 @@ fn a_transcript_location_that_cannot_be_established_refuses_the_endpoint_run() {
             ("CLAUDE_CONFIG_DIR", ""),
             ("USERPROFILE", &uh),
             ("HOME", &home_in_s),
+        ],
+    );
+    assert_eq!(ok.status.code(), Some(0), "{}", text(&ok));
+    assert_eq!(e.turns().len(), 1);
+    assert_eq!(e.last()["bridge_outcome"], "usable reply");
+}
+
+/// (Wave 7, F36-2, RC3) A scratch repository whose last component is NFC `café`, its NFD
+/// spelling (`cafe` + U+0301) as `CLAUDE_CONFIG_DIR` - a string that differs ordinally and lies
+/// outside the repository by the plain comparison, while Claude Code normalises it to NFC and
+/// writes its transcripts inside: the endpoint preflight refuses before any turn (the dry run and
+/// the run; nothing starts but the launcher's `--version` probe). The decomposed directory is never
+/// created: the refusal is the normalised comparison's, not the filesystem's. A configuration
+/// outside, in either form, runs.
+#[test]
+fn a_decomposed_config_dir_inside_an_nfc_repository_refuses_the_endpoint_run() {
+    let e = setup_named("epnfc", "caf\u{e9}");
+    let roster = e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"W7_FAKE_ZAI_TOKEN"},"plan":"zai"}]}"#);
+    let nfd_repo = e.work.join("cafe\u{301}");
+    assert_ne!(nfd_repo.as_os_str(), e.repo.as_os_str());
+    let cfg = nfd_repo.join(".claude");
+    assert!(!cfg.exists() && !nfd_repo.exists());
+    let cfg_s = cfg.to_string_lossy().to_string();
+    let refusal = format!("CLAUDE_CONFIG_DIR ({cfg_s}) lies inside the repository under review: the engine's transcripts would change the tree; point it elsewhere");
+    let env = [
+        ("CODEX_CONSULT_ROSTER", roster.as_str()),
+        ("W7_FAKE_ZAI_TOKEN", "fake-token-w7"),
+        ("CLAUDE_CONFIG_DIR", cfg_s.as_str()),
+    ];
+    let d = e.consult(&["--dry-run"], &env);
+    let t = text(&d);
+    assert_eq!(d.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains(&format!("a real run is refused: {refusal}")),
+        "{t}"
+    );
+    let x = e.consult(&["--reply-name", "nfd"], &env);
+    let tx = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{tx}");
+    assert!(
+        tx.contains(&format!(
+            "the claude engine is refused: {refusal}; nothing was started."
+        )),
+        "{tx}"
+    );
+    assert!(e.turns().is_empty());
+    assert!(!e.starts().iter().any(|s| s["kind"] == "auth"));
+    // outside the repository, decomposed too: the run goes on
+    let out = e.work.join("cafe\u{301}-config");
+    std::fs::create_dir_all(&out).unwrap();
+    let out_s = out.to_string_lossy().to_string();
+    let ok = e.consult(
+        &["--reply-name", "outside"],
+        &[
+            ("CODEX_CONSULT_ROSTER", roster.as_str()),
+            ("W7_FAKE_ZAI_TOKEN", "fake-token-w7"),
+            ("FAKE_CLAUDE_TOKEN_EXPECT", "fake-token-w7"),
+            ("CLAUDE_CONFIG_DIR", out_s.as_str()),
         ],
     );
     assert_eq!(ok.status.code(), Some(0), "{}", text(&ok));

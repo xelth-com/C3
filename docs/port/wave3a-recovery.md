@@ -365,6 +365,53 @@ timeout continuation, the format repair; a kick, a stall cut and a timeout alike
   as before, now placed by `CODEX_CONSULT_TEST_KILL_PAUSE_AT=<write|kill>[,<main|continuation|repair>]`:
   `write` (the default) right after the record's write after the kill, `kill` right after the kill
   and BEFORE its result is written; at every kill site unless a turn is named.
+- **(Wave 7, the 0.2.0 acceptance's F30-2 / F23-3 failure path, RC2) The write before the kill
+  that fails.** Until wave 7 the hook kept a failed write in memory only and the kill went ahead -
+  a bridge terminated right after it left the `running` record naming only the killed child, and
+  the killer never learned the evidence was missing. Now:
+  - the write's result flows to the killer: the hook answers `KillEvent::Before` with a
+    `subprocess::KillRecord` (`Durable { fallback }` or `Lost(why)`), and `kill_tree_checked`
+    receives it before it stops anything;
+  - a failed write is retried ONCE into the record's fallback file next to it
+    (`liveness::pending::kill_fallback_path`: `.consult.pending-kill.json`, a panel member's
+    `.consult.pending-<NN>-kill.json`) - the same record written before the kill. Its name is one of
+    `.consult.pending-*.json`, so the recovery (`pending_paths`, and the plugin's `Get-PendingPaths`)
+    reads and judges it as any record: it refuses while its tree may live, and the next run that
+    finds it released consumes and removes it. A fallback on disk keeps the evidence: the kill is
+    still not confirmed (no continuation), the warning names the fallback (`the <...> could not be
+    recorded (<error>) - <fallback> keeps the record written before the kill (its tree unknown: the
+    next run for this task is refused until a scan finds none of it); <path> still names only child
+    pid <n>`), and the run may commit;
+  - both writes failing (`KillRecord::Lost`): the kill STILL happens - a hung tree must not outlive
+    the run - and is NOT confirmed (`the kill's record could not be written before the kill (<error>;
+    its fallback <path>: <error>)`); the run ends refused before its commit as above unless the end
+    of the run writes the record. A bridge terminated in that interval leaves only the LAUNCH record
+    (`running`, the child pid and its start, the writer): the next run's recovery refuses from it
+    alone - the child gone, the by-parent scan under the writer and the child finds a process of the
+    killed tree that survived, whatever its name (Windows keeps an orphan's parent id), and the
+    machine-wide rule finds a codex-like one. What it cannot find from the launch record alone is a
+    process below a dead intermediate the record never named that is not codex-like (section 3,
+    F30-1) - the record written before the kill, or its fallback, names every intermediate of the
+    enumeration and closes that.
+  - TEST HOOK (test mode only, C3's): `CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL=1` - the fallback write
+    fails too.
+  - Proof: `consult::orchestrate::kill_record_tests::a_kill_whose_record_cannot_be_written_keeps_it_in_its_fallback`,
+    `..::a_kill_whose_record_cannot_be_written_is_not_confirmed_and_loses_nothing_silently` (the
+    fallback blocked too: the killer is told `Lost`), `engines::subprocess::tests::a_kill_whose_record_is_lost_still_kills_and_is_not_confirmed`,
+    `liveness::pending::tests::a_kills_fallback_file_is_read_as_a_record` and, the real binary
+    against the fake codex (`c3-cli/tests/kill_record_durable.rs`):
+    `a_kill_record_that_cannot_be_written_is_kept_in_its_fallback` (the read-only record: the run
+    commits with the warning, the fallback holds the record written before the kill),
+    `rc2_a_lost_kill_record_leaves_its_fallback_and_the_next_run_is_refused` and
+    `rc2_a_kill_record_lost_with_its_fallback_is_refused_from_the_launch_record_alone` (RC2: the
+    read-only fixture on a host where the kill cannot enumerate the children
+    (`CODEX_CONSULT_TEST_KILL_DENIED=1`: the fake's PowerShell below the killed launcher survives -
+    the surviving helper), the bridge terminated in the pause right after the MAIN kill, access
+    restored: the launch record unchanged, the fallback holding the record before the kill (or, the
+    fallback blocked, nothing else); the dry run says every record would refuse, the next run is
+    refused naming the helper's pid, nothing committed; with the fallback, the helper stopped, the
+    next run consumes both records and removes the fallback). `a_kill_record_that_cannot_be_written_ends_the_run_refused`
+    now blocks the fallback too (its meaning unchanged).
 
 ### F30-1 (blocker): the unknown-tree scan, fail-closed
 
@@ -407,7 +454,7 @@ could be released.
 | `consult::orchestrate::kill_record_tests::a_kill_writes_its_record_before_the_kill_and_puts_it_back_after_a_clean_one` | the record before the kill (root with its entry, an unreadable descendant in `unverified[]`, an exited one left out, the pre-kill why and note); a clean kill puts the `running` record back byte for byte; a kept kill replaces it |
 | `consult::orchestrate::kill_record_tests::a_kill_whose_record_cannot_be_written_is_not_confirmed_and_loses_nothing_silently` | both writes blocked: not confirmed, kept (unknown tree), both warnings, the evidence LOST (the run would refuse its commit) |
 | `consult::orchestrate::kill_record_tests::a_kill_record_written_only_before_or_only_after_the_kill_is_warned_not_lost` | one write failed: warned, not lost; the record on disk is the one after the kill, or (Windows, read-only file) the one before it |
-| `c3-cli/tests/kill_record_durable.rs` (6 tests, Windows, a real `c3 consult` against a fake codex) | the two wave 3c fixtures (the main turn, the bridge killed after the record's write); RC2: the bridge killed in the pause right after the MAIN kill, before its result is written - the record before the kill is on disk unchanged (root `cmd` first, the fake's `powershell` below it, start times, the pre-kill why), nothing committed; the same at the TIMEOUT CONTINUATION's kill (the record names the continuation's own child, not the main turn's) and at the FORMAT REPAIR's kill (the record names the repair's child AND the saved prose, `first_reply`); RC3: the record made read-only once the main turn runs - the run ends refused (exit 1, the warning naming `.consult.pending.json` and the child pid), no continuation, nothing committed, the record on disk still the `running` one |
+| `c3-cli/tests/kill_record_durable.rs` (6 tests in wave 3e - 9 since wave 7, see the F30-2 wave 7 bullet -; Windows, a real `c3 consult` against a fake codex) | the two wave 3c fixtures (the main turn, the bridge killed after the record's write); RC2: the bridge killed in the pause right after the MAIN kill, before its result is written - the record before the kill is on disk unchanged (root `cmd` first, the fake's `powershell` below it, start times, the pre-kill why), nothing committed; the same at the TIMEOUT CONTINUATION's kill (the record names the continuation's own child, not the main turn's) and at the FORMAT REPAIR's kill (the record names the repair's child AND the saved prose, `first_reply`); RC3: the record made read-only once the main turn runs - the run ends refused (exit 1, the warning naming `.consult.pending.json` and the child pid; since wave 7 with the fallback blocked by its test hook), no continuation, nothing committed, the record on disk still the `running` one |
 
 The integration tests take `C3_TEST_EXE` (a copy of this build's `c3.exe`) over `CARGO_BIN_EXE_c3`:
 the target directory the C3 checkouts share hashes their artifacts alike, so another checkout's build
@@ -455,6 +502,10 @@ under `HARNESS.lock`, Windows PowerShell 5.1 with `PSModulePath` reset, 2026-10-
   when its evidence is on disk neither before nor after the kill and the end of the run cannot write
   it, the run ends refused before its commit (the plugin warns and commits). A kill that keeps
   nothing puts the run's `running` record back, so the rest of the run is unchanged.
+- (wave 7, F30-2) A write before the kill that fails is retried once into
+  `.consult.pending-kill.json` (`.consult.pending-<NN>-kill.json`), which the plugin does not
+  write; its name is one the plugin's `Get-PendingPaths` reads, so plugin 0.6.1 judges it as a
+  record too (it refuses while the tree may live and consumes it once released).
 - (wave 3e, F30-1) C3's by-parent pass counts the whole subtree under a recorded pid (the plugin's:
   its direct children); its machine-wide pass counts a row whose start time cannot be read unless
   its command line is readable (the plugin's table never has such a row). C3's Windows table now

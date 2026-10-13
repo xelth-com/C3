@@ -292,6 +292,53 @@ reset):
 |---|---|---|---|
 | claude | 87 / 0 | **87 / 0** | ENDPOINT green: no `auth` start on the route; the E3 dry run's one `version` start is now the endpoint-environment probe the harness string shares |
 
+## Wave 7 - the acceptance round's fixes to the guard (F36-1, F36-2; F25-1, F32-1, F32-2 stated)
+
+See also `docs/port/wave7-acceptance-fixes.md` (handoff 36 of `.collab/parity-0.6.1-2026-10-08/`).
+
+- **F36-1 (blocker): no byte slicing.** `c3_core::paths::repo_relative` (which `path_inside` and
+  every other repository-relative path use) stripped the root by slicing the candidate at the
+  root prefix's BYTE length - root `C:\repo`, `CLAUDE_CONFIG_DIR=C:\日本\.claude`: byte 8 lies inside
+  `本`, and the guard panicked. The root is now stripped char by char (`strip_prefix`), so the rest
+  always starts at a char boundary; the Windows comparison folds every letter as the plugin's
+  `OrdinalIgnoreCase` does (simple uppercase per char; before, ASCII letters only). No other
+  `[..len]` / `split_at` of one string at another string's length exists in the crates (grepped:
+  every other slice is at a `find` result or the string's own prefix). Tests:
+  `c3_core::paths::tests::a_unicode_candidate_outside_the_root_is_not_sliced` (portable),
+  `..::a_unicode_config_dir_outside_a_drive_root_is_not_sliced` (Windows),
+  `engines::claude_auth::tests::rc1_a_unicode_config_dir_on_another_drive_path_does_not_panic`
+  (RC1 verbatim: `launch_problem_of` returns `""`) and
+  `..::a_unicode_config_dir_outside_the_repository_does_not_panic` (portable).
+- **F36-2 (major): the NFC form.** Claude Code writes under `(CLAUDE_CONFIG_DIR ??
+  join(os.homedir(), ".claude")).normalize("NFC")` + `/projects`; the guard compared the
+  un-normalised strings, so a decomposed `CLAUDE_CONFIG_DIR` whose NFC form lies in the repository
+  passed. Now `projects_directory` derives the NFC form (as Claude Code does), and both checks of
+  `launch_problem_of` go through `path_inside_any_form`: the candidate as written and in NFC, the
+  root as written and in NFC - any pair inside refuses (fail-closed: NTFS keeps composed and
+  decomposed names apart, APFS folds them; the comparison is the strings', no filesystem folding is
+  relied on). Crate `unicode-normalization` 0.1 (already in the lock file through `stringprep`).
+  Tests: `engines::claude_auth::tests::a_decomposed_config_dir_whose_nfc_form_is_in_the_repository_is_refused`
+  (lexically outside by `repo_relative`, refused; an NFD home; the reverse - an NFD repository, an
+  NFC configuration; a reported NFD projectsDirectory; outside in either form allowed) and
+  `claude_engine::a_decomposed_config_dir_inside_an_nfc_repository_refuses_the_endpoint_run` (RC3:
+  the real binary, a scratch repository named NFC `café`, `CLAUDE_CONFIG_DIR` its NFD spelling +
+  `.claude`, never created -> the dry run says `a real run is refused: CLAUDE_CONFIG_DIR (...) lies
+  inside ...`, the run exits 1 with `nothing was started`, no turn and no `auth` start; an NFD
+  directory outside runs).
+- **F32-2 (the sources, verified).** C3 has no general `home_dir`; the guard's home is
+  `home_var`: `USERPROFILE` on Windows, `HOME` elsewhere - the variable libuv's `uv_os_homedir`
+  (Claude Code's `os.homedir()` under node and Bun) reads first, in the same order; libuv's own
+  fallback (the account's profile directory from the system on Windows, the user database
+  elsewhere) is not resolved by C3, so an unset or blank variable refuses the run (fail-closed,
+  unchanged since 4g). `HOMEDRIVE`/`HOMEPATH`, which the review proposed, are not read by
+  `uv_os_homedir` (checked with node 24.13 and Bun 1.4 in 4g) and stay unread. Still unverified
+  before the spawn, by design: a wrapper launcher that sets `CLAUDE_CONFIG_DIR` (or the home)
+  inside itself - the strict tree check fails such a run after its turn.
+- **F25-1 / F32-1 (stated, unchanged).** The `--version` probe proves the launcher runs in the
+  endpoint turn's environment without its token; it cannot prove the launcher executes a `-p`
+  turn, and a launcher whose `--version` needs the token is reported unavailable. Both stay
+  unsupported cases (README, "Known limits").
+
 ## Harnesses through the shim (pinned v0.6.1)
 
 Plugin pinned at v0.6.1, the tree staged per `harness-shim.md` section 4, one harness at a time

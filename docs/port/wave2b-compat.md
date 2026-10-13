@@ -416,6 +416,20 @@ with 500 records, `.bad` a directory): the marked lines parse as records (one un
 torn one), its cap evicts the record, the suffix stays byte for byte - and its next update re-adds
 the record (the plugin's T14 above).
 
+### Limits (wave 7, F29-1 / RC4 of the 0.2.0 acceptance, handoff 36)
+
+**Unsupported with plugin 0.6.1: once-only replay of the shared journal across both bridges.** With
+plugin 0.6.1 and C3 updating the same machine-wide health file, the once-only replay of a kept
+journal record holds only for C3's own updates: C3 honours the `applied` / `applying` marks, but the
+plugin's updater ignores them and can re-apply a record the 500-record cap evicted (its TECH_DEBT
+T14, above) - two consecutive plugin updates after such an eviction re-add the record, whatever C3
+does next. RC4 offered to replay the schedule through two pinned-plugin updates and then C3, or to
+record this invariant as unsupported with 0.6.1; it is recorded as unsupported here (and in the
+README's known limits), because the run above already shows the plugin's second update
+resurrecting the record and nothing C3 does afterwards can take that write back. It holds again
+once the plugin judges the marks (plugin 0.6.2, T14). Nothing breaks the file format: both bridges
+read each other's journal and health file.
+
 ## Tests
 
 Rust: `crates/c3-cli/tests/compat_wave2b.rs` (the real binary against a fake codex `.cmd`: TESTMODE
