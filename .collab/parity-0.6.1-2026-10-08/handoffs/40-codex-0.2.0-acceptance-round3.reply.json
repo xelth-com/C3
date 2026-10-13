@@ -1,0 +1,355 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The original F38-1 schedule is addressed, but recovery silently ignores failures to enumerate the new recovery-copy directory, allowing a live named helper to be missed.",
+  "reply_markdown": "1. **Q1 — A recovery counterexample remains (finding #1, blocker).** Let both collab writes fail, successfully persist the Codex-home copy, kill the ancestors while a named generic helper survives, and terminate the bridge. On restart, make enumeration of `c3/pending-kill` return permission denied. `kill_copy_paths` returns an empty list; recovery never judges the copy. With no other matching processes, the original launch record cannot identify the orphan helper and another turn can start. The original F38-1 all-writes-fail schedule itself is addressed: `Lost` now returns before killing.\n\n2. **Q2 — Limits and acknowledgement.** External ancestor death is acceptable as the explicitly bounded compatibility limitation. The registration-failure stop is acceptable only as the stated legacy exception; it does not satisfy a universal “no kill without a record” claim. The kick acknowledgement is a real, nonblocking reporting defect (finding #2): the caller prints that the tree is being stopped and returns zero although it was deliberately left alive.\n\n3. **Q3 — HOLD; do not tag yet.** Fix finding #1 and demonstrate refusal under discovery failure. Source inspection supports closing F38-1 and the original pre-kill ordering findings. Tests now include main, continuation, repair, third-copy recovery, and all-writes-fail cases.\n\nThis was a read-only, eight-call review. I did not execute tests; the 789-pass result is the brief’s report. The RC1 test can also finish successfully after printing `release not shown`, so its pass alone does not establish eventual release. I skipped `.collab` metadata except the handoffs, portions of test/helper hunks, and unrelated release implementation and historical verification documents. Most earlier findings therefore remain **not-checked**, not reconfirmed. HEAD differs from the requested endpoint only in collaboration files.\n\n## Requested checks\n\n- **RC1:** Working directory `C:\\Users\\Dmytro\\C3`; workspace-write; extend the existing RC1 helper-survival procedure with injected `PermissionDenied` from recovery-copy directory enumeration, then restart using the same home. Require explicit inspection failure, a live helper, and no turn marker; restore enumeration and require refusal naming the helper. Budget: one deterministic regression, 10 minutes.\n- **RC2:** Same directory; workspace-write; repeat the all-three-writes-fail fixture using kick instead of timeout and capture the kick caller’s output/status. Require a `not killed` acknowledgement naming the live root and no claim of successful stopping. Budget: one fixture, 5 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 170
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 173
+        },
+        {
+          "path": "crates/c3/src/consult/recovery.rs",
+          "line": 71
+        }
+      ],
+      "claim": "Recovery silently treats failure to enumerate the Codex-home kill-copy directory, or errors while iterating it, as absence of recovery copies. A durable copy naming a live helper can therefore be omitted and the task released.",
+      "trigger": "Both collab writes fail, the third copy succeeds, C3 kills the recorded ancestors while a generic helper survives, and the bridge terminates. Before restarting with the same CODEX_HOME, directory enumeration becomes inaccessible or returns an iteration error. The collab launch record names only dead ancestors, and no independent process match blocks recovery.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/pending.rs:157-205",
+          "observation": "read_dir failure immediately returns the empty output vector; rd.flatten() discards per-entry errors. Neither failure reaches callers."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/recovery.rs:59-120",
+          "observation": "Assessment checks only paths returned by pending_paths and returns no recovery error when an omitted copy is never visited."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/kill_record_durable.rs:947-1093",
+          "observation": "The existing RC1 fixture establishes the relevant topology: the unchanged launch record names the dead root, while the Codex-home copy names the surviving helper. It does not inject directory enumeration failure."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Recovery-copy discovery combined with the RC1 topology",
+          "observation": "If enumeration hides the sole record identifying the helper, the new durable write no longer guarantees refusal on restart."
+        }
+      ],
+      "verification": "Extend the existing RC1 fixture to inject PermissionDenied and an entry-iteration error during kill-copy discovery; require recovery to refuse before writing the engine-turn marker while the helper remains alive.",
+      "remedy": "Return discovery errors to all recovery consumers and refuse on non-NotFound directory or entry errors. Distinguish a genuinely absent copy directory from failed inspection; do not flatten away iteration errors.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 609
+        },
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 633
+        },
+        {
+          "path": "crates/c3/src/consult/kick.rs",
+          "line": 212
+        },
+        {
+          "path": "crates/c3/src/consult/kick.rs",
+          "line": 219
+        }
+      ],
+      "claim": "A kick whose kill record cannot be written anywhere still receives a stopped acknowledgement, causing the kick caller to report that the engine tree is being stopped and return success even though the tree was deliberately left alive.",
+      "trigger": "Kick a live reviewer while the pending-record write, fallback write, and Codex-home copy write all fail.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/subprocess.rs:600-635",
+          "observation": "Both kick branches call kill_now and then unconditionally acknowledge stopped, without checking KillCheck.not_killed."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/subprocess.rs:900-915",
+          "observation": "KillRecord::Lost returns left_alive before any kill operation."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/kick.rs:212-236",
+          "observation": "Every non-late acknowledgement produces the stopped/process-tree-being-stopped message; the command then returns zero."
+        }
+      ],
+      "verification": "Use the all-three-writes-fail fixture with an operator kick; verify that the root remains alive and capture the kick command's acknowledgement, output, and exit status.",
+      "remedy": "Propagate a distinct not_killed acknowledgement with the root and failure reason, handle it explicitly in the kick caller, and report an unsuccessful stop.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Telemetry spool implementation and race test were outside this focused review."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Deletion retry behavior was outside this review."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Harness coverage mapping was not audited."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating transaction ordering was not inspected."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Prompt anchor generation was not inspected."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Shared-plan roster and quota behavior was not inspected."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "No route benchmark was reviewed; the handoff says native Messages is outside this release."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Unicode process classification was not inspected."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Production Windows DST behavior was not exercised."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light panel metadata was not inspected."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Historical Samoa offset handling was not inspected."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Context-window configuration parsing was not inspected."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Flush/deletion lock ordering was not inspected."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Deletion cleanup durability was not inspected."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Spool reread failure handling was not inspected."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Legacy backlog sanitization was not inspected."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Rating actor model inference was not inspected."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Health journal I/O failure handling was not inspected."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required-reviewer launcher resolution was not inspected."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Full-roster shared-plan evaluation was not inspected."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "PowerShell hook pointer execution was not checked."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "AGY tool stall allowance was not inspected."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Local-only deletion transaction persistence was not inspected."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Complaint/deletion concurrency was not inspected."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Unreadable salt cleanup handling was not inspected."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Duplicate-key telemetry sanitization was not inspected."
+    },
+    {
+      "id": "F22-1",
+      "status": "not-checked",
+      "note": "Journal replay deduplication was not inspected."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "Process metadata lookup failure classification was not inspected."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Unknown creation-time scan behavior was not re-audited."
+    },
+    {
+      "id": "F23-3",
+      "status": "fixed",
+      "note": "For checked kill sites, source now persists tree evidence before killing or leaves the tree alive. Copy discovery has the separate defect in finding #1."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "The earlier deterministic process-inspection fixtures were not reviewed."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Production Samoa boundary evidence was not reviewed."
+    },
+    {
+      "id": "F24-1",
+      "status": "not-checked",
+      "note": "Not-spooled lock-busy accounting was not inspected."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated fold suffix handling was not inspected."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Concurrent not-spooled cleanup was not inspected."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Unseen-suffix status timestamps were not inspected."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Plugin-home marker and concurrent bridge coverage was not inspected."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Second fold-record rewrite failure handling was not inspected."
+    },
+    {
+      "id": "F25-2",
+      "status": "not-checked",
+      "note": "Read portions of transcript path handling, but not enough endpoint preflight code to close this finding independently."
+    },
+    {
+      "id": "F25-3",
+      "status": "not-checked",
+      "note": "Claude model case validation was not inspected."
+    },
+    {
+      "id": "F25-4",
+      "status": "not-checked",
+      "note": "Child environment Debug redaction was not inspected."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Unknown-tree process-table traversal was not re-audited."
+    },
+    {
+      "id": "F30-2",
+      "status": "fixed",
+      "note": "Checked kill sites require a successful pre-kill write in one of three locations; Lost returns without killing. Registration remains the documented exception."
+    },
+    {
+      "id": "F30-3",
+      "status": "fixed",
+      "note": "Read main, continuation, repair, pre-result crash, and write-failure fixtures. Coverage was added; tests were not executed in this consultation."
+    },
+    {
+      "id": "F31-1",
+      "status": "not-checked",
+      "note": "Live-producer not-spooled accounting was not inspected."
+    },
+    {
+      "id": "F36-1",
+      "status": "fixed",
+      "note": "repo_relative now compares characters and returns chars().as_str(), avoiding the unrelated UTF-8 byte offset; the stated Unicode fixture is present."
+    },
+    {
+      "id": "F36-2",
+      "status": "fixed",
+      "note": "Read NFC normalization and the decomposed-path refusal fixture; source and assertions address the stated input. No runtime rerun."
+    },
+    {
+      "id": "F38-1",
+      "status": "fixed",
+      "note": "The original schedule is prevented: a third copy precedes killing, or all-three-write failure leaves the tree alive. The RC1 source checks a surviving helper; finding #1 concerns subsequent copy discovery failure."
+    }
+  ],
+  "unproven": [
+    "Recovery under Codex-home directory enumeration or entry-iteration failures; finding #1 is supported by source tracing, not an executed fault-injection reproduction.",
+    "Kick output and exit status under all-three-write failure were traced but not exercised.",
+    "The reported 789 passing tests, clippy, formatting, and harness results were not rerun or independently validated from raw logs.",
+    "The RC1 eventual-release branch may return successfully with 'release not shown' when another process blocks the machine-wide scan.",
+    "Third-copy failure combinations across every continuation, repair, and panel-member path were not exhaustively inspected or executed.",
+    "Most historical findings and the full release range were outside this focused acceptance review.",
+    "Recovery after changing CODEX_HOME or switching the next consultation to plugin 0.6.1 remains outside the third-copy discovery guarantee, as documented."
+  ],
+  "first_run_checklist": [
+    "Confirm the tested binary revision and resolved CODEX_HOME/collab directory in the run evidence; subsequent recovery must use the same home.",
+    "Force both collab writes to fail: observe the third copy containing task, collab_dir, root/helper PIDs and start times before the ancestors die.",
+    "After bridge termination, confirm the helper remains alive, recovery names its copy and PID, and no engine-turn marker or new consultation commit appears.",
+    "With recovery-copy directory inspection denied, require an explicit inspection-error refusal and no engine turn; a zero exit is not acceptable.",
+    "With all three writes failing, observe 'not killed', the live root, all write errors, no continuation, and no commit.",
+    "After stopping the helper, observe the copy being consumed, its removal, and exactly one permitted engine turn; reject 'release not shown' as release proof.",
+    "For a normal successful consultation, verify the expected usable reply and ledger entry, plus no unresolved recovery refusal or not-killed warning; do not infer these from exit code zero."
+  ]
+}
