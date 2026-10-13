@@ -7875,7 +7875,7 @@
                      },
                      {
                          "id":  "F38-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -7953,6 +7953,15 @@
                                              "evidence":  "",
                                              "base_commit":  "8580c65ca31ad808ede99b4bcb65bf63b3fba2ed",
                                              "tree_sha256":  "139e1ae7a0da79d17a319abc14305c867a3081336d66a4ff9eb4a62509d57d62"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T22:02:38+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7b (098c29e): no kill without a record - three locations, the tree left alive otherwise; docs/port/wave7-acceptance-fixes.md 7b",
+                                             "evidence":  "",
+                                             "base_commit":  "098c29e20f258f00b0c2f2b985683317ea25ccbc",
+                                             "tree_sha256":  "3a39a678b826f22860124f9b962e3a946b67f1253886506865a53131daeff48d"
                                          }
                                      ],
                          "reviewer_checks":  [
