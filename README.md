@@ -275,6 +275,12 @@ answers to.
   `USERPROFILE` (Windows) or `HOME` (elsewhere) - Claude Code's `os.homedir()` sources - and
   refuses when neither is set; a wrapper launcher that sets `CLAUDE_CONFIG_DIR` inside itself is
   not seen before the spawn (the strict tree check fails such a run after its turn).
+- **No kill without a record:** a reviewer tree is killed only when the record naming it is on
+  disk - the recovery record, its fallback or `<codex home>/c3/pending-kill/<task>-<run id>.json`;
+  all three failing, the tree is left alive and the task refused while it runs. A helper left by an
+  EXTERNAL death of its recorded ancestors (not by C3), below an unrecorded intermediate and with a
+  command line unrelated to codex, is not detectable by either bridge -
+  `docs/port/wave7-acceptance-fixes.md`, "7b".
 
 ## Install into Claude Code
 

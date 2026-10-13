@@ -50,6 +50,7 @@ closed. Each finding below: the fix, the proof, and what differs from the plugin
   the recovery of both bridges reads as a record. Both failing (`Lost`): the kill still runs (a hung
   tree must not outlive the run), not confirmed, and the run is refused before its commit unless
   the end of the run writes the record. Test hook: `CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL=1`.
+  (Superseded by 7b below: no kill without a record - a third location, else no kill.)
 - **Proof (RC2).** `kill_record_durable::rc2_a_lost_kill_record_leaves_its_fallback_and_the_next_run_is_refused`
   and `..::rc2_a_kill_record_lost_with_its_fallback_is_refused_from_the_launch_record_alone`: the
   read-only fixture, the kill unable to enumerate the children (`CODEX_CONSULT_TEST_KILL_DENIED=1`,
@@ -84,6 +85,78 @@ is `home_var` - `USERPROFILE` on Windows, `HOME` elsewhere - the variable libuv'
 reads first; its system fallback is not resolved, so an unset or blank variable refuses the run
 (confirmed, unchanged). A wrapper launcher that sets `CLAUDE_CONFIG_DIR` inside itself stays
 unverifiable before the spawn. `wave4-claude.md`, "Wave 7".
+
+## 7b: no kill without a record (handoff 38, F38-1)
+
+The round-2 acceptance (`handoffs/38-codex-0.2.0-acceptance-round2.md`, HOLD on F38-1 only) found
+the last gap of the failure path above: both writes before the kill failing, the kill still ran
+and `KillRecord::Lost` lived in memory only. A bridge that died right after killing an unrecorded
+intermediate left a launch record naming neither it nor its helper: the by-parent scans cannot
+cross the dead intermediate, the machine-wide rule passes a helper with a readable non-codex
+command line, and the next run released the task. The coordinator's decision, implemented here:
+fail closed - NO KILL WITHOUT A RECORD.
+
+- **Three locations.** Before any tree kill (the main turn's timeout, stall or kick, the timeout
+  continuation's and the format repair's - all through `KillSite::before_kill` and
+  `subprocess::kill_tree_checked`) the record that names the tree must be durable in at least one
+  of, tried in this order: (1) the recovery record (`.consult.pending.json`, a member's
+  `.consult.pending-<NN>.json`); (2) its fallback (`.consult.pending-kill.json`,
+  `.consult.pending-<NN>-kill.json`); (3) the codex home's copy, outside the collab directory:
+  `<codex home>/c3/pending-kill/<task>-<run id>.json` (`<codex home>` = `CODEX_HOME`, else
+  `~/.codex` - the bridge's resolver; the run id = the consultation id), the fallback's JSON plus
+  `collab_dir` and `task`. Test hook: `CODEX_CONSULT_TEST_KILL_THIRD_FAIL=1` - the copy fails too.
+- **The recovery reads all three.** `liveness::pending::pending_paths` lists, after the task's own
+  records, the copies whose `task` is the task directory's name and whose `collab_dir` is its
+  parent (compared as directories, not as spellings); a file named `<task>-<uuid>.json` whose task
+  and collab directory cannot be read is listed too (fail-closed: it refuses as unusable). A copy
+  is judged, refused on and consumed exactly as the fallback - by the run's recovery, the panel's,
+  the findings and rating refusal and `-List`. A run whose end writes the recovery record clean (it
+  names what the kills left) removes its copy; a copy a dead bridge left is removed when the next
+  run consumes it.
+- **All three failing: no kill.** `KillRecord::Lost` carries the three errors and the killer
+  leaves the tree ALIVE as the evidence (`KillCheck::not_killed`; the survivors are the root and
+  its live descendants). The turn ends failed, its stop unchanged (class `timeout` or `stall`,
+  never usable, no continuation): `failed: timeout after N s (not killed: the kill record could
+  not be written anywhere (<record error>; its fallback <path>: <error>; its copy <path>:
+  <error>): the reviewer tree (pid <root>) is left alive as the evidence; the task is refused until
+  it is gone or recorded)`. The launch record on disk names the root as its `child_pid`: the next
+  run of the task is refused while it lives. An end of the run that cannot write the record either
+  is refused uncommitted and names the tree it left running.
+- **Proof (RC1 of reply 38, as far as the decision allows).**
+  `kill_record_durable::rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_copy`:
+  the tree cmd (root) -> the fake's PowerShell (intermediate) -> a helper PowerShell that only
+  sleeps (its command line unrelated to codex); the record read-only and the fallback blocked, the
+  copy written; the kill stops the root and the intermediate, the helper survives
+  (`CODEX_CONSULT_TEST_KILL_SPARE=<pid file>`, test mode only, stands for a helper the kill cannot
+  stop: no `taskkill /T`, not by pid - the test asserts it alive), the bridge dies at `kill,main`.
+  On disk: the launch record unchanged, no fallback, the copy naming root, intermediate and helper
+  with their start times. The dry run shows the copy refusing on the helper; the next run is
+  refused before any engine turn (the fake's turn marker is never written); the helper gone, the
+  next run consumes the copy, removes it and takes its turn.
+  `..::f38_a_kill_record_written_nowhere_leaves_the_tree_alive_and_the_task_refused`: all three
+  blocked - after the run the root and the intermediate still run, the message as above, nothing
+  committed, no continuation; the next run is refused from the launch record naming the root,
+  before any engine turn; then the tree is cleaned up.
+  `..::f38_the_codex_home_copy_is_removed_once_the_record_is_written_clean`: access restored
+  during the pause after the kill, the end of the run writes the record clean and the copy is
+  gone. `..::rc2_a_kill_record_lost_with_its_fallback_is_kept_in_the_codex_home_and_refuses`:
+  RC2's launch-record-alone variant became the copy variant (with both collab writes failing a
+  kill now always has the copy, or does not happen). Unit level:
+  `pending::tests::a_kill_copy_in_the_codex_home_is_read_as_a_record_of_its_task_only` (the
+  resolver, the listing, the judging), `kill_record_tests::a_kill_whose_collab_writes_fail_keeps_its_record_in_the_codex_home`,
+  `..::a_kill_that_did_not_happen_is_told_as_such`,
+  `subprocess::tests::a_kill_whose_record_is_lost_does_not_kill_and_is_not_confirmed`.
+- **Documented limit.** An EXTERNAL death of the recorded ancestors - not by C3: the operator or
+  another tool stopping the root and an unrecorded intermediate - that leaves a generic helper (a
+  readable command line unrelated to codex) is not detectable by either bridge: no record names
+  the helper and no scan reaches it. Parity with the plugin. The copy is read from the codex home
+  the next run resolves: a next run under another `CODEX_HOME` does not see it.
+- **Unchanged.** The registration failure's stop (`kill_tree_by_pid` of a child whose `running`
+  record could not be written, rows (e)) stays the plugin's: the child that just spawned is stopped
+  at once by `taskkill /T`, its record left at `launching`.
+- **Plugin.** The plugin kills after its write whatever it came to and reads no codex home copy:
+  a plugin 0.6.1 bridge running the next consultation of a task judges the collab records only
+  (the launch record; the fallback as a member-named record).
 
 ## Verification
 

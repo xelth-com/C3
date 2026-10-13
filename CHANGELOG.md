@@ -86,6 +86,12 @@ v0.6.1 harnesses through the shim (`docs/port/harness-shim.md`).
   failing, the kill still runs, not confirmed, and the next run is refused from the launch record
   and its fail-closed scans. F29-1 (the shared journal with plugin 0.6.1) and F25-1/F32-1/F32-2
   (what the endpoint preflight and the transcript guard cannot see) are stated as known limits.
+- Wave 7b (`wave7-acceptance-fixes.md`, "7b"), acceptance round 2 (F38-1): no kill without a
+  record - the record before a kill goes to the recovery record, else its fallback, else a third
+  location outside the collab directory, `<codex home>/c3/pending-kill/<task>-<run id>.json`, which
+  the recovery reads and consumes as the fallback (and the end of a run that writes the record
+  clean removes); all three failing, the tree is left alive, the run ends failed naming its root
+  and the three errors, and the next run is refused from the launch record while it lives.
 
 ### Changed
 
