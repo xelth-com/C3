@@ -114,3 +114,24 @@ Idle since 2026-10-09 18:15; idle wake 2 at 19:15 - the handover is this section
 2026-10-13 21:30 - ROUND 2 (n=23, handoff 38): 383 s, 10 calls, 0.64M input, window 23 -> 44 %. HOLD on F38-1 only (F36-1/F36-2 fixed): when BOTH pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, the recovery can release the task while a non-codex helper survives (KillRecord::Lost lives in memory only). Decision: fail closed - NO KILL WITHOUT A RECORD (the tree is left alive as living evidence, the run fails naming the pid, the next turn is refused from the launch record while the child lives) plus a third record location in the codex home before any kill; an external death of the ancestors with a generic helper stays a documented limit shared with the plugin. Wave 7b worker next, then round 3.
 
 2026-10-13 22:12 - ROUND 3 (n=24, handoff 40): 341 s, 9 calls, 0.54M input, window 44 -> 61 %. HOLD: F40-1 blocker (pending_paths treats a read_dir/iteration error of <codex home>/c3/pending-kill as "no copies" - must be an inspection failure that refuses), F40-2 minor (a kick whose record is written nowhere still acknowledges "stopped"). Wave 7c worker next; round 4 after (window resets 23:37).
+
+## Planned after the tag: worker telemetry (the operator's request, 2026-10-13 22:40)
+
+Goal: know which worker tier (opus / sonnet / haiku / other) did what kind of work and how it ended, across installs
+(users on an Opus-max or a Sonnet-max plan), WITHOUT spending the coordinator's tokens. Design:
+- The signal source is the host's hook, not the model: Claude Code runs `SubagentStop` (and `SubagentStart`) hooks
+  as shell commands with a JSON on stdin (session, transcript paths, the agent id - to verify: `agent_transcript_path`).
+  C3 ships `c3 hook subagent-stop`; the plugin ships the PowerShell mirror in its hooks.json. Zero model tokens.
+- From the subagent's transcript the hook computes CLASSES AND NUMBERS only: tier (the plugin's agent names
+  opus-worker/sonnet-worker/haiku-worker, else `other`), the actual model (closed list of published names, else
+  `other`), outcome (`completed`, `error:rate_limit`, `error:context` (prompt too long), `error:other`, `stopped`),
+  duration bucket, input/output token buckets, tool-use count bucket, tool-error count bucket, edits bucket
+  (Edit/Write calls -> `read-only` vs `writes`), whether a verification command ran (cargo test / pytest / run-all
+  patterns -> `verified`), resumes (SendMessage continuations of the same agent). Never a prompt, a path, a name.
+- Optional judgment at ~50 tokens: `c3 worker rate <agent id> yes|partly|no --note` (mirrors `-Rate` for reviewers);
+  the event carries the mark like the reviewer rating (`rating_rev`, judge).
+- One event per subagent end to the intake (event class `worker`); the intake (xelth.com crates/telemetry) gets the
+  schema and a public table "workers": per tier x outcome counts, error share, median duration/tokens, the rating
+  share - so a user can see whether e.g. sonnet-worker finishes verification waves as often as opus-worker.
+- Cost: hook CPU only; the rating is optional. Privacy as the existing contract (closed classes, consult_ref-style
+  pseudonymous keys). Order: after v0.2.0 - C3 wave "worker telemetry", the plugin mirror, the intake + page.
