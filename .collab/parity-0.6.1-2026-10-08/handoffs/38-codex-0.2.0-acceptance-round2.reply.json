@@ -1,0 +1,321 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "F36-1 and F36-2 are addressed, but the remaining F30-2/F23-3 failure path can release a task while an orphaned helper survives.",
+  "reply_markdown": "1. **Q1 — Unicode guard:** F36-1 and F36-2 are fixed by inspection for their reported triggers. Prefix removal now follows character boundaries; transcript checks compare the original and NFC forms of both paths. The added fixtures exercise the Japanese-path panic and decomposed configuration path. I found no further concrete Unicode bypass in the inspected code; exhaustive Windows case-fold equivalence remains unproven.\n\n2. **Q2 — Recovery:** Yes, a failing schedule remains. Both recovery-record writes fail; the kill removes the root and an intermediate process but leaves its helper alive; the bridge dies before recording the result. The surviving launch record names neither intermediate nor helper. Parent scans cannot cross the missing intermediate, and a helper with a readable, non-Codex command line escapes the machine-wide rule. Recovery then returns inactive. Finding #1 merges the remaining F30-2/F23-3 failure case. The new RC2 fixture leaves a direct child, so it does not exercise this schedule.\n\n3. **Q3 — Documented limits:** Acceptable as explicitly scoped compatibility limitations: cross-bridge once-only replay is unsupported with plugin 0.6.1; `--version` establishes launcher availability rather than turn success; unresolved home-directory fallback refuses conservatively. Wrapper-modified transcript locations remain outside the preflight guarantee. These disclosures do not resolve Q2’s claimed fail-closed recovery invariant.\n\n4. **Q4 — HOLD:** Do not tag v0.2.0 yet. The blocker is the remaining F30-2/F23-3 case, consolidated in finding #1. Require the regression below and observable refusal before acceptance.\n\n**Coverage:** Read the brief, relevant handoff-33 sections, wave-7 note, changed release documentation, and all non-`.collab` code/configuration diff hunks. Followed recovery and transcript-guard dependencies through selected source ranges. Skipped `.collab` history/logs beyond the two briefs, unrelated earlier-release implementation, complete older wave documents, and raw verification logs. Source files inspected outside the diff match `9f1ebf4`; HEAD differs only in collaboration records. No files were written and no tests were run. Reported green runs are coordinator evidence, not independently reproduced results.\n\n## Requested checks\n\n- **RC1:** Working directory `C:\\Users\\Dmytro\\C3`; permission **workspace-write**; budget **30 minutes, one regression**. Extend the RC2 fixture to leave `root → intermediate → helper`, fail both kill-record writes, remove root/intermediate while retaining a helper with a readable unrelated command line, and terminate the bridge at `kill,main`. Restart the same task after restoring write access. Finding #1 is settled only if recovery refuses before any new engine turn while the helper remains alive; verify the fixture actually preserves that helper.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 687
+        },
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 912
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 1026
+        },
+        {
+          "path": "crates/c3/src/liveness/proc.rs",
+          "line": 878
+        },
+        {
+          "path": "crates/c3-cli/tests/kill_record_durable.rs",
+          "line": 589
+        }
+      ],
+      "claim": "The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge.",
+      "trigger": "Start a tree bridge → recorded root → unrecorded intermediate → helper. Make replacement of the pending record and creation of its fallback fail. Let the kill stop the root and intermediate while the helper survives, then terminate the bridge before any successful post-kill write. Restore filesystem access and restart the task with no other matching processes. The helper has a readable command line that matches neither the recorded launcher nor the Codex rules.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:681-712",
+          "observation": "Failure of both writes returns KillRecord::Lost and saves the outcome only in memory; no additional durable refusal state is established."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/subprocess.rs:897-919,991-998",
+          "observation": "The killer proceeds after receiving Lost. It kills the root and attempts descendant termination; marking the result unconfirmed occurs in memory."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/pending.rs:804-818,928-1026; crates/c3/src/liveness/proc.rs:813-865,866-906",
+          "observation": "Recovery scans under recorded pids and then applies the machine-wide classifier. Parent traversal needs surviving table links; a readable unrelated helper is not selected by the machine-wide rule. Empty scans produce an inactive result."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/kill_record_durable.rs:589-739; docs/port/wave7-acceptance-fixes.md:63-70",
+          "observation": "RC2 preserves the fake PowerShell directly below the recorded launcher. The wave note explicitly acknowledges that the launch record cannot find a non-Codex helper below a dead, unrecorded intermediate."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Combined dual-write-failure, bridge-crash, and recovery branches",
+          "observation": "Combining the acknowledged ancestry gap with failure of both durable writes permits a new turn despite a surviving helper. This combined schedule was not executed during this read-only review."
+        }
+      ],
+      "verification": "Run RC1 from Requested checks with an isolated process table or controlled Windows tree, proving the helper remains alive and requiring the restarted task to refuse before spawning another engine turn.",
+      "remedy": "Make an interrupted launch remain conservatively blocked when complete kill evidence cannot be persisted. Establish that recovery obligation durably before spawning, or require explicit operator release of an unresolved launch record instead of treating these empty scans as proof of termination. Add the missing dead-intermediate regression.",
+      "supersedes": [
+        "F30-2",
+        "F23-3"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Telemetry spool concurrency was outside this delta review."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Deletion retry identity was not rechecked."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Read reported harness limitations, but did not audit the assertion coverage map."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating commit-before-spool behavior was not rechecked."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Prompt anchors were outside this delta review."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Shared-plan roster behavior was not rechecked."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "No credit-saving or review-equivalence benchmark was inspected."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Located Unicode classifier tests but did not inspect the complete fix or run them."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Production Windows DST handling was not rechecked."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light ledger metadata was not rechecked."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Historical Samoa offset handling was not rechecked."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Context-window configuration parsing was not rechecked."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Flush-versus-deletion locking was not rechecked."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Recoverable deletion cleanup was not rechecked."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Spool reread failure handling was not rechecked."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Legacy telemetry sanitization was not rechecked."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Rating actor model inference was not rechecked."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Health journal I/O failure behavior was not rechecked."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required-reviewer launcher override handling was not rechecked."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Full-roster shared-plan quota evaluation was not rechecked."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "PowerShell hook pointer execution was not rechecked."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "Read AGY kill-hook signature changes only; tool-stall behavior was not rechecked."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Local-only deletion transaction persistence was not rechecked."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Complaint/deletion synchronization was not rechecked."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Unreadable-salt cleanup behavior was not rechecked."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Duplicate-key telemetry sanitization was not rechecked."
+    },
+    {
+      "id": "F22-1",
+      "status": "not-checked",
+      "note": "Read the mixed-bridge limitation disclosure; did not inspect C3 journal deduplication implementation."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "Process metadata lookup failure handling was not rechecked."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Inspected scan branches for the current blocker, but did not verify all original unknown-start fixtures."
+    },
+    {
+      "id": "F23-3",
+      "status": "still-open",
+      "note": "Normal pre-kill persistence and fallback improve durability; the remaining dual-write-failure/crash case is consolidated in finding #1."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "Original metadata and unknown-tree test corrections were not audited."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Production Windows Samoa evidence was not inspected."
+    },
+    {
+      "id": "F24-1",
+      "status": "not-checked",
+      "note": "Not-spooled lock-busy accounting was not rechecked."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated suffix accounting was not rechecked."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Concurrent not-spooled creation during deletion was not rechecked."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Latest unseen event reporting was not rechecked."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Plugin-home marker and shared-lock oracle coverage was not rechecked."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Second accounting-record rewrite failures were not rechecked."
+    },
+    {
+      "id": "F25-2",
+      "status": "not-checked",
+      "note": "Inspected derived-location checks, but did not retrace endpoint auth-status acquisition and the original reported-directory scenario."
+    },
+    {
+      "id": "F25-3",
+      "status": "not-checked",
+      "note": "Claude model case validation was not rechecked."
+    },
+    {
+      "id": "F25-4",
+      "status": "not-checked",
+      "note": "ChildEnv debug redaction was not rechecked."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Inspected subtree traversal and machine-wide filtering, but did not validate the complete original synthetic fixture."
+    },
+    {
+      "id": "F30-2",
+      "status": "still-open",
+      "note": "Fallback persistence fixes one-write failure; both-write failure followed by a bridge crash remains unsafe. Consolidated with F23-3 in finding #1."
+    },
+    {
+      "id": "F30-3",
+      "status": "fixed",
+      "note": "By source inspection, tests now cover main, continuation, repair, interruption before post-kill persistence, and write-failure refusal. Not rerun; the new combined scenario in finding #1 remains uncovered."
+    },
+    {
+      "id": "F31-1",
+      "status": "not-checked",
+      "note": "Live-to-gone producer accounting was not rechecked."
+    },
+    {
+      "id": "F36-1",
+      "status": "fixed",
+      "note": "Character-wise prefix removal eliminates the unrelated UTF-8 byte-offset slice; exact Japanese-path fixtures are present. Not rerun."
+    },
+    {
+      "id": "F36-2",
+      "status": "fixed",
+      "note": "Derived paths use NFC and containment checks compare both forms of candidate and root; unit and endpoint integration fixtures cover the reported trigger. Not rerun."
+    }
+  ],
+  "unproven": [
+    "The combined dual-write-failure, dead-intermediate, surviving-helper crash schedule has not been executed.",
+    "No tests, builds, harnesses, or live consultations were independently run during this read-only review.",
+    "Exhaustive equivalence between the new Unicode folding helper and Windows OrdinalIgnoreCase was not established.",
+    "Fallback recovery interchange with the pinned PowerShell plugin was documented but not independently exercised.",
+    "Earlier telemetry, health, rating, roster, and runtime findings marked not-checked were not re-certified.",
+    "Wrapper-modified transcript locations and successful endpoint turns cannot be established by the version probe alone."
+  ],
+  "first_run_checklist": [
+    "Observe the tested revision and binary identity, an actual engine turn, a nonempty usable reply, and a matching committed ledger entry; a successful version probe or dry run is insufficient.",
+    "With an in-repository NFC-equivalent Claude configuration path, observe an explicit refusal and no engine turn; with an outside configuration, verify the actual transcript destination and unchanged reviewed tree.",
+    "At an interrupted kill, inspect the pending record or fallback before terminating the bridge: it must preserve the relevant process identities and unresolved-kill state.",
+    "After the dual-write-failure regression, observe that the helper is still alive and the next consultation refuses before spawning any engine process.",
+    "Once recovery is legitimately released, observe recovery consumption and fallback removal; confirm that a logged warning or skipped release assertion was not counted as a successful recovery check.",
+    "For a normal live consultation, observe the expected ledger outcome and telemetry status showing delivery or an explicitly retained queue; exit code 0 alone does not prove those side effects."
+  ]
+}

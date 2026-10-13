@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "abbeea98-9b84-49c5-936e-54ac09757a3d",
+    "id8":  "abbeea98",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-13T20:56:06+02:00",
+    "updated":  "2026-10-13T21:02:49+02:00",
+    "finished":  "2026-10-13T21:02:49+02:00",
+    "wall_seconds":  403.4,
+    "pid":  30680,
+    "start_time":  "2026-10-13T18:56:06.9536357Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  5100,
+    "purpose":  "acceptance",
+    "reply_name":  "0.2.0-acceptance-round2",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\37-claude-0.2.0-acceptance-round2.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  382.7,
+                        "n":  23,
+                        "handoff":  "38",
+                        "reply":  "handoffs/38-codex-0.2.0-acceptance-round2.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a1369f-8562-7fc1-a7cb-eb8bb4e52c59 (source: events), wall 382.7 s\nquota      : 5h 44% until 23:37; wk 23% until Oct 20; this run 640588 input tokens (526976 cached) in 10 calls, max 92321 per call of 258400; sub-agents 0\nverdict    : HOLD - F36-1 and F36-2 are addressed, but the remaining F30-2/F23-3 failure path can release a task while an orphaned helper survives.\nfindings   : 1 blocker, 0 major, 0 minor, 0 note -\u003e F38-1 in findings.json\nprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 still-open, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 still-open, F30-3 fixed, F31-1 not-checked, F36-1 fixed, F36-2 fixed\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\38-codex-0.2.0-acceptance-round2.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\38-codex-0.2.0-acceptance-round2.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\38-codex-0.2.0-acceptance-round2.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-abbeea98.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}
