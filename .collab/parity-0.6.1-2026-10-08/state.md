@@ -149,3 +149,24 @@ BEFORE IMPLEMENTING the two planned waves above (worker telemetry; wave 31 "watc
 Worker telemetry, additions (the operator, 2026-10-14 00:00): (1) the worker's REASONING EFFORT (low/medium/high/xhigh/max) is a dimension next to the tier and the model - the hook must find it (the agent definition's `effort:` frontmatter; an explicit `effort` override of the Agent call may not be in the subagent transcript - an open question for the consilium; fallback: the coordinator's rate command carries `--effort`); the optimisation question is then "per task class, the cheapest tier x effort with a completion share above X". (2) Nobody watches the site or the telemetry today: the xelth.com assistant (crates/server/src/chat.rs C3_PROMPT) is a STATIC prompt and reads no stats; no scheduled job or agent exists. Plan: the intake computes aggregated tables nightly (reviewers: usefulness; workers: tier x effort x task class -> completion, error share, median tokens/duration, rating share) and a derived recommendation table; the C3 page shows them and the assistant's prompt gets the latest table injected at request time - no new agent needed; an autonomous weekly "optimiser" note is a consilium question, not a given. Note: the intake already has an `agent_report` event (model_name, agent_role, task_scope free text) from an older project - the worker event must NOT reuse it (free text breaks the closed-class contract).
 
 2026-10-14 02:00 - RC7 green on 3e9473e (795 tests, clippy/fmt clean, 22 harnesses at the rc6 counts on the pinned v0.6.1 tests - the plugin's HEAD tests carry wave 30 and are not the oracle; live smoke ZAI 15.8 s + claude haiku 6 s, telemetry delivered). TAGGED v0.2.0.
+
+## Where things stand (handover, 2026-10-14 02:05)
+
+- **C3 v0.2.0 is tagged and pushed** (a7f2626; code 05c4b9f; RC7 report 3e9473e). The acceptance reviewer accepted
+  in round 5 (n=26) after waves 7/7b/7c/7d; every finding of the task is `implemented`, `verified` or `wontfix`
+  with a documented limit. The plugin TECH_DEBT filed from this track: T11-T16.
+- **The plugin** (claude-codex-consult main 33ba041) has wave 30 (quota windows, T15) UNRELEASED in `[Unreleased]`;
+  its HEAD `tests/` are no longer the 0.6.1 oracle for C3 (claude 65/1, 0.3 228/1 against C3 0.2.0) - run C3's
+  harnesses with the pinned v0.6.1 `tests/` until C3 ports wave 30.
+- **Next, in order:** (1) C3 wave 8 - port the plugin's wave 30 (quota windows: rollout `rate_limits`, the QUOTA
+  verdicts, the fork guard, `multi_agent=false`, `-Budget`, ledger `quota`/`tokens`, the reading discipline) and
+  T16 (`-Kick` reading `not killed`); (2) a clean install of C3's Claude Code plugin layer (`plugin/`) in a fresh
+  session - the hook line, one consultation through the `consult` skill, the acceptance reviewer's first-run
+  checklist (reply 36); (3) a week with C3 as the daily driver, the plugin installed beside it; (4) the framing
+  CONSILIUM (full-roster panel) on the two planned designs above (worker telemetry incl. the effort dimension;
+  wave 31 "watch") before any implementation; (5) the site assistant's prompt (xelth.com chat.rs C3_PROMPT) to say
+  C3 0.2.0 is released - a deploy, to confirm with the operator; (6) plugin 0.6.2 when wave 30 has had a review.
+- **Operator-side open items:** install plugin 0.6.1 from the tag (the cache still holds 0.6.0), rename roster-0.6
+  over the live roster and add a claude `auth: subscription` entry (haiku-5-5, chore) and the Kimi pair.
+- To resume: a fresh session reads this section; the machine rules and the harness recipe are above and in
+  `docs/port/harness-shim.md`.
