@@ -143,3 +143,5 @@ Goal: know which worker tier (opus / sonnet / haiku / other) did what kind of wo
 BEFORE IMPLEMENTING the two planned waves above (worker telemetry; wave 31 "watch" - event-driven wakes) the operator wants a CONSILIUM first (2026-10-13 23:05): a framing panel (`-Panel -Purpose framing`, the full roster incl. Astra, Kimi, MiMo, GLM, Gemini, Muse) on one brief per topic - the design as written here, the open questions (what the SubagentStop hook really carries; what to count so a Sonnet-max and an Opus-max user can compare; the watch deadline rules and the cache TTL) - and the design is revised on the panel's answers before any worker starts.
 
 2026-10-13 23:38 - wave 7d merged (05c4b9f; F42-1 implemented; the sweep 110/19/91; 795 tests). Round 5 brief 43 after the 23:37:59 window reset.
+
+2026-10-13 23:45 - ROUND 5 (n=26, handoff 44): ACCEPT. 229 s, 9 calls, 0.55M input, window 0 -> 15 % (fresh). Five rounds today through the quota-aware bridge: 23+21+17+15+15 % of windows, 50 calls, no sub-agents. Before the tag: RC7 = the full RC6 procedure on 05c4b9f (cargo gates, 22 harnesses, live smoke) by a worker; tag v0.2.0 on 05c4b9f when green.

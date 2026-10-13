@@ -1,0 +1,126 @@
+# Handoff 44 - Codex: 0.2.0-acceptance-round5
+
+Date: 2026-10-13 23:38 local. Author: Codex (model gpt-6-astra, effort high), Codex CLI 0.155.1.
+Reviewer: openai :: gpt-6-astra (provider from -Provider, model from roster; endpoint builtin:openai; provider fingerprint 56d97b6ece36; harness codex-cli 0.155.1).
+Preflight: ok: Logged in using ChatGPT.
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied).
+Effort: high sent (requested high, mapping openai, by caps-v1: builtin:openai, any model; not confirmed by the provider). Consultation id: 4337fbbe-e1e6-42bd-a2a1-45e95d1cb3ae.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only, purpose: acceptance). Argv: `codex exec --sandbox read-only --color never --json -m gpt-6-astra -c features.multi_agent=false -c model_reasoning_effort="high" -c model_provider="openai" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-7df9a05c68dd4ddea081e3ca410a89f2.md --output-schema C:\Users\Dmytro\claude-codex-consult\plugins\codex-consult\schemas\consult-reply.schema.json -` (prompt on stdin).
+Parent thread: (none - new thread). Result thread: `01a13734-3373-7f42-8381-d2d2764f3dd7` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/43-claude-0.2.0-acceptance-round5.md` (sha256 e18f0ad7d890). Reviewed: 354cad7, base 354cad7c63f4330fad3441981657bd1781b5bbe9, tree sha256 c0794b88c1e1, 0 changed files.
+Bridge outcome: usable reply. Wall time: 229 s. Tokens: in 552211 (cached 441216), out 5570, reasoning 967.
+Quota (rollout): 5h 15% until 04:39; wk 31% until Oct 20; this run 552211 input tokens (441216 cached) in 9 calls, max 88925 per call of 258400; sub-agents 0; sub-agents off (features.multi_agent=false); budget 70 % of the 5-hour window.
+Timeout: 3600 s (the default of purpose acceptance); continuation after a timeout kill: up to 900 s. Range: `98a8742..05c4b9f` - the range changes 18 files, 2225 lines (2121 insertions, 104 deletions).
+Verdict: ACCEPT - F42-1 is fixed, the inspected recovery callers preserve inspection failures, and the saved targeted test results support acceptance of this delta without a new blocker. Findings: none. Structured reply: `handoffs/44-codex-0.2.0-acceptance-round5.reply.json`.
+WARNING: ACCEPT with 12 unchecked prior blocker(s) (F14-1, F22-1, F23-1, F23-2, F23-3, F24-1, F25-2, F30-1, F30-2, F31-1, F36-1, F38-1).
+Raw event stream: `handoffs/44-codex-0.2.0-acceptance-round5.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+1. **Q1:** I found no remaining error-to-absence conversion in the recovery paths inspected. `read_pending_file` treats only `NotFound` as absence; other I/O failures and unusable contents refuse recovery. Consult, both panel entry checks, findings changes, listing, and kick propagate that refusal. Copy attribution retains unreadable task-named copies. The retained ledger-error conversion in `consult/recovery.rs` affects the recovered/cleared label, not process-liveness evidence. I did not independently audit all 91 retained hits.
+
+   **F42-1 is fixed.** The extended fixture asserts exit 1, the precise copy-read refusal, no engine-turn marker, a live helper, and retained evidence. The saved RC1 log records a pass. The two new unit tests also passed. The workspace log contains one embedding-test failure; its separate six-test rerun passed—this was not a clean single-pass workspace run.
+
+2. **Q2: ACCEPT for tagging v0.2.0**, carrying forward the previously documented release scope and compatibility limits. No new acceptance blockers found in `98a8742..05c4b9f`.
+
+   I read all changed production-code and test hunks, the 7d documentation and sweep inventory, relevant earlier-handoff excerpts, and targeted caller context. HEAD differs from the reviewed revision only in collaboration records. I did not read the bulk collaboration diffs, re-review the entire release, independently inspect every older fix, or rerun tests. Older findings without direct verification remain explicitly `not-checked`; acceptance does not certify them anew.
+
+   Before trusting the first real exit 0, observe the expected reviewer actually running, a usable persisted reply and matching ledger entry, and no unresolved recovery refusal. For recovery qualification, require inspection failures to prevent any engine turn, then require release only after the helper exits and the recovery copy is consumed.
+
+---
+
+### Findings
+
+_(none)_
+
+### Prior findings
+
+- F02-1 - not-checked - Telemetry spool implementation was outside this delta review.
+- F02-3 - not-checked - Deletion retry identity was not re-reviewed.
+- F02-4 - not-checked - The complete harness coverage map was not inspected.
+- F02-5 - not-checked - Rating transaction ordering was not rechecked.
+- F02-6 - not-checked - Prompt anchor implementation and fixtures were not inspected.
+- F02-7 - not-checked - Shared-plan configuration and cross-repository scheduling were not rechecked.
+- F02-8 - not-checked - The benchmark assumption was not tested; handoff 33 excludes native Messages from this release.
+- F04-1 - not-checked - Unicode process-name handling was not re-reviewed.
+- F04-2 - not-checked - Production Windows DST boundary behavior was not rechecked.
+- F04-3 - not-checked - Required-light ledger metadata was outside the inspected panel changes.
+- F06-1 - not-checked - Historical Samoa reset handling was not rechecked.
+- F09-1 - not-checked - Context-window configuration parsing was not re-reviewed.
+- F09-2 - not-checked - Flush/deletion synchronization was not rechecked.
+- F09-3 - not-checked - Recoverable deletion cleanup was not rechecked.
+- F09-4 - not-checked - Spool reread failure handling was not rechecked.
+- F09-5 - not-checked - Legacy-event sanitization was not rechecked.
+- F09-6 - not-checked - Bare-label rating actor inference was not rechecked.
+- F11-1 - not-checked - Health journal I/O failure handling was not rechecked.
+- F11-2 - not-checked - Required-reviewer launcher propagation was not rechecked.
+- F11-3 - not-checked - Shared-plan quota evaluation was not rechecked.
+- F11-4 - not-checked - PowerShell hook command execution was not rechecked.
+- F11-5 - not-checked - AGY tool stall allowance and attribution were not rechecked.
+- F14-1 - not-checked - Local-only deletion transaction persistence was not rechecked.
+- F19-1 - not-checked - Complaint/deletion synchronization was not rechecked.
+- F19-2 - not-checked - Unreadable-salt cleanup handling was not rechecked.
+- F19-3 - not-checked - Duplicate-key telemetry sanitization was not rechecked.
+- F22-1 - not-checked - Durable health journal deduplication was not rechecked.
+- F23-1 - not-checked - Process metadata lookup failures were outside this file-I/O review.
+- F23-2 - not-checked - Unknown process creation-time scans were not rechecked.
+- F23-3 - not-checked - Related pre-kill persistence code was inspected, but the original full crash schedule was not independently verified.
+- F23-4 - not-checked - The older deterministic process-inspection fixtures were not inspected.
+- F23-5 - not-checked - Production Windows Samoa tests were not inspected.
+- F24-1 - not-checked - Not-spooled lock-busy accounting was not rechecked.
+- F24-2 - not-checked - Unterminated not-spooled suffix handling was not rechecked.
+- F24-3 - not-checked - Concurrent not-spooled creation during cleanup was not rechecked.
+- F24-4 - not-checked - Latest unseen not-spooled event selection was not rechecked.
+- F24-5 - not-checked - P8 marker, production-layout, and cross-bridge concurrency coverage was not rechecked.
+- F24-6 - not-checked - Fold-record second-write failure handling was not rechecked.
+- F25-2 - not-checked - Endpoint transcript-location preflight was not rechecked.
+- F25-3 - not-checked - Claude model case normalization was not rechecked.
+- F25-4 - not-checked - Child-environment Debug redaction was not rechecked.
+- F30-1 - not-checked - Generic-helper ancestry and unreadable creation-time classification were not rechecked.
+- F30-2 - not-checked - The pre-kill writer was inspected, but all killer call sites and failure schedules were not re-reviewed.
+- F30-3 - not-checked - Continuation and repair durability fixtures were not individually inspected.
+- F31-1 - not-checked - Live-to-gone producer accounting was not rechecked.
+- F36-1 - not-checked - The documented Unicode path fix was read, but its implementation was not rechecked.
+- F36-2 - not-checked - The documented NFC guard fix was read, but its implementation was not rechecked.
+- F38-1 - not-checked - Related copy persistence and RC1 evidence were inspected; the complete no-record/no-kill implementation was not re-reviewed.
+- F40-1 - fixed - Directory-open and iteration errors propagate through PendingPaths and recovery refusal; the extended RC1 fixture exercises both modes and its saved log passes.
+- F40-2 - fixed - The kick caller reports the not-killed acknowledgement and returns 1; the saved workspace log records the dedicated RC2 integration test passing.
+- F42-1 - fixed - Only NotFound produces absence. Metadata/read errors produce an inspection refusal; caller checks and the passing extended RC1 fixture cover the reported trigger.
+
+## Verdict: ACCEPT
+
+F42-1 is fixed, the inspected recovery callers preserve inspection failures, and the saved targeted test results support acceptance of this delta without a new blocker.
+
+**WARNING: ACCEPT with 12 unchecked prior blocker(s) (F14-1, F22-1, F23-1, F23-2, F23-3, F24-1, F25-2, F30-1, F30-2, F31-1, F36-1, F38-1).**
+
+### Blockers
+
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542`, `crates/c3/src/telemetry/complaint.rs:240`, `crates/c3/src/telemetry/complaint.rs:673` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending'). Verify: Add a test: forget_with with ForgetRequest{public_ref: None, local: true, yes: true} and an injected remove failing on spool.ndjson; assert whether forget-pending.json exists and whether a subsequent flush posts the retained events. Remedy: In the None arm, persist the transaction (phase cleaning) via write_transaction before calling finish_cleanup (or pass phase confirmed so run_local_cleanup writes it), so an interruption leaves the blocking, resumable record the docs and the CLI message promise.
+- **F22-1** (prior, not-checked) `crates/c3-core/src/health.rs:1563`, `crates/c3-core/src/health.rs:1915`, `crates/c3-core/src/health.rs:1942`, `crates/c3-core/src/health.rs:1960`, `crates/c3-core/src/health.rs:2028` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false. Verify: Add a deterministic test with an unwritable `.bad` path, one recent journal record, and 500 newer endpoint records; run two updates and assert the journal record is neither resurrected nor allowed to displace another endpoint. Remedy: Persist a monotonic journal applied-sequence marker or equivalent durable consumed state, and truncate the journal by that sequence independently of endpoint retention; do not use the mutable endpoint set as the only replay ledger.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97`, `crates/c3/src/liveness/proc.rs:100`, `crates/c3/src/liveness/pending.rs:283`, `crates/c3/src/liveness/pending.rs:344` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time. Verify: Inject `name_and_parent -> None` while `process_start_iso -> Some(start)` and require `test_unverified_process`/`test_recorded_process` to return running or an explicit inspection failure. Remedy: Distinguish process absence from inspection failure; return an unknown/running verdict when the pid exists but metadata cannot be read.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753`, `crates/c3/src/liveness/proc.rs:775`, `crates/c3/src/liveness/proc.rs:827`, `crates/c3/src/liveness/pending.rs:790` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs. Verify: Run `test_pending_active` on a `kill_unconfirmed` record with a live scan row whose `created` is `None`; require refusal/failed verification, never release. Remedy: Treat unknown creation/start as blocking evidence or fail the scan; do not silently filter those rows.
+- **F23-3** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:5105`, `crates/c3/src/consult/orchestrate.rs:5143`, `docs/port/wave3a-recovery.md:59` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree. Verify: Add a pause between the kill and the end-of-run pending write, terminate the bridge there, and inspect the recovery record for the expected `unverified`/`kill_unconfirmed` fields. Remedy: Persist the kill disposition at each kill site, or write a durable kill journal before continuing the run.
+- **F24-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:640`, `crates/c3/src/telemetry/spool.rs:668`, `crates/c3/src/telemetry/notspooled.rs:704` - The spool-lock fallback marks all non-legacy not-spooled lines as seen without folding or retaining per-file provenance; a later fold counts the same gone-producer files again, so the accounting can double-count and temporarily hide the count. Verify: Hold `spool.lock` for over one second during flush 1 with N gone-producer lines, then run flush 2 and compare both records; require exactly one accounting of N. Remedy: In the fallback, retain per-file folded entries or mark only positively kept files seen; never advance the global baseline for files that remain foldable.
+- **F25-2** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:357`, `crates/c3/src/engines/claude_auth.rs:374` - Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed. Verify: Make endpoint-mode `auth status` report an in-repository projects directory and require refusal before spawn. Remedy: Probe the status facts for endpoint mode too, without reading or logging the token, and reject unsafe transcript locations.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815`, `crates/c3/src/liveness/pending.rs:297`, `crates/c3/src/liveness/pending.rs:902` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process. Verify: Run `test_pending_active_with` with the wrapper/helper synthetic table and require the record to remain active; repeat with a readable non-codex command line. Remedy: Scan full descendant relationships and treat unknown-start or command-line-unreadable/generic-runtime rows as blocking unless positive evidence proves they are unrelated.
+- **F30-2** (prior, not-checked) `crates/c3/src/engines/subprocess.rs:536`, `crates/c3/src/consult/orchestrate.rs:587`, `crates/c3/src/consult/orchestrate.rs:4927`, `crates/c3/src/consult/orchestrate.rs:5674` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues. Verify: Add a pause between `kill_tree_checked` and `KillSite::write`, terminate there, and separately inject `write_pending` errors before continuation or commit. Remedy: Persist the kill record synchronously from the kill path or an append-only sidecar before returning, and fail closed when that persistence fails.
+- **F31-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:668`, `crates/c3/src/telemetry/notspooled.rs:886`, `crates/c3/src/telemetry/notspooled.rs:950` - The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history. Verify: Run the RC1 schedule and compare the first record’s `not_spooled_seen`, the second record’s fold note, and the total accounting for the N lines. Remedy: Persist per-file seen byte/line prefixes or carry the fallback’s kept-file provenance into the next fold, and subtract those already-seen lines when folding a formerly-live producer.
+- **F36-1** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:425`, `crates/c3/src/engines/claude_auth.rs:540`, `crates/c3-core/src/paths.rs:41` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary. Verify: Run RC1 and assert the guard returns normally for the stated paths. Remedy: Use boundary-safe prefix comparison, such as str::get before comparing, or an appropriate path-component comparison; add the Unicode regression.
+- **F38-1** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:687`, `crates/c3/src/engines/subprocess.rs:912`, `crates/c3/src/liveness/pending.rs:1026`, `crates/c3/src/liveness/proc.rs:878`, `crates/c3-cli/tests/kill_record_durable.rs:589` - The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge. Verify: Run RC1 from Requested checks with an isolated process table or controlled Windows tree, proving the helper remains alive and requiring the restarted task to refuse before spawning another engine turn. Remedy: Make an interrupted launch remain conservatively blocked when complete kill evidence cannot be persisted. Establish that recovery obligation durably before spawning, or require explicit operator release of an unresolved launch record instead of treating these empty scans as proof of termination. Add the missing dead-intermediate regression.
+
+### Unproven scenarios
+
+- The entire 4cd8d18..05c4b9f release and all older findings were not independently re-reviewed.
+- Not every one of the sweep's 91 retained hits was independently traced.
+- The metadata-denial integration case uses an injected error; real Windows ACL and sharing-failure behavior was not exercised during this consultation.
+- No tests were executed during this read-only review; runtime conclusions rely on inspected fixture assertions and existing logs.
+- Independent runtime injection coverage for panel member acceptance and findings mutation under inspection failures was not established.
+
+### First-run checklist (observable)
+
+- [ ] Record the tested binary's version and build revision, and observe the intended reviewer, engine, and launcher in the run output.
+- [ ] Observe a real engine turn and a usable persisted reply with a matching consultation ID and ledger entry; exit 0 alone is insufficient.
+- [ ] With recovery-copy inspection denied, observe the path-specific refusal and nonzero exit, no new engine-turn marker, the helper still alive, and the evidence files retained.
+- [ ] After restoring inspection, observe refusal while the helper lives; after it exits, observe recovery-copy consumption and a new engine turn.
+- [ ] If an operator kick cannot persist kill evidence anywhere, observe 'not killed', the live root PID, and kick exit 1 rather than a stopped-success message.
