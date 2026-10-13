@@ -215,6 +215,95 @@ The round-3 acceptance (`handoffs/40-codex-0.2.0-acceptance-round3.md`, HOLD) fo
   PowerShell 5.1, `HARNESS.lock`): harness-pending 26/0, harness-fixes 56/0. Counts and log paths:
   `.collab/parity-0.6.1-2026-10-08/wave7c-STATE.md`.
 
+## 7d: a record that cannot be inspected is no absent record (handoff 42, F42-1, and the sweep)
+
+The round-4 acceptance (`handoffs/42-codex-0.2.0-acceptance-round4.md`, HOLD) found the same gap
+one level down from 7c: `read_pending_file` asked `Path::exists()`, which turns a metadata error
+into `false`, so a copy the listing found but whose metadata lookup then failed read as ABSENT -
+the recovery, the findings refusal and `-List` skipped it, and a helper named only in that copy
+could be released.
+
+- **The rule, for every recovery-evidence file** (the recovery record, its fallback
+  `-kill.json`, the codex home copies, the running record): only `NotFound` - of the metadata
+  lookup or of the read - means absent. Any other error is an INSPECTION FAILURE:
+  `read_pending_file` returns `exists: true`, no record, and `the recovery record <path> cannot be
+  read (<error>): the task is refused until it can be read` (`record_read_refusal`). A record that
+  is empty, not UTF-8, does not parse, is not a JSON object or has an unknown state stays
+  unusable (the plugin's text) - refused, never "no record". Every reader refuses on it: the
+  consult recovery (real run and dry run), the panel's (both passes), the findings status change
+  and rating (`read_task_pending_records`, which reads the error before the absence), the kick
+  (exit 1; `kick_record` reads every record - an unreadable one may be the one naming the member),
+  `findings -List` (a `pending:` line). Test hook (test mode only):
+  `CODEX_CONSULT_TEST_COPY_META_FAIL=denied` - the metadata lookup of a file in
+  `<codex home>/c3/pending-kill` fails with `PermissionDenied`, after the listing found it.
+- **The task directory's own listing** (`pending_paths_with`): 7c kept the plugin's
+  `Get-PendingPaths` rule there; it now follows the copies' rule - the directory absent is no
+  records, a failure to open it or to read an entry is `the recovery records under <dir> cannot be
+  listed (<error>): the task is refused until they can be read` in `PendingPaths::error`.
+- **Proof (RC1 of reply 42).**
+  `kill_record_durable::rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_copy`
+  gains a third phase beside 7c's `denied` and `iter`: the listing succeeds and finds the copy,
+  its metadata lookup fails (`CODEX_CONSULT_TEST_COPY_META_FAIL=denied`) - the next run exits 1
+  with the refusal naming the copy and the error before any engine turn (no turn marker), the
+  helper alive, the copy and the launch record kept; the dry run refuses the same, `findings
+  -List` shows it as `pending:`, the kick refuses on it (exit 1). Access restored, the run is
+  refused naming the helper; the helper gone, the copy is consumed and the turn runs. Unit level:
+  `pending::tests::a_recovery_record_that_cannot_be_inspected_is_never_absent` (the injected
+  `PermissionDenied`, `NotFound` real and injected, a directory where the record goes, the
+  unusable bodies, the task directory absent and not a directory, an unresolvable collab
+  directory), `kick::tests::a_kick_refuses_on_a_record_it_cannot_inspect`.
+- **The sweep.** `crates/c3/src/liveness/pending.rs`, `consult/recovery.rs`, `consult/kick.rs`,
+  `findings_tool/`, `panel/` and the recovery parts of `consult/orchestrate.rs` (non-test code)
+  were searched for every conversion of an IO error into absence or emptiness (`.exists()`,
+  `.is_file()`, `.is_dir()`, `.ok()`, `unwrap_or_default()`, `unwrap_or(Vec::new())`, `if let
+  Ok(`, `.flatten()` on `read_dir`, `filter_map(Result::ok)`, `metadata(..).is_ok()`), plus the
+  readers of `read_pending_file` by reading. Every hit and its verdict:
+  `.collab/parity-0.6.1-2026-10-08/wave7d-STATE.md`.
+
+  | File | Hits | Fixed | Left |
+  |---|---|---|---|
+  | `liveness/pending.rs` | 17 | 7 | 10 |
+  | `consult/recovery.rs` | 6 + 1 read | 1 | 6 |
+  | `consult/kick.rs` | 4 + 1 read | 2 | 3 |
+  | `findings_tool/mod.rs` | 17 + 2 read | 1 | 18 |
+  | `findings_tool/revision.rs` | 3 | 0 | 3 |
+  | `panel/` (`roles.rs` 12, `routing.rs` 7, `run.rs` 30 + 3 read) | 52 | 2 | 50 |
+  | `consult/orchestrate.rs` (recovery parts) | 7 | 6 | 1 |
+  | **Total** | **110** | **19** | **91** |
+
+  Fixed (recovery evidence): `read_pending_file` (`exists()`, `read_to_string().unwrap_or_default()`
+  - F42-1); the task directory's listing (`if let Ok(read_dir)`, `.flatten()`); the copies'
+  attribution read (`read().ok()`, parse `.ok()`: unreadable or unparsable, a copy is attributed by
+  its name - `<task>-<uuid>.json` - listed and refused, never dropped) and `same_dir` (a collab
+  directory that cannot be resolved for a reason other than its absence counts as the task's:
+  fail-closed); the consult and panel recovery and `read_task_pending_records` through
+  `read_pending_file` (recovery.rs `None => continue`); the kick (the task directory's `is_dir()`:
+  only `NotFound` is "no task directory"; its record loop ignored `rd.error`); `-List` (the error
+  read before the absence); the panel's unused-record pass (an unreadable member record was
+  reported "stay unused": now kept, named, state `unreadable`) and the member's record state; the
+  record before a kill (`before_kill`: a record on disk that cannot be inspected or read back is no
+  longer replaced by one built on the run's record - it may name what an earlier kill left; the
+  record before the kill goes to the fallback, then the copy, the inspection failure standing for
+  the record's write error); the panel member's accept (`member_early_accept`'s `is_file()` and
+  `from_value().unwrap_or_default()`, `member_accept`'s `read().ok()...unwrap_or_default()`: a
+  record that cannot be read or parsed refuses the member before its launch; a record that is gone
+  keeps the old reading). Left (not recovery evidence, or already fail-closed): value and
+  timestamp parses and file-name defaults; the liveness rules' timestamp parses (unparsable: no age
+  cut-off, already fail-closed); the sessions ledger (the recovered/cleared label, the orphan flags,
+  the panel's ledger entries); the findings store (its own refusal rules); lock owners (message
+  only); the kick request file; roster, brief, roles, templates, routing, member logs and the
+  panel's temp directory; `drop_copy`'s `exists()` (a removal guard - a lookup failure keeps the
+  copy, which the next run consumes); the panel's F15-3 check (already refuses on the error).
+- **Plugin.** The plugin's `Read-PendingFile` / `Get-PendingPaths` keep their reading (a plugin
+  0.6.1 bridge reads no codex home copy, 7b); C3 refuses where the plugin would read absence -
+  fail-closed only.
+- **Verified.** `cargo test -j 2 --no-fail-fast --workspace`: 795 tests (793 + 2: c3 lib 421 ->
+  423; the RC1 test extended), 794 passed, the known flaky `index::embed` loopback test green on
+  its rerun; RC1 showed the release (the copy consumed, the turn taken); clippy `--all-targets -D
+  warnings` and `cargo fmt --check` clean; through the shim (the wave-7 pinned v0.6.1 tree, Windows
+  PowerShell 5.1, `HARNESS.lock`): harness-pending 26/0, harness-fixes 56/0. Counts, log paths and
+  every hit of the sweep with its verdict: `.collab/parity-0.6.1-2026-10-08/wave7d-STATE.md`.
+
 ## Verification
 
 - `cargo test -j 2 --no-fail-fast --workspace`: 784 tests (baseline 772 + 12 new), 783 passed; the

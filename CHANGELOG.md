@@ -99,6 +99,13 @@ v0.6.1 harnesses through the shim (`docs/port/harness-shim.md`).
   absent directory is empty); a kick whose kill did not happen (its record written nowhere) is
   acknowledged `not killed` - the kick names the live root and why, says the tree is left alive and
   the task refused, and exits 1.
+- Wave 7d (`wave7-acceptance-fixes.md`, "7d"), acceptance round 4 (F42-1) and a sweep of the
+  family: a recovery record - the record, its fallback, a codex home copy, the running record -
+  whose metadata lookup, read or parse fails is an inspection failure, never an absent record (only
+  `NotFound` is): every reader refuses naming the file and the error (`the recovery record <path>
+  cannot be read (<error>): the task is refused until it can be read`; `-List` prints it as
+  `pending:`, the kick exits 1); the task directory's own listing that fails refuses the same way;
+  the record before a kill never replaces a record that cannot be read.
 
 ### Changed
 
