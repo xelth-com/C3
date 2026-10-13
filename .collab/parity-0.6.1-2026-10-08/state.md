@@ -141,3 +141,5 @@ Goal: know which worker tier (opus / sonnet / haiku / other) did what kind of wo
 2026-10-13 23:00 - ROUND 4 (n=25, handoff 42): 252 s, 9 calls, 0.44M input, window 61 -> 76 %. HOLD: F42-1 blocker (read_pending_file uses Path::exists - a metadata error on a copy reads as absent). Wave 7d: fix it AND sweep every error-to-absence conversion in the recovery readers so the chain ends. Round 5 after the 23:37 window reset.
 
 BEFORE IMPLEMENTING the two planned waves above (worker telemetry; wave 31 "watch" - event-driven wakes) the operator wants a CONSILIUM first (2026-10-13 23:05): a framing panel (`-Panel -Purpose framing`, the full roster incl. Astra, Kimi, MiMo, GLM, Gemini, Muse) on one brief per topic - the design as written here, the open questions (what the SubagentStop hook really carries; what to count so a Sonnet-max and an Opus-max user can compare; the watch deadline rules and the cache TTL) - and the design is revised on the panel's answers before any worker starts.
+
+2026-10-13 23:38 - wave 7d merged (05c4b9f; F42-1 implemented; the sweep 110/19/91; 795 tests). Round 5 brief 43 after the 23:37:59 window reset.

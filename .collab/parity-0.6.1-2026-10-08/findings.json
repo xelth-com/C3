@@ -8912,7 +8912,7 @@
                      },
                      {
                          "id":  "F42-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -8971,6 +8971,15 @@
                                              "evidence":  "",
                                              "base_commit":  "43bc331acc2020158da9cfa9f4ac291a4bedbb24",
                                              "tree_sha256":  "e2887e0353a296334962daf0208c2e677a28e994ee1e80571f7209c13b485d6d"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T23:37:33+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7d (05c4b9f): only NotFound is absent; the sweep table in docs/port/wave7-acceptance-fixes.md 7d",
+                                             "evidence":  "",
+                                             "base_commit":  "05c4b9f0b49b8158f54376da078ffde1d89c5a16",
+                                             "tree_sha256":  "ef2e07a60f5d9d76a98a1dbf987ac264b755ba3b423e2c1439d5a6881834b5f0"
                                          }
                                      ],
                          "reviewer_checks":  [
