@@ -1,0 +1,113 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Directory enumeration and kick acknowledgement are fixed, but a copy-file metadata error can still hide durable recovery evidence and release the task.",
+  "reply_markdown": "**Q1.** Yes—finding #1. After successful directory enumeration, `read_pending_file` calls `Path::exists()`. A metadata error becomes `false`, producing no record and no error. `recovery::assess` silently skips that copy. If it alone names the surviving helper, recovery can release the task. This is distinct from F40-1’s directory-enumeration failure.\n\nF40-1’s original trigger is fixed: directory-open and entry-iteration errors propagate to refusal. F40-2 is also fixed: both kick sites acknowledge `not killed`, and the caller reports the live root and exits 1. Existing test logs contain passing entries for both targeted integration tests and the three unit tests; I did not execute them.\n\n**Q2. HOLD** on finding #1; do not tag yet.\n\nI read handoffs 33/37/39/41, wave-note sections 7b/7c, the changelog delta, all non-`.collab` changed hunks, and targeted recovery/caller context. I did not review the `.collab` administrative delta, the whole release, older findings’ implementations, or complete verification logs. Context reads used the working tree, whose HEAD is `43bc331`; the requested diff was explicitly `098c29e..98a8742`.\n\n## Requested checks\n\n- **RC1:** In `C:\\Users\\Dmytro\\C3`, extend the existing RC1 helper-survival fixture to inject `PermissionDenied` at the copy-file metadata lookup after successful enumeration, then restart with the same `CODEX_HOME`. Permission: workspace-write. Require an inspection refusal, retained copy, live helper, and no engine-turn marker; restore access and verify refusal names the helper. Settles finding #1. Budget: one fixture, 30 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 306
+        },
+        {
+          "path": "crates/c3/src/consult/recovery.rs",
+          "line": 88
+        },
+        {
+          "path": "crates/c3/src/liveness/pending.rs",
+          "line": 380
+        }
+      ],
+      "claim": "A metadata inspection error on an enumerated recovery copy is treated as absence. read_pending_file uses Path::exists(), which converts metadata errors to false, and returns exists=false with no error. Recovery and findings checks then skip the copy, potentially releasing a task while a helper named only in that durable copy remains alive.",
+      "trigger": "The Codex-home copy directory enumerates successfully, but metadata lookup for a listed copy fails, for example through a transient access failure after enumeration. The copy alone names a surviving generic helper; the collab launch record names dead ancestors and no independent process match blocks recovery.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/pending.rs:249-274,305-313",
+          "observation": "Copy discovery retains matching paths, including unreadable UUID-named copies, but read_pending_file subsequently returns an error-free absent result when path.exists() is false."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/recovery.rs:80-91; crates/c3/src/liveness/pending.rs:372-382",
+          "observation": "Recovery continues when the returned record is None; findings checks continue when exists is false."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Path::exists() error semantics and the recovery control flow",
+          "observation": "A metadata failure is indistinguishable from absence at this branch. If the skipped copy contains the only surviving-helper evidence, its liveness is never checked. This filesystem failure was not reproduced during the read-only review."
+        }
+      ],
+      "verification": "Extend the existing RC1 integration fixture with a metadata-error injection after successful copy enumeration; require restart refusal before any engine-turn marker while the helper remains alive.",
+      "remedy": "Replace the boolean existence precheck with an error-preserving read or metadata operation. Treat only a confirmed NotFound as absence; propagate other errors as unusable-record inspection failures. Add the copy-file failure fixture alongside the directory-error tests.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Older telemetry implementation outside this round's reviewed delta."},
+    {"id":"F02-3","status":"not-checked","note":"Older deletion implementation not revalidated."},
+    {"id":"F02-4","status":"not-checked","note":"Harness coverage map not revalidated."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction ordering not revalidated."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt anchor implementation not revalidated."},
+    {"id":"F02-7","status":"not-checked","note":"Plan identity implementation not revalidated."},
+    {"id":"F02-8","status":"not-checked","note":"Native-route benchmark not reviewed; handoff 33 excludes native Messages from this release."},
+    {"id":"F04-1","status":"not-checked","note":"Unicode process classifier not revalidated."},
+    {"id":"F04-2","status":"not-checked","note":"Production Windows DST behavior not revalidated."},
+    {"id":"F04-3","status":"not-checked","note":"Required-light ledger metadata not revalidated."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa normalization not revalidated."},
+    {"id":"F09-1","status":"not-checked","note":"Unicode configuration handling not revalidated."},
+    {"id":"F09-2","status":"not-checked","note":"Flush/deletion locking not revalidated."},
+    {"id":"F09-3","status":"not-checked","note":"Recoverable deletion cleanup not revalidated."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread failure handling not revalidated."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy event sanitization not revalidated."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor inference not revalidated."},
+    {"id":"F11-1","status":"not-checked","note":"Health journal I/O failure handling not revalidated."},
+    {"id":"F11-2","status":"not-checked","note":"Required-reviewer launcher propagation not revalidated."},
+    {"id":"F11-3","status":"not-checked","note":"Shared-plan quota evaluation not revalidated."},
+    {"id":"F11-4","status":"not-checked","note":"PowerShell hook pointer not revalidated."},
+    {"id":"F11-5","status":"not-checked","note":"AGY tool stall allowance not revalidated."},
+    {"id":"F14-1","status":"not-checked","note":"Local-only deletion transaction not revalidated."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization not revalidated."},
+    {"id":"F19-2","status":"not-checked","note":"Unreadable salt cleanup not revalidated."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key sanitization not revalidated."},
+    {"id":"F22-1","status":"not-checked","note":"Durable journal replay deduplication not revalidated."},
+    {"id":"F23-1","status":"not-checked","note":"Process metadata lookup failure handling not revalidated."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown creation-time scan behavior not revalidated."},
+    {"id":"F23-3","status":"not-checked","note":"Pre-kill durability described in wave 7b; its implementation was not re-reviewed."},
+    {"id":"F23-4","status":"not-checked","note":"Earlier deterministic recovery fixtures not revalidated."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa tests not reviewed."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled fallback accounting not revalidated."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated suffix accounting not revalidated."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent not-spooled cleanup not revalidated."},
+    {"id":"F24-4","status":"not-checked","note":"Unseen-suffix status reporting not revalidated."},
+    {"id":"F24-5","status":"not-checked","note":"P8 marker, layout and mixed-bridge coverage not revalidated."},
+    {"id":"F24-6","status":"not-checked","note":"Second fold-record rewrite failure not revalidated."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript-location guard not revalidated."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case normalization not revalidated."},
+    {"id":"F25-4","status":"not-checked","note":"Child environment Debug redaction not revalidated."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree helper classification not revalidated."},
+    {"id":"F30-2","status":"not-checked","note":"Pre-kill write policy documented, but all kill sites and failure branches were not re-reviewed."},
+    {"id":"F30-3","status":"not-checked","note":"Continuation and repair durability fixtures not revalidated."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer accounting not revalidated."},
+    {"id":"F36-1","status":"not-checked","note":"Handoff reports fixed; Unicode path implementation not re-reviewed."},
+    {"id":"F36-2","status":"not-checked","note":"Handoff reports fixed; NFC guard implementation not re-reviewed."},
+    {"id":"F38-1","status":"not-checked","note":"Wave 7b policy and RC1 context read; complete pre-kill implementation not revalidated."},
+    {"id":"F40-1","status":"fixed","note":"Original directory-open and entry-iteration failures now propagate through PendingPaths.error to refusal. Reviewed tests and existing passing log entries. Finding #1 concerns the separate copy-file metadata path."},
+    {"id":"F40-2","status":"fixed","note":"Both kick sites emit not killed for KillCheck.not_killed; the caller reports the live root and returns 1. Reviewed integration assertions and existing passing test log."}
+  ],
+  "unproven": [
+    "The copy-file metadata-error schedule in finding #1 has not been executed.",
+    "Tests were inspected and existing logs sampled, not rerun; the complete suite and reported flaky-test rerun were not independently verified.",
+    "Panel passes and findings mutation consumers were traced through shared error handling, but no fresh end-to-end failure runs were performed.",
+    "Older findings and the full compatibility release were not revalidated in this bounded review.",
+    "Targeted surrounding-code reads used working-tree HEAD 43bc331; unchanged context was not independently compared with 98a8742.",
+    "Documented mixed-bridge limits remain: plugin 0.6.1 does not recognize C3's not killed acknowledgement or discover Codex-home recovery copies."
+  ],
+  "first_run_checklist": [
+    "With a surviving helper and unreadable recovery evidence, observe an inspection refusal naming the affected directory or file, a nonzero exit, retained recovery evidence, and no engine-turn marker.",
+    "After restoring access, observe refusal naming the surviving helper PID; only after that helper exits should recovery consume the copy and a new engine-turn marker appear.",
+    "When all three pre-kill writes fail during a kick, observe result=not killed, the live root PID and failure reason, kick exit 1, root still alive, and no committed consultation.",
+    "On the first ordinary successful run, verify the expected reviewer actually executed, produced a usable reply, and committed the corresponding ledger entry; exit 0 alone is insufficient."
+  ]
+}

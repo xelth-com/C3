@@ -137,3 +137,5 @@ Goal: know which worker tier (opus / sonnet / haiku / other) did what kind of wo
   pseudonymous keys). Order: after v0.2.0 - C3 wave "worker telemetry", the plugin mirror, the intake + page.
 
 2026-10-13 22:50 - wave 7c merged (98a8742; F40-1, F40-2 implemented; 793 tests). Round 4 brief 41 launched (window ~61 % before; -Budget 85; resets 23:37).
+
+2026-10-13 23:00 - ROUND 4 (n=25, handoff 42): 252 s, 9 calls, 0.44M input, window 61 -> 76 %. HOLD: F42-1 blocker (read_pending_file uses Path::exists - a metadata error on a copy reads as absent). Wave 7d: fix it AND sweep every error-to-absence conversion in the recovery readers so the chain ends. Round 5 after the 23:37 window reset.
