@@ -102,3 +102,5 @@ as a chore reviewer); one c3-cli compiler warning (the German linker note, `link
 (RC4 benchmark for a native Messages route, SurrealDB-derived views) is NOT started.
 
 Idle since 2026-10-09 18:15; idle wake 2 at 19:15 - the handover is this section, the 30-minute wake removed. Resume on Wed 2026-10-14 after 11:37 with a fresh session from this file (the command above).
+
+2026-10-13 13:36 - the operator asked to finish now; a one-word probe of openai :: gpt-6-astra answered, so the acceptance (handoff 33) was launched with -SkipPreflight past the stale weekly-cap record: n=20 FAILED after 186 s of reading - the 5-hour window ("try again at 6:32 PM"); partial in handoffs/34-...partial.md, thread 01a13509-4ed9-7683-8305-9856ed1db1aa. Resume at 18:36: `-Mode resume -Thread 01a13509-4ed9-7683-8305-9856ed1db1aa -Purpose acceptance -ReplyName 0.2.0-acceptance -Range 4cd8d18..09b9d25 -SkipPreflight -Prompt "finish your review"` (-Detach). Not rated (no reply; plugin T12).
