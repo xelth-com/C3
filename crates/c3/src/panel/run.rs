@@ -35,6 +35,9 @@ use super::plan::{self, MemberInput, PanelPlan, PanelRoutingResult, RoutingRecor
 use super::routing::Rating;
 
 const TOOL: &str = "codex-consult";
+/// (Wave 7d, F42-1 sweep) The state a member's recovery record is reported in when it cannot be
+/// inspected or is unusable (the record is kept; the next run of the task refuses on it).
+const UNREADABLE_RECORD: &str = "unreadable";
 
 /// Run the panel path; return the process exit code.
 pub fn run(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
@@ -1320,7 +1323,15 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     if !dry {
         for s in &mut slots {
             let rd = crate::liveness::pending::read_pending_file(&s.record_path);
-            if rd.error.is_some() || rd.record.is_none() {
+            // (wave 7d, F42-1 sweep) a record that cannot be inspected (or is unusable) is kept
+            // and said so - never reported as absent ("stay unused")
+            if let Some(err) = &rd.error {
+                s.record_kept = true;
+                s.record_state = UNREADABLE_RECORD.to_string();
+                println!("{TOOL}: {err}");
+                continue;
+            }
+            if rd.record.is_none() {
                 continue;
             }
             let st = rd
@@ -1727,13 +1738,15 @@ fn complete_member(s: &mut Slot, store: &FilesStore, b: &Built, dry: bool) {
     if !dry {
         s.entry = find_panel_entry(store, &b.task, &b.panel_id, s.k);
         let rd = crate::liveness::pending::read_pending_file(&s.record_path);
-        s.record_state = rd
-            .record
-            .as_ref()
-            .and_then(|r| r.get("state"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        s.record_state = match (&rd.error, &rd.record) {
+            (Some(_), _) => UNREADABLE_RECORD.to_string(),
+            (None, record) => record
+                .as_ref()
+                .and_then(|r| r.get("state"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        };
     }
 }
 

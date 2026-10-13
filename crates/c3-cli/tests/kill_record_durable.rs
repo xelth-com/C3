@@ -32,6 +32,10 @@
 //! written nowhere is acknowledged `not killed`: the kick names the live root, claims no stop and
 //! fails; the tree stays alive.
 //!
+//! (Wave 7d, F42-1, RC1 of reply 42) A copy the listing found whose metadata lookup fails
+//! (`CODEX_CONSULT_TEST_COPY_META_FAIL=denied`) is no absent copy: the same inspection refusal,
+//! naming the copy and the error, from the run, the dry run, `findings -List` and the kick.
+//!
 //! Nothing reaches a real provider or intake. Windows only (the fake codex is a `.cmd` wrapper
 //! around a PowerShell script, as the plugin's `fake-codex3.cmd`).
 #![cfg(windows)]
@@ -1065,21 +1069,40 @@ fn rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_cop
     // `findings -List` shows it and the kick refuses on it
     let copy_dir = copy.parent().unwrap().to_path_buf();
     let nn = launch_rec["nn"].as_str().unwrap().to_string();
-    for (mode, why) in [
-        ("denied", "access is denied"),
-        ("iter", "an entry could not be read"),
-    ] {
-        let failure = format!(
+    let listing = |mode: &str, why: &str| {
+        format!(
             "the recovery copies under {} cannot be listed ({why} (test hook CODEX_CONSULT_TEST_COPY_DIR_FAIL={mode})): the task is refused until they can be read",
             copy_dir.display()
-        );
+        )
+    };
+    // (wave 7d, F42-1; RC1 of reply 42) the listing succeeds and finds the copy, the copy's
+    // metadata lookup fails (PermissionDenied): the copy is no absent record - the same refusal,
+    // naming the copy and the error
+    let meta_failure = format!(
+        "the recovery record {} cannot be read (access is denied (test hook CODEX_CONSULT_TEST_COPY_META_FAIL=denied)): the task is refused until it can be read",
+        copy.display()
+    );
+    for (hook, value, failure) in [
+        (
+            "CODEX_CONSULT_TEST_COPY_DIR_FAIL",
+            "denied",
+            listing("denied", "access is denied"),
+        ),
+        (
+            "CODEX_CONSULT_TEST_COPY_DIR_FAIL",
+            "iter",
+            listing("iter", "an entry could not be read"),
+        ),
+        ("CODEX_CONSULT_TEST_COPY_META_FAIL", "denied", meta_failure),
+    ] {
+        let mode = format!("{hook}={value}");
         let blind = launch(
             &work,
             &["--timeout-sec", "30"],
             &[
                 ("FAKE_MAIN", "prose"),
                 ("FAKE_TURN_FILE", turns_s.as_str()),
-                ("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode),
+                (hook, value),
             ],
             true,
         )
@@ -1096,10 +1119,7 @@ fn rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_cop
         let dry = launch(
             &work,
             &["--dry-run"],
-            &[
-                ("FAKE_MAIN", "prose"),
-                ("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode),
-            ],
+            &[("FAKE_MAIN", "prose"), (hook, value)],
             true,
         )
         .child
@@ -1111,7 +1131,7 @@ fn rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_cop
         let list = c3_other(
             &work,
             &["findings", "--task", "t", "--list"],
-            &[("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode)],
+            &[(hook, value)],
         );
         let list_text = output_text(&list);
         assert!(
@@ -1121,7 +1141,7 @@ fn rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_cop
         let kick = c3_other(
             &work,
             &["consult", "--task", "t", "--kick", "--member", &nn],
-            &[("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode)],
+            &[(hook, value)],
         );
         let kick_text = output_text(&kick);
         assert_eq!(kick.status.code(), Some(1), "{mode}: {kick_text}");
@@ -1130,7 +1150,8 @@ fn rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_cop
             "{mode}: {kick_text}"
         );
     }
-    // enumeration restored - the next run: refused before any engine turn, naming the helper
+    // enumeration and the lookup restored - the next run: refused before any engine turn, naming
+    // the helper
     let next = launch(
         &work,
         &["--timeout-sec", "30"],

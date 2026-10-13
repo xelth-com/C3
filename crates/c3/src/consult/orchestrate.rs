@@ -745,7 +745,8 @@ impl KillSite {
     /// The write before the kill; (wave 7, F30-2) a failed one retried ONCE into the fallback file,
     /// (wave 7b, F38-1) that failing too, into the codex home's copy, and what it came to returned
     /// to the killer: all three failing, [`crate::engines::subprocess::KillRecord::Lost`] with the
-    /// three errors - the killer leaves the tree alive.
+    /// three errors - the killer leaves the tree alive. (Wave 7d, F42-1 sweep) A record on disk
+    /// that cannot be inspected is not replaced: it counts as the record's failed write.
     fn before_kill(
         &self,
         turn: &str,
@@ -754,20 +755,39 @@ impl KillSite {
     ) -> crate::engines::subprocess::KillRecord {
         use crate::engines::subprocess::KillRecord;
         let path = store_pending_path(&self.store, &self.pending);
-        let prior = crate::liveness::pending::read_pending_file(&path)
-            .record
-            .and_then(|v| serde_json::from_value::<PendingRecord>(v).ok())
-            .unwrap_or_else(|| {
-                let mut r = self.on.clone();
-                r.state = PendingState::Running;
-                r.child_pid = Some(root);
-                r
-            });
+        let on_run = || {
+            let mut r = self.on.clone();
+            r.state = PendingState::Running;
+            r.child_pid = Some(root);
+            r
+        };
+        // (wave 7d, F42-1 sweep) the record on disk absent: built on the run's record; one that
+        // cannot be inspected (or read back as a record) is NOT replaced - it may name what an
+        // earlier kill left: the record before the kill (built on the run's record) goes to its
+        // fallback, then to the copy, the inspection failure standing for the record's write error
+        let rd = crate::liveness::pending::read_pending_file(&path);
+        let (prior, uninspected) = match (rd.error, rd.record) {
+            (Some(e), _) => (on_run(), Some(e)),
+            (None, Some(v)) => match serde_json::from_value::<PendingRecord>(v) {
+                Ok(r) => (r, None),
+                Err(e) => (
+                    on_run(),
+                    Some(crate::liveness::pending::record_read_refusal(
+                        &path,
+                        &std::io::Error::other(format!("it does not read back as a record: {e}")),
+                    )),
+                ),
+            },
+            (None, None) => (on_run(), None),
+        };
         let record = pre_kill_record(&prior, turn, root, tree);
-        let written = self
-            .store
-            .write_pending(&self.pending, &record)
-            .map_err(|e| c3_core::one_line(&e.to_string()));
+        let written = match uninspected {
+            Some(e) => Err(c3_core::one_line(&e)),
+            None => self
+                .store
+                .write_pending(&self.pending, &record)
+                .map_err(|e| c3_core::one_line(&e.to_string())),
+        };
         let mut fallback: Option<PathBuf> = None;
         let mut copy: Option<PathBuf> = None;
         let outcome = match &written {
@@ -1853,11 +1873,21 @@ fn member_early_accept(mo: &Options, m: &crate::panel::member::MemberSpec) -> Re
     let pending = PendingRef::member(task, m.nn as u32);
     let path = store_pending_path(&store, &pending);
     let started = "This panel member was not started.";
-    if !path.is_file() {
-        return Err(format!(
-            "this panel member's recovery record '{}' does not exist (the panel run writes it before it launches a member); this panel member was not started.",
-            path.display()
-        ));
+    // (wave 7d, F42-1 sweep) only an absent record (or no file) "does not exist"
+    match std::fs::metadata(&path) {
+        Ok(m) if m.is_file() => {}
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "could not read the recovery record '{}' ({e}). {started}",
+                path.display()
+            ))
+        }
+        _ => {
+            return Err(format!(
+                "this panel member's recovery record '{}' does not exist (the panel run writes it before it launches a member); this panel member was not started.",
+                path.display()
+            ))
+        }
     }
     let bytes = std::fs::read(&path).map_err(|e| {
         format!(
@@ -1918,7 +1948,13 @@ fn member_early_accept(mo: &Options, m: &crate::panel::member::MemberSpec) -> Re
         ));
     }
 
-    let mut rec: PendingRecord = serde_json::from_value(val).unwrap_or_default();
+    // (wave 7d, F42-1 sweep) a record that does not read back as one is unusable, never a default
+    let mut rec: PendingRecord = serde_json::from_value(val).map_err(|e| {
+        format!(
+            "the recovery record '{}' is unusable ({e}). {started}",
+            path.display()
+        )
+    })?;
     // The member rewrites the reserved record as its OWN (the writer-pid rule): its own pid when
     // the panel run launched it (the panel clears the bridge var for members), or the shim's pid
     // when a harness launched the member directly through the shim (SPEC).
@@ -5148,8 +5184,9 @@ fn json_str(v: &serde_json::Value, key: &str) -> String {
 /// Phase B of the panel-member accept (`codex-consult.ps1:3516-3524`): the record was already
 /// rewritten as this process's own and its parent verified alive by [`member_early_accept`]
 /// (before the preflight); reopen it and stamp this run's reply/consult id/launcher/engine. A
-/// missing/unreadable record here means it was withdrawn under this process (a race the caller
-/// treats as "not started"); the base record is used as-is.
+/// missing record here means it was withdrawn under this process; the base record is used as-is.
+/// (Wave 7d, F42-1 sweep) A record that cannot be read or parsed is no missing one: the member is
+/// refused before its launch (`Err`), the record kept.
 fn member_accept(
     store: &FilesStore,
     ctx: &Context,
@@ -5158,10 +5195,22 @@ fn member_accept(
     reply_rel: &str,
 ) -> Result<PendingRecord, String> {
     let path = store_pending_path(store, pending);
-    let mut rec: PendingRecord = std::fs::read(&path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default();
+    let started = "This panel member was not started.";
+    let mut rec: PendingRecord = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| {
+            format!(
+                "the recovery record '{}' is unusable ({e}). {started}",
+                path.display()
+            )
+        })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => PendingRecord::default(),
+        Err(e) => {
+            return Err(format!(
+                "could not read the recovery record '{}' ({e}). {started}",
+                path.display()
+            ))
+        }
+    };
     rec.reply = reply_rel.to_string();
     rec.consult_id = ctx.consult_id.clone();
     rec.launcher = if ctx.is_codex() {

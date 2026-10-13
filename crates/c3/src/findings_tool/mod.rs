@@ -287,7 +287,9 @@ fn read_ledger(sessions_path: &Path) -> Vec<Value> {
 
 /// `Write-PendingLine`: one line per interrupted consultation of the task. (Wave 7c, F40-1) The
 /// codex home's kill records that cannot be listed: a `pending:` line naming the directory and the
-/// error first (a status change or a rating is refused on it).
+/// error first (a status change or a rating is refused on it). (Wave 7d, F42-1) A record that
+/// cannot be inspected: a `pending:` line naming it and the error (its error is read before its
+/// absence - only a record that is gone is skipped).
 fn write_pending_line(task_dir: &Path) {
     let listed = pending::pending_paths(task_dir);
     if let Some(err) = &listed.error {
@@ -295,11 +297,11 @@ fn write_pending_line(task_dir: &Path) {
     }
     for path in listed.paths {
         let rd = pending::read_pending_file(&path);
-        if !rd.exists {
-            continue;
-        }
         if let Some(err) = rd.error {
             println!("pending: {err}");
+            continue;
+        }
+        if !rd.exists {
             continue;
         }
         let r = match rd.record {

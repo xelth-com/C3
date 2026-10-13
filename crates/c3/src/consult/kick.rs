@@ -9,8 +9,9 @@
 //! was taken live or LATE), `1` no such member / not running (a stale kick file of that number is
 //! removed) - (wave 7c, F40-1) or the task's recovery records cannot be listed, and (F40-2) a kick
 //! acknowledged `not killed` (the kill's record could be written nowhere: the tree is left alive and
-//! the task refused) - `3` no acknowledgement in time (the kick file stays for the member's next
-//! poll), `4` the command is misused.
+//! the task refused), and (wave 7d, F42-1) one of the task's recovery records cannot be inspected -
+//! `3` no acknowledgement in time (the kick file stays for the member's next poll), `4` the command
+//! is misused.
 
 use std::path::Path;
 
@@ -67,8 +68,17 @@ pub fn run(o: &Options) -> i32 {
     let repo = providers::resolve_repo_root(&cwd);
     let collab = providers::resolve_collab_root(&repo, &o.collab_dir);
     let task_dir = collab.join(&o.task);
-    if !task_dir.is_dir() {
-        return fail(&format!("no task directory '{}'.", task_dir.display()));
+    // (wave 7d, F42-1 sweep) only an absent task directory is "no task directory"
+    match std::fs::metadata(&task_dir) {
+        Ok(m) if m.is_dir() => {}
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            let why = c3_core::one_line(&e.to_string());
+            return fail(&format!(
+                "the task directory {} cannot be read ({why}): the kick is refused until it can be read.",
+                task_dir.display()
+            ));
+        }
+        _ => return fail(&format!("no task directory '{}'.", task_dir.display())),
     }
 
     // A detached run named by -Id: the member must be one of ITS members, running.
@@ -98,24 +108,12 @@ pub fn run(o: &Options) -> i32 {
 
     // The run's recovery record: a member's `.consult.pending-<NN>.json`, a single run's
     // `.consult.pending.json`. It must name NN, be `running`, and its engine child alive.
-    // (Wave 7c, F40-1) records that cannot all be listed refuse the kick, as any consumer.
-    let mut record: Option<serde_json::Value> = None;
-    let listed = pending::pending_paths(&task_dir);
-    if let Some(err) = listed.error {
-        return fail(&err);
-    }
-    for p in listed.paths {
-        let rd = pending::read_pending_file(&p);
-        if let Some(rec) = rd.record {
-            if rec.get("nn").and_then(|v| v.as_str()) == Some(nn.as_str()) {
-                record = Some(rec);
-                break;
-            }
-        }
-    }
-    let record = match record {
-        Some(r) => r,
-        None => {
+    // (Wave 7c, F40-1) records that cannot all be listed refuse the kick, as any consumer; (wave
+    // 7d, F42-1) so does a record that cannot be inspected or is unusable.
+    let record = match kick_record(pending::pending_paths(&task_dir), &nn) {
+        Err(err) => return fail(&err),
+        Ok(Some(r)) => r,
+        Ok(None) => {
             return fail(&format!(
                 "no run with handoff {nn} is in progress in task {} (no recovery record names it).",
                 o.task
@@ -266,9 +264,77 @@ fn not_killed_text(nn: &str, task: &str, ack: &crate::engines::subprocess::KickA
     )
 }
 
+/// The recovery record that names the handoff `nn` among the task's records `listed`. (Wave 7c,
+/// F40-1) A listing that failed is the error; (wave 7d, F42-1) so is ANY record that cannot be
+/// inspected or is unusable ([`pending::read_pending_file`]'s error) - it may be the one naming
+/// `nn`, so the kick refuses on it rather than report "no run in progress"; every record is read.
+fn kick_record(
+    listed: pending::PendingPaths,
+    nn: &str,
+) -> Result<Option<serde_json::Value>, String> {
+    if let Some(err) = listed.error {
+        return Err(err);
+    }
+    let mut record: Option<serde_json::Value> = None;
+    for p in listed.paths {
+        let rd = pending::read_pending_file(&p);
+        if let Some(err) = rd.error {
+            return Err(err);
+        }
+        if let Some(rec) = rd.record {
+            if record.is_none() && rec.get("nn").and_then(|v| v.as_str()) == Some(nn) {
+                record = Some(rec);
+            }
+        }
+    }
+    Ok(record)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (Wave 7d, F42-1) The kick refuses on a record it cannot inspect (a directory where a record
+    /// goes) or an unusable one, whether or not another record names the member; a record that is
+    /// gone is no refusal.
+    #[test]
+    fn a_kick_refuses_on_a_record_it_cannot_inspect() {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-kick-records-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mine = dir.join(".consult.pending-03.json");
+        std::fs::write(&mine, r#"{"state":"running","nn":"03"}"#).unwrap();
+        let other = dir.join(".consult.pending-04.json");
+        let listed = |paths: Vec<std::path::PathBuf>| pending::PendingPaths { paths, error: None };
+        let found = kick_record(listed(vec![mine.clone(), other.clone()]), "03").unwrap();
+        assert_eq!(
+            found.unwrap()["nn"],
+            "03",
+            "a record that is gone is no refusal"
+        );
+        std::fs::create_dir_all(&other).unwrap();
+        let e = kick_record(listed(vec![mine.clone(), other.clone()]), "03").unwrap_err();
+        assert!(
+            e.starts_with(&format!(
+                "the recovery record {} cannot be read (",
+                other.display()
+            )),
+            "{e}"
+        );
+        std::fs::remove_dir_all(&other).unwrap();
+        std::fs::write(&other, "{ not json").unwrap();
+        let e = kick_record(listed(vec![other.clone(), mine.clone()]), "03").unwrap_err();
+        assert!(e.contains("is unusable"), "{e}");
+        let failed = pending::PendingPaths {
+            paths: vec![mine],
+            error: Some("the listing failed".into()),
+        };
+        assert_eq!(kick_record(failed, "03").unwrap_err(), "the listing failed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// (Wave 7c, F40-2) The report of a `not killed` acknowledgement names the live root and why,
     /// says the tree is left alive and the task refused, and claims no stop.
