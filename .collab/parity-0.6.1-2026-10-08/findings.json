@@ -8353,7 +8353,7 @@
                      },
                      {
                          "id":  "F40-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -8417,6 +8417,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a73d3e6d90bd017e0597cbd001206086b340ca1c",
                                              "tree_sha256":  "aef3a21b4d887203afcc66a02bdf2fd423cd688259f1826c756b551540737c68"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T22:48:11+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7c (98a8742): docs/port/wave7-acceptance-fixes.md 7c",
+                                             "evidence":  "",
+                                             "base_commit":  "98a8742bbe571074ff07cf71c102e6fef4bfb12a",
+                                             "tree_sha256":  "b583006eb295a87ac4b20976e3dbd658e67e70a2ca423e95802acd3667d9c9ae"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -8425,7 +8434,7 @@
                      },
                      {
                          "id":  "F40-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -8488,6 +8497,15 @@
                                              "evidence":  "",
                                              "base_commit":  "a73d3e6d90bd017e0597cbd001206086b340ca1c",
                                              "tree_sha256":  "aef3a21b4d887203afcc66a02bdf2fd423cd688259f1826c756b551540737c68"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T22:48:16+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7c (98a8742): docs/port/wave7-acceptance-fixes.md 7c",
+                                             "evidence":  "",
+                                             "base_commit":  "98a8742bbe571074ff07cf71c102e6fef4bfb12a",
+                                             "tree_sha256":  "b583006eb295a87ac4b20976e3dbd658e67e70a2ca423e95802acd3667d9c9ae"
                                          }
                                      ],
                          "reviewer_checks":  [

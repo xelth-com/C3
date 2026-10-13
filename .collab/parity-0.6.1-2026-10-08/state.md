@@ -135,3 +135,5 @@ Goal: know which worker tier (opus / sonnet / haiku / other) did what kind of wo
   share - so a user can see whether e.g. sonnet-worker finishes verification waves as often as opus-worker.
 - Cost: hook CPU only; the rating is optional. Privacy as the existing contract (closed classes, consult_ref-style
   pseudonymous keys). Order: after v0.2.0 - C3 wave "worker telemetry", the plugin mirror, the intake + page.
+
+2026-10-13 22:50 - wave 7c merged (98a8742; F40-1, F40-2 implemented; 793 tests). Round 4 brief 41 launched (window ~61 % before; -Budget 85; resets 23:37).
