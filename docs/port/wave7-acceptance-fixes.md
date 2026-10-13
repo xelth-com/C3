@@ -158,6 +158,63 @@ fail closed - NO KILL WITHOUT A RECORD.
   a plugin 0.6.1 bridge running the next consultation of a task judges the collab records only
   (the launch record; the fallback as a member-named record).
 
+## 7c: copies that cannot be listed, a kick that killed nothing (handoff 40, F40-1, F40-2)
+
+The round-3 acceptance (`handoffs/40-codex-0.2.0-acceptance-round3.md`, HOLD) found two gaps of 7b.
+
+- **F40-1 (blocker): an unlisted copy is no absent copy.** `kill_copy_paths` treated a failure to
+  open `<codex home>/c3/pending-kill` as "no copies" and dropped the entries it could not read
+  (`rd.flatten()`), so the one record naming a surviving helper - 7b's copy, the collab records
+  naming only the dead ancestors - could be skipped and the task released. Now the directory
+  absent (`NotFound`) is the only empty listing; any other error opening it or reading one of its
+  entries is an INSPECTION FAILURE: `kill_copy_paths` returns `Err`, and `pending_paths` carries it
+  beside the task's own records (`PendingPaths { paths, error }`). Every consumer refuses on it
+  before any record is judged - the consult recovery (real run and dry run), the panel's (both
+  passes), the findings status change and rating (`read_task_pending_records`), the kick (exit 1);
+  `findings -List` prints it as a `pending:` line. The text: `the recovery copies under <dir> cannot
+  be listed (<error>): the task is refused until they can be read`. Test hook (test mode only):
+  `CODEX_CONSULT_TEST_COPY_DIR_FAIL=denied` (opening the directory fails with `PermissionDenied`,
+  whether it exists or not) or `=iter` (it opens, reading its entries fails).
+- **F40-2 (minor): a kick that killed nothing says so.** The kicked turn acknowledged `stopped`
+  after `kill_now` whatever the kill did, so a kick whose kill record could be written nowhere
+  (7b: the tree left alive) made the `-Kick` command report the tree "being stopped" and exit 0.
+  Now the turn acknowledges by what its kill did (`acknowledge_taken_kick`): a kill with
+  `KillCheck::not_killed` writes `result=not killed` with `root=<pid>` and `reason=<why>` into
+  `<kick>.ack`; the command prints `-Kick: member <NN> of task <t> took the kick but was NOT
+  stopped - not killed (root pid <pid>): <why>. Its engine's process tree (root pid <pid>) is left
+  alive and the task is refused until it is gone or recorded; ...` to stderr, claims no stop and exits `1`
+  (the failure code of a kick that is not carried out: "no such member / not running"; `3` stays
+  "no acknowledgement", `4` misuse). The member's own outcome was already right (`failed: stopped
+  by the operator (-Kick) (not killed: ...)`, refused uncommitted when its record cannot be
+  written). A plugin 0.6.1 `-Kick` reads `stopped`|`late` only: it would not recognise a C3
+  member's `not killed` (the C3 kick does).
+- **Proof (RC1 and RC2 of reply 40).**
+  `kill_record_durable::rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_copy`
+  is extended: after the dry run shows the copy refusing on the helper, the same codex home is
+  read under `CODEX_CONSULT_TEST_COPY_DIR_FAIL=denied` and `=iter` - the next run exits 1 with the
+  inspection failure naming the directory and the error, before any engine turn (no turn marker),
+  the helper alive, the copy and the launch record kept; the dry run refuses the same,
+  `findings -List` shows it as `pending:`, the kick refuses on it. Enumeration restored, the run is
+  refused naming the helper; the helper stopped, the copy is consumed and the turn runs.
+  `..::rc2_f40_a_kick_whose_kill_record_is_written_nowhere_is_acknowledged_not_killed`: the
+  all-three-writes-fail fixture with the operator's kick instead of the timeout - the kick exits 1
+  naming the live root and the left-alive refusal, never "is being stopped"; root and intermediate
+  alive after the kick and after the run; the run failed `stopped by the operator (-Kick) (not
+  killed: ...)`, nothing committed. Unit level:
+  `pending::tests::a_kill_copy_directory_that_cannot_be_listed_is_an_inspection_failure` (absent:
+  empty; injected `PermissionDenied` with the directory absent and present; injected entry error;
+  a real one - the directory's path is a file), `subprocess::tests::a_kick_whose_kill_did_not_happen_is_acknowledged_not_killed`,
+  `kick::tests::a_not_killed_acknowledgement_is_reported_as_no_stop`.
+- **Unchanged.** The task directory's own listing (`.consult.pending*.json`) keeps the plugin's
+  rule (`Get-PendingPaths`); a run under another `CODEX_HOME` still does not see the copy (7b's
+  documented limit).
+- **Verified.** `cargo test -j 2 --no-fail-fast --workspace`: 793 tests (789 + 4: c3 lib 418 -> 421,
+  kill_record_durable 11 -> 12), 792 passed, the known flaky `index::embed` loopback test green on
+  its rerun; RC1 showed the release (the copy consumed, the turn taken); clippy `--all-targets -D
+  warnings` and `cargo fmt --check` clean; through the shim (the wave-7 pinned v0.6.1 tree, Windows
+  PowerShell 5.1, `HARNESS.lock`): harness-pending 26/0, harness-fixes 56/0. Counts and log paths:
+  `.collab/parity-0.6.1-2026-10-08/wave7c-STATE.md`.
+
 ## Verification
 
 - `cargo test -j 2 --no-fail-fast --workspace`: 784 tests (baseline 772 + 12 new), 783 passed; the

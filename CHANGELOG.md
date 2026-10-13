@@ -92,6 +92,13 @@ v0.6.1 harnesses through the shim (`docs/port/harness-shim.md`).
   the recovery reads and consumes as the fallback (and the end of a run that writes the record
   clean removes); all three failing, the tree is left alive, the run ends failed naming its root
   and the three errors, and the next run is refused from the launch record while it lives.
+- Wave 7c (`wave7-acceptance-fixes.md`, "7c"), acceptance round 3 (F40-1, F40-2): the codex home's
+  kill records that cannot be listed (the directory cannot be opened, an entry cannot be read) are
+  an inspection failure, never "no records" - the consult and panel recovery, the dry run, the
+  findings refusal and `-List` and the kick refuse naming the directory and the error (only an
+  absent directory is empty); a kick whose kill did not happen (its record written nowhere) is
+  acknowledged `not killed` - the kick names the live root and why, says the tree is left alive and
+  the task refused, and exits 1.
 
 ### Changed
 
