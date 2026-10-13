@@ -85,6 +85,17 @@ plugin's marker path - P8 scope).
 the plugin matches providers case-sensitively); F02-8 note. Filed for the PLUGIN 0.6.2 from this track: T11, T12,
 T13, T14.
 
+## Reading budget (added 2026-10-13 after attempt n=20)
+
+The first attempt spent 96 % of this subscription's 5-hour window in 186 s: it replayed a forked 1.2 MB thread,
+printed whole files with `git show` (a context of ~700k tokens re-sent on each of 20 tool calls) and spawned three
+sub-agents that replayed it again. The raw diff of the range is 2.2 MB (~550k tokens); the crates tree is 4 MB.
+Rules for this run: no sub-agents; never print a whole file - `git diff 4cd8d18..09b9d25 --stat` first, then
+hunks of ONE path at a time (`git diff 4cd8d18..09b9d25 -- <path> | Select-Object -First 200`); read the
+documents before the code (`docs/port/*.md`, `CHANGELOG.md`, `README.md` - 345 KB in all, the per-wave "differs
+from the plugin" lists are the claim under test); at most 12 tool calls; give the verdict even if the reading is
+incomplete and say what you did not read.
+
 ## Questions
 
 - **Q1.** Compatibility: a behaviour of plugin 0.6.1 a user would meet that 0.2.0 lacks or does differently
