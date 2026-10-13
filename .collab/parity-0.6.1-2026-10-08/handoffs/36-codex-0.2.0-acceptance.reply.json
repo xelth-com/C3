@@ -1,0 +1,363 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "A valid Unicode configuration can panic during Claude preflight, and failed pre-kill persistence still permits killing without durable recovery evidence.",
+  "reply_markdown": "**Q1. Compatibility.** I found two additional problems in the Claude transcript guard: a valid Unicode path can panic (finding #1), and the derived path omits the NFC normalization described in the implementation notes (finding #2). Neither is identified as an intentional difference. The documented endpoint preflight remains a version probe, not proof that `-p` works; F32-1 is therefore only partially resolved.\n\n**Q2. Going beyond the plugin.** The complaint locking and identity recheck address the inspected deletion race. The journal extension preserves C3's replay decisions, but does not establish once-only replay across both bridges: `wave2b-compat.md:390–417` explicitly reports that plugin 0.6.1 re-adds marked, evicted records. F29-1 remains open for that shared invariant; this is a documented plugin limitation, not evidence of a newly broken file format.\n\nThe pre-kill record improves the successful-write path, but F30-2 remains open when persistence fails. `before_kill` stores the write error in memory and returns no result; `kill_tree_checked` proceeds unconditionally. The existing write-failure test explicitly expects the surviving record to remain `running`, naming only the child. A subsequent refusal to commit does not restore evidence lost if the bridge dies during that interval. F23-3 consequently remains open for this failure schedule.\n\nI did not independently validate the full-roster plan change or all interchange paths.\n\n**Q3. P7/P8.** Acceptable as explicit release boundaries: independent telemetry identities/outboxes in production, and sequential oracle adaptation in test mode. P8 does not support concurrent plugin/C3 access to the redirected files; its documentation acknowledges different lock domains. C3 tests can replace path-specific telemetry assertions, but expected failure counts alone cannot certify semantic equivalence. The reported 772 tests and live runs are useful evidence, not tests I reran. The named live matrix provides no demonstrated Claude `api-key` run.\n\n**Q4. Verdict.** **HOLD; do not tag yet.** Acceptance blockers are finding #1 and F30-2. Address finding #2 and reconcile the remaining shared-journal guarantee with F29-1 before claiming all findings closed. F32-1's documented probe limitation should likewise remain explicit rather than marked completely fixed.\n\nThis was a bounded, read-only review using 12 tool calls, without agents, builds, live requests, or edits. I read selected sections of every named wave document, the state, RC2/RC3/RC5/RC6 reports, README and changelog, then targeted code and test ranges. HEAD is newer than the target; the comparison showed no subsequent changes under `crates`, README or CHANGELOG, and only the added RC6 report under the inspected documentation paths. I did not read the complete 220-file delta, consultation archives, complete test bodies, raw verification logs, most orchestration/engine/panel/ledger changes, or the complete shim coverage inventory. `not-checked` entries are not closure endorsements.\n\n## Requested checks\n\n- **RC1 — finding #1:** Working directory `C:\\Users\\Dmytro\\C3`; workspace-write; add and run a Windows regression calling `launch_problem_of` with root `C:\\repo`, `CLAUDE_CONFIG_DIR=C:\\日本\\.claude`, and no reported projects directory. Require normal return, without panic. Budget: one targeted test, 10 minutes.\n- **RC2 — F30-2:** Same working directory; workspace-write; extend the existing read-only-pending-file fixture to pause immediately after killing, terminate the bridge there, restore file access and attempt recovery with a surviving helper. Require durable blocking evidence and refusal of a new turn. Budget: one deterministic fixture, 20 minutes.\n- **RC3 — finding #2:** Same working directory; workspace-write; create a scratch repository whose final component is NFC `café`, pass its decomposed equivalent as `CLAUDE_CONFIG_DIR`, and test endpoint preflight with a fake launcher. Require refusal before a turn. Budget: one fixture, 10 minutes.\n- **RC4 — F29-1:** Same working directory; workspace-write; replay the documented retained-journal/500-record-cap schedule through two consecutive pinned-plugin updates followed by C3. Require no resurrection or displacement, or explicitly record this invariant as unsupported with plugin 0.6.1. Budget: one isolated health directory, 15 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 425
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 540
+        },
+        {
+          "path": "crates/c3-core/src/paths.rs",
+          "line": 41
+        }
+      ],
+      "claim": "The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary.",
+      "trigger": "On Windows, use repository root C:\\repo and CLAUDE_CONFIG_DIR=C:\\日本\\.claude. The repository prefix is eight bytes long, while byte offset eight in the candidate lies inside 本.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:415-431,534-545",
+          "observation": "The configuration check passes the path to path_inside, which calls repo_relative before attempting filesystem canonicalization."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/paths.rs:8-41",
+          "observation": "starts_with checks only total length before evaluating &hay[..prefix.len()]."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "Read-only PowerShell UTF-8 byte calculation for C:\\repo\\ and C:\\日本\\.claude",
+          "observation": "The prefix length was 8; candidate byte 8 was 0xAC, a UTF-8 continuation byte."
+        },
+        {
+          "kind": "inferred",
+          "reference": "The inspected call chain and byte calculation",
+          "observation": "Rust string slicing at that offset panics. The actual C3 invocation was not run."
+        }
+      ],
+      "verification": "Run RC1 and assert the guard returns normally for the stated paths.",
+      "remedy": "Use boundary-safe prefix comparison, such as str::get before comparing, or an appropriate path-component comparison; add the Unicode regression.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 456
+        },
+        {
+          "path": "crates/c3/src/engines/claude_auth.rs",
+          "line": 479
+        },
+        {
+          "path": "docs/port/wave4-claude.md",
+          "line": 235
+        }
+      ],
+      "claim": "The derived transcript guard omits the NFC normalization that the release notes attribute to Claude Code, so it can approve an outside-looking decomposed path whose normalized transcript destination is inside the reviewed repository.",
+      "trigger": "On a filesystem that distinguishes composed and decomposed names, the repository is C:\\scratch\\café using U+00E9, while endpoint-mode CLAUDE_CONFIG_DIR spells the same final component with U+0065 U+0301. No projectsDirectory is reported.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/claude_auth.rs:446-479,510-564",
+          "observation": "The derived path uses the environment value directly, folds path components and resolves existing ancestors, but performs no Unicode normalization."
+        },
+        {
+          "kind": "read-code",
+          "reference": "docs/port/wave4-claude.md:234-259",
+          "observation": "The notes state that Claude Code normalizes its selected configuration directory to NFC before appending projects."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "Read-only PowerShell comparison of composed and decomposed scratch paths",
+          "observation": "Ordinal equality was false, while equality after NFC normalization was true."
+        },
+        {
+          "kind": "inferred",
+          "reference": "The documented Claude derivation versus projects_directory",
+          "observation": "The guard can inspect a different destination from the documented runtime destination. Claude's bundle and an actual turn were not independently executed."
+        }
+      ],
+      "verification": "Run RC3 with the pinned Claude path-derivation behavior and assert preflight refuses the normalized in-repository destination.",
+      "remedy": "Apply the runtime's NFC normalization at the same derivation stage before containment checks, and test composed/decomposed configuration and home paths.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "fixed",
+      "note": "Inspected synchronized snapshot/current-spool removal by exact-line multiset; race fixture not rerun."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Deletion transaction documentation reviewed; failed DELETE retry schedule not traced completely."
+    },
+    {
+      "id": "F02-4",
+      "status": "fixed",
+      "note": "RC2 distinguishes helper-only checks, and the telemetry shim invokes C3; complete assertion inventory not re-audited."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating commit/enqueue ordering and injected write failure not inspected."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Anchor implementation and fixtures not inspected."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Plan documentation reviewed; cross-repository execution not verified."
+    },
+    {
+      "id": "F02-8",
+      "status": "still-open",
+      "note": "Native-route equivalence remains unproven; correctly deferred outside this spawned-Claude release."
+    },
+    {
+      "id": "F04-1",
+      "status": "fixed",
+      "note": "strip_exe uses boundary-safe str::get."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Production Windows DST boundary fixtures not inspected or run."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light execution and ledger metadata not inspected."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Samoa production and synthetic behavior not verified."
+    },
+    {
+      "id": "F09-1",
+      "status": "fixed",
+      "note": "Configuration keys are split at '=' instead of sliced at unrelated byte offsets."
+    },
+    {
+      "id": "F09-2",
+      "status": "fixed",
+      "note": "send_locked rechecks deletion state while holding both locks."
+    },
+    {
+      "id": "F09-3",
+      "status": "fixed",
+      "note": "Inspected cleanup ordering retains the transaction through salt cleanup and removes it last; interruption fixture not rerun."
+    },
+    {
+      "id": "F09-4",
+      "status": "fixed",
+      "note": "A failed current-spool reread returns an error before replacement."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Sanitizer reconstruction inspected, but legacy queue ingestion was not traced."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Bare-provider rating model inference not verified."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Journal mark protocol inspected; all partial-read and archival error paths were not."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required AGY launcher override path not inspected."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Full-roster required-plan availability evaluation not inspected."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "Production PowerShell pointer not parsed or executed."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "Shared tool-flight changes inspected, but AGY event classification and timing were not."
+    },
+    {
+      "id": "F14-1",
+      "status": "fixed",
+      "note": "Local-only cleanup writes its cleaning transaction and returns on write failure before cleanup."
+    },
+    {
+      "id": "F19-1",
+      "status": "fixed",
+      "note": "After confirmation, complaint submission acquires both locks, rechecks deletion and identity, and holds the sender lock through POST."
+    },
+    {
+      "id": "F19-2",
+      "status": "fixed",
+      "note": "Unreadable salt returns from cleanup before transaction removal."
+    },
+    {
+      "id": "F19-3",
+      "status": "fixed",
+      "note": "close_event_body always serializes the reconstructed value."
+    },
+    {
+      "id": "F22-1",
+      "status": "fixed",
+      "note": "C3 checks journal-carried marks independently of endpoint retention; mixed-plugin limitation remains under F29-1."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "process_info preserves inspection failure; downstream pending decisions were not fully traced."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Scan changes inspected selectively; complete pending-release fixture not verified."
+    },
+    {
+      "id": "F23-3",
+      "status": "still-open",
+      "note": "Successful pre-kill persistence is implemented, but its failure still allows killing without durable evidence; see F30-2."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "Complete deterministic recovery fixture set not inspected."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Real Windows Samoa registry and DST-edge comparison not verified."
+    },
+    {
+      "id": "F24-1",
+      "status": "fixed",
+      "note": "The lock-busy fallback now carries the previous baseline instead of marking current lines seen."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated suffix replay not inspected."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Cleanup rescan observed, but concurrent producer synchronization not fully traced."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Latest-unseen timestamp selection not inspected."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Marker/production tests are documented; concurrent redirected plugin/C3 access is explicitly unsupported and was not tested."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Second rewrite failure and recreated filenames not verified."
+    },
+    {
+      "id": "F25-1",
+      "status": "still-open",
+      "note": "The version probe detects ordinary launch failures but does not reject every unrelated binary or launcher unable to execute a turn."
+    },
+    {
+      "id": "F25-2",
+      "status": "fixed",
+      "note": "Endpoint mode now derives and checks a projects directory; additional path defects are findings #1 and #2."
+    },
+    {
+      "id": "F25-3",
+      "status": "fixed",
+      "note": "Resolved as a corrected parity claim: documented pinned-plugin table lookup is case-sensitive; uppercase rejection is intentional."
+    },
+    {
+      "id": "F25-4",
+      "status": "fixed",
+      "note": "ChildEnv has a custom Debug implementation that redacts environment values."
+    },
+    {
+      "id": "F29-1",
+      "status": "still-open",
+      "note": "C3 recognizes journal marks, but the notes explicitly demonstrate plugin 0.6.1 replaying marked records after eviction."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Breadth-first subtree traversal and unknown-identity handling inspected; complete synthetic wrapper/helper schedule not verified."
+    },
+    {
+      "id": "F30-2",
+      "status": "still-open",
+      "note": "before_kill returns no success/failure to the killer. A failed write is retained only in memory, killing proceeds, and the failure test leaves only the running child record."
+    },
+    {
+      "id": "F30-3",
+      "status": "still-open",
+      "note": "Continuation, repair and write-failure tests were added, but failed pre-write persistence combined with bridge termination remains uncovered."
+    },
+    {
+      "id": "F31-1",
+      "status": "fixed",
+      "note": "The lock-busy fallback preserves carried_seen; it no longer consumes live-producer lines."
+    },
+    {
+      "id": "F32-1",
+      "status": "still-open",
+      "note": "Probe uses endpoint variables without the token; --version-only launchers and token-dependent version commands remain explicit unsupported cases."
+    },
+    {
+      "id": "F32-2",
+      "status": "still-open",
+      "note": "Missing platform-home variables now fail closed, but wrapper-injected configuration remains explicitly unverified before spawn."
+    }
+  ],
+  "unproven": [
+    "Independent reproduction of the reported 772 tests, harness counts, live runs and interchange results; no tests or live requests were run in this review.",
+    "Most of the 220-file delta, complete test bodies, raw verification logs and consultation archives were not read.",
+    "Failed pre-kill persistence followed by bridge termination while an unrecorded helper survives.",
+    "Once-only shared health-journal replay with unmodified plugin 0.6.1; documentation reports a counterexample.",
+    "Actual pinned-Claude behavior for NFC-derived transcript destinations; the normalization finding relies on the repository's documented runtime derivation.",
+    "A live Claude api-key consultation, production Windows Samoa/DST boundary behavior, and cross-repository shared-plan contention.",
+    "Concurrent plugin/C3 use of P8 redirected files is unsupported; sequential harness success does not cover it.",
+    "A version probe cannot establish turn support or configuration injected internally by an opaque launcher."
+  ],
+  "first_run_checklist": [
+    "Record the executable path and build revision as well as `c3 0.2.0`; confirm test hooks are off and the intended roster entry, auth mode and endpoint are selected.",
+    "Observe a substantive parsed reply and a committed ledger entry with matching task/run identity, consult_ref, intended reviewer and actual resolved model.",
+    "For Claude, inspect init evidence: allowed read tools only, no MCP servers, dontAsk permission mode, expected auth/model proof, and no token values in output.",
+    "Observe a clean strict tree check and confirm actual transcript files landed outside the repository.",
+    "After a telemetry-on commit, observe delivery without another consultation: intake success plus last-flush delivered count and the expected remaining spool; consult exit 0 alone does not establish delivery.",
+    "After rating, inspect the saved judge, rating_rev and timestamp, and match the emitted rating to the consultation reference.",
+    "For a shared-plan panel, compare ledger start/end times to confirm serialization and inspect required-reviewer membership as run with no skip reason.",
+    "After any timeout, stall or kick, inspect the recovery file and subsequent refusal/release evidence; a warning that persistence failed must not be treated as proof the process tree is safe."
+  ]
+}

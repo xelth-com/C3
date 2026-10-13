@@ -1,0 +1,126 @@
+codex-consult: detached run 06da3115 (detach id 06da3115-32e9-4383-b6e8-10d0b8d57d26) - pid 28820 on LAPTOP-9SGIHQ03, started 2026-10-13T18:37:39+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-06da3115.status.json
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied)
+codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13620-9968-7513-beea-ee551ffff8f4 (source: events), wall 442.2 s
+quota      : 5h 23% until 23:37; wk 20% until Oct 20; this run 1098753 input tokens (973056 cached) in 13 calls, max 123372 per call of 258400; sub-agents 0
+verdict    : HOLD - A valid Unicode configuration can panic during Claude preflight, and failed pre-kill persistence still permits killing without durable recovery evidence.
+findings   : 1 blocker, 1 major, 0 minor, 0 note -> F36-1..F36-2 in findings.json
+prior      : F02-1 fixed, F02-3 not-checked, F02-4 fixed, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 still-open, F04-1 fixed, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 fixed, F09-2 fixed, F09-3 fixed, F09-4 fixed, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 fixed, F19-1 fixed, F19-2 fixed, F19-3 fixed, F22-1 fixed, F23-1 not-checked, F23-2 not-checked, F23-3 still-open, F23-4 not-checked, F23-5 not-checked, F24-1 fixed, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-1 still-open, F25-2 fixed, F25-3 fixed, F25-4 fixed, F29-1 still-open, F30-1 not-checked, F30-2 still-open, F30-3 still-open, F31-1 fixed, F32-1 still-open, F32-2 still-open
+reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\36-codex-0.2.0-acceptance.md
+reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\36-codex-0.2.0-acceptance.reply.json
+events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\36-codex-0.2.0-acceptance.events.jsonl
+
+**Q1. Compatibility.** I found two additional problems in the Claude transcript guard: a valid Unicode path can panic (finding #1), and the derived path omits the NFC normalization described in the implementation notes (finding #2). Neither is identified as an intentional difference. The documented endpoint preflight remains a version probe, not proof that `-p` works; F32-1 is therefore only partially resolved.
+
+**Q2. Going beyond the plugin.** The complaint locking and identity recheck address the inspected deletion race. The journal extension preserves C3's replay decisions, but does not establish once-only replay across both bridges: `wave2b-compat.md:390–417` explicitly reports that plugin 0.6.1 re-adds marked, evicted records. F29-1 remains open for that shared invariant; this is a documented plugin limitation, not evidence of a newly broken file format.
+
+The pre-kill record improves the successful-write path, but F30-2 remains open when persistence fails. `before_kill` stores the write error in memory and returns no result; `kill_tree_checked` proceeds unconditionally. The existing write-failure test explicitly expects the surviving record to remain `running`, naming only the child. A subsequent refusal to commit does not restore evidence lost if the bridge dies during that interval. F23-3 consequently remains open for this failure schedule.
+
+I did not independently validate the full-roster plan change or all interchange paths.
+
+**Q3. P7/P8.** Acceptable as explicit release boundaries: independent telemetry identities/outboxes in production, and sequential oracle adaptation in test mode. P8 does not support concurrent plugin/C3 access to the redirected files; its documentation acknowledges different lock domains. C3 tests can replace path-specific telemetry assertions, but expected failure counts alone cannot certify semantic equivalence. The reported 772 tests and live runs are useful evidence, not tests I reran. The named live matrix provides no demonstrated Claude `api-key` run.
+
+**Q4. Verdict.** **HOLD; do not tag yet.** Acceptance blockers are finding #1 and F30-2. Address finding #2 and reconcile the remaining shared-journal guarantee with F29-1 before claiming all findings closed. F32-1's documented probe limitation should likewise remain explicit rather than marked completely fixed.
+
+This was a bounded, read-only review using 12 tool calls, without agents, builds, live requests, or edits. I read selected sections of every named wave document, the state, RC2/RC3/RC5/RC6 reports, README and changelog, then targeted code and test ranges. HEAD is newer than the target; the comparison showed no subsequent changes under `crates`, README or CHANGELOG, and only the added RC6 report under the inspected documentation paths. I did not read the complete 220-file delta, consultation archives, complete test bodies, raw verification logs, most orchestration/engine/panel/ledger changes, or the complete shim coverage inventory. `not-checked` entries are not closure endorsements.
+
+## Requested checks
+
+- **RC1 — finding #1:** Working directory `C:\Users\Dmytro\C3`; workspace-write; add and run a Windows regression calling `launch_problem_of` with root `C:\repo`, `CLAUDE_CONFIG_DIR=C:\日本\.claude`, and no reported projects directory. Require normal return, without panic. Budget: one targeted test, 10 minutes.
+- **RC2 — F30-2:** Same working directory; workspace-write; extend the existing read-only-pending-file fixture to pause immediately after killing, terminate the bridge there, restore file access and attempt recovery with a surviving helper. Require durable blocking evidence and refusal of a new turn. Budget: one deterministic fixture, 20 minutes.
+- **RC3 — finding #2:** Same working directory; workspace-write; create a scratch repository whose final component is NFC `café`, pass its decomposed equivalent as `CLAUDE_CONFIG_DIR`, and test endpoint preflight with a fake launcher. Require refusal before a turn. Budget: one fixture, 10 minutes.
+- **RC4 — F29-1:** Same working directory; workspace-write; replay the documented retained-journal/500-record-cap schedule through two consecutive pinned-plugin updates followed by C3. Require no resurrection or displacement, or explicitly record this invariant as unsupported with plugin 0.6.1. Budget: one isolated health directory, 15 minutes.
+
+### Findings
+
+- **F36-1** [blocker] `crates/c3/src/engines/claude_auth.rs:425`, `crates/c3/src/engines/claude_auth.rs:540`, `crates/c3-core/src/paths.rs:41` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary. Trigger: On Windows, use repository root C:\repo and CLAUDE_CONFIG_DIR=C:\日本\.claude. The repository prefix is eight bytes long, while byte offset eight in the candidate lies inside 本. Evidence: read-code: The configuration check passes the path to path_inside, which calls repo_relative before attempting filesystem canonicalization.; read-code: starts_with checks only total length before evaluating &hay[..prefix.len()].; ran-command: The prefix length was 8; candidate byte 8 was 0xAC, a UTF-8 continuation byte.; inferred: Rust string slicing at that offset panics. The actual C3 invocation was not run. Verify: Run RC1 and assert the guard returns normally for the stated paths. Remedy: Use boundary-safe prefix comparison, such as str::get before comparing, or an appropriate path-component comparison; add the Unicode regression.
+- **F36-2** [major] `crates/c3/src/engines/claude_auth.rs:456`, `crates/c3/src/engines/claude_auth.rs:479`, `docs/port/wave4-claude.md:235` - The derived transcript guard omits the NFC normalization that the release notes attribute to Claude Code, so it can approve an outside-looking decomposed path whose normalized transcript destination is inside the reviewed repository. Trigger: On a filesystem that distinguishes composed and decomposed names, the repository is C:\scratch\café using U+00E9, while endpoint-mode CLAUDE_CONFIG_DIR spells the same final component with U+0065 U+0301. No projectsDirectory is reported. Evidence: read-code: The derived path uses the environment value directly, folds path components and resolves existing ancestors, but performs no Unicode normalization.; read-code: The notes state that Claude Code normalizes its selected configuration directory to NFC before appending projects.; ran-command: Ordinal equality was false, while equality after NFC normalization was true.; inferred: The guard can inspect a different destination from the documented runtime destination. Claude's bundle and an actual turn were not independently executed. Verify: Run RC3 with the pinned Claude path-derivation behavior and assert preflight refuses the normalized in-repository destination. Remedy: Apply the runtime's NFC normalization at the same derivation stage before containment checks, and test composed/decomposed configuration and home paths.
+
+### Prior findings
+
+- F02-1 - fixed - Inspected synchronized snapshot/current-spool removal by exact-line multiset; race fixture not rerun.
+- F02-3 - not-checked - Deletion transaction documentation reviewed; failed DELETE retry schedule not traced completely.
+- F02-4 - fixed - RC2 distinguishes helper-only checks, and the telemetry shim invokes C3; complete assertion inventory not re-audited.
+- F02-5 - not-checked - Rating commit/enqueue ordering and injected write failure not inspected.
+- F02-6 - not-checked - Anchor implementation and fixtures not inspected.
+- F02-7 - not-checked - Plan documentation reviewed; cross-repository execution not verified.
+- F02-8 - still-open - Native-route equivalence remains unproven; correctly deferred outside this spawned-Claude release.
+- F04-1 - fixed - strip_exe uses boundary-safe str::get.
+- F04-2 - not-checked - Production Windows DST boundary fixtures not inspected or run.
+- F04-3 - not-checked - Required-light execution and ledger metadata not inspected.
+- F06-1 - not-checked - Samoa production and synthetic behavior not verified.
+- F09-1 - fixed - Configuration keys are split at '=' instead of sliced at unrelated byte offsets.
+- F09-2 - fixed - send_locked rechecks deletion state while holding both locks.
+- F09-3 - fixed - Inspected cleanup ordering retains the transaction through salt cleanup and removes it last; interruption fixture not rerun.
+- F09-4 - fixed - A failed current-spool reread returns an error before replacement.
+- F09-5 - not-checked - Sanitizer reconstruction inspected, but legacy queue ingestion was not traced.
+- F09-6 - not-checked - Bare-provider rating model inference not verified.
+- F11-1 - not-checked - Journal mark protocol inspected; all partial-read and archival error paths were not.
+- F11-2 - not-checked - Required AGY launcher override path not inspected.
+- F11-3 - not-checked - Full-roster required-plan availability evaluation not inspected.
+- F11-4 - not-checked - Production PowerShell pointer not parsed or executed.
+- F11-5 - not-checked - Shared tool-flight changes inspected, but AGY event classification and timing were not.
+- F14-1 - fixed - Local-only cleanup writes its cleaning transaction and returns on write failure before cleanup.
+- F19-1 - fixed - After confirmation, complaint submission acquires both locks, rechecks deletion and identity, and holds the sender lock through POST.
+- F19-2 - fixed - Unreadable salt returns from cleanup before transaction removal.
+- F19-3 - fixed - close_event_body always serializes the reconstructed value.
+- F22-1 - fixed - C3 checks journal-carried marks independently of endpoint retention; mixed-plugin limitation remains under F29-1.
+- F23-1 - not-checked - process_info preserves inspection failure; downstream pending decisions were not fully traced.
+- F23-2 - not-checked - Scan changes inspected selectively; complete pending-release fixture not verified.
+- F23-3 - still-open - Successful pre-kill persistence is implemented, but its failure still allows killing without durable evidence; see F30-2.
+- F23-4 - not-checked - Complete deterministic recovery fixture set not inspected.
+- F23-5 - not-checked - Real Windows Samoa registry and DST-edge comparison not verified.
+- F24-1 - fixed - The lock-busy fallback now carries the previous baseline instead of marking current lines seen.
+- F24-2 - not-checked - Unterminated suffix replay not inspected.
+- F24-3 - not-checked - Cleanup rescan observed, but concurrent producer synchronization not fully traced.
+- F24-4 - not-checked - Latest-unseen timestamp selection not inspected.
+- F24-5 - not-checked - Marker/production tests are documented; concurrent redirected plugin/C3 access is explicitly unsupported and was not tested.
+- F24-6 - not-checked - Second rewrite failure and recreated filenames not verified.
+- F25-1 - still-open - The version probe detects ordinary launch failures but does not reject every unrelated binary or launcher unable to execute a turn.
+- F25-2 - fixed - Endpoint mode now derives and checks a projects directory; additional path defects are findings #1 and #2.
+- F25-3 - fixed - Resolved as a corrected parity claim: documented pinned-plugin table lookup is case-sensitive; uppercase rejection is intentional.
+- F25-4 - fixed - ChildEnv has a custom Debug implementation that redacts environment values.
+- F29-1 - still-open - C3 recognizes journal marks, but the notes explicitly demonstrate plugin 0.6.1 replaying marked records after eviction.
+- F30-1 - not-checked - Breadth-first subtree traversal and unknown-identity handling inspected; complete synthetic wrapper/helper schedule not verified.
+- F30-2 - still-open - before_kill returns no success/failure to the killer. A failed write is retained only in memory, killing proceeds, and the failure test leaves only the running child record.
+- F30-3 - still-open - Continuation, repair and write-failure tests were added, but failed pre-write persistence combined with bridge termination remains uncovered.
+- F31-1 - fixed - The lock-busy fallback preserves carried_seen; it no longer consumes live-producer lines.
+- F32-1 - still-open - Probe uses endpoint variables without the token; --version-only launchers and token-dependent version commands remain explicit unsupported cases.
+- F32-2 - still-open - Missing platform-home variables now fail closed, but wrapper-injected configuration remains explicitly unverified before spawn.
+
+## Verdict: HOLD
+
+A valid Unicode configuration can panic during Claude preflight, and failed pre-kill persistence still permits killing without durable recovery evidence.
+
+### Blockers
+
+- **F36-1** `crates/c3/src/engines/claude_auth.rs:425`, `crates/c3/src/engines/claude_auth.rs:540`, `crates/c3-core/src/paths.rs:41` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary. Verify: Run RC1 and assert the guard returns normally for the stated paths. Remedy: Use boundary-safe prefix comparison, such as str::get before comparing, or an appropriate path-component comparison; add the Unicode regression.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97`, `crates/c3/src/liveness/proc.rs:100`, `crates/c3/src/liveness/pending.rs:283`, `crates/c3/src/liveness/pending.rs:344` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time. Verify: Inject `name_and_parent -> None` while `process_start_iso -> Some(start)` and require `test_unverified_process`/`test_recorded_process` to return running or an explicit inspection failure. Remedy: Distinguish process absence from inspection failure; return an unknown/running verdict when the pid exists but metadata cannot be read.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753`, `crates/c3/src/liveness/proc.rs:775`, `crates/c3/src/liveness/proc.rs:827`, `crates/c3/src/liveness/pending.rs:790` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs. Verify: Run `test_pending_active` on a `kill_unconfirmed` record with a live scan row whose `created` is `None`; require refusal/failed verification, never release. Remedy: Treat unknown creation/start as blocking evidence or fail the scan; do not silently filter those rows.
+- **F23-3** (prior, still-open) `crates/c3/src/consult/orchestrate.rs:5105`, `crates/c3/src/consult/orchestrate.rs:5143`, `docs/port/wave3a-recovery.md:59` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree. Verify: Add a pause between the kill and the end-of-run pending write, terminate the bridge there, and inspect the recovery record for the expected `unverified`/`kill_unconfirmed` fields. Remedy: Persist the kill disposition at each kill site, or write a durable kill journal before continuing the run.
+- **F25-1** (prior, still-open) `crates/c3/src/engines/claude_auth.rs:197`, `crates/c3/src/engines/claude_auth.rs:311` - Endpoint-auth preflight reports available without proving the configured Claude launcher can run; only the token variable is checked, so a wrong or non-runnable launcher passes preflight and fails later. Verify: Run endpoint preflight with a non-executable launcher and require unavailable before the turn starts. Remedy: Run a cheap launcher probe such as `--version` or `auth status` in the endpoint child environment before returning available.
+- **F29-1** (prior, still-open) `crates/c3-core/src/health.rs:1682`, `crates/c3-core/src/health.rs:2017`, `crates/c3-core/src/health.rs:2045`, `crates/c3-core/src/health.rs:2189` - The applied-key list is only a C3-local replay guard: it is silently ignored when missing or malformed, and the plugin’s shared journal updater neither reads nor preserves it, so a retained journal record can still be replayed after endpoint-key eviction and applied twice. Verify: Create a kept journal record, evict its endpoint through the cap, remove or invalidate `.journal.applied`, run the plugin journal updater and then an update, and assert the record is neither re-added nor allowed to displace a newer endpoint. Remedy: Make consumed-journal state authoritative in the shared journal protocol, or fail closed when the retained journal has no trustworthy ledger; add a mixed C3/plugin crash-and-eviction fixture.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815`, `crates/c3/src/liveness/pending.rs:297`, `crates/c3/src/liveness/pending.rs:902` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process. Verify: Run `test_pending_active_with` with the wrapper/helper synthetic table and require the record to remain active; repeat with a readable non-codex command line. Remedy: Scan full descendant relationships and treat unknown-start or command-line-unreadable/generic-runtime rows as blocking unless positive evidence proves they are unrelated.
+- **F30-2** (prior, still-open) `crates/c3/src/engines/subprocess.rs:536`, `crates/c3/src/consult/orchestrate.rs:587`, `crates/c3/src/consult/orchestrate.rs:4927`, `crates/c3/src/consult/orchestrate.rs:5674` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues. Verify: Add a pause between `kill_tree_checked` and `KillSite::write`, terminate there, and separately inject `write_pending` errors before continuation or commit. Remedy: Persist the kill record synchronously from the kill path or an append-only sidecar before returning, and fail closed when that persistence fails.
+- **F32-2** (prior, still-open) `crates/c3/src/engines/claude_auth.rs:383`, `crates/c3/src/engines/claude_auth.rs:399`, `crates/c3/src/engines/claude_auth.rs:417` - The derived transcript guard can return no problem when Claude Code derives a projects directory from an OS home source that `home_dir` does not implement, allowing transcripts inside the repository to be treated as safe. Verify: Run endpoint preflight under the environment above and require refusal before any turn when the OS-derived projects path is inside the repository. Remedy: Resolve the home exactly as the child runtime does, including `HOMEDRIVE`+`HOMEPATH` and the system home fallback; fail closed when the effective config/home cannot be established, and recheck the child’s final environment before launch.
+
+### Unproven scenarios
+
+- Independent reproduction of the reported 772 tests, harness counts, live runs and interchange results; no tests or live requests were run in this review.
+- Most of the 220-file delta, complete test bodies, raw verification logs and consultation archives were not read.
+- Failed pre-kill persistence followed by bridge termination while an unrecorded helper survives.
+- Once-only shared health-journal replay with unmodified plugin 0.6.1; documentation reports a counterexample.
+- Actual pinned-Claude behavior for NFC-derived transcript destinations; the normalization finding relies on the repository's documented runtime derivation.
+- A live Claude api-key consultation, production Windows Samoa/DST boundary behavior, and cross-repository shared-plan contention.
+- Concurrent plugin/C3 use of P8 redirected files is unsupported; sequential harness success does not cover it.
+- A version probe cannot establish turn support or configuration injected internally by an opaque launcher.
+
+### First-run checklist (observable)
+
+- [ ] Record the executable path and build revision as well as `c3 0.2.0`; confirm test hooks are off and the intended roster entry, auth mode and endpoint are selected.
+- [ ] Observe a substantive parsed reply and a committed ledger entry with matching task/run identity, consult_ref, intended reviewer and actual resolved model.
+- [ ] For Claude, inspect init evidence: allowed read tools only, no MCP servers, dontAsk permission mode, expected auth/model proof, and no token values in output.
+- [ ] Observe a clean strict tree check and confirm actual transcript files landed outside the repository.
+- [ ] After a telemetry-on commit, observe delivery without another consultation: intake success plus last-flush delivered count and the expected remaining spool; consult exit 0 alone does not establish delivery.
+- [ ] After rating, inspect the saved judge, rating_rev and timestamp, and match the emitted rating to the consultation reference.
+- [ ] For a shared-plan panel, compare ledger start/end times to confirm serialization and inspect required-reviewer membership as run with no skip reason.
+- [ ] After any timeout, stall or kick, inspect the recovery file and subsequent refusal/release evidence; a warning that persistence failed must not be treated as proof the process tree is safe.
