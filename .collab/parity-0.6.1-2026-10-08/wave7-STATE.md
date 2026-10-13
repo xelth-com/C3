@@ -53,6 +53,26 @@ Branch `wave-7-acceptance-fixes` from main 086c03d (reviewed code = 09b9d25). Wo
   recorded child finds the orphaned fake PowerShell), `rc2_a_lost_kill_record_leaves_its_fallback...`
   FAILS (no fallback file within 90 s - the new durable evidence). No processes leaked.
 
+- Full suite (`cargo test -j 2 --no-fail-fast --workspace`, log `%TEMP%/c3-wave7/test.log`): first
+  attempt failed to BUILD (os error 1455 - a peer xelixir rustc held 8.6 GB of commit); rerun:
+  **784 tests, 783 passed, 1 failed** - `index::embed::tests::embed_reaches_a_loopback_fake_via_localhost`
+  (the known flaky loopback test), rerun of `index::embed` 6/6 (`%TEMP%/c3-wave7/embed-rerun.log`).
+  Baseline 772 + 12 new (c3-core paths 2; c3 lib 6: claude_auth 3, orchestrate 1, subprocess 1,
+  pending 1; c3-cli 4: claude_engine 1, kill_record_durable 3). Counts: c3 lib 415, exit_codes 1,
+  http_engine 21, index_embeddings 5, index_federation 6, index_integration 4, pending_liveness 3,
+  recovery_wave3a 1, router 12, scrub_markers 1, telemetry 39, telemetry_peers 1, claude_engine 15,
+  compat_wave2b 17, compat_wave5 5, kill_record_durable 9, mcp_integration 1, notspooled_parity 21,
+  panel_light_required 1, telemetry_parity 7, wave6_live_diffs 5, c3-core lib 151, contracts 8,
+  formats 26, store 9.
+- `cargo clippy --workspace --all-targets -j 2 -- -D warnings`: clean (log `%TEMP%/c3-wave7/clippy.log`);
+  `cargo fmt --check`: clean.
+- Harnesses: binary copy `%TEMP%/c3-wave7/c3.exe` (target/debug/c3.exe of 20:26); pinned tree
+  `git archive v0.6.1 plugins/codex-consult tests` under `%TEMP%/c3-wave7/pin`, the six shims over
+  its scripts; driver `%TEMP%/c3-wave7/drive.ps1` (HARNESS.lock per harness, Windows PowerShell
+  5.1, PSModulePath reset); logs `%TEMP%/c3-wave7/logs/`, summary `%TEMP%/c3-wave7/results.txt`.
+  Results (ps51 5.1.26100.9444): **harness-claude 87/0** (677 s), **harness-pending 26/0** (114 s),
+  **harness-fixes 56/0** (185 s); run-all logs under `%TEMP%/codex-consult-tests/run-all-20261013-*`.
+
 ## Decided
 - F36-1: `c3_core::paths::repo_relative` strips the root prefix char by char (never byte slicing);
   the Windows comparison folds case as .NET `OrdinalIgnoreCase` does (simple uppercase per char).
@@ -61,5 +81,5 @@ Branch `wave-7-acceptance-fixes` from main 086c03d (reviewed code = 09b9d25). Wo
   string at the length of its OWN prefix or of a `find` result).
 
 ## Next
-- RC3 integration test (claude_engine, real binary, scratch repo `café`), F30-2 failure path (RC2), F29-1 / F32-2 docs, CHANGELOG,
-  wave7 doc, full suite + clippy + fmt, harness-claude / harness-pending / harness-fixes via the shim.
+- Nothing left in this wave's brief. For the coordinator: the acceptance re-review (round 2) of
+  `wave-7-acceptance-fixes` (commits eb56786, 19ffe01 and the docs/state commit after them).

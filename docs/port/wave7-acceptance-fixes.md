@@ -87,5 +87,14 @@ unverifiable before the spawn. `wave4-claude.md`, "Wave 7".
 
 ## Verification
 
-See `.collab/parity-0.6.1-2026-10-08/wave7-STATE.md` for the counts and log paths of this wave's
-suite, clippy, fmt and the three harnesses through the shim.
+- `cargo test -j 2 --no-fail-fast --workspace`: 784 tests (baseline 772 + 12 new), 783 passed; the
+  one failure was the known flaky `index::embed::tests::embed_reaches_a_loopback_fake_via_localhost`,
+  green on its rerun (`index::embed` 6/6).
+- `cargo clippy --workspace --all-targets -j 2 -- -D warnings` and `cargo fmt --check`: clean.
+- RC2 against the pre-change binary (code 09b9d25, via `C3_TEST_EXE`): the launch-record fixture
+  passes, the fallback fixture fails (no fallback file) - the refusal from the launch record held
+  before, the fallback is what wave 7 adds.
+- Through the shim (pinned v0.6.1 tree, Windows PowerShell 5.1, one harness at a time under
+  `HARNESS.lock`): harness-claude 87/0, harness-pending 26/0, harness-fixes 56/0.
+
+Counts and log paths: `.collab/parity-0.6.1-2026-10-08/wave7-STATE.md`.
