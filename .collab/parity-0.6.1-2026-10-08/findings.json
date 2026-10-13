@@ -5197,6 +5197,15 @@
                                              "evidence":  "",
                                              "base_commit":  "6f7a8f7046d281b0ad92851f0ec9ccce0ca95ad1",
                                              "tree_sha256":  "672ccb6fee160486dd680e9faf6066e674c1dd0ae8b0f954f17a4be67747500e"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:54:58+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7 (9f1ebf4): see docs/port/wave7-acceptance-fixes.md",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -6209,7 +6218,7 @@
                      },
                      {
                          "id":  "F25-1",
-                         "status":  "implemented",
+                         "status":  "wontfix",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -6268,6 +6277,15 @@
                                              "evidence":  "",
                                              "base_commit":  "c8f099712ae2aa9127a1c7b73cc997e77441ef55",
                                              "tree_sha256":  "56d7ef6cea2eff096d51e01ffbd7c23130a37922b445c6b250b626c0568dd35f"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:55:08+02:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "documented as a limit in wave 7 (9f1ebf4): F29-1 plugin 0.6.1 replay (plugin T14), F32-2 home sources = os.homedir() (USERPROFILE/HOME, fail closed), F25-1/F32-1 the --version probe cannot prove a turn",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -6624,7 +6642,7 @@
                      },
                      {
                          "id":  "F29-1",
-                         "status":  "implemented",
+                         "status":  "wontfix",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -6696,6 +6714,15 @@
                                              "evidence":  "",
                                              "base_commit":  "3b1df071cece203c7bc8ae92a6e845d12001550c",
                                              "tree_sha256":  "aef7d63e4a8ab4ba32672d51c247f235708a06c827101afff12ecd6935393c3a"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:55:01+02:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "documented as a limit in wave 7 (9f1ebf4): F29-1 plugin 0.6.1 replay (plugin T14), F32-2 home sources = os.homedir() (USERPROFILE/HOME, fail closed), F25-1/F32-1 the --version probe cannot prove a turn",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -6906,6 +6933,15 @@
                                              "evidence":  "",
                                              "base_commit":  "7a4d88219a7e7bf22e31839d1340c204cf98ddb8",
                                              "tree_sha256":  "7f13cea07a0b3d87276f4a375d546cb72f97060219c64d9b797d69b3b61ec11e"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:54:54+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7 (9f1ebf4): see docs/port/wave7-acceptance-fixes.md",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -7118,7 +7154,7 @@
                      },
                      {
                          "id":  "F32-1",
-                         "status":  "implemented",
+                         "status":  "wontfix",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -7186,6 +7222,15 @@
                                              "evidence":  "",
                                              "base_commit":  "f62ca029f916f69481263f17b33d9064f539a977",
                                              "tree_sha256":  "6e35e295700426e4bd347c2b946186933935be0055dac1d96ee24f45249b6cd5"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:55:13+02:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "documented as a limit in wave 7 (9f1ebf4): F29-1 plugin 0.6.1 replay (plugin T14), F32-2 home sources = os.homedir() (USERPROFILE/HOME, fail closed), F25-1/F32-1 the --version probe cannot prove a turn",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -7201,7 +7246,7 @@
                      },
                      {
                          "id":  "F32-2",
-                         "status":  "implemented",
+                         "status":  "wontfix",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -7269,6 +7314,15 @@
                                              "evidence":  "",
                                              "base_commit":  "f62ca029f916f69481263f17b33d9064f539a977",
                                              "tree_sha256":  "6e35e295700426e4bd347c2b946186933935be0055dac1d96ee24f45249b6cd5"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:55:04+02:00",
+                                             "status":  "wontfix",
+                                             "by":  "coordinator",
+                                             "note":  "documented as a limit in wave 7 (9f1ebf4): F29-1 plugin 0.6.1 replay (plugin T14), F32-2 home sources = os.homedir() (USERPROFILE/HOME, fail closed), F25-1/F32-1 the --version probe cannot prove a turn",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -7284,7 +7338,7 @@
                      },
                      {
                          "id":  "F36-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -7348,6 +7402,15 @@
                                              "evidence":  "",
                                              "base_commit":  "e519e39b861da594953c7d941e8c6ea605ebe2ea",
                                              "tree_sha256":  "5d40dcd8d13b0b8f7174e227460029941d7974c8c57888d886cc348fa90e84d0"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:54:45+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7 (9f1ebf4): see docs/port/wave7-acceptance-fixes.md",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -7356,7 +7419,7 @@
                      },
                      {
                          "id":  "F36-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -7420,6 +7483,15 @@
                                              "evidence":  "",
                                              "base_commit":  "e519e39b861da594953c7d941e8c6ea605ebe2ea",
                                              "tree_sha256":  "5d40dcd8d13b0b8f7174e227460029941d7974c8c57888d886cc348fa90e84d0"
+                                         },
+                                         {
+                                             "when":  "2026-10-13T20:54:49+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 7 (9f1ebf4): see docs/port/wave7-acceptance-fixes.md",
+                                             "evidence":  "",
+                                             "base_commit":  "9f1ebf495bb519c72535eef73b3a4cb3e6e0d546",
+                                             "tree_sha256":  "a65bd7c01ebb8660faa413af92d35fbf92e71e883e1dae65257edd8862900869"
                                          }
                                      ],
                          "reviewer_checks":  [
