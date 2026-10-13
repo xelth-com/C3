@@ -10703,7 +10703,9 @@ mod kill_record_tests {
         );
         // the recovery reads the fallback as a record of the task
         let task_dir = path.parent().unwrap();
-        assert!(crate::liveness::pending::pending_paths(task_dir).contains(&fallback));
+        assert!(crate::liveness::pending::pending_paths(task_dir)
+            .paths
+            .contains(&fallback));
         let rd = crate::liveness::pending::read_pending_file(&fallback);
         assert!(rd.error.is_none() && rd.record.is_some());
         let _ = std::fs::remove_dir_all(task_dir.parent().unwrap());
@@ -10782,7 +10784,9 @@ mod kill_record_tests {
         );
         // the recovery reads it as a record of the task; the record written clean removes it
         assert!(
-            crate::liveness::pending::pending_paths_with(&task_dir, Some(&home)).contains(&copy)
+            crate::liveness::pending::pending_paths_with(&task_dir, Some(&home))
+                .paths
+                .contains(&copy)
         );
         site.drop_copy();
         assert!(!copy.exists(), "the copy is removed");

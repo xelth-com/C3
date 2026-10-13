@@ -56,7 +56,9 @@ impl Recovery {
 }
 
 /// Read and judge every recovery record of the task (`Read-TaskPendingRecords` + the
-/// `Recovered` flag from `Get-NextNumbers`).
+/// `Recovered` flag from `Get-NextNumbers`). (Wave 7c, F40-1) A listing of the records that failed
+/// (the codex home's kill records cannot be listed: [`pending::PendingPaths::error`]) is the
+/// error, before any record is judged - a real run, a dry run and the panel refuse on it.
 pub fn assess(store: &FilesStore, task: &TaskSlug) -> Recovery {
     let task_dir = store.task_dir(task);
     // Ledger `n`s (for the recovered/cleared distinction).
@@ -68,7 +70,14 @@ pub fn assess(store: &FilesStore, task: &TaskSlug) -> Recovery {
         .unwrap_or_default();
 
     let mut items = Vec::new();
-    for path in pending::pending_paths(&task_dir) {
+    let listed = pending::pending_paths(&task_dir);
+    if let Some(err) = listed.error {
+        return Recovery {
+            error: Some(err),
+            items,
+        };
+    }
+    for path in listed.paths {
         let rd = pending::read_pending_file(&path);
         if let Some(err) = rd.error {
             return Recovery {

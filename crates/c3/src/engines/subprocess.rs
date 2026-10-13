@@ -302,12 +302,22 @@ pub fn kick_ack_path(kick_path: &Path) -> std::path::PathBuf {
     std::path::PathBuf::from(s)
 }
 
-/// One acknowledgement of a kick request (wave 27c, D1): the result (`stopped` | `late`) and the
-/// request id it acknowledges.
+/// (Wave 7c, F40-2) The result of a kick taken on a live turn whose kill did not happen - its
+/// record could be written nowhere ([`c3_core::engine::KillCheck::not_killed`]): the tree is left
+/// alive as the evidence.
+pub const KICK_NOT_KILLED: &str = "not killed";
+
+/// One acknowledgement of a kick request (wave 27c, D1): the result (`stopped` | `late` | - wave
+/// 7c, F40-2 - [`KICK_NOT_KILLED`]) and the request id it acknowledges; a `not killed` one names
+/// the root pid left alive (`root`) and why (`reason`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KickAck {
     pub result: String,
     pub id: String,
+    /// (Wave 7c, F40-2) `not killed`: the root pid of the tree left alive (`0`: none named).
+    pub root: u32,
+    /// (Wave 7c, F40-2) `not killed`: why (the kill's `why`, one line; `""`: none given).
+    pub reason: String,
 }
 
 /// Parse the `id=<request id>` line of a kick file (wave 27c, D1). `None` when the file is absent
@@ -346,12 +356,17 @@ pub fn write_kick_atomic(kick_path: &Path, id: &str) -> std::io::Result<()> {
     res
 }
 
-/// Write `<kick>.ack` holding the result and the request id it acknowledges (wave 27c, D1).
-pub fn write_kick_ack(kick_path: &Path, result: &str, id: &str) {
+/// Write `<kick>.ack` holding the result and the request id it acknowledges (wave 27c, D1);
+/// (wave 7c, F40-2) `left`: the root pid left alive and why (`root=` / `reason=` lines, a
+/// `not killed` acknowledgement).
+pub fn write_kick_ack(kick_path: &Path, result: &str, id: &str, left: Option<(u32, &str)>) {
+    let detail = left
+        .map(|(root, why)| format!("root={root}\nreason={}\n", c3_core::one_line(why)))
+        .unwrap_or_default();
     let _ = std::fs::write(
         kick_ack_path(kick_path),
         format!(
-            "result={result}\nid={id}\n{} pid {}\n",
+            "result={result}\n{detail}id={id}\n{} pid {}\n",
             iso_now(),
             std::process::id()
         ),
@@ -368,6 +383,10 @@ pub fn read_kick_ack(ack_path: &Path) -> Option<KickAck> {
             ack.result = v.trim().to_string();
         } else if let Some(v) = l.strip_prefix("id=") {
             ack.id = v.trim().to_string();
+        } else if let Some(v) = l.strip_prefix("root=") {
+            ack.root = v.trim().parse().unwrap_or(0);
+        } else if let Some(v) = l.strip_prefix("reason=") {
+            ack.reason = v.trim().to_string();
         }
     }
     Some(ack)
@@ -403,9 +422,27 @@ pub fn sweep_stale_ack(kick_path: &Path, my_id: Option<&str>, max_age_secs: u64)
 /// holding the `result` (`stopped` | `late`) and the request id read from the kick file, then
 /// removes the kick file. Never fails the run.
 fn confirm_kick(kick_path: &Path, result: &str) {
+    confirm_kick_with(kick_path, result, None);
+}
+
+/// [`confirm_kick`] with the tree left alive (`left`: its root pid and why) for a `not killed`
+/// acknowledgement.
+fn confirm_kick_with(kick_path: &Path, result: &str, left: Option<(u32, &str)>) {
     let id = read_kick_id(kick_path).unwrap_or_default();
-    write_kick_ack(kick_path, result, &id);
+    write_kick_ack(kick_path, result, &id, left);
     let _ = std::fs::remove_file(kick_path);
+}
+
+/// (Wave 7c, F40-2) The acknowledgement of a kick taken on a live turn, by what its kill did:
+/// `stopped` - or, the kill did not happen ([`c3_core::engine::KillCheck::not_killed`]: its record
+/// could be written nowhere and the tree is left alive as the evidence), [`KICK_NOT_KILLED`]
+/// naming the root pid left alive and why. The `-Kick` command then reports the tree left alive
+/// and fails.
+fn acknowledge_taken_kick(kick_path: &Path, check: Option<&c3_core::engine::KillCheck>) {
+    match check.filter(|c| c.not_killed) {
+        Some(c) => confirm_kick_with(kick_path, KICK_NOT_KILLED, Some((c.root_pid, &c.why))),
+        None => confirm_kick(kick_path, "stopped"),
+    }
 }
 
 /// Whether a launcher is a Windows batch file (`.cmd` / `.bat`, any case).
@@ -606,7 +643,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                 _ => {
                     (survivors, kill_check) = kill_now(&mut child);
                     stop = TurnStop::Kick;
-                    confirm_kick(kp, "stopped");
+                    acknowledge_taken_kick(kp, kill_check.as_ref());
                 }
             }
         }
@@ -630,7 +667,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         if kp.exists() {
                             (survivors, kill_check) = kill_now(&mut child);
                             stop = TurnStop::Kick;
-                            confirm_kick(kp, "stopped");
+                            acknowledge_taken_kick(kp, kill_check.as_ref());
                             break None;
                         }
                     }
@@ -1588,6 +1625,54 @@ mod tests {
         assert_eq!(ack.result, "late");
         assert_eq!(ack.id, "req-456");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (Wave 7c, F40-2) A kick whose kill did not happen (its record written nowhere: the check
+    /// `not_killed`) is acknowledged `not killed` with the root left alive and why - never
+    /// `stopped`; a kill that ran (confirmed or not) is acknowledged `stopped`.
+    #[test]
+    fn a_kick_whose_kill_did_not_happen_is_acknowledged_not_killed() {
+        let dir = std::env::temp_dir().join(format!("c3-kick-nk-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let kick = dir.join(".consult.kick-02");
+        let why = "the kill record could not be written anywhere (a; b): the reviewer tree (pid 4242) is left alive as the evidence; the task is refused until it is gone or recorded";
+        let not_killed = c3_core::engine::KillCheck {
+            root_pid: 4242,
+            confirmed: false,
+            why: why.to_string(),
+            unverified: Vec::new(),
+            not_killed: true,
+        };
+        write_kick_atomic(&kick, "req-nk").unwrap();
+        acknowledge_taken_kick(&kick, Some(&not_killed));
+        assert!(!kick.exists(), "the kick file is removed");
+        let ack = read_kick_ack(&kick_ack_path(&kick)).unwrap();
+        assert_eq!(
+            ack,
+            KickAck {
+                result: KICK_NOT_KILLED.to_string(),
+                id: "req-nk".to_string(),
+                root: 4242,
+                reason: why.to_string(),
+            }
+        );
+        for check in [
+            Some(c3_core::engine::KillCheck::confirmed(4243)),
+            Some(c3_core::engine::KillCheck {
+                root_pid: 4244,
+                confirmed: false,
+                why: "taskkill failed".to_string(),
+                unverified: vec![4245],
+                not_killed: false,
+            }),
+            None,
+        ] {
+            write_kick_atomic(&kick, "req-st").unwrap();
+            acknowledge_taken_kick(&kick, check.as_ref());
+            let ack = read_kick_ack(&kick_ack_path(&kick)).unwrap();
+            assert_eq!((ack.result.as_str(), ack.root), ("stopped", 0), "{check:?}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

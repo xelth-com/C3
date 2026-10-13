@@ -74,16 +74,32 @@ pub struct TaskPending {
     pub active_message: Option<String>,
 }
 
+/// (Wave 7c, F40-1) The recovery records of a task as [`pending_paths`] lists them, and whether
+/// the listing is complete.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PendingPaths {
+    /// The records listed (the task's own, then the codex home's kill records of the task).
+    pub paths: Vec<PathBuf>,
+    /// The inspection failure: the codex home's kill records could not be listed (a directory or
+    /// entry error other than the directory's absence, [`kill_copy_paths`]) - a record naming a
+    /// live process may be among them, so every consumer refuses on it. `None`: the listing is
+    /// complete.
+    pub error: Option<String>,
+}
+
 /// `Get-PendingPaths`: `.consult.pending.json` first, then `.consult.pending-*.json` sorted
 /// (ordinal, case-insensitive) - (wave 7, F30-2) a kill's fallback file
 /// ([`kill_fallback_path`]) among them; then (wave 7b, F38-1) the kill records of this task kept
 /// in the codex home ([`kill_copy_paths`], C3's third location), judged and consumed as any record.
-pub fn pending_paths(task_dir: &Path) -> Vec<PathBuf> {
+/// (Wave 7c, F40-1) A failure to list those kill records is no absence of them: it travels as
+/// [`PendingPaths::error`], which the consult and panel recovery, the findings refusal and the
+/// kick refuse on (`-List` shows it).
+pub fn pending_paths(task_dir: &Path) -> PendingPaths {
     pending_paths_with(task_dir, kill_copy_home().as_deref())
 }
 
 /// [`pending_paths`] with the codex home whose kill records are read given (`None`: none is).
-pub fn pending_paths_with(task_dir: &Path, codex_home: Option<&Path>) -> Vec<PathBuf> {
+pub fn pending_paths_with(task_dir: &Path, codex_home: Option<&Path>) -> PendingPaths {
     let mut single: Vec<PathBuf> = Vec::new();
     let mut members: Vec<PathBuf> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(task_dir) {
@@ -105,10 +121,15 @@ pub fn pending_paths_with(task_dir: &Path, codex_home: Option<&Path>) -> Vec<Pat
             .to_string_lossy()
             .to_lowercase()
     });
-    let copies = codex_home
-        .map(|h| kill_copy_paths(h, task_dir))
-        .unwrap_or_default();
-    single.into_iter().chain(members).chain(copies).collect()
+    let (copies, error) = match codex_home.map(|h| kill_copy_paths(h, task_dir)) {
+        None => (Vec::new(), None),
+        Some(Ok(copies)) => (copies, None),
+        Some(Err(e)) => (Vec::new(), Some(e)),
+    };
+    PendingPaths {
+        paths: single.into_iter().chain(members).chain(copies).collect(),
+        error,
+    }
 }
 
 /// (Wave 7, F30-2) The fallback file of the recovery record `record` (`<name>.json` ->
@@ -148,29 +169,86 @@ pub fn kill_copy_path(codex_home: &Path, task: &str, run_id: &str) -> PathBuf {
     kill_copy_dir(codex_home).join(format!("{task}-{run_id}.json"))
 }
 
+/// (Wave 7c, F40-1) TEST HOOK (test mode only): `CODEX_CONSULT_TEST_COPY_DIR_FAIL` - how the
+/// listing of the codex home's kill records ([`kill_copy_paths`]) is made to fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyDirFail {
+    /// `denied`: the directory cannot be opened (`PermissionDenied`, whether it exists or not).
+    Denied,
+    /// `iter`: the directory opens, and reading its entries fails.
+    Iter,
+}
+
+/// The [`CopyDirFail`] the test hook asks for (`None`: none, or not in test mode).
+fn copy_dir_fail_hook() -> Option<CopyDirFail> {
+    let v = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_COPY_DIR_FAIL")?;
+    match v.trim().to_ascii_lowercase().as_str() {
+        "denied" => Some(CopyDirFail::Denied),
+        "iter" => Some(CopyDirFail::Iter),
+        _ => None,
+    }
+}
+
+/// (Wave 7c, F40-1) The refusal of a task whose kill records in the codex home cannot be listed.
+pub fn copy_listing_refusal(dir: &Path, e: &std::io::Error) -> String {
+    format!(
+        "the recovery copies under {} cannot be listed ({}): the task is refused until they can be read",
+        dir.display(),
+        c3_core::one_line(&e.to_string())
+    )
+}
+
 /// (Wave 7b, F38-1) The kill records of the task directory `task_dir` kept in `codex_home`
 /// ([`kill_copy_path`]), sorted by name: a record whose `task` is the task directory's name and
 /// whose `collab_dir` is its parent directory. A file named for the task (`<task>-<uuid>.json`)
 /// whose task and collab directory cannot be read (unreadable, not a JSON object, the fields
 /// missing) is listed too - fail-closed: [`read_pending_file`] refuses it as unusable or judges it
-/// as any record.
-pub fn kill_copy_paths(codex_home: &Path, task_dir: &Path) -> Vec<PathBuf> {
+/// as any record. (Wave 7c, F40-1) The directory absent (`NotFound`) is the only "no records": any
+/// other failure to open it, or to read one of its entries, is an inspection failure - `Err` with
+/// the refusal ([`copy_listing_refusal`]) - never an empty listing. Test hook:
+/// `CODEX_CONSULT_TEST_COPY_DIR_FAIL=denied|iter` ([`CopyDirFail`]).
+pub fn kill_copy_paths(codex_home: &Path, task_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    kill_copy_paths_as(codex_home, task_dir, copy_dir_fail_hook())
+}
+
+/// [`kill_copy_paths`] with the injected failure given.
+fn kill_copy_paths_as(
+    codex_home: &Path,
+    task_dir: &Path,
+    fail: Option<CopyDirFail>,
+) -> Result<Vec<PathBuf>, String> {
     let task = task_dir
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let Some(collab_dir) = task_dir.parent() else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     if task.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let prefix = format!("{task}-");
-    let mut out: Vec<PathBuf> = Vec::new();
-    let Ok(rd) = std::fs::read_dir(kill_copy_dir(codex_home)) else {
-        return out;
+    let dir = kill_copy_dir(codex_home);
+    let opened = match fail {
+        Some(CopyDirFail::Denied) => Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "access is denied (test hook CODEX_CONSULT_TEST_COPY_DIR_FAIL=denied)",
+        )),
+        _ => std::fs::read_dir(&dir),
     };
-    for ent in rd.flatten() {
+    let rd = match opened {
+        Ok(rd) => rd,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(copy_listing_refusal(&dir, &e)),
+    };
+    let injected = (fail == Some(CopyDirFail::Iter)).then(|| {
+        Err(std::io::Error::other(
+            "an entry could not be read (test hook CODEX_CONSULT_TEST_COPY_DIR_FAIL=iter)",
+        ))
+    });
+    let mut out: Vec<PathBuf> = Vec::new();
+    for ent in injected.into_iter().chain(rd) {
+        let ent = ent.map_err(|e| copy_listing_refusal(&dir, &e))?;
         let name = ent.file_name().to_string_lossy().to_string();
         let Some(run_id) = name
             .strip_prefix(&prefix)
@@ -202,7 +280,7 @@ pub fn kill_copy_paths(codex_home: &Path, task_dir: &Path) -> Vec<PathBuf> {
             .to_string_lossy()
             .to_lowercase()
     });
-    out
+    Ok(out)
 }
 
 /// Whether two paths name the same directory: by their canonical forms when both resolve, else
@@ -281,9 +359,17 @@ pub fn read_pending_file(path: &Path) -> PendingRead {
 
 /// `Read-TaskPendingRecords`: the first unusable record refuses; otherwise the first active
 /// record's message is returned (a status change or rating is refused while it is active).
+/// (Wave 7c, F40-1) A listing that failed ([`PendingPaths::error`]) refuses as an unusable record.
 pub fn read_task_pending_records(task_dir: &Path) -> TaskPending {
     let mut active_message: Option<String> = None;
-    for p in pending_paths(task_dir) {
+    let listed = pending_paths(task_dir);
+    if let Some(err) = listed.error {
+        return TaskPending {
+            error: Some(err),
+            active_message: None,
+        };
+    }
+    for p in listed.paths {
         let rd = read_pending_file(&p);
         if let Some(err) = rd.error {
             return TaskPending {
@@ -1179,6 +1265,7 @@ mod tests {
             std::fs::write(p, rec).unwrap();
         }
         let names: Vec<String> = pending_paths(&dir)
+            .paths
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
             .collect();
@@ -1255,14 +1342,20 @@ mod tests {
         let single = task_dir.join(".consult.pending.json");
         std::fs::write(&single, r#"{"state":"reserved"}"#).unwrap();
         assert_eq!(
-            pending_paths_with(&task_dir, Some(&home)),
+            pending_paths_with(&task_dir, Some(&home)).paths,
             vec![single.clone(), copy.clone(), broken.clone()]
         );
         assert_eq!(
             kill_copy_paths(&home, &task_dir),
-            vec![copy.clone(), broken.clone()]
+            Ok(vec![copy.clone(), broken.clone()])
         );
-        assert_eq!(pending_paths_with(&task_dir, None), vec![single]);
+        assert_eq!(
+            pending_paths_with(&task_dir, None),
+            PendingPaths {
+                paths: vec![single],
+                error: None
+            }
+        );
         // judged as any record: the live survivor refuses; the unreadable one is unusable
         let rd = read_pending_file(&copy);
         let check = test_pending_active(&rd.record.expect("the copy reads"), &copy);
@@ -1274,6 +1367,70 @@ mod tests {
         );
         let bad = read_pending_file(&broken);
         assert!(bad.error.is_some_and(|e| e.contains("is unusable")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// (Wave 7c, F40-1) The codex home's kill records that cannot be listed are no absence of
+    /// them: the directory absent is the only "no records"; the directory that cannot be opened
+    /// (a real failure - the path is a file - and the injected `PermissionDenied`) and an entry
+    /// that cannot be read (injected) are an inspection failure naming the directory and the
+    /// error, carried by `pending_paths` beside the task's own records.
+    #[test]
+    fn a_kill_copy_directory_that_cannot_be_listed_is_an_inspection_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "c3-killcopy-list-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let home = root.join("codex-home");
+        let task_dir = root.join("repo").join(".collab").join("t");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        let single = task_dir.join(".consult.pending.json");
+        std::fs::write(&single, r#"{"state":"reserved"}"#).unwrap();
+        let dir = kill_copy_dir(&home);
+        let refusal = |why: &str| {
+            format!(
+                "the recovery copies under {} cannot be listed ({why}",
+                dir.display()
+            )
+        };
+        let tail = "): the task is refused until they can be read";
+        // absent: no records, the listing complete
+        assert_eq!(kill_copy_paths_as(&home, &task_dir, None), Ok(Vec::new()));
+        assert_eq!(
+            pending_paths_with(&task_dir, Some(&home)),
+            PendingPaths {
+                paths: vec![single.clone()],
+                error: None
+            }
+        );
+        // the injected PermissionDenied, the directory absent or present
+        for _ in 0..2 {
+            let e = kill_copy_paths_as(&home, &task_dir, Some(CopyDirFail::Denied)).unwrap_err();
+            assert!(e.starts_with(&refusal("access is denied")), "{e}");
+            assert!(e.ends_with(tail), "{e}");
+            std::fs::create_dir_all(&dir).unwrap();
+        }
+        // a copy present, its directory listed: no failure, the copy listed
+        let copy = kill_copy_path(&home, "t", "0f6b5d2e-1c4a-4e7b-9a51-3d2c1b0a9f87");
+        std::fs::write(&copy, "{ not json").unwrap();
+        assert_eq!(
+            kill_copy_paths_as(&home, &task_dir, None),
+            Ok(vec![copy.clone()])
+        );
+        // an entry that cannot be read: the copy is not silently dropped
+        let e = kill_copy_paths_as(&home, &task_dir, Some(CopyDirFail::Iter)).unwrap_err();
+        assert!(e.starts_with(&refusal("an entry could not be read")), "{e}");
+        assert!(e.ends_with(tail), "{e}");
+        // a real failure to open it: the directory's path is a file
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::write(&dir, b"not a directory").unwrap();
+        let e = kill_copy_paths(&home, &task_dir).unwrap_err();
+        assert!(e.starts_with(&refusal("")), "{e}");
+        assert!(e.ends_with(tail), "{e}");
+        let listed = pending_paths_with(&task_dir, Some(&home));
+        assert_eq!(listed.paths, vec![single.clone()]);
+        assert_eq!(listed.error.as_deref(), Some(e.as_str()));
         let _ = std::fs::remove_dir_all(&root);
     }
 

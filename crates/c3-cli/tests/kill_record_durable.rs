@@ -25,6 +25,13 @@
 //! failed naming its root and the three errors, the next run is refused from the launch record.
 //! A copy the end of the run made redundant (the record written clean) is removed.
 //!
+//! (Wave 7c, F40-1, RC1 of reply 40) The codex home's copies that cannot be listed
+//! (`CODEX_CONSULT_TEST_COPY_DIR_FAIL=denied|iter`) are an inspection failure: the run, the dry
+//! run, `findings -List` and the kick name the directory and the error and refuse - the copy naming
+//! the surviving helper is never skipped. (F40-2, RC2 of reply 40) A kick whose kill record is
+//! written nowhere is acknowledged `not killed`: the kick names the live root, claims no stop and
+//! fails; the tree stays alive.
+//!
 //! Nothing reaches a real provider or intake. Windows only (the fake codex is a `.cmd` wrapper
 //! around a PowerShell script, as the plugin's `fake-codex3.cmd`).
 #![cfg(windows)]
@@ -165,6 +172,47 @@ fn launch_logged(work: &Path, args: &[&str], env: &[(&str, &str)], out: &Path, e
 
 fn launch_io(work: &Path, args: &[&str], env: &[(&str, &str)], out: Stdio, err: Stdio) -> Run {
     let repo = work.join("repo");
+    let mut cmd = c3_cmd(work, env);
+    let child = cmd
+        .args([
+            "consult",
+            "--task",
+            "t",
+            "--prompt",
+            "x",
+            "--reply-name",
+            "kd",
+            "--stall-sec",
+            "0",
+        ])
+        .args(args)
+        .stdout(out)
+        .stderr(err)
+        .spawn()
+        .expect("run c3 consult");
+    let path = repo.join(".collab").join("t").join(".consult.pending.json");
+    Run {
+        child,
+        work: work.to_path_buf(),
+        repo,
+        path,
+    }
+}
+
+/// (Wave 7c) Another `c3` command (`args` whole: a kick, `findings -List`) in the repository
+/// `prepare` made under `work`, with the runs' environment and `env`; its output.
+fn c3_other(work: &Path, args: &[&str], env: &[(&str, &str)]) -> std::process::Output {
+    c3_cmd(work, env)
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run c3")
+}
+
+/// `c3` in the repository under `work`: the codex home, the fake codex and the test switches of
+/// this file, and nothing inherited from the bridge, the fake or C3; then `env`.
+fn c3_cmd(work: &Path, env: &[(&str, &str)]) -> Command {
+    let repo = work.join("repo");
     let home = work.join("home");
     let fake = work.join("fake-codex.cmd");
     let mut cmd = Command::new(c3_bin());
@@ -192,30 +240,7 @@ fn launch_io(work: &Path, args: &[&str], env: &[(&str, &str)], out: Stdio, err: 
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let child = cmd
-        .args([
-            "consult",
-            "--task",
-            "t",
-            "--prompt",
-            "x",
-            "--reply-name",
-            "kd",
-            "--stall-sec",
-            "0",
-        ])
-        .args(args)
-        .stdout(out)
-        .stderr(err)
-        .spawn()
-        .expect("run c3 consult");
-    let path = repo.join(".collab").join("t").join(".consult.pending.json");
-    Run {
-        child,
-        work: work.to_path_buf(),
-        repo,
-        path,
-    }
+    cmd
 }
 
 fn read_record(path: &Path) -> Option<Value> {
@@ -1031,9 +1056,81 @@ fn rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_cop
             && copy_line.contains(&format!("pid {helper}")),
         "the copy refuses on the helper: {dry_text}"
     );
-    // the next run: refused before any engine turn
     let turns = work.join("turns.txt");
     let turns_s = turns.to_string_lossy().to_string();
+    // (wave 7c, F40-1; RC1 of reply 40) the same codex home, its copies made unlistable - the
+    // directory cannot be opened (PermissionDenied) or one of its entries cannot be read: an
+    // explicit inspection failure naming the directory and the error refuses the run before any
+    // engine turn (the copy naming the helper is never skipped as absent), the dry run as well;
+    // `findings -List` shows it and the kick refuses on it
+    let copy_dir = copy.parent().unwrap().to_path_buf();
+    let nn = launch_rec["nn"].as_str().unwrap().to_string();
+    for (mode, why) in [
+        ("denied", "access is denied"),
+        ("iter", "an entry could not be read"),
+    ] {
+        let failure = format!(
+            "the recovery copies under {} cannot be listed ({why} (test hook CODEX_CONSULT_TEST_COPY_DIR_FAIL={mode})): the task is refused until they can be read",
+            copy_dir.display()
+        );
+        let blind = launch(
+            &work,
+            &["--timeout-sec", "30"],
+            &[
+                ("FAKE_MAIN", "prose"),
+                ("FAKE_TURN_FILE", turns_s.as_str()),
+                ("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode),
+            ],
+            true,
+        )
+        .child
+        .wait_with_output()
+        .unwrap();
+        let blind_text = output_text(&blind);
+        assert_eq!(blind.status.code(), Some(1), "{mode}: {blind_text}");
+        assert!(blind_text.contains(&failure), "{mode}: {blind_text}");
+        assert!(!turns.exists(), "{mode}: no engine turn ran: {blind_text}");
+        assert!(alive(helper), "{mode}: the helper lives");
+        assert!(copy.exists(), "{mode}: the copy is kept");
+        assert_eq!(read_record(&run.path).unwrap(), launch_rec, "{mode}");
+        let dry = launch(
+            &work,
+            &["--dry-run"],
+            &[
+                ("FAKE_MAIN", "prose"),
+                ("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode),
+            ],
+            true,
+        )
+        .child
+        .wait_with_output()
+        .unwrap();
+        let dry_text = output_text(&dry);
+        assert_eq!(dry.status.code(), Some(1), "{mode}: {dry_text}");
+        assert!(dry_text.contains(&failure), "{mode}: {dry_text}");
+        let list = c3_other(
+            &work,
+            &["findings", "--task", "t", "--list"],
+            &[("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode)],
+        );
+        let list_text = output_text(&list);
+        assert!(
+            list_text.contains(&format!("pending: {failure}")),
+            "{mode}: {list_text}"
+        );
+        let kick = c3_other(
+            &work,
+            &["consult", "--task", "t", "--kick", "--member", &nn],
+            &[("CODEX_CONSULT_TEST_COPY_DIR_FAIL", mode)],
+        );
+        let kick_text = output_text(&kick);
+        assert_eq!(kick.status.code(), Some(1), "{mode}: {kick_text}");
+        assert!(
+            kick_text.contains(&format!("-Kick: {failure}")),
+            "{mode}: {kick_text}"
+        );
+    }
+    // enumeration restored - the next run: refused before any engine turn, naming the helper
     let next = launch(
         &work,
         &["--timeout-sec", "30"],
@@ -1150,4 +1247,89 @@ fn f38_the_codex_home_copy_is_removed_once_the_record_is_written_clean() {
         .clone();
     assert_eq!(last["kill_confirmed"], false, "{last}");
     let _ = std::fs::remove_dir_all(&run.work);
+}
+
+#[test]
+fn rc2_f40_a_kick_whose_kill_record_is_written_nowhere_is_acknowledged_not_killed() {
+    // (wave 7c, F40-2; RC2 of reply 40) the all-three-writes-fail fixture of
+    // `f38_a_kill_record_written_nowhere_leaves_the_tree_alive_and_the_task_refused` with the
+    // operator's kick instead of the timeout: the record path read-only once the main turn runs,
+    // the fallback and the codex home's copy blocked - the kicked turn kills nothing and
+    // acknowledges `not killed`; the kick names the live root and why, says the tree is left alive
+    // and the task refused, claims no stop and fails (exit 1); the tree stays alive, the run ends
+    // failed `not killed`, nothing committed
+    let work = scratch("killrec-kick-nowhere");
+    prepare(&work);
+    let inter_file = work.join("intermediate.pid");
+    let inter_s = inter_file.to_string_lossy().to_string();
+    let (out_log, err_log) = (work.join("run.out"), work.join("run.err"));
+    let mut run = launch_logged(
+        &work,
+        &["--timeout-sec", "300", "--continue-sec", "0"],
+        &[
+            ("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL", "1"),
+            ("CODEX_CONSULT_TEST_KILL_THIRD_FAIL", "1"),
+            ("FAKE_SLEEP_SEC", "600"),
+            ("FAKE_PID_FILE", inter_s.as_str()),
+        ],
+        &out_log,
+        &err_log,
+    );
+    let mut reaper = Reapers::default();
+    let launch_rec = wait_record(&mut run, "the main turn running", |v| {
+        v["state"] == "running" && v["child_pid"].as_u64().is_some()
+    });
+    let root = launch_rec["child_pid"].as_u64().unwrap();
+    reaper.0.push(root);
+    let intermediate = read_pid(&inter_file);
+    reaper.0.push(intermediate);
+    set_readonly(&run.path, true);
+    let nn = launch_rec["nn"].as_str().unwrap().to_string();
+    let kick = c3_other(
+        &work,
+        &["consult", "--task", "t", "--kick", "--member", &nn],
+        &[],
+    );
+    let kick_text = output_text(&kick);
+    assert_eq!(kick.status.code(), Some(1), "the kick fails: {kick_text}");
+    assert!(
+        kick_text.contains(&format!(
+            "-Kick: member {nn} of task t took the kick but was NOT stopped - not killed (root pid {root}): the kill record could not be written anywhere ("
+        )) && kick_text.contains(&format!(
+            "Its engine's process tree (root pid {root}) is left alive and the task is refused until it is gone or recorded"
+        )),
+        "{kick_text}"
+    );
+    assert!(
+        !kick_text.contains("is being stopped")
+            && !kick_text.contains("stopped - it took the kick"),
+        "no claim of stopping: {kick_text}"
+    );
+    assert!(alive(root), "the root still runs: {kick_text}");
+    assert!(alive(intermediate), "the fake's PowerShell still runs");
+    // the run ends failed, the tree alive, nothing committed
+    let st = run.child.wait().expect("the run ends");
+    set_readonly(&run.path, false);
+    let text = format!(
+        "{}{}",
+        std::fs::read_to_string(&out_log).unwrap_or_default(),
+        std::fs::read_to_string(&err_log).unwrap_or_default()
+    );
+    assert!(!st.success(), "{text}");
+    assert!(
+        text.contains(
+            "failed: stopped by the operator (-Kick) (not killed: the kill record could not be written anywhere ("
+        ) && text.contains(&format!(
+            "the reviewer tree (pid {root}) is left alive as the evidence; the task is refused until it is gone or recorded"
+        )),
+        "{text}"
+    );
+    assert!(alive(root) && alive(intermediate), "the tree is left alive");
+    assert_nothing_committed(&run.repo);
+    assert_eq!(read_record(&run.path).unwrap(), launch_rec);
+    assert!(kill_copies(&work).is_empty(), "the copy was blocked");
+    drop(reaper);
+    wait_gone(root);
+    wait_gone(intermediate);
+    let _ = std::fs::remove_dir_all(&work);
 }

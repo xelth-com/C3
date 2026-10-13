@@ -7,8 +7,10 @@
 //! kicked run writes `<kick file>.ack` (`kicked` | `late`) and removes the kick file, which this
 //! command waits up to 10 s for (wave 26c, D1). Exit `0` acknowledged (the message says whether it
 //! was taken live or LATE), `1` no such member / not running (a stale kick file of that number is
-//! removed), `3` no acknowledgement in time (the kick file stays for the member's next poll), `4`
-//! the command is misused.
+//! removed) - (wave 7c, F40-1) or the task's recovery records cannot be listed, and (F40-2) a kick
+//! acknowledged `not killed` (the kill's record could be written nowhere: the tree is left alive and
+//! the task refused) - `3` no acknowledgement in time (the kick file stays for the member's next
+//! poll), `4` the command is misused.
 
 use std::path::Path;
 
@@ -96,8 +98,13 @@ pub fn run(o: &Options) -> i32 {
 
     // The run's recovery record: a member's `.consult.pending-<NN>.json`, a single run's
     // `.consult.pending.json`. It must name NN, be `running`, and its engine child alive.
+    // (Wave 7c, F40-1) records that cannot all be listed refuse the kick, as any consumer.
     let mut record: Option<serde_json::Value> = None;
-    for p in pending::pending_paths(&task_dir) {
+    let listed = pending::pending_paths(&task_dir);
+    if let Some(err) = listed.error {
+        return fail(&err);
+    }
+    for p in listed.paths {
         let rd = pending::read_pending_file(&p);
         if let Some(rec) = rd.record {
             if rec.get("nn").and_then(|v| v.as_str()) == Some(nn.as_str()) {
@@ -209,11 +216,18 @@ pub fn run(o: &Options) -> i32 {
             return 3;
         }
     };
+    let mut code = 0;
     if ack.result == "late" {
         println!(
             "{TOOL}: -Kick: member {nn} of task {} had already finished - the kick is recorded as kick_late in its warnings, its outcome unchanged.",
             o.task
         );
+    } else if ack.result == crate::engines::subprocess::KICK_NOT_KILLED {
+        // (Wave 7c, F40-2) the member took the kick but its kill did not happen: the record naming
+        // the tree could be written nowhere, so the tree is left alive as the evidence - no stop
+        // is claimed and the kick fails.
+        eprintln!("{TOOL}: -Kick: {}", not_killed_text(&nn, &o.task, &ack));
+        code = 1;
     } else {
         println!(
             "{TOOL}: -Kick: member {nn} of task {} stopped - it took the kick; its engine's process tree is being stopped and its partial output salvaged; it records \"failed: stopped by the operator (-Kick)\" (a format repair only: its first reply stands) - the panel goes on with the others.",
@@ -231,5 +245,50 @@ pub fn run(o: &Options) -> i32 {
             let _ = std::fs::remove_file(&ack_path);
         }
     }
-    0
+    code
+}
+
+/// (Wave 7c, F40-2) The `-Kick` report of a member that acknowledged `not killed`: the live root
+/// pid and why, the tree left alive and the task refused - never a stop.
+fn not_killed_text(nn: &str, task: &str, ack: &crate::engines::subprocess::KickAck) -> String {
+    let root = if ack.root > 0 {
+        format!("root pid {}", ack.root)
+    } else {
+        "its root".to_string()
+    };
+    let why = if ack.reason.is_empty() {
+        "the kill record could not be written anywhere".to_string()
+    } else {
+        ack.reason.clone()
+    };
+    format!(
+        "member {nn} of task {task} took the kick but was NOT stopped - not killed ({root}): {why}. Its engine's process tree ({root}) is left alive and the task is refused until it is gone or recorded; the member ends failed with the tree as the evidence."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// (Wave 7c, F40-2) The report of a `not killed` acknowledgement names the live root and why,
+    /// says the tree is left alive and the task refused, and claims no stop.
+    #[test]
+    fn a_not_killed_acknowledgement_is_reported_as_no_stop() {
+        let ack = crate::engines::subprocess::KickAck {
+            result: crate::engines::subprocess::KICK_NOT_KILLED.to_string(),
+            id: "x".to_string(),
+            root: 4242,
+            reason: "the kill record could not be written anywhere (a; b; c): the reviewer tree (pid 4242) is left alive as the evidence; the task is refused until it is gone or recorded".to_string(),
+        };
+        let t = not_killed_text("03", "t", &ack);
+        assert!(t.starts_with("member 03 of task t took the kick but was NOT stopped - not killed (root pid 4242): the kill record could not be written anywhere (a; b; c)"), "{t}");
+        assert!(t.contains("Its engine's process tree (root pid 4242) is left alive and the task is refused until it is gone or recorded"), "{t}");
+        assert!(!t.contains("is being stopped"), "{t}");
+        let bare = crate::engines::subprocess::KickAck {
+            result: crate::engines::subprocess::KICK_NOT_KILLED.to_string(),
+            ..Default::default()
+        };
+        assert!(not_killed_text("03", "t", &bare)
+            .contains("not killed (its root): the kill record could not be written anywhere."));
+    }
 }
