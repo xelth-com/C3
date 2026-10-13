@@ -411,6 +411,10 @@ pub struct KillCheck {
     pub why: String,
     /// Descendants whose start time could not be read (`Unverified`).
     pub unverified: Vec<u32>,
+    /// (wave 7b, F38-1) The kill did NOT happen: the record naming the tree could be written
+    /// nowhere, so the tree was left alive as the evidence (`why` says so; the live pids travel
+    /// as the outcome's `survivors`). Never set by a kill that ran.
+    pub not_killed: bool,
 }
 
 impl KillCheck {
@@ -421,6 +425,7 @@ impl KillCheck {
             confirmed: true,
             why: String::new(),
             unverified: Vec::new(),
+            not_killed: false,
         }
     }
 }

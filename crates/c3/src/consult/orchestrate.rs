@@ -353,6 +353,10 @@ fn kill_may_run_pids(c: &c3_core::engine::KillCheck) -> String {
 /// confirmed: <why>; pid <n> may still run)`; with survivors `(process tree killed; <n> processes
 /// survived: pid <n>[; <why>; pid <n> may still run])`.
 fn format_kill_text(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> String {
+    // (wave 7b, F38-1) no record anywhere: the tree was left alive
+    if c.not_killed {
+        return format!("(not killed: {})", c.why);
+    }
     if !survivors.is_empty() {
         return format!(
             "(process tree killed; {} processes survived: pid {}{})",
@@ -395,6 +399,14 @@ fn kill_check_warning(
 ) -> Option<String> {
     if c.confirmed {
         return None;
+    }
+    // (wave 7b, F38-1) no record anywhere: the tree was left alive
+    if c.not_killed {
+        return Some(format!(
+            "not killed ({turn}): {}; left running: pid {}",
+            c.why,
+            join_pids(survivors)
+        ));
     }
     if survivors.is_empty() {
         return Some(format!(
@@ -490,12 +502,21 @@ fn kept_record(on: &PendingRecord, k: &KeptKill) -> PendingRecord {
 /// into the record's fallback file ([`crate::liveness::pending::kill_fallback_path`], read by the
 /// recovery as any record), and what it came to goes back to the killer
 /// ([`crate::engines::subprocess::KillRecord`]); TEST HOOK (test mode only):
-/// `CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL=1` - the fallback write fails too.
+/// `CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL=1` - the fallback write fails too. (Wave 7b, F38-1) NO
+/// KILL WITHOUT A RECORD: the fallback failing too, the record goes into its third location, the
+/// codex home's copy ([`crate::liveness::pending::kill_copy_path`], outside the collab directory;
+/// the recovery reads it as any record of the task); all three failing, the killer is told
+/// [`crate::engines::subprocess::KillRecord::Lost`] and leaves the tree alive as the evidence.
+/// TEST HOOK (test mode only): `CODEX_CONSULT_TEST_KILL_THIRD_FAIL=1` - the copy's write fails too.
 #[derive(Clone)]
 struct KillSite {
     store: FilesStore,
     pending: PendingRef,
     on: PendingRecord,
+    /// (wave 7b, F38-1) This run's codex home copy of the kill record
+    /// (`<codex home>/c3/pending-kill/<task>-<run id>.json`); `None`: no codex home resolves (the
+    /// unit tests: none unless a test sets one).
+    copy: Option<PathBuf>,
     pause_ms: u64,
     /// `true`: the test pause is held right after the kill, before its result is written.
     pause_at_kill: bool,
@@ -519,6 +540,9 @@ struct PreKill {
     error: Option<String>,
     /// (wave 7, F30-2) That write failed and the record went into its fallback file - here.
     fallback: Option<PathBuf>,
+    /// (wave 7b, F38-1) The fallback failed too and the record went into the codex home's copy -
+    /// here.
+    copy: Option<PathBuf>,
 }
 
 /// (wave 7, F30-2) The record written before a kill, into the fallback file `path` (the recovery
@@ -535,6 +559,55 @@ fn write_kill_fallback(path: &Path, record: &PendingRecord) -> Result<(), String
         .to_bytes()
         .map_err(|e| c3_core::one_line(&e.to_string()))?;
     c3_core::store::write_text_atomic(path, &bytes).map_err(|e| c3_core::one_line(&e.to_string()))
+}
+
+/// (wave 7b, F38-1) The record written before a kill, into the codex home's copy `path` (neither
+/// the recovery record nor its fallback could be written): the fallback's JSON plus `collab_dir`
+/// and `task`, the directory created when missing. `Err`: why not.
+fn write_kill_copy(
+    path: &Path,
+    record: &PendingRecord,
+    collab_dir: &Path,
+    task: &str,
+) -> Result<(), String> {
+    if c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_THIRD_FAIL")
+        .is_some_and(|v| v.trim() == "1")
+    {
+        return Err("the write failed (test hook CODEX_CONSULT_TEST_KILL_THIRD_FAIL)".to_string());
+    }
+    let mut r = record.clone();
+    r.extra.insert(
+        "collab_dir".to_string(),
+        serde_json::Value::String(collab_dir.to_string_lossy().to_string()),
+    );
+    r.extra.insert(
+        "task".to_string(),
+        serde_json::Value::String(task.to_string()),
+    );
+    let bytes = r
+        .to_bytes()
+        .map_err(|e| c3_core::one_line(&e.to_string()))?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| c3_core::one_line(&e.to_string()))?;
+    }
+    c3_core::store::write_text_atomic(path, &bytes).map_err(|e| c3_core::one_line(&e.to_string()))
+}
+
+/// (wave 7b, F38-1) This run's codex home copy path: `<codex home>/c3/pending-kill/<task>-<run
+/// id>.json`, the run id its consultation id (a fresh one when it has none).
+fn kill_copy_of(home: Option<&Path>, pending: &PendingRef, on: &PendingRecord) -> Option<PathBuf> {
+    let home = home?;
+    let id = on.consult_id.trim();
+    let run_id = if !id.is_empty() && uuid::Uuid::parse_str(id).is_ok() {
+        id.to_string()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
+    Some(crate::liveness::pending::kill_copy_path(
+        home,
+        pending.task.as_str(),
+        &run_id,
+    ))
 }
 
 /// (wave 3e, F30-2) The `kill_unconfirmed` of the record written before a kill: until the kill's
@@ -617,10 +690,18 @@ impl KillSite {
             _ => "",
         }
         .to_string();
+        // (wave 7b, F38-1) the unit tests never write into the codex home of the machine
+        let home = if cfg!(test) {
+            None
+        } else {
+            crate::liveness::pending::kill_copy_home()
+        };
+        let copy = kill_copy_of(home.as_deref(), &pending, &on);
         KillSite {
             store,
             pending,
             on,
+            copy,
             pause_ms,
             pause_at_kill,
             pause_turn,
@@ -662,7 +743,9 @@ impl KillSite {
     }
 
     /// The write before the kill; (wave 7, F30-2) a failed one retried ONCE into the fallback file,
-    /// and what it came to returned to the killer.
+    /// (wave 7b, F38-1) that failing too, into the codex home's copy, and what it came to returned
+    /// to the killer: all three failing, [`crate::engines::subprocess::KillRecord::Lost`] with the
+    /// three errors - the killer leaves the tree alive.
     fn before_kill(
         &self,
         turn: &str,
@@ -686,6 +769,7 @@ impl KillSite {
             .write_pending(&self.pending, &record)
             .map_err(|e| c3_core::one_line(&e.to_string()));
         let mut fallback: Option<PathBuf> = None;
+        let mut copy: Option<PathBuf> = None;
         let outcome = match &written {
             Ok(()) => KillRecord::Durable { fallback: false },
             Err(e) => {
@@ -695,7 +779,32 @@ impl KillSite {
                         fallback = Some(fb);
                         KillRecord::Durable { fallback: true }
                     }
-                    Err(f) => KillRecord::Lost(format!("{e}; its fallback {}: {f}", fb.display())),
+                    Err(f) => {
+                        let third = match &self.copy {
+                            Some(c) => write_kill_copy(
+                                c,
+                                &record,
+                                &self.store.collab,
+                                self.pending.task.as_str(),
+                            )
+                            .map(|()| c.clone())
+                            .map_err(|t| format!("its copy {}: {t}", c.display())),
+                            None => Err(
+                                "its copy in the codex home: no codex home (CODEX_HOME, HOME and USERPROFILE resolve none)"
+                                    .to_string(),
+                            ),
+                        };
+                        match third {
+                            Ok(c) => {
+                                copy = Some(c);
+                                KillRecord::Durable { fallback: true }
+                            }
+                            Err(t) => KillRecord::Lost(format!(
+                                "{e}; its fallback {}: {f}; {t}",
+                                fb.display()
+                            )),
+                        }
+                    }
                 }
             }
         };
@@ -706,8 +815,25 @@ impl KillSite {
             a.written = written.is_ok();
             a.error = written.err();
             a.fallback = fallback;
+            a.copy = copy;
         }
         outcome
+    }
+
+    /// (wave 7b, F38-1) The recovery record is written clean at the end of the run (it names what
+    /// the kills left): this run's codex home copy, if a kill wrote one, is not needed any more and
+    /// is removed (a failed removal leaves it to the next run's recovery, which consumes it).
+    fn drop_copy(&self) {
+        if let Some(c) = &self.copy {
+            if c.exists() {
+                if let Err(e) = std::fs::remove_file(c) {
+                    eprintln!(
+                        "{TOOL}: could not remove the kill record's copy {} ({e}); the next run consumes it",
+                        c.display()
+                    );
+                }
+            }
+        }
     }
 
     /// What the current turn's kill wrote before it stopped anything.
@@ -781,7 +907,8 @@ fn kept_what(c: &c3_core::engine::KillCheck, survivors: &[u32]) -> &'static str 
 
 /// (wave 3e, F30-2) The warning of a kill whose record could not be written - before the kill
 /// (`pre`), after it (`post`) or both - and whether the evidence is LOST (no record of the kill on
-/// disk: written neither before nor after it, nor - wave 7 - into the fallback file). The plugin's
+/// disk: written neither before nor after it, nor (wave 7) into the fallback file, nor (wave 7b)
+/// into the codex home's copy; a kill that found none of the three did not happen). The plugin's
 /// form when it is lost: `the survivors|unverified pids|unconfirmed kill could not be recorded
 /// (<error>) - <path> still names only child pid <n>`. `None`: both writes succeeded (or none was
 /// due).
@@ -801,19 +928,27 @@ fn kill_record_warning(
             ),
             false,
         )),
-        (_, Some(e)) if pre.fallback.is_some() => Some((
+        (_, Some(e)) if pre.fallback.is_some() || pre.copy.is_some() => Some((
             format!(
                 "the {what} could not be recorded ({e}) - {} keeps the record written before the kill (its tree unknown: the next run for this task is refused until a scan finds none of it); {path} still names only child pid {child}",
-                pre.fallback.as_deref().unwrap_or(Path::new("")).display()
+                pre.fallback
+                    .as_deref()
+                    .or(pre.copy.as_deref())
+                    .unwrap_or(Path::new(""))
+                    .display()
             ),
             false,
         )),
         (Some(e), None) => Some((
             format!(
-                "the record could not be written before the kill ({e}) - the kill counts as not confirmed; {path} names what it left{}",
+                "the record could not be written before the kill ({e}) - the kill counts as not confirmed; {path} names what it left{}{}",
                 pre.fallback
                     .as_deref()
                     .map(|f| format!(" ({} keeps the record written before the kill until the next run consumes it)", f.display()))
+                    .unwrap_or_default(),
+                pre.copy
+                    .as_deref()
+                    .map(|c| format!(" ({} keeps the record written before the kill until the end of the run writes the record clean or the next run consumes it)", c.display()))
                     .unwrap_or_default()
             ),
             false,
@@ -871,8 +1006,16 @@ fn main_kill_check(
 /// tree killed; <n> processes survived: pid ...[; <why>; pid <u> may still run]; the next run for
 /// this task is refused until they exit)`; (wave 28e, E18) no survivor but unverified descendants -
 /// `failed: <stop> (kill not confirmed: <why>; pid <u> may still run; the next run for this task is
-/// refused until it exits)`; else `failed: <stop> <Format-KillText>`.
+/// refused until it exits)`; else `failed: <stop> <Format-KillText>`. (Wave 7b, F38-1) A kill that
+/// did not happen (no record anywhere): `failed: <stop> (not killed: the kill record could not be
+/// written anywhere (<errors>): the reviewer tree (pid <root>) is left alive as the evidence; the
+/// task is refused until it is gone or recorded)`.
 fn main_kill_outcome(stop: &str, c: &c3_core::engine::KillCheck, survivors: &[u32]) -> String {
+    // (wave 7b, F38-1) the record of the kill could be written nowhere: no kill - the tree is the
+    // evidence, the launch record names its root
+    if c.not_killed {
+        return format!("failed: {stop} {}", format_kill_text(c, survivors));
+    }
     if !survivors.is_empty() {
         return format!(
             "failed: {stop} (process tree killed; {} processes survived: pid {}{}; the next run for this task is refused until they exit)",
@@ -6078,15 +6221,33 @@ fn finish(
         // unknown tree (`kill_unconfirmed`): the record is kept in state `survivors`.
         let survivor_rec = kept_record(&base_record, &k);
         let written = store.write_pending(&pending, &survivor_rec);
+        // (wave 7b, F38-1) the record is written clean: the codex home's copy of a kill's record
+        // is not needed any more
+        if written.is_ok() {
+            kill_site.drop_copy();
+        }
         // (wave 3e, F30-2) no commit without the kill's evidence on disk: a kill whose record was
         // written neither before nor after it, and this write failing too, ends the run refused -
-        // nothing is committed (the record on disk may name only the killed child).
+        // nothing is committed (the record on disk may name only the killed child). (Wave 7b,
+        // F38-1) A kill that found no record anywhere did not happen: its tree runs, the launch
+        // record names its root.
         if let (Err(e), Some(lost)) = (
             &written,
             kill_record_lost.as_ref().or(sec.kill_record_lost.as_ref()),
         ) {
+            let left = main_kill
+                .iter()
+                .chain(sec.kill_checks.iter().map(|(c, _)| c))
+                .find(|c| c.not_killed)
+                .map(|c| c.root_pid);
+            let tail = match left {
+                Some(root) => format!(
+                    "the reviewer tree (pid {root}) was left running as the evidence - the next consultation of this task is refused while it runs"
+                ),
+                None => "make sure no process of it still runs before the next consultation of this task".to_string(),
+            };
             return refuse(&format!(
-                "the kill's evidence is not on disk: {lost}; the end of the run could not write it either ({}). This run is not committed: no ledger entry was written and the stores were not touched - make sure no process of it still runs before the next consultation of this task (bridge outcome: {bridge_outcome}).",
+                "the kill's evidence is not on disk: {lost}; the end of the run could not write it either ({}). This run is not committed: no ledger entry was written and the stores were not touched - {tail} (bridge outcome: {bridge_outcome}).",
                 c3_core::one_line(&e.to_string())
             ));
         }
@@ -9988,7 +10149,31 @@ mod kill_record_tests {
             confirmed,
             why: why.to_string(),
             unverified: unverified.to_vec(),
+            not_killed: false,
         }
+    }
+
+    /// (Wave 7b, F38-1) A kill that did not happen - its record could be written nowhere - is told
+    /// as such: the outcome, the kill text and the warning name the tree left alive.
+    #[test]
+    fn a_kill_that_did_not_happen_is_told_as_such() {
+        let why = "the kill record could not be written anywhere (x; its fallback f: y; its copy c: z): the reviewer tree (pid 9) is left alive as the evidence; the task is refused until it is gone or recorded";
+        let mut c = check(false, why, 9, &[]);
+        c.not_killed = true;
+        assert_eq!(
+            main_kill_outcome("timeout after 3 s", &c, &[9, 10]),
+            format!("failed: timeout after 3 s (not killed: {why})")
+        );
+        assert_eq!(
+            format_kill_text(&c, &[9, 10]),
+            format!("(not killed: {why})")
+        );
+        assert_eq!(
+            kill_check_warning(&c, &[9, 10], "format repair"),
+            Some(format!(
+                "not killed (format repair): {why}; left running: pid 9, 10"
+            ))
+        );
     }
 
     #[test]
@@ -10521,6 +10706,102 @@ mod kill_record_tests {
         assert!(crate::liveness::pending::pending_paths(task_dir).contains(&fallback));
         let rd = crate::liveness::pending::read_pending_file(&fallback);
         assert!(rd.error.is_none() && rd.record.is_some());
+        let _ = std::fs::remove_dir_all(task_dir.parent().unwrap());
+    }
+
+    /// (Wave 7b, F38-1) The recovery record and its fallback both blocked: the record before the
+    /// kill goes into the codex home's copy (`<home>/c3/pending-kill/t-<consult id>.json`, the
+    /// fallback's JSON plus `collab_dir` and `task`), the killer is told it is durable, the
+    /// warning names the copy, nothing is lost, the recovery reads the copy as a record of the
+    /// task, and the record written clean at the end of the run removes it. The copy blocked too:
+    /// LOST with the three errors (the killer then leaves the tree alive).
+    #[test]
+    fn a_kill_whose_collab_writes_fail_keeps_its_record_in_the_codex_home() {
+        use crate::engines::subprocess::{KillEvent, KillRecord};
+        let (store, pending, path, mut base) = running_store("killrec-copy", 7_000_021);
+        base.consult_id = "3c0e7a52-5f0e-4b8e-9d1c-2a7b6f4e8d10".into();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::create_dir_all(crate::liveness::pending::kill_fallback_path(&path)).unwrap();
+        let task_dir = path.parent().unwrap().to_path_buf();
+        let home = task_dir.parent().unwrap().join("codex-home");
+        let mut site = KillSite::new(store.clone(), pending.clone(), base.clone(), "");
+        assert!(
+            site.copy.is_none(),
+            "the unit tests write into no codex home"
+        );
+        site.copy = kill_copy_of(Some(&home), &pending, &base);
+        let copy = crate::liveness::pending::kill_copy_path(&home, "t", &base.consult_id);
+        assert_eq!(site.copy.as_deref(), Some(copy.as_path()));
+        let told = site.hook("main turn")(KillEvent::Before {
+            root: 7_000_022,
+            tree: &Ok(Vec::new()),
+        });
+        assert_eq!(told, KillRecord::Durable { fallback: true });
+        let pre = site.armed();
+        assert!(pre.error.is_some() && pre.fallback.is_none(), "{pre:?}");
+        assert_eq!(pre.copy.as_deref(), Some(copy.as_path()));
+        let r = on_disk(&copy);
+        assert_eq!(r["state"], "survivors", "{r}");
+        assert_eq!(r["task"], "t", "{r}");
+        assert_eq!(
+            r["collab_dir"],
+            store.collab.to_string_lossy().as_ref(),
+            "{r}"
+        );
+        assert_eq!(r["consult_id"], base.consult_id.as_str(), "{r}");
+        assert_eq!(r["child_pid"], 7_000_022, "{r}");
+        assert_eq!(
+            r["kill_unconfirmed"],
+            "the kill of the main turn (pid 7000022) started and its result was never recorded"
+        );
+        // the kill's handling: not confirmed, the write after it fails too - warned, not lost
+        let mut sec = Secondary {
+            kill_site: Some(site.clone()),
+            ..Secondary::default()
+        };
+        let _ = secondary_kill(
+            "timeout after 30 s",
+            Some(KillCheck::confirmed(7_000_022)),
+            &[],
+            "main turn",
+            &mut sec,
+        );
+        assert!(sec.kill_record_lost.is_none());
+        let w = sec
+            .kill_warnings
+            .iter()
+            .find(|w| w.starts_with("kill not recorded (main turn): "))
+            .expect("the record warning");
+        assert!(
+            w.contains(&format!(
+                "{} keeps the record written before the kill (its tree unknown",
+                copy.display()
+            )),
+            "{w}"
+        );
+        // the recovery reads it as a record of the task; the record written clean removes it
+        assert!(
+            crate::liveness::pending::pending_paths_with(&task_dir, Some(&home)).contains(&copy)
+        );
+        site.drop_copy();
+        assert!(!copy.exists(), "the copy is removed");
+        // the copy blocked too (a directory where the file goes): lost, the three errors named
+        std::fs::create_dir_all(&copy).unwrap();
+        let mut site = KillSite::new(store, pending.clone(), base.clone(), "");
+        site.copy = kill_copy_of(Some(&home), &pending, &base);
+        match site.hook("main turn")(KillEvent::Before {
+            root: 7_000_022,
+            tree: &Ok(Vec::new()),
+        }) {
+            KillRecord::Lost(why) => assert!(
+                why.contains("; its fallback ")
+                    && why.contains(&format!("; its copy {}: ", copy.display())),
+                "{why}"
+            ),
+            other => panic!("the killer must be told the record is nowhere: {other:?}"),
+        }
+        assert!(site.armed().copy.is_none());
         let _ = std::fs::remove_dir_all(task_dir.parent().unwrap());
     }
 

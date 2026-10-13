@@ -14,7 +14,16 @@
 //! goes into its fallback file `.consult.pending-kill.json` (read by the recovery as any record), and
 //! with the bridge terminated right after the kill, a process of the killed tree still running and
 //! the file access restored, the next run is refused - from the fallback and the launch record, and
-//! (the fallback blocked too) from the launch record alone.
+//! (the fallback blocked too) from the codex home's copy.
+//!
+//! (Wave 7b, F38-1, RC1 of reply 38) NO KILL WITHOUT A RECORD. Both collab writes failing, the
+//! record goes into its third location, `<CODEX_HOME>/c3/pending-kill/<task>-<run id>.json`: with
+//! a tree root -> intermediate -> helper whose root and intermediate the kill stops and whose helper
+//! survives, the bridge terminated at the kill, the next run is refused before any engine turn
+//! while the helper lives (the launch record cannot reach a helper below a dead intermediate; the
+//! copy names it). All three writes failing, nothing is killed: the tree stays alive, the run ends
+//! failed naming its root and the three errors, the next run is refused from the launch record.
+//! A copy the end of the run made redundant (the record written clean) is removed.
 //!
 //! Nothing reaches a real provider or intake. Windows only (the fake codex is a `.cmd` wrapper
 //! around a PowerShell script, as the plugin's `fake-codex3.cmd`).
@@ -60,12 +69,16 @@ const FAKE_CMD: &str = "@echo off\r\nset \"FAKE_CODEX_ARGS=%*\"\r\npowershell -N
 /// A trimmed fake-codex3: `--version`, `login status`, and an exec turn that prints
 /// `thread.started` / `turn.started` and then, by `FAKE_MAIN` (a new turn) or `FAKE_RESUME` (a
 /// `resume <thread>` turn): `prose` - copies a prose reply to the `-o` file and ends the turn;
-/// anything else - hangs (the run's timeout kills it).
+/// anything else - hangs (the run's timeout kills it). `FAKE_TURN_FILE`: every exec turn appends a
+/// line there (an engine turn ran); `FAKE_HELPER_PID_FILE` (a hanging turn): the fake's PowerShell
+/// starts a helper - a PowerShell that only sleeps, its command line unrelated to codex - and writes
+/// its pid there (the tree launcher -> the fake's PowerShell -> the helper).
 const FAKE_PS1: &str = r#"$ErrorActionPreference = 'Stop'
 $raw = [string]$env:FAKE_CODEX_ARGS
 if ($raw -match '--version') { Write-Output 'codex-cli 0.155.1-fake'; exit 0 }
 if ($raw -match '^\s*login\s+status(\s|$)') { [Console]::Error.WriteLine('Logged in using ChatGPT'); exit 0 }
 $null = [Console]::In.ReadToEnd()
+if ($env:FAKE_TURN_FILE) { [IO.File]::AppendAllText($env:FAKE_TURN_FILE, "turn`n") }
 $tid = [guid]::NewGuid().ToString()
 $resume = $false
 if ($raw -match ' resume ([0-9a-fA-F-]{36})') { $resume = $true; $tid = $Matches[1] }
@@ -83,6 +96,10 @@ if ($mode -eq 'prose') {
     exit 0
 }
 if ($env:FAKE_PID_FILE) { [IO.File]::WriteAllText($env:FAKE_PID_FILE, [string]$PID) }
+if ($env:FAKE_HELPER_PID_FILE) {
+    $h = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 600') -NoNewWindow -PassThru
+    [IO.File]::WriteAllText($env:FAKE_HELPER_PID_FILE, [string]$h.Id)
+}
 $sleep = 60
 if ($env:FAKE_SLEEP_SEC) { $sleep = [int]$env:FAKE_SLEEP_SEC }
 Start-Sleep -Seconds $sleep
@@ -130,6 +147,23 @@ fn prepare(work: &Path) {
 /// Starts one consultation in the repository `prepare` made under `work` (a first one, or the next
 /// one after an interrupted run).
 fn launch(work: &Path, args: &[&str], env: &[(&str, &str)], capture: bool) -> Run {
+    let (out, err) = if capture {
+        (Stdio::piped(), Stdio::piped())
+    } else {
+        (Stdio::null(), Stdio::null())
+    };
+    launch_io(work, args, env, out, err)
+}
+
+/// [`launch`] with the run's stdout and stderr in the files `out` and `err` (a tree the run leaves
+/// alive may hold its pipes open).
+fn launch_logged(work: &Path, args: &[&str], env: &[(&str, &str)], out: &Path, err: &Path) -> Run {
+    let o = std::fs::File::create(out).unwrap();
+    let e = std::fs::File::create(err).unwrap();
+    launch_io(work, args, env, Stdio::from(o), Stdio::from(e))
+}
+
+fn launch_io(work: &Path, args: &[&str], env: &[(&str, &str)], out: Stdio, err: Stdio) -> Run {
     let repo = work.join("repo");
     let home = work.join("home");
     let fake = work.join("fake-codex.cmd");
@@ -158,11 +192,6 @@ fn launch(work: &Path, args: &[&str], env: &[(&str, &str)], capture: bool) -> Ru
     for (k, v) in env {
         cmd.env(k, v);
     }
-    let (out, err) = if capture {
-        (Stdio::piped(), Stdio::piped())
-    } else {
-        (Stdio::null(), Stdio::null())
-    };
     let child = cmd
         .args([
             "consult",
@@ -452,47 +481,111 @@ fn a_bridge_that_dies_during_the_format_repairs_kill_leaves_its_record() {
 }
 
 #[test]
-fn a_kill_record_that_cannot_be_written_ends_the_run_refused() {
-    // (F30-2 / F30-3) the record path read-only once the main turn runs and - wave 7 - the
-    // fallback file blocked (test hook): the write before the kill, its retry into the fallback,
-    // the one after the kill and the end of the run's all fail - the run ends refused, the warning
-    // names the record, nothing is committed
-    let mut run = start(
-        "killrec-readonly",
+fn f38_a_kill_record_written_nowhere_leaves_the_tree_alive_and_the_task_refused() {
+    // (wave 7b, F38-1 (b)) the record path read-only once the main turn runs, the fallback and the
+    // codex home's copy blocked (test hooks): the write before the kill fails in all three places -
+    // NOTHING is killed: the tree (the launcher, the fake's PowerShell) stays alive as the evidence,
+    // the run ends failed naming its root and the three errors, no continuation, nothing committed;
+    // the next run is refused from the launch record while the recorded child lives
+    let work = scratch("killrec-nowhere");
+    prepare(&work);
+    let inter_file = work.join("intermediate.pid");
+    let inter_s = inter_file.to_string_lossy().to_string();
+    let (out_log, err_log) = (work.join("run.out"), work.join("run.err"));
+    let mut run = launch_logged(
+        &work,
         &["--timeout-sec", "3", "--continue-sec", "3"],
-        &[("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL", "1")],
-        true,
+        &[
+            ("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL", "1"),
+            ("CODEX_CONSULT_TEST_KILL_THIRD_FAIL", "1"),
+            ("FAKE_SLEEP_SEC", "600"),
+            ("FAKE_PID_FILE", inter_s.as_str()),
+        ],
+        &out_log,
+        &err_log,
     );
-    let running = wait_record(&mut run, "the main turn running", |v| {
+    let mut reaper = Reapers::default();
+    let launch_rec = wait_record(&mut run, "the main turn running", |v| {
         v["state"] == "running" && v["child_pid"].as_u64().is_some()
     });
-    let child = running["child_pid"].as_u64().unwrap();
-    let mut perms = std::fs::metadata(&run.path).unwrap().permissions();
-    perms.set_readonly(true);
-    std::fs::set_permissions(&run.path, perms).unwrap();
-    let out = run.child.wait_with_output().expect("the run ends");
-    let mut perms = std::fs::metadata(&run.path).unwrap().permissions();
-    #[allow(clippy::permissions_set_readonly_false)]
-    perms.set_readonly(false);
-    let _ = std::fs::set_permissions(&run.path, perms);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(!out.status.success(), "refused: {stderr}");
-    assert!(
-        stderr.contains(
-            "the kill's evidence is not on disk: the unconfirmed kill could not be recorded ("
-        ) && stderr.contains(&format!(
-            ".consult.pending.json still names only child pid {child}"
-        )) && stderr.contains("This run is not committed"),
-        "{stderr}"
+    let root = launch_rec["child_pid"].as_u64().unwrap();
+    reaper.0.push(root);
+    set_readonly(&run.path, true);
+    let st = run.child.wait().expect("the run ends");
+    set_readonly(&run.path, false);
+    let text = format!(
+        "{}{}",
+        std::fs::read_to_string(&out_log).unwrap_or_default(),
+        std::fs::read_to_string(&err_log).unwrap_or_default()
     );
-    // no continuation ran on it (the kill is not confirmed), nothing was committed, the record on
-    // disk is the one the write could not replace
-    assert!(!stdout.contains("one continuation turn"), "{stdout}");
+    let intermediate = read_pid(&inter_file);
+    reaper.0.push(intermediate);
+    // no kill without a record: the tree is alive
+    assert!(alive(root), "the root still runs: {text}");
+    assert!(
+        alive(intermediate),
+        "the fake's PowerShell still runs: {text}"
+    );
+    assert!(!st.success(), "{text}");
+    let copies_dir = work.join("home").join("c3").join("pending-kill");
+    assert!(
+        text.contains(
+            "failed: timeout after 3 s (not killed: the kill record could not be written anywhere ("
+        ) && text.contains("; its fallback ")
+            && text.contains("(test hook CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL); its copy ")
+            && text.contains(&copies_dir.display().to_string())
+            && text.contains("(test hook CODEX_CONSULT_TEST_KILL_THIRD_FAIL)): the reviewer tree (pid ")
+            && text.contains(&format!(
+                "the reviewer tree (pid {root}) is left alive as the evidence; the task is refused until it is gone or recorded"
+            )),
+        "{text}"
+    );
+    assert!(
+        text.contains("This run is not committed")
+            && text.contains(&format!(
+                "the reviewer tree (pid {root}) was left running as the evidence"
+            )),
+        "{text}"
+    );
+    assert!(!text.contains("one continuation turn"), "{text}");
     assert_nothing_committed(&run.repo);
-    let r = read_record(&run.path).unwrap();
-    assert_eq!(r["state"], "running", "{r}");
-    assert_eq!(r["child_pid"], child, "{r}");
+    assert_eq!(
+        read_record(&run.path).unwrap(),
+        launch_rec,
+        "the launch record stays"
+    );
+    assert!(!run
+        .path
+        .with_file_name(".consult.pending-kill.json")
+        .exists());
+    assert!(kill_copies(&work).is_empty(), "the copy was blocked");
+    // the next run of the task: refused from the launch record, before any engine turn
+    let turns = work.join("turns.txt");
+    let turns_s = turns.to_string_lossy().to_string();
+    let next = launch(
+        &work,
+        &["--timeout-sec", "30"],
+        &[("FAKE_MAIN", "prose"), ("FAKE_TURN_FILE", turns_s.as_str())],
+        true,
+    )
+    .child
+    .wait_with_output()
+    .unwrap();
+    let next_text = output_text(&next);
+    assert_eq!(next.status.code(), Some(1), "{next_text}");
+    assert!(
+        next_text.contains(&format!(
+            "codex process (pid {root}) is still running (state 'running'"
+        )),
+        "refused for the live recorded child: {next_text}"
+    );
+    assert!(!turns.exists(), "no engine turn ran");
+    assert_nothing_committed(&run.repo);
+    // the tree is cleaned up
+    drop(reaper);
+    wait_gone(root);
+    wait_gone(intermediate);
+    let _ = std::fs::remove_dir_all(&work);
 }
 
 /// The record path made read-only (`true`) or writable again.
@@ -516,6 +609,102 @@ impl Drop for Reaper {
                 .status();
         }
     }
+}
+
+/// The processes this test left running, stopped when the test ends, however it ends.
+#[derive(Default)]
+struct Reapers(Vec<u64>);
+
+impl Drop for Reapers {
+    fn drop(&mut self) {
+        for pid in &self.0 {
+            if alive(*pid) {
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+    }
+}
+
+/// The pid the fake wrote into `file` (waits up to 90 s for it).
+fn read_pid(file: &Path) -> u64 {
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        if let Some(pid) = std::fs::read_to_string(file)
+            .ok()
+            .and_then(|t| t.trim().parse::<u64>().ok())
+        {
+            return pid;
+        }
+        assert!(Instant::now() < deadline, "no pid in {}", file.display());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// (Wave 7b, F38-1) The kill records kept in the codex home of the runs under `work`
+/// (`<CODEX_HOME>/c3/pending-kill/*.json`).
+fn kill_copies(work: &Path) -> Vec<PathBuf> {
+    let dir = work.join("home").join("c3").join("pending-kill");
+    let mut out: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "json"))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort();
+    out
+}
+
+/// Polls until the codex home keeps a kill record (the run must not end first).
+fn wait_copy(run: &mut Run) -> PathBuf {
+    let deadline = Instant::now() + Duration::from_secs(90);
+    loop {
+        if let Some(c) = kill_copies(&run.work).into_iter().next() {
+            if read_record(&c).is_some() {
+                return c;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no kill record in the codex home within 90 s"
+        );
+        if let Ok(Some(st)) = run.child.try_wait() {
+            panic!("the run ended ({st}) before its kill record reached the codex home");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The codex home's copy `c` of the record written before the main kill of the run whose launch
+/// record is `launch_rec`: named `t-<consult id>.json`, the fallback's JSON (the pre-kill record)
+/// plus `task` and `collab_dir`.
+fn assert_the_copy_of_the_record_before_the_kill(
+    c: &Path,
+    launch_rec: &Value,
+    repo: &Path,
+) -> Value {
+    let r = read_record(c).expect("the copy reads as a record");
+    assert_eq!(
+        c.file_name().unwrap().to_string_lossy(),
+        format!("t-{}.json", launch_rec["consult_id"].as_str().unwrap()),
+        "{r}"
+    );
+    assert_eq!(r["task"], "t", "{r}");
+    assert_eq!(
+        r["collab_dir"],
+        repo.join(".collab").to_string_lossy().to_string(),
+        "{r}"
+    );
+    assert_eq!(r["n"], launch_rec["n"], "{r}");
+    assert_eq!(r["nn"], launch_rec["nn"], "{r}");
+    assert_eq!(r["consult_id"], launch_rec["consult_id"], "{r}");
+    assert_the_record_written_before_the_kill(&r, "main turn");
+    r
 }
 
 /// The run's text (stdout and stderr).
@@ -582,10 +771,10 @@ fn a_kill_record_that_cannot_be_written_is_kept_in_its_fallback() {
 /// right after the MAIN kill (the kill's result never written), on a host where the kill cannot
 /// enumerate the children (`CODEX_CONSULT_TEST_KILL_DENIED=1`: only the launcher is stopped, the
 /// fake's PowerShell below it survives - the surviving helper). `fallback_ok`: the record before
-/// the kill went into the fallback file; else the fallback is blocked too (test hook) and only the
-/// launch record (`running`, child pid and start) is on disk. File access restored, the next run of
-/// the task must be refused while the helper runs - and, `fallback_ok`, the fallback is consumed
-/// once it no longer does.
+/// the kill went into the fallback file; else the fallback is blocked too (test hook) and - wave
+/// 7b - the record went into the codex home's copy. File access restored, the next run of the task
+/// must be refused while the helper runs - and the fallback or the copy is consumed once it no
+/// longer does.
 fn rc2_recovery_after_a_lost_kill_record(tag: &str, fallback_ok: bool) {
     let work = scratch(tag);
     prepare(&work);
@@ -625,6 +814,7 @@ fn rc2_recovery_after_a_lost_kill_record(tag: &str, fallback_ok: bool) {
             std::thread::sleep(Duration::from_millis(100));
         }
     }
+    let copy = (!fallback_ok).then(|| wait_copy(&mut run));
     // the kill went through (the bridge now holds in the pause right after it)
     wait_gone(root);
     std::thread::sleep(Duration::from_millis(1000));
@@ -654,6 +844,12 @@ fn rc2_recovery_after_a_lost_kill_record(tag: &str, fallback_ok: bool) {
         );
     } else {
         assert!(!fallback.exists(), "the fallback was blocked");
+        // (wave 7b) the record before the kill, in the codex home's copy (the tree unknown: the
+        // enumeration was denied - the root only)
+        let c = read_record(copy.as_deref().unwrap()).unwrap();
+        assert_eq!(c["state"], "survivors", "{c}");
+        assert_eq!(c["survivors"][0]["pid"], root, "{c}");
+        assert_eq!(c["task"], "t", "{c}");
     }
     assert_nothing_committed(&run.repo);
     // the next run of the task: refused while the helper runs - the dry run names every record
@@ -667,17 +863,19 @@ fn rc2_recovery_after_a_lost_kill_record(tag: &str, fallback_ok: bool) {
             && dry_text.contains("the next run would be REFUSED"),
         "{dry_text}"
     );
-    if fallback_ok {
-        assert!(
-            dry_text.contains(".consult.pending-kill.json (state 'survivors'"),
-            "{dry_text}"
-        );
-        assert_eq!(
-            dry_text.matches("the next run would be REFUSED").count(),
-            2,
-            "both records refuse: {dry_text}"
-        );
-    }
+    let kept = match &copy {
+        None => fallback.clone(),
+        Some(c) => c.clone(),
+    };
+    assert!(
+        dry_text.contains(&format!("{} (state 'survivors'", kept.display())),
+        "{dry_text}"
+    );
+    assert_eq!(
+        dry_text.matches("the next run would be REFUSED").count(),
+        2,
+        "both records refuse: {dry_text}"
+    );
     let next = launch(
         &work,
         &["--timeout-sec", "30"],
@@ -696,9 +894,13 @@ fn rc2_recovery_after_a_lost_kill_record(tag: &str, fallback_ok: bool) {
     );
     assert_nothing_committed(&run.repo);
     assert_eq!(read_record(&run.path).unwrap(), launch_rec);
-    if fallback_ok {
-        assert!(fallback.exists(), "the fallback stays while it refuses");
-        // the helper gone: both records are consumed, the fallback removed, the run goes on
+    {
+        assert!(
+            kept.exists(),
+            "the fallback or the copy stays while it refuses"
+        );
+        // the helper gone: both records are consumed, the fallback or the copy removed, the run
+        // goes on
         drop(reaper);
         wait_gone(helper);
         let ok = launch(
@@ -720,10 +922,13 @@ fn rc2_recovery_after_a_lost_kill_record(tag: &str, fallback_ok: bool) {
         }
         assert_eq!(ok.status.code(), Some(0), "{ok_text}");
         assert!(
-            ok_text.contains(".consult.pending-kill.json: state 'survivors'"),
+            ok_text.contains(&format!(
+                "{}: state 'survivors'",
+                kept.file_name().unwrap().to_string_lossy()
+            )),
             "{ok_text}"
         );
-        assert!(!fallback.exists(), "the consumed fallback is removed");
+        assert!(!kept.exists(), "the consumed fallback or copy is removed");
     }
     let _ = std::fs::remove_dir_all(&work);
 }
@@ -734,6 +939,215 @@ fn rc2_a_lost_kill_record_leaves_its_fallback_and_the_next_run_is_refused() {
 }
 
 #[test]
-fn rc2_a_kill_record_lost_with_its_fallback_is_refused_from_the_launch_record_alone() {
-    rc2_recovery_after_a_lost_kill_record("killrec-rc2-launch", false);
+fn rc2_a_kill_record_lost_with_its_fallback_is_kept_in_the_codex_home_and_refuses() {
+    rc2_recovery_after_a_lost_kill_record("killrec-rc2-copy", false);
+}
+
+#[test]
+fn rc1_f38_a_helper_below_a_dead_intermediate_is_refused_from_the_codex_home_copy() {
+    // (wave 7b, F38-1 (a); RC1 of reply 38) the tree launcher (cmd) -> the fake's PowerShell (the
+    // intermediate) -> a helper whose command line is unrelated to codex; both collab writes fail
+    // (the record read-only, the fallback blocked), the codex home's copy succeeds: the kill stops
+    // the root and the intermediate, the helper survives (it stands for one the kill cannot stop:
+    // `CODEX_CONSULT_TEST_KILL_SPARE`), and the bridge dies right after the kill (`kill,main`).
+    // The launch record names only the dead root; the copy names the whole tree. Access restored,
+    // the next run is refused before any engine turn while the helper lives; once it is gone, the
+    // copy is consumed and removed
+    let work = scratch("killrec-rc1-copy");
+    prepare(&work);
+    let inter_file = work.join("intermediate.pid");
+    let helper_file = work.join("helper.pid");
+    let inter_s = inter_file.to_string_lossy().to_string();
+    let helper_s = helper_file.to_string_lossy().to_string();
+    let mut run = launch(
+        &work,
+        &["--timeout-sec", "8", "--continue-sec", "0"],
+        &[
+            ("CODEX_CONSULT_TEST_KILL_PAUSE_MS", "120000"),
+            ("CODEX_CONSULT_TEST_KILL_PAUSE_AT", "kill,main"),
+            ("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL", "1"),
+            ("CODEX_CONSULT_TEST_KILL_SPARE", helper_s.as_str()),
+            ("FAKE_SLEEP_SEC", "600"),
+            ("FAKE_PID_FILE", inter_s.as_str()),
+            ("FAKE_HELPER_PID_FILE", helper_s.as_str()),
+        ],
+        false,
+    );
+    let mut reaper = Reapers::default();
+    let launch_rec = wait_record(&mut run, "the main turn running", |v| {
+        v["state"] == "running" && v["child_pid"].as_u64().is_some()
+    });
+    let root = launch_rec["child_pid"].as_u64().unwrap();
+    reaper.0.push(root);
+    set_readonly(&run.path, true);
+    // the tree before the kill: root -> intermediate -> helper
+    let intermediate = read_pid(&inter_file);
+    let helper = read_pid(&helper_file);
+    reaper.0.push(helper);
+    reaper.0.push(intermediate);
+    let copy = wait_copy(&mut run);
+    // the kill went through (the bridge holds in the pause right after it)
+    wait_gone(root);
+    wait_gone(intermediate);
+    std::thread::sleep(Duration::from_millis(1000));
+    let _ = run.child.kill();
+    let _ = run.child.wait();
+    set_readonly(&run.path, false);
+    assert!(alive(helper), "the fixture preserves the helper");
+    // on disk: the launch record unchanged, no fallback, the copy naming the tree
+    assert_eq!(
+        read_record(&run.path).unwrap(),
+        launch_rec,
+        "nothing replaced the launch record"
+    );
+    assert!(!run
+        .path
+        .with_file_name(".consult.pending-kill.json")
+        .exists());
+    assert_eq!(kill_copies(&work), vec![copy.clone()]);
+    let c = assert_the_copy_of_the_record_before_the_kill(&copy, &launch_rec, &run.repo);
+    let named: Vec<u64> = c["survivors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["pid"].as_u64())
+        .collect();
+    for pid in [root, intermediate, helper] {
+        assert!(named.contains(&pid), "the copy names pid {pid}: {c}");
+    }
+    assert_nothing_committed(&run.repo);
+    // the dry run: the copy refuses on the helper
+    let dry = launch(&work, &["--dry-run"], &[("FAKE_MAIN", "prose")], true)
+        .child
+        .wait_with_output()
+        .unwrap();
+    let dry_text = output_text(&dry);
+    let copy_line = dry_text
+        .lines()
+        .find(|l| l.contains(&format!("{} (state 'survivors'", copy.display())))
+        .unwrap_or_else(|| panic!("the dry run lists the copy: {dry_text}"));
+    assert!(
+        copy_line.contains("the next run would be REFUSED")
+            && copy_line.contains(&format!("pid {helper}")),
+        "the copy refuses on the helper: {dry_text}"
+    );
+    // the next run: refused before any engine turn
+    let turns = work.join("turns.txt");
+    let turns_s = turns.to_string_lossy().to_string();
+    let next = launch(
+        &work,
+        &["--timeout-sec", "30"],
+        &[("FAKE_MAIN", "prose"), ("FAKE_TURN_FILE", turns_s.as_str())],
+        true,
+    )
+    .child
+    .wait_with_output()
+    .unwrap();
+    let next_text = output_text(&next);
+    assert_eq!(next.status.code(), Some(1), "{next_text}");
+    // the copy refuses on the helper - unless a codex process of this machine makes the launch
+    // record refuse first (the machine-wide rule; the dry run above showed the copy's refusal)
+    assert!(
+        (next_text.contains(&format!(
+            "codex process (pid {helper}) is still running (state 'survivors'"
+        )) && next_text.contains(&copy.display().to_string()))
+            || next_text.contains("task not verifiable"),
+        "refused: {next_text}"
+    );
+    assert!(!turns.exists(), "no engine turn ran: {next_text}");
+    assert!(alive(helper), "refused while the helper lives");
+    assert_nothing_committed(&run.repo);
+    assert_eq!(read_record(&run.path).unwrap(), launch_rec);
+    assert!(copy.exists(), "the copy stays while it refuses");
+    // the helper gone: both records are consumed, the copy removed, the run goes on
+    drop(reaper);
+    wait_gone(helper);
+    let ok = launch(
+        &work,
+        &["--timeout-sec", "30"],
+        &[("FAKE_MAIN", "prose"), ("FAKE_TURN_FILE", turns_s.as_str())],
+        true,
+    )
+    .child
+    .wait_with_output()
+    .unwrap();
+    let ok_text = output_text(&ok);
+    if ok.status.code() == Some(1) && ok_text.contains("task not verifiable") {
+        // a real codex process of this machine holds the machine-wide rule (fail-closed, as
+        // designed): the release cannot be shown here
+        eprintln!("release not shown - a codex-like process of this machine runs: {ok_text}");
+        let _ = std::fs::remove_dir_all(&work);
+        return;
+    }
+    assert_eq!(ok.status.code(), Some(0), "{ok_text}");
+    assert!(
+        ok_text.contains(&format!(
+            "{}: state 'survivors'",
+            copy.file_name().unwrap().to_string_lossy()
+        )),
+        "{ok_text}"
+    );
+    assert!(!copy.exists(), "the consumed copy is removed");
+    assert!(turns.exists(), "the released run took its turn");
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[test]
+fn f38_the_codex_home_copy_is_removed_once_the_record_is_written_clean() {
+    // (wave 7b, F38-1 (c)) the collab writes fail before the kill (the record read-only, the
+    // fallback blocked): the record goes into the codex home's copy and the kill happens; access
+    // restored while the bridge holds in the pause after the kill, the write after it and the
+    // end of the run's write the record clean - the copy is removed, the run commits (the kill not
+    // confirmed), the record keeps the unknown tree
+    let mut run = start(
+        "killrec-copy-clean",
+        &["--timeout-sec", "3", "--continue-sec", "3"],
+        &[
+            ("CODEX_CONSULT_TEST_KILL_PAUSE_MS", "8000"),
+            ("CODEX_CONSULT_TEST_KILL_PAUSE_AT", "kill,main"),
+            ("CODEX_CONSULT_TEST_KILL_FALLBACK_FAIL", "1"),
+        ],
+        true,
+    );
+    let launch_rec = wait_record(&mut run, "the main turn running", |v| {
+        v["state"] == "running" && v["child_pid"].as_u64().is_some()
+    });
+    set_readonly(&run.path, true);
+    let copy = wait_copy(&mut run);
+    set_readonly(&run.path, false);
+    assert_the_copy_of_the_record_before_the_kill(&copy, &launch_rec, &run.repo);
+    let out = run.child.wait_with_output().expect("the run ends");
+    let text = output_text(&out);
+    assert!(!text.contains("This run is not committed"), "{text}");
+    assert!(!text.contains("one continuation turn"), "{text}");
+    assert!(
+        text.contains(&format!(
+            "{} keeps the record written before the kill until the end of the run writes the record clean or the next run consumes it",
+            copy.display()
+        )),
+        "{text}"
+    );
+    assert!(
+        !copy.exists(),
+        "the copy is removed once the record is written clean"
+    );
+    assert!(kill_copies(&run.work).is_empty());
+    let p = read_record(&run.path).expect("the record is kept");
+    assert_eq!(p["state"], "survivors", "{p}");
+    assert!(
+        p["kill_unconfirmed"]
+            .as_str()
+            .is_some_and(|w| w.starts_with("the kill's record could not be written (")),
+        "{p}"
+    );
+    let sessions = run.repo.join(".collab").join("t").join("sessions.json");
+    let ledger: Value = serde_json::from_slice(&std::fs::read(sessions).unwrap()).unwrap();
+    let last = ledger["codex"]["consults"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["kill_confirmed"], false, "{last}");
+    let _ = std::fs::remove_dir_all(&run.work);
 }

@@ -76,8 +76,14 @@ pub struct TaskPending {
 
 /// `Get-PendingPaths`: `.consult.pending.json` first, then `.consult.pending-*.json` sorted
 /// (ordinal, case-insensitive) - (wave 7, F30-2) a kill's fallback file
-/// ([`kill_fallback_path`]) among them.
+/// ([`kill_fallback_path`]) among them; then (wave 7b, F38-1) the kill records of this task kept
+/// in the codex home ([`kill_copy_paths`], C3's third location), judged and consumed as any record.
 pub fn pending_paths(task_dir: &Path) -> Vec<PathBuf> {
+    pending_paths_with(task_dir, kill_copy_home().as_deref())
+}
+
+/// [`pending_paths`] with the codex home whose kill records are read given (`None`: none is).
+pub fn pending_paths_with(task_dir: &Path, codex_home: Option<&Path>) -> Vec<PathBuf> {
     let mut single: Vec<PathBuf> = Vec::new();
     let mut members: Vec<PathBuf> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(task_dir) {
@@ -99,7 +105,10 @@ pub fn pending_paths(task_dir: &Path) -> Vec<PathBuf> {
             .to_string_lossy()
             .to_lowercase()
     });
-    single.into_iter().chain(members).collect()
+    let copies = codex_home
+        .map(|h| kill_copy_paths(h, task_dir))
+        .unwrap_or_default();
+    single.into_iter().chain(members).chain(copies).collect()
 }
 
 /// (Wave 7, F30-2) The fallback file of the recovery record `record` (`<name>.json` ->
@@ -115,6 +124,103 @@ pub fn kill_fallback_path(record: &Path) -> PathBuf {
         .unwrap_or_default();
     let stem = name.strip_suffix(".json").unwrap_or(&name);
     record.with_file_name(format!("{stem}-kill.json"))
+}
+
+/// (Wave 7b, F38-1) The codex home whose `c3/pending-kill` directory keeps the kill records C3
+/// could write neither into the recovery record nor into its fallback: `CODEX_HOME`, else
+/// `~/.codex` (the bridge's resolver); `None` when neither can be resolved.
+pub fn kill_copy_home() -> Option<PathBuf> {
+    let home = crate::providers::get_codex_home();
+    (!home.trim().is_empty()).then(|| PathBuf::from(home))
+}
+
+/// (Wave 7b, F38-1) The directory of the kill records kept outside the collab directory:
+/// `<codex home>/c3/pending-kill`.
+pub fn kill_copy_dir(codex_home: &Path) -> PathBuf {
+    codex_home.join("c3").join("pending-kill")
+}
+
+/// (Wave 7b, F38-1) The third location of a kill's record - where it goes when neither the
+/// recovery record nor its fallback ([`kill_fallback_path`]) can be written:
+/// `<codex home>/c3/pending-kill/<task>-<run id>.json`, the fallback's JSON plus `collab_dir` and
+/// `task` (the record names its task; [`kill_copy_paths`] finds it by them).
+pub fn kill_copy_path(codex_home: &Path, task: &str, run_id: &str) -> PathBuf {
+    kill_copy_dir(codex_home).join(format!("{task}-{run_id}.json"))
+}
+
+/// (Wave 7b, F38-1) The kill records of the task directory `task_dir` kept in `codex_home`
+/// ([`kill_copy_path`]), sorted by name: a record whose `task` is the task directory's name and
+/// whose `collab_dir` is its parent directory. A file named for the task (`<task>-<uuid>.json`)
+/// whose task and collab directory cannot be read (unreadable, not a JSON object, the fields
+/// missing) is listed too - fail-closed: [`read_pending_file`] refuses it as unusable or judges it
+/// as any record.
+pub fn kill_copy_paths(codex_home: &Path, task_dir: &Path) -> Vec<PathBuf> {
+    let task = task_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let Some(collab_dir) = task_dir.parent() else {
+        return Vec::new();
+    };
+    if task.is_empty() {
+        return Vec::new();
+    }
+    let prefix = format!("{task}-");
+    let mut out: Vec<PathBuf> = Vec::new();
+    let Ok(rd) = std::fs::read_dir(kill_copy_dir(codex_home)) else {
+        return out;
+    };
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        let Some(run_id) = name
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".json"))
+        else {
+            continue;
+        };
+        let path = ent.path();
+        let fields = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+            .filter(Value::is_object)
+            .and_then(|v| {
+                let t = v.get("task")?.as_str()?.to_string();
+                let c = v.get("collab_dir")?.as_str()?.to_string();
+                Some((t, c))
+            });
+        let ours = match fields {
+            Some((t, c)) => t == task && same_dir(Path::new(&c), collab_dir),
+            None => uuid::Uuid::parse_str(run_id).is_ok(),
+        };
+        if ours {
+            out.push(path);
+        }
+    }
+    out.sort_by_key(|p| {
+        p.file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase()
+    });
+    out
+}
+
+/// Whether two paths name the same directory: by their canonical forms when both resolve, else
+/// lexically (separators unified, trailing separators dropped; Windows: case-insensitive).
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if let (Ok(x), Ok(y)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        return x == y;
+    }
+    let norm = |p: &Path| {
+        let s = p.to_string_lossy().replace('\\', "/");
+        let s = s.trim_end_matches('/').to_string();
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    };
+    norm(a) == norm(b)
 }
 
 /// `Read-PendingFile`.
@@ -1089,6 +1195,86 @@ mod tests {
         assert!(rd.error.is_none());
         assert_eq!(rd.record.unwrap()["state"], "survivors");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (Wave 7b, F38-1) The third location of a kill's record, `<codex home>/c3/pending-kill/
+    /// <task>-<run id>.json`: the recovery lists, after the task's own records, the copies whose
+    /// `task` and `collab_dir` are the task directory's (the collab directory compared as a
+    /// directory, not as a spelling) and - fail-closed - an unreadable one named
+    /// `<task>-<uuid>.json`; a copy of the same task in another collab directory, of another task
+    /// whose name starts with this one's, or an unreadable one not named for the task is not
+    /// listed. A listed copy is judged as any record: a live survivor refuses.
+    #[test]
+    fn a_kill_copy_in_the_codex_home_is_read_as_a_record_of_its_task_only() {
+        let root = std::env::temp_dir().join(format!(
+            "c3-killcopy-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let home = root.join("codex-home");
+        let collab = root.join("repo").join(".collab");
+        let task_dir = collab.join("t");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        assert_eq!(kill_copy_dir(&home), home.join("c3").join("pending-kill"));
+        let id = "0f6b5d2e-1c4a-4e7b-9a51-3d2c1b0a9f87";
+        let copy = kill_copy_path(&home, "t", id);
+        assert_eq!(copy, kill_copy_dir(&home).join(format!("t-{id}.json")));
+        std::fs::create_dir_all(kill_copy_dir(&home)).unwrap();
+        let me = std::process::id();
+        let start = proc::process_start_iso(me).unwrap_or_default();
+        let rec = |task: &str, collab: &str| {
+            serde_json::json!({
+                "state": "survivors", "n": 3, "nn": "05", "host": machine_name(),
+                "survivors": [{ "pid": me, "start_time": start }],
+                "task": task, "collab_dir": collab,
+            })
+            .to_string()
+        };
+        // the collab directory spelled with forward slashes and a trailing one: the same directory
+        let spelled = format!("{}/", collab.to_string_lossy().replace('\\', "/"));
+        std::fs::write(&copy, rec("t", &spelled)).unwrap();
+        let elsewhere = root.join("other").join(".collab");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(
+            kill_copy_path(&home, "t", "1f6b5d2e-1c4a-4e7b-9a51-3d2c1b0a9f87"),
+            rec("t", &elsewhere.to_string_lossy()),
+        )
+        .unwrap();
+        std::fs::write(
+            kill_copy_path(&home, "t-x", "2f6b5d2e-1c4a-4e7b-9a51-3d2c1b0a9f87"),
+            rec("t-x", &collab.to_string_lossy()),
+        )
+        .unwrap();
+        let broken = kill_copy_path(&home, "t", "9f6b5d2e-1c4a-4e7b-9a51-3d2c1b0a9f87");
+        std::fs::write(&broken, "{ not json").unwrap();
+        std::fs::write(
+            kill_copy_path(&home, "t-x", "3f6b5d2e-1c4a-4e7b-9a51-3d2c1b0a9f87"),
+            "{ not json",
+        )
+        .unwrap();
+        let single = task_dir.join(".consult.pending.json");
+        std::fs::write(&single, r#"{"state":"reserved"}"#).unwrap();
+        assert_eq!(
+            pending_paths_with(&task_dir, Some(&home)),
+            vec![single.clone(), copy.clone(), broken.clone()]
+        );
+        assert_eq!(
+            kill_copy_paths(&home, &task_dir),
+            vec![copy.clone(), broken.clone()]
+        );
+        assert_eq!(pending_paths_with(&task_dir, None), vec![single]);
+        // judged as any record: the live survivor refuses; the unreadable one is unusable
+        let rd = read_pending_file(&copy);
+        let check = test_pending_active(&rd.record.expect("the copy reads"), &copy);
+        assert!(check.active, "{}", check.check);
+        assert!(
+            check.message.contains(&format!("pid {me}")),
+            "{}",
+            check.message
+        );
+        let bad = read_pending_file(&broken);
+        assert!(bad.error.is_some_and(|e| e.contains("is unusable")));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     fn me() -> u32 {

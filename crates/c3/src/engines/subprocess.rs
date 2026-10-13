@@ -96,12 +96,14 @@ pub enum KillRecord {
     #[default]
     NotDue,
     /// The record that names the tree is on disk: in the recovery record or - that write failed -
-    /// in its fallback file (`fallback`, read by the recovery too).
+    /// outside it (`fallback`: in its fallback file or - wave 7b - the codex home's copy, both
+    /// read by the recovery too).
     Durable { fallback: bool },
-    /// Neither the recovery record nor its fallback could be written (why). The kill still
-    /// happens - a hung tree must not outlive the run - but it is NOT confirmed; the next run's
-    /// recovery judges the launch record on disk (its child pid and start) with the fail-closed
-    /// scans.
+    /// (Wave 7b, F38-1) Neither the recovery record, nor its fallback, nor the codex home's copy
+    /// could be written (why: the three errors). NO KILL WITHOUT A RECORD: the tree is left alive
+    /// as the evidence - the launch record on disk names its root, so the next run of the task is
+    /// refused while it lives - and the turn ends as failed (its stop unchanged), the kill
+    /// [`c3_core::engine::KillCheck::not_killed`].
     Lost(String),
 }
 
@@ -885,10 +887,16 @@ fn root_exited_within(child: &mut Child, ms: u64) -> bool {
 /// falls back to `taskkill /T /F` once more while the root is still there; the kill is then
 /// confirmed only when the root exited AND taskkill reported success (outside Windows never).
 /// (wave 3e, F30-2) `on_kill` hears [`KillEvent::Before`] once the tree is enumerated, before
-/// anything is stopped; (wave 7) its answer comes back here: a record written neither to the
-/// recovery record nor to its fallback ([`KillRecord::Lost`]) leaves the kill going ahead - a hung
-/// tree must not outlive the run - and NOT confirmed (`the kill's record could not be written
-/// before the kill (<why>)`, unless the kill has its own why). Returns `(survivors, check)`.
+/// anything is stopped; (wave 7) its answer comes back here. (Wave 7b, F38-1) NO KILL WITHOUT A
+/// RECORD: a record written nowhere - neither to the recovery record, nor to its fallback, nor to
+/// the codex home's copy ([`KillRecord::Lost`]) - leaves the tree ALIVE as the evidence: nothing is
+/// stopped, the survivors are the root and its live descendants, the kill is not confirmed and
+/// [`c3_core::engine::KillCheck::not_killed`] (`the kill record could not be written anywhere
+/// (<why>): the reviewer tree (pid <root>) is left alive as the evidence; the task is refused until
+/// it is gone or recorded`). TEST HOOK (test mode only): `CODEX_CONSULT_TEST_KILL_SPARE=<file>` -
+/// the pids that file names (read at the kill; separated by whitespace or commas) stand for a
+/// helper the kill cannot stop: they are not stopped by pid and no `taskkill /T` runs over the tree
+/// (it would reach them). Returns `(survivors, check)`.
 fn kill_tree_checked(
     child: &mut Child,
     on_kill: Option<&dyn Fn(KillEvent<'_>) -> KillRecord>,
@@ -903,8 +911,16 @@ fn kill_tree_checked(
         Ok(d) => (d, String::new()),
         Err(why) => (Vec::new(), why),
     };
+    if let KillRecord::Lost(why) = record {
+        return left_alive(child, &descendants, &why);
+    }
+    let spared = kill_spared_pids();
     #[cfg(windows)]
-    let mut taskkill_exit = taskkill_tree(root);
+    let mut taskkill_exit = if spared.is_empty() {
+        taskkill_tree(root)
+    } else {
+        1
+    };
     #[cfg(not(windows))]
     let taskkill_exit = -1;
     // The root before its descendants: a root that outlives its children reacts to their death (a
@@ -913,7 +929,7 @@ fn kill_tree_checked(
     for (d, st0) in &descendants {
         // (wave 28b, D14) never a pid that meanwhile belongs to another process; (wave 28c, D8)
         // never one whose identity cannot be confirmed
-        if st0 == "<gone>" || pid_identity(*d, st0) != PidIdentity::Alive {
+        if st0 == "<gone>" || spared.contains(d) || pid_identity(*d, st0) != PidIdentity::Alive {
             continue;
         }
         crate::liveness::proc::terminate_pid(*d);
@@ -991,13 +1007,62 @@ fn kill_tree_checked(
     if !alive.is_empty() {
         check.confirmed = false;
     }
-    if let KillRecord::Lost(why) = record {
-        check.confirmed = false;
-        if check.why.is_empty() {
-            check.why = format!("the kill's record could not be written before the kill ({why})");
+    (alive, check)
+}
+
+/// (Wave 7b, F38-1) The kill that does not happen - its record could be written nowhere (`why`):
+/// the tree is left alive as the evidence. Its survivors are the root and the descendants of the
+/// enumeration still alive with the start time read then; one whose start time cannot be read is
+/// unverified. Not confirmed, `not_killed`.
+fn left_alive(
+    child: &mut Child,
+    descendants: &[(u32, String)],
+    why: &str,
+) -> (Vec<u32>, c3_core::engine::KillCheck) {
+    use crate::liveness::proc::{pid_identity, PidIdentity};
+    let root = child.id();
+    let mut alive: Vec<u32> = Vec::new();
+    let mut unknown: Vec<u32> = Vec::new();
+    if !root_exited_within(child, 0) {
+        alive.push(root);
+    }
+    for (d, st) in descendants {
+        if st == "<gone>" {
+            continue;
+        }
+        match pid_identity(*d, st) {
+            PidIdentity::Alive => alive.push(*d),
+            PidIdentity::Unknown => unknown.push(*d),
+            PidIdentity::Gone => {}
         }
     }
+    let check = c3_core::engine::KillCheck {
+        root_pid: root,
+        confirmed: false,
+        why: format!(
+            "the kill record could not be written anywhere ({why}): the reviewer tree (pid {root}) is left alive as the evidence; the task is refused until it is gone or recorded"
+        ),
+        unverified: unknown,
+        not_killed: true,
+    };
     (alive, check)
+}
+
+/// (Wave 7b, F38-1) TEST HOOK (test mode only): `CODEX_CONSULT_TEST_KILL_SPARE=<file>` - the pids
+/// the file names, read at the kill (empty: none, or the file cannot be read).
+fn kill_spared_pids() -> Vec<u32> {
+    let Some(file) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_KILL_SPARE") else {
+        return Vec::new();
+    };
+    let file = file.trim();
+    if file.is_empty() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(file)
+        .unwrap_or_default()
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter_map(|t| t.trim().parse::<u32>().ok())
+        .collect()
 }
 
 /// `kill -9 <pid>` through the `kill` binary (no libc dependency); best effort.
@@ -1446,11 +1511,12 @@ mod tests {
 
     // (wave 27c, D1) a kick request carries an id written atomically; the member acknowledges with
     // `<kick>.ack` holding that id and the result; the id round-trips through the helpers.
-    /// (Wave 7, F30-2) The caller's answer to `KillEvent::Before` reaches the killer: a record
-    /// written nowhere (`KillRecord::Lost`) leaves the kill going ahead - the tree is stopped - but
-    /// not confirmed, with the why; a durable record leaves a clean kill confirmed.
+    /// (Wave 7, F30-2; wave 7b, F38-1) The caller's answer to `KillEvent::Before` reaches the
+    /// killer: a record written nowhere (`KillRecord::Lost`) leaves the tree ALIVE - nothing is
+    /// stopped, the root is a survivor, the kill is not confirmed and not done, with the why; a
+    /// durable record leaves a clean kill confirmed.
     #[test]
-    fn a_kill_whose_record_is_lost_still_kills_and_is_not_confirmed() {
+    fn a_kill_whose_record_is_lost_does_not_kill_and_is_not_confirmed() {
         fn sleeper() -> Child {
             let mut cmd = if cfg!(windows) {
                 let mut c = Command::new("ping");
@@ -1478,15 +1544,17 @@ mod tests {
         let root = child.id();
         let (survivors, check) = kill_tree_checked(&mut child, Some(&lost));
         assert_eq!(told.get(), root, "the hook heard the kill before it");
-        assert!(survivors.is_empty(), "{survivors:?}");
-        assert!(
-            child.try_wait().ok().flatten().is_some(),
-            "the tree was stopped"
-        );
-        assert!(!check.confirmed);
+        let still = child.try_wait().ok().flatten().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(still, "no kill without a record: the tree is left alive");
+        assert_eq!(survivors, vec![root], "the root is the evidence");
+        assert!(!check.confirmed && check.not_killed, "{check:?}");
         assert_eq!(
             check.why,
-            "the kill's record could not be written before the kill (disk full (test))"
+            format!(
+                "the kill record could not be written anywhere (disk full (test)): the reviewer tree (pid {root}) is left alive as the evidence; the task is refused until it is gone or recorded"
+            )
         );
         let durable = |_: KillEvent<'_>| KillRecord::Durable { fallback: true };
         let mut child = sleeper();
