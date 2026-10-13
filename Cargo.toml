@@ -45,6 +45,9 @@ ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 # config with), so no new crate is pulled in; PEM parsing comes from rustls' `pki_types`.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 webpki-roots = "0.26"
+# unicode-normalization: (wave 7, F36-2) the Claude transcript guard compares paths in NFC, the
+# form Claude Code normalises its config directory to. Already in the lock file (stringprep's).
+unicode-normalization = "0.1"
 # ignore + globset: the pack pipeline's file discovery (milestone 7). `ignore` gives the same
 # .gitignore-aware repository walk eckSnapshot relies on (respecting nested .gitignore,
 # .git/info/exclude and the global excludes) with directory pruning; `globset` compiles C3's

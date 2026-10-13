@@ -25,6 +25,7 @@ webpki-roots.workspace = true
 ignore = { workspace = true }
 globset = { workspace = true }
 url = { workspace = true }
+unicode-normalization = { workspace = true }
 surrealdb = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 

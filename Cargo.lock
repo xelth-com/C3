@@ -480,6 +480,7 @@ dependencies = [
  "sha2",
  "surrealdb",
  "tokio",
+ "unicode-normalization",
  "ureq",
  "url",
  "uuid",

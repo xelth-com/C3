@@ -16,6 +16,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+use unicode_normalization::UnicodeNormalization;
 
 use c3_core::claude::{ChildEnv, ClaudeEndpoint, CLAUDE_AUTH_MODES};
 use c3_core::credential::CredentialResult;
@@ -411,7 +412,10 @@ pub fn launch_problem(repo_root: &Path, launcher: &str, auth: &str) -> String {
 /// The plugin's two refusals verbatim, and (wave 4g, F32-2) `the transcript location cannot be
 /// established (<why>); set CLAUDE_CONFIG_DIR to a directory outside the repository` when
 /// [`projects_directory`] cannot derive it. A relative directory is taken against the child's
-/// working directory, the repository root.
+/// working directory, the repository root. (Wave 7, F36-2) Both checks compare every form
+/// ([`path_inside_any_form`]): as written and NFC-normalised, the root likewise - Claude Code
+/// normalises its config directory to NFC, so a decomposed `CLAUDE_CONFIG_DIR` whose NFC form lies
+/// in the repository is refused, and fail-closed: one form inside refuses.
 pub fn launch_problem_of(
     repo_root: &Path,
     env: &[(String, String)],
@@ -422,13 +426,13 @@ pub fn launch_problem_of(
         .map(str::trim)
         .filter(|c| !c.is_empty())
     {
-        if path_inside(repo_root, &in_child_cwd(repo_root, cfg)) {
+        if path_inside_any_form(repo_root, &in_child_cwd(repo_root, cfg)) {
             return format!("CLAUDE_CONFIG_DIR ({cfg}) lies inside the repository under review: the engine's transcripts would change the tree; point it elsewhere");
         }
     }
     match projects_directory(repo_root, env, reported, windows) {
         Err(why) => format!("the transcript location cannot be established ({why}); set CLAUDE_CONFIG_DIR to a directory outside the repository"),
-        Ok(pd) if path_inside(repo_root, Path::new(&pd)) => format!("the claude projectsDirectory ({pd}) lies inside the repository under review: the engine's transcripts would change the tree"),
+        Ok(pd) if path_inside_any_form(repo_root, Path::new(&pd)) => format!("the claude projectsDirectory ({pd}) lies inside the repository under review: the engine's transcripts would change the tree"),
         Ok(_) => String::new(),
     }
 }
@@ -439,8 +443,9 @@ pub fn launch_problem_of(
 /// join(os.homedir(), ".claude"))/projects` (its bundle, 2.1.29x: `??`, so a SET
 /// `CLAUDE_CONFIG_DIR` is taken as it is), the home as `os.homedir()` resolves it
 /// ([`home_var`]), a relative value against the child's working directory (`repo_root`), `.` and
-/// `..` folded as `path.join` folds them. `Err(why)` - fail-closed - when that cannot be
-/// established here: a blank `CLAUDE_CONFIG_DIR` (Claude Code would write relative to its working
+/// `..` folded as `path.join` folds them, and (wave 7, F36-2) NFC-normalised as Claude Code
+/// normalises it (`.normalize("NFC")` before `projects` is appended). `Err(why)` - fail-closed -
+/// when that cannot be established here: a blank `CLAUDE_CONFIG_DIR` (Claude Code would write relative to its working
 /// directory, the repository), the home variable unset (`os.homedir()` falls back to the
 /// account's profile directory or user-database home, which c3 does not resolve) or blank.
 pub fn projects_directory(
@@ -476,7 +481,42 @@ pub fn projects_directory(
             }
         }
     };
-    Ok(base.join("projects").to_string_lossy().to_string())
+    Ok(nfc_path(&base)
+        .join("projects")
+        .to_string_lossy()
+        .to_string())
+}
+
+/// (Wave 7, F36-2) `p` NFC-normalised (a path that is not Unicode as it is).
+fn nfc_path(p: &Path) -> PathBuf {
+    match p.to_str() {
+        Some(s) => PathBuf::from(s.nfc().collect::<String>()),
+        None => p.to_path_buf(),
+    }
+}
+
+/// (Wave 7, F36-2) The forms of `p` the guard compares: as written and, when it differs,
+/// NFC-normalised.
+fn path_forms(p: &Path) -> Vec<PathBuf> {
+    let n = nfc_path(p);
+    if n.as_os_str() == p.as_os_str() {
+        vec![n]
+    } else {
+        vec![p.to_path_buf(), n]
+    }
+}
+
+/// (Wave 7, F36-2) [`path_inside`] over every form of both sides ([`path_forms`]: as written and
+/// NFC-normalised): `p` lies inside `root` when any form of it lies inside any form of the root.
+/// Fail-closed by design - Claude Code writes under the NFC form of its config directory, the
+/// filesystem may keep the composed and the decomposed name apart (NTFS) or fold them (APFS),
+/// so the guard refuses when either reading puts the transcripts in the repository; the
+/// comparison is the strings', no filesystem folding is relied on.
+pub fn path_inside_any_form(root: &Path, p: &Path) -> bool {
+    let roots = path_forms(root);
+    path_forms(p)
+        .iter()
+        .any(|q| roots.iter().any(|r| path_inside(r, q)))
 }
 
 /// (wave 4g, F32-2) The variable `os.homedir()` reads - libuv's `uv_os_homedir`, under node and
@@ -1141,6 +1181,121 @@ mod tests {
         assert_eq!(
             projects_directory(&repo, &vars(&[("CLAUDE_CONFIG_DIR", &up)]), "", true).unwrap(),
             d.join("cfg-up").join("projects").to_string_lossy()
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// (Wave 7, F36-1, RC1) A Unicode `CLAUDE_CONFIG_DIR` outside the repository whose byte at the
+    /// root prefix's length lies inside a char: the guard returns - no panic - and allows it; the
+    /// portable shape (`/repo`, `/日本/.claude`) on every platform.
+    #[test]
+    fn a_unicode_config_dir_outside_the_repository_does_not_panic() {
+        let w = cfg!(windows);
+        let env = vars(&[
+            ("CLAUDE_CONFIG_DIR", "/日本/.claude"),
+            (home_var(w), "/日本"),
+        ]);
+        assert_eq!(launch_problem_of(Path::new("/repo"), &env, "", w), "");
+        assert!(!path_inside(Path::new("/repo"), Path::new("/日本/.claude")));
+        assert!(!path_inside_any_form(
+            Path::new("/repo"),
+            Path::new("/日本/.claude/projects")
+        ));
+    }
+
+    /// (F36-1, RC1) The reviewer's case: root `C:\repo`, `CLAUDE_CONFIG_DIR=C:\日本\.claude`, no
+    /// reported projects directory -> `launch_problem_of` returns normally (allowed: outside).
+    #[cfg(windows)]
+    #[test]
+    fn rc1_a_unicode_config_dir_on_another_drive_path_does_not_panic() {
+        let env = vars(&[
+            ("CLAUDE_CONFIG_DIR", r"C:\日本\.claude"),
+            ("USERPROFILE", r"C:\Users\x"),
+        ]);
+        assert_eq!(launch_problem_of(Path::new(r"C:\repo"), &env, "", true), "");
+        assert_eq!(
+            projects_directory(Path::new(r"C:\repo"), &env, "", true).unwrap(),
+            r"C:\日本\.claude\projects"
+        );
+        // the home in Unicode likewise
+        let home = vars(&[("USERPROFILE", r"C:\日本")]);
+        assert_eq!(
+            launch_problem_of(Path::new(r"C:\repo"), &home, "", true),
+            ""
+        );
+        // and inside a Unicode repository: refused, not sliced
+        let inside = vars(&[("CLAUDE_CONFIG_DIR", r"C:\日本\.claude")]);
+        assert_eq!(
+            launch_problem_of(Path::new(r"C:\日本"), &inside, "", true),
+            r"CLAUDE_CONFIG_DIR (C:\日本\.claude) lies inside the repository under review: the engine's transcripts would change the tree; point it elsewhere"
+        );
+    }
+
+    /// (Wave 7, F36-2, RC3) Claude Code writes under the NFC form of its config directory: a
+    /// decomposed (NFD) `CLAUDE_CONFIG_DIR` - or home - whose NFC form lies in a repository named
+    /// in NFC is refused, though the strings differ ordinally and lexically; the reverse (an NFD
+    /// repository, an NFC configuration) is refused too (fail-closed). Pure strings: the paths
+    /// need not exist, no filesystem folding is relied on.
+    #[test]
+    fn a_decomposed_config_dir_whose_nfc_form_is_in_the_repository_is_refused() {
+        let w = cfg!(windows);
+        let hv = home_var(w);
+        let d = scratch("nfc");
+        let repo = d.join("caf\u{e9}");
+        let repo_nfd = d.join("cafe\u{301}");
+        assert_ne!(repo.as_os_str(), repo_nfd.as_os_str());
+        let cfg_nfd = repo_nfd.join(".claude").to_string_lossy().to_string();
+        // the old comparison saw it outside: lexically ...
+        assert_eq!(
+            c3_core::paths::repo_relative(&repo, Path::new(&cfg_nfd)),
+            None
+        );
+        // ... the new one refuses it
+        let out = d.join("home").to_string_lossy().to_string();
+        assert_eq!(
+            launch_problem_of(&repo, &vars(&[("CLAUDE_CONFIG_DIR", &cfg_nfd), (hv, &out)]), "", w),
+            format!("CLAUDE_CONFIG_DIR ({cfg_nfd}) lies inside the repository under review: the engine's transcripts would change the tree; point it elsewhere")
+        );
+        assert!(path_inside_any_form(&repo, Path::new(&cfg_nfd)));
+        // the derived location is the NFC one, as Claude Code's
+        assert_eq!(
+            projects_directory(&repo, &vars(&[("CLAUDE_CONFIG_DIR", &cfg_nfd)]), "", w).unwrap(),
+            repo.join(".claude").join("projects").to_string_lossy()
+        );
+        // the home in NFD inside the NFC repository: the derived (NFC) location is refused
+        let home_nfd = repo_nfd.join("home").to_string_lossy().to_string();
+        let derived = repo
+            .join("home")
+            .join(".claude")
+            .join("projects")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            launch_problem_of(&repo, &vars(&[(hv, &home_nfd)]), "", w),
+            format!("the claude projectsDirectory ({derived}) lies inside the repository under review: the engine's transcripts would change the tree")
+        );
+        // the reverse: an NFD repository, the NFC configuration - refused (either form inside)
+        let cfg_nfc = repo.join(".claude").to_string_lossy().to_string();
+        assert_eq!(
+            launch_problem_of(&repo_nfd, &vars(&[("CLAUDE_CONFIG_DIR", &cfg_nfc), (hv, &out)]), "", w),
+            format!("CLAUDE_CONFIG_DIR ({cfg_nfc}) lies inside the repository under review: the engine's transcripts would change the tree; point it elsewhere")
+        );
+        // a reported projectsDirectory in NFD inside: refused too
+        let rep_nfd = repo_nfd.join("p").to_string_lossy().to_string();
+        assert_eq!(
+            launch_problem_of(&repo, &vars(&[(hv, &out)]), &rep_nfd, w),
+            format!("the claude projectsDirectory ({rep_nfd}) lies inside the repository under review: the engine's transcripts would change the tree")
+        );
+        // outside in either form: allowed
+        let elsewhere = d.join("cafe\u{301}-cfg").to_string_lossy().to_string();
+        assert_eq!(
+            launch_problem_of(
+                &repo,
+                &vars(&[("CLAUDE_CONFIG_DIR", &elsewhere), (hv, &out)]),
+                "",
+                w
+            ),
+            ""
         );
         let _ = std::fs::remove_dir_all(&d);
     }
