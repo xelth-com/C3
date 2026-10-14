@@ -29,6 +29,8 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
+$WaitRule = 'c3: coordinator rules - the c3:coordinate skill; while waiting on workers, panels, builds or peers schedule a wakeup (ScheduleWakeup, about 20 min) instead of blocking, small reads at each wake - the prompt cache stays warm'
+
 function Resolve-C3Exe {
     if ($env:C3_EXE -and (Test-Path -LiteralPath $env:C3_EXE)) {
         return $env:C3_EXE
@@ -49,6 +51,7 @@ try {
     $exe = Resolve-C3Exe
     if (-not $exe) {
         Write-Output 'c3: not installed - place the c3 binary on PATH or set C3_EXE (see plugin/README.md)'
+        Write-Output $WaitRule
         exit 0
     }
     $previous = $ErrorActionPreference
@@ -62,6 +65,7 @@ try {
     # (wave 27, R13 D5) the second line: the pointer to the coordinator's rules (and the telemetry switch)
     $pointer = (@($raw | Where-Object { $_ -like 'codex-consult: coordinator rules - *' }) | Select-Object -First 1)
     if ($pointer -and $pointer -ne $first) { Write-Output $pointer }
+    Write-Output $WaitRule
 } catch {
     $msg = ("$($_.Exception.Message)" -replace '\s+', ' ').Trim()
     if ($msg.Length -gt 120) { $msg = $msg.Substring(0, 117) + '...' }

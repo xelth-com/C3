@@ -33,9 +33,15 @@ from the PowerShell plugin to `c3`'s subcommands.
   `plugin/` directory, the same way `claude-codex-consult`'s root manifest points at
   `plugins/codex-consult`). Until then, point Claude Code at a local checkout:
   `/plugin marketplace add <path to this repository>`, then `/plugin install c3@<name>`.
+- **Another Claude Code session on this machine, from a local checkout:**
+  `claude plugin marketplace add <path to the C3 checkout>`, then
+  `claude plugin install c3@c3` (the marketplace is named `c3` in `.claude-plugin/marketplace.json`;
+  user scope; other sessions pick it up at their next restart). Later, once a newer plugin
+  version is published (the version is bumped at each release): `claude plugin update c3@c3`.
 - **Install the binary:**
-  - from source: `cargo install --path crates/c3-cli` (from a checkout of the C3
-    repository) puts `c3` on `PATH` via cargo's own bin directory; or
+  - from source: `cargo install --path crates/c3-cli --force` (from a checkout of the C3
+    repository; `--no-default-features` drops the `index-surreal` feature, the embedded
+    SurrealDB code index - use the default build unless that feature is the problem) puts `c3` on `PATH` via cargo's own bin directory; or
   - a release download, once published, placed anywhere on `PATH`, or pointed at with
     `C3_EXE=<path>`.
 - **Verify:** `c3 providers` → at least one row `available`; then a `--dry-run`
