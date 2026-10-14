@@ -36,6 +36,7 @@ pub mod peak;
 pub mod plan;
 pub mod ps_json;
 pub mod purpose;
+pub mod quota;
 pub mod roster;
 pub mod roster_ext;
 pub mod schema;

@@ -870,6 +870,10 @@ pub struct Record {
     pub hit: DateTime<FixedOffset>,
     pub hit_iso: String,
     pub until: DateTime<FixedOffset>,
+    /// (wave 8 = plugin wave 30) `window` for a quota window observed at
+    /// [`crate::quota::QUOTA_BLOCK_PERCENT`] or more with its reset ahead (`New-QuotaWindowRecord`),
+    /// else `""`.
+    pub failure_kind: String,
     // sort keys
     order: DateTime<FixedOffset>,
     n: i64,
@@ -886,6 +890,13 @@ pub struct EndpointHealth {
     pub last_limit: Option<Record>,
     pub last_failure: Option<Record>,
     pub recent_usable: Option<Record>,
+    /// (wave 8 = plugin wave 30) The newest observed quota windows of the endpoint
+    /// ([`crate::quota::endpoint_window`]), `None` when none was observed.
+    pub window: Option<crate::quota::EndpointWindow>,
+    /// The QUOTA column / the dry run's quota line (`5h 96% until 18:32; wk 15% until Oct 20`).
+    pub window_text: String,
+    /// `low quota: 5-hour window 84 % until 18:32` (a window at 80 % or more), else `""`.
+    pub window_low: String,
 }
 
 fn dto(v: &Value) -> Option<DateTime<FixedOffset>> {
@@ -1016,6 +1027,7 @@ pub fn endpoint_health_set(
             hit: at,
             hit_iso: String::new(),
             until: at + Duration::minutes(60),
+            failure_kind: String::new(),
             order: order.unwrap(),
             n,
             ok,
@@ -1130,7 +1142,70 @@ pub fn endpoint_health_set(
         h.last_failure = h.quota.clone();
     }
     h.recent_usable = records.iter().find(|r| r.ok && r.age <= 60.0).cloned();
+    // (wave 8 = plugin wave 30) the newest observed quota windows (the ledgers' and the machine
+    // file's `quota`, the codex home's newest rollout for the built-in openai endpoint when the live
+    // source is on): shown (window_text, window_low), and a window at 98 % or more whose reset lies
+    // ahead keeps the endpoint out until that reset - a quota record with a known reset, like a
+    // usage limit that named its reset time (every caller: the walk, -Require, the panel, the
+    // listing, -Short)
+    h.window = crate::quota::endpoint_window(consults, &fp_set, &builtin);
+    if let Some(w) = h.window.clone() {
+        h.window_text = crate::quota::format_windows(&w.quota, now_utc);
+        h.window_low = crate::quota::format_low_warning(&w.quota, now_utc);
+        if let Some(wrec) = quota_window_record(&w, now_utc) {
+            let replace = h
+                .quota
+                .as_ref()
+                .map(|q| q.until < wrec.until)
+                .unwrap_or(true);
+            if replace {
+                h.quota = Some(wrec.clone());
+                h.quota_known = true;
+                if h.last_limit.is_none() {
+                    h.last_limit = Some(wrec.clone());
+                }
+                if h.last_failure.is_none() {
+                    h.last_failure = Some(wrec);
+                }
+            }
+        }
+    }
     h
+}
+
+/// (wave 8 = plugin wave 30) `New-QuotaWindowRecord`: the health record of a window that keeps its
+/// endpoint out (judged at `now`): the blocking window with the latest reset - class `quota`,
+/// failure kind `window`, a known reset (retry_after = until = resets_at), message `<window> <n> %
+/// used` - or `None`.
+pub fn quota_window_record(
+    w: &crate::quota::EndpointWindow,
+    now_utc: DateTime<Utc>,
+) -> Option<Record> {
+    let s = crate::quota::blocking_window(&w.quota, now_utc)?;
+    let resets = s.resets_at?;
+    let obs = w.observed_at;
+    let age_ms = (now_utc - obs.with_timezone(&Utc)).num_milliseconds() as f64;
+    let age = (age_ms / 60000.0).max(0.0);
+    let local_obs = crate::quota::to_local(obs);
+    Some(Record {
+        fingerprint: w.fingerprint.clone(),
+        class: "quota".into(),
+        kind: String::new(),
+        code: String::new(),
+        message: format!("{} {} % used", s.name, crate::quota::format_percent(s.used)),
+        when: format_offset_iso(local_obs),
+        age_minutes: age.floor() as i64,
+        retry_after: Some(resets),
+        retry_after_iso: format_offset_iso(resets),
+        hit: obs,
+        hit_iso: format_offset_iso(local_obs),
+        until: resets,
+        failure_kind: "window".into(),
+        order: obs,
+        n: 0,
+        ok: false,
+        age,
+    })
 }
 
 // --------------------------------------------------------------------------- machine health
@@ -1172,6 +1247,12 @@ pub struct MachineEndpoint {
     /// file, prunes by it and reads it ([`machine_endpoint_consults`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_mark: Option<Value>,
+    /// (wave 8 = plugin wave 30) the quota windows the run's rollout named (`{primary, secondary,
+    /// observed_at}` - the ledger's `quota`); a run with neither a usable reply nor a provider
+    /// failure (a timeout, a stall, a budget stop) writes a record of class `""` that carries only
+    /// them (a reader before wave 30 skips a record without a class).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<Value>,
 }
 
 /// One running-member row in the machine-wide health file.
@@ -1389,9 +1470,54 @@ pub fn new_machine_health_record_marked(
     repo: &str,
     quota_mark: Option<&MachineFailure>,
 ) -> Option<MachineEndpoint> {
+    new_machine_health_record_quota(fingerprint, outcome, failure, repo, quota_mark, None)
+}
+
+/// `New-MachineHealthRecord -QuotaMark -Quota` (wave 8 = plugin wave 30): as
+/// [`new_machine_health_record_marked`], and the quota windows of the run (`{primary, secondary,
+/// observed_at}`, when one of them is named) travel on the record; a run without an outcome record
+/// (a timeout, a stall, an operator or budget stop) writes a record of class `""` that carries only
+/// them.
+pub fn new_machine_health_record_quota(
+    fingerprint: &str,
+    outcome: &str,
+    failure: Option<&MachineFailure>,
+    repo: &str,
+    quota_mark: Option<&MachineFailure>,
+    quota: Option<&Value>,
+) -> Option<MachineEndpoint> {
     if fingerprint.is_empty() {
         return None;
     }
+    let named = quota
+        .filter(|q| q.is_object() && (!q["primary"].is_null() || !q["secondary"].is_null()))
+        .cloned();
+    let mut rec = new_machine_health_record_base(fingerprint, outcome, failure, repo, quota_mark);
+    if let Some(q) = named {
+        let r = rec.get_or_insert_with(|| MachineEndpoint {
+            endpoint: fingerprint.to_string(),
+            class: String::new(),
+            kind: String::new(),
+            until: None,
+            retry_after: None,
+            repo: repo.to_string(),
+            when: format_offset_iso(now_offset()),
+            message: String::new(),
+            quota_mark: None,
+            quota: None,
+        });
+        r.quota = Some(q);
+    }
+    rec
+}
+
+fn new_machine_health_record_base(
+    fingerprint: &str,
+    outcome: &str,
+    failure: Option<&MachineFailure>,
+    repo: &str,
+    quota_mark: Option<&MachineFailure>,
+) -> Option<MachineEndpoint> {
     if is_usable_outcome(outcome) {
         let now = now_offset();
         let mark = quota_mark.filter(|m| m.class == "quota").map(|m| {
@@ -1428,6 +1554,7 @@ pub fn new_machine_health_record_marked(
             when: format_offset_iso(now),
             message: String::new(),
             quota_mark: mark,
+            quota: None,
         });
     }
     let f = failure?;
@@ -1473,6 +1600,7 @@ pub fn new_machine_health_record_marked(
         when: format_offset_iso(when),
         message,
         quota_mark: None,
+        quota: None,
     })
 }
 
@@ -2154,6 +2282,13 @@ fn update_machine_health(
                         .and_then(|m| m["until"].as_str())
                         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
                 });
+            // (wave 8 = plugin wave 30) and any record while a quota window it carries still blocks
+            let until = until.or_else(|| {
+                e.quota
+                    .as_ref()
+                    .and_then(|q| crate::quota::blocking_window(q, now))
+                    .and_then(|w| w.resets_at)
+            });
             let still_out = until.map(|u| u.with_timezone(&Utc) > now).unwrap_or(false);
             recent || still_out
         });
@@ -2353,13 +2488,22 @@ fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Valu
         .endpoints
         .into_iter()
         .filter(|e| fingerprint.is_none_or(|fp| e.endpoint == fp))
-        .map(|e| {
+        .filter_map(|e| {
             let mut v = serde_json::json!({
                 "when": e.when,
                 "n": 0,
                 "finished_at": e.when,
                 "reviewer": { "provider_fingerprint": e.endpoint },
             });
+            if e.class.is_empty() {
+                // (wave 8 = plugin wave 30) a record of class '' carries only the quota windows of
+                // a run: no outcome (a record without a class and without them is skipped)
+                let q = e.quota.clone()?;
+                v["bridge_outcome"] = Value::String(String::new());
+                v["provider_failure"] = Value::Null;
+                v["quota"] = q;
+                return Some(v);
+            }
             if e.class == "ok" {
                 v["bridge_outcome"] = Value::String("usable reply".into());
                 // (wave 29b, E15) a usable reply with a quota mark: the mark travels as
@@ -2405,7 +2549,8 @@ fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Valu
                     "until": e.until,
                 });
             }
-            v
+            v["quota"] = e.quota.clone().unwrap_or(Value::Null);
+            Some(v)
         })
         .collect()
 }
@@ -3493,6 +3638,7 @@ mod machine_health_tests {
             when: format_offset_iso(old_when),
             message: String::new(),
             quota_mark: None,
+            quota: None,
         };
         let still_out = MachineEndpoint {
             endpoint: "fp-still-out".into(),
@@ -3504,6 +3650,7 @@ mod machine_health_tests {
             when: format_offset_iso(old_when),
             message: String::new(),
             quota_mark: None,
+            quota: None,
         };
         let running_row = MachineRunning {
             endpoint: "fp-run".into(),
@@ -4627,5 +4774,194 @@ mod retry_after_tests {
             local.wall_offsets(wall("2026-10-25T02:30:00")),
             LocalResult::Ambiguous(hours(2), hours(1))
         );
+    }
+}
+
+// (wave 8 = plugin wave 30, T15) the quota windows in the endpoint health and the verdict - the
+// UNIT cases of the plugin's harness-quota.
+#[cfg(test)]
+mod quota_window_tests {
+    use super::*;
+    use crate::credential::CredentialResult;
+    use crate::verdict::verdict_with_credential;
+    use serde_json::json;
+
+    fn clock() -> DateTime<Utc> {
+        "2026-10-13T12:00:00Z".parse().unwrap()
+    }
+
+    fn entry(fp: &str, used: f64, reset: &str) -> Value {
+        json!({
+            "n": 1,
+            "when": "2026-10-13T11:30:00+00:00",
+            "finished_at": "2026-10-13T11:36:00+00:00",
+            "bridge_outcome": "usable reply",
+            "reviewer": {"provider": "openai", "provider_fingerprint": fp},
+            "provider_failure": null,
+            "quota": {
+                "primary": {"used_percent": used, "window_minutes": 300, "resets_at": reset},
+                "secondary": {"used_percent": 15.0, "window_minutes": 10080, "resets_at": "2026-10-20T11:32:16+00:00"},
+                "observed_at": "2026-10-13T11:35:49+00:00"
+            }
+        })
+    }
+
+    fn ident() -> crate::lineage::ReviewerIdentity {
+        let cfg = crate::config::scan_config_text("", "model = \"gpt-5.1\"\n");
+        crate::lineage::resolve_reviewer_identity(&cfg, "openai", "gpt-5.1", "", "codex", "")
+    }
+
+    #[test]
+    fn a_window_at_99_percent_is_a_usage_limit_with_its_reset() {
+        let fp = builtin_openai_fingerprint();
+        let h = endpoint_health(
+            &[entry(&fp, 99.0, "2026-10-13T16:32:16+00:00")],
+            &fp,
+            clock(),
+        );
+        let q = h.quota.clone().expect("a quota record");
+        assert!(h.quota_known);
+        assert_eq!(q.failure_kind, "window");
+        assert_eq!(q.retry_after_iso, "2026-10-13T16:32:16+00:00");
+        assert!(
+            h.window_text.starts_with("5h 99% until "),
+            "{}",
+            h.window_text
+        );
+        let v =
+            verdict_with_credential(&ident(), Some(&h), CredentialResult::ok("logged in"), true);
+        assert_eq!(v.state, "unavailable");
+        assert_eq!(v.kind, "quota");
+        assert_eq!(
+            v.reason,
+            "5-hour window 99 % used, resets 2026-10-13T16:32:16+00:00"
+        );
+        assert_eq!(v.until, q.retry_after);
+        assert!(v.refusal.starts_with(
+            "provider openai is not usable: its 5-hour window 99 % used (observed at "
+        ));
+        assert!(v
+            .refusal
+            .contains("until the window resets at 2026-10-13T16:32:16+00:00; nothing was started"));
+    }
+
+    #[test]
+    fn a_window_at_84_percent_is_low_quota_and_available() {
+        let fp = builtin_openai_fingerprint();
+        let h = endpoint_health(
+            &[entry(&fp, 84.0, "2026-10-13T16:32:16+00:00")],
+            &fp,
+            clock(),
+        );
+        assert!(h.quota.is_none());
+        let lt = crate::quota::to_local("2026-10-13T16:32:16+00:00".parse().unwrap())
+            .format("%H:%M")
+            .to_string();
+        let v =
+            verdict_with_credential(&ident(), Some(&h), CredentialResult::ok("logged in"), true);
+        assert_eq!(v.state, "available");
+        assert_eq!(
+            v.quota_warning,
+            format!("low quota: 5-hour window 84 % until {lt}")
+        );
+        assert!(v
+            .label
+            .ends_with(&format!("; low quota: 5-hour window 84 % until {lt})")));
+    }
+
+    #[test]
+    fn a_past_reset_changes_nothing_and_the_newest_observation_decides() {
+        let fp = builtin_openai_fingerprint();
+        let h = endpoint_health(
+            &[entry(&fp, 99.0, "2026-10-13T11:00:00+00:00")],
+            &fp,
+            clock(),
+        );
+        assert!(h.quota.is_none());
+        assert!(h.window_text.starts_with("5h reset (last 99% until "));
+        let v =
+            verdict_with_credential(&ident(), Some(&h), CredentialResult::ok("logged in"), true);
+        assert_eq!(v.state, "available");
+        assert!(v.quota_warning.is_empty());
+        // a 0.6.1 entry without the keys stays valid
+        let old = json!({"n": 1, "when": "2026-10-13T11:30:00+00:00", "bridge_outcome": "usable reply",
+            "reviewer": {"provider": "openai", "provider_fingerprint": fp}, "provider_failure": null});
+        let h_old = endpoint_health(std::slice::from_ref(&old), &fp, clock());
+        assert!(h_old.window.is_none() && h_old.quota.is_none());
+        // a later entry at 30 % lifts the 99 % one
+        let newer = json!({"n": 2, "when": "2026-10-13T11:40:00+00:00", "finished_at": "2026-10-13T11:41:00+00:00",
+            "bridge_outcome": "usable reply", "reviewer": {"provider": "openai", "provider_fingerprint": fp},
+            "provider_failure": null, "quota": {"primary": {"used_percent": 30.0, "window_minutes": 300,
+            "resets_at": "2026-10-13T16:40:00+00:00"}, "secondary": null, "observed_at": "2026-10-13T11:41:00+00:00"}});
+        let h_new = endpoint_health(
+            &[entry(&fp, 99.0, "2026-10-13T16:32:16+00:00"), newer],
+            &fp,
+            clock(),
+        );
+        assert!(h_new.quota.is_none());
+        assert!(h_new.window_text.starts_with("5h 30% until "));
+    }
+
+    #[test]
+    fn the_machine_record_carries_the_quota_and_class_empty_without_an_outcome() {
+        let fp = builtin_openai_fingerprint();
+        let q = json!({"primary": {"used_percent": 99.0, "window_minutes": 300,
+            "resets_at": format_offset_iso(now_offset() + Duration::hours(2))}, "secondary": null,
+            "observed_at": format_offset_iso(now_offset())});
+        let t = new_machine_health_record_quota(
+            &fp,
+            "failed: timeout after 60 s (process tree killed)",
+            None,
+            "r",
+            None,
+            Some(&q),
+        )
+        .unwrap();
+        assert_eq!(t.class, "");
+        assert_eq!(t.quota.as_ref().unwrap()["primary"]["used_percent"], 99.0);
+        let ok = new_machine_health_record_quota(&fp, "usable reply", None, "r", None, Some(&q))
+            .unwrap();
+        assert_eq!(ok.class, "ok");
+        assert!(ok.quota.is_some());
+        let op = MachineFailure {
+            class: "operator".into(),
+            message: "x".into(),
+            ..Default::default()
+        };
+        let rop = new_machine_health_record_quota(
+            &fp,
+            "failed: stopped at the quota budget: x",
+            Some(&op),
+            "r",
+            None,
+            Some(&q),
+        )
+        .unwrap();
+        assert_eq!(rop.class, "");
+        let none = json!({"primary": null, "secondary": null, "observed_at": null});
+        assert!(new_machine_health_record_quota(
+            &fp,
+            "failed: timeout after 60 s",
+            None,
+            "r",
+            None,
+            Some(&none)
+        )
+        .is_none());
+        // the record round-trips the machine file and another repository reads the window
+        let dir = std::env::temp_dir().join(format!("c3-quota-machine-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let hp = dir.join("health.json");
+        let alive = |_: u32, _: &str| true;
+        assert!(!add_machine_health_endpoint(&hp, &t, &alive).failed());
+        let consults = machine_endpoint_consults(&hp, &fp);
+        assert_eq!(consults.len(), 1);
+        assert_eq!(consults[0]["bridge_outcome"], "");
+        let h = endpoint_health(&consults, &fp, Utc::now());
+        assert_eq!(
+            h.quota.as_ref().map(|q| q.failure_kind.as_str()),
+            Some("window")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

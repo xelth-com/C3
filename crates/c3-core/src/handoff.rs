@@ -130,6 +130,8 @@ pub struct OptionalRecords {
     pub recovery_lines: Vec<String>,
     /// Drift lines (tree/HEAD/brief/artifacts changed), after Brief/Reviewed.
     pub drift_lines: Vec<String>,
+    /// (wave 8 = plugin wave 30) `Quota (rollout): ...`, right after Bridge outcome (codex).
+    pub quota: Option<String>,
     /// `Engine turns: ...`, after Bridge outcome.
     pub engine_turns: Option<String>,
     /// `Warnings: ...`.
@@ -254,6 +256,8 @@ impl HandoffHeader {
             self.wall_seconds,
             self.tokens.render()
         ));
+        // (wave 8) the quota windows and the run's tokens (codex)
+        push_opt(&mut lines, &r.quota);
         // 14-16.
         push_opt(&mut lines, &r.engine_turns);
         push_opt(&mut lines, &r.warnings);

@@ -209,6 +209,10 @@ pub struct Request {
     pub schema_path: Option<PathBuf>,
     /// Applied `-CodexConfig` items (`key=value`); codex `-c` args, passed through verbatim.
     pub extra_config: Vec<String>,
+    /// (wave 8 = plugin wave 30) The bridge's own codex `-c` items placed right after `-m`, before
+    /// the identity pins and the user's items: `features.multi_agent=false` unless the user's
+    /// `-CodexConfig` names `features.multi_agent` (theirs wins). Empty for every other engine.
+    pub agent_config: Vec<String>,
     /// codex `-o <path>`: where the last agent message is written.
     pub output_last_message: Option<PathBuf>,
     /// muse `--prompt-file <path>`: the prompt file.
@@ -447,6 +451,9 @@ pub enum StopKind {
     },
     /// The operator stopped the run with `-Kick`.
     Kick,
+    /// (wave 8 = plugin wave 30, T15) The quota budget stopped the main turn: the 5-hour window of
+    /// the run's rollout, observed during the turn, reached `-Budget` with its reset ahead.
+    Budget { window: crate::quota::PrimaryWindow },
 }
 
 // --------------------------------------------------------------------------- v1 reply schema
@@ -1062,6 +1069,12 @@ impl SubprocessEngine {
             a.push("-m".into());
             a.push(r.model.clone());
         }
+        // (wave 8 = plugin wave 30) the sub-agent switch right after the model, before the identity
+        // pins and the user's own -c items (which stay last before -o)
+        for item in &r.agent_config {
+            a.push("-c".into());
+            a.push(item.clone());
+        }
         if let Some(e) = &r.effort {
             a.push("-c".into());
             a.push(format!("model_reasoning_effort={}", toml_basic_string(e)));
@@ -1306,6 +1319,7 @@ mod tests {
             sandbox: "read-only".into(),
             schema_path: Some(PathBuf::from("schema.json")),
             extra_config: vec![],
+            agent_config: vec![],
             output_last_message: Some(PathBuf::from("last.md")),
             prompt_file: None,
             max_model_steps: None,

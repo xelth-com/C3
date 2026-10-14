@@ -374,6 +374,33 @@ pub struct LedgerEntry {
     pub finished_at: String,
     #[serde(default)]
     pub commit_wait_ms: i64,
+    /// (wave 8 = plugin wave 30, T15; codex runs only, AFTER `commit_wait_ms`) the quota windows the
+    /// run's rollout named: `{primary, secondary, observed_at}` - each window `{used_percent,
+    /// window_minutes, resets_at}` (ISO with the local offset), null members when the rollout names
+    /// none or was not found. Absent in an engine's entry and in one recorded before (kept absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota: Option<Value>,
+    /// (wave 8) `{input, cached, output, thread_input, calls, max_input, context_window, subagents
+    /// {count, input, calls}}` from the rollout, `null` when it was not found. Tri-state: absent
+    /// (engine / older entry) vs present `null`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub tokens: Option<Option<Value>>,
+    /// (wave 8) `false` when the bridge passed `-c features.multi_agent=false` (the default),
+    /// `true`/`false` as the user's `-CodexConfig` set `features.multi_agent`.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present"
+    )]
+    pub subagents_allowed: Option<Option<bool>>,
+    /// (wave 8) `{percent, source, stopped, used_percent, resets_at}` - `stopped` true when the
+    /// main turn was stopped at the quota budget.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<Value>,
     /// Unknown members a later wave adds, preserved in place on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
@@ -1025,6 +1052,51 @@ impl SessionsFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // (wave 8 = plugin wave 30) a codex entry's quota, tokens, subagents_allowed and budget are the
+    // LAST keys, after commit_wait_ms (harness-0.3 LEDGER, harness-quota LEDGER); an entry without
+    // them (an engine's, a 0.6.1 one) writes none; `tokens` null is written as null.
+    #[test]
+    fn the_quota_keys_follow_commit_wait_ms_and_stay_absent_without_them() {
+        let mut e = LedgerEntry {
+            n: 1,
+            commit_wait_ms: 0,
+            ..Default::default()
+        };
+        let plain = serde_json::to_value(&e).unwrap();
+        let keys: Vec<String> = plain.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(keys.last().map(String::as_str), Some("commit_wait_ms"));
+        e.quota =
+            Some(serde_json::json!({"primary": null, "secondary": null, "observed_at": null}));
+        e.tokens = Some(None);
+        e.subagents_allowed = Some(Some(false));
+        e.budget = Some(
+            serde_json::json!({"percent": 90, "source": "default", "stopped": false, "used_percent": null, "resets_at": null}),
+        );
+        let v = serde_json::to_value(&e).unwrap();
+        let keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        let tail: Vec<&str> = keys[keys.len() - 5..].iter().map(String::as_str).collect();
+        assert_eq!(
+            tail,
+            [
+                "commit_wait_ms",
+                "quota",
+                "tokens",
+                "subagents_allowed",
+                "budget"
+            ]
+        );
+        assert!(v["tokens"].is_null());
+        // a read keeps the tri-states: present null stays present
+        let back: LedgerEntry = serde_json::from_value(v).unwrap();
+        assert_eq!(back.tokens, Some(None));
+        assert_eq!(back.subagents_allowed, Some(Some(false)));
+        let text = ps_json::to_ps_json(&back).unwrap();
+        assert!(
+            text.contains("\"tokens\":  null") || text.contains("\"tokens\": null"),
+            "{text}"
+        );
+    }
 
     fn entry(n: i64, id: &str) -> LedgerEntry {
         LedgerEntry {

@@ -31,6 +31,9 @@ pub struct PreflightVerdict {
     /// route ([`crate::plan::plan_quota_verdict`]): the plan and the label of that route, for
     /// the availability views.
     pub plan_quota: Option<PlanQuotaRef>,
+    /// (wave 8 = plugin wave 30) `low quota: 5-hour window 84 % until 18:32` when the endpoint's
+    /// newest window is at 80 % or more (the verdict stays available, the run is not refused).
+    pub quota_warning: String,
 }
 
 /// The plan a verdict was judged by (`PlanQuota { Plan; Label }`).
@@ -57,6 +60,7 @@ impl PreflightVerdict {
             credential: None,
             burst: false,
             plan_quota: None,
+            quota_warning: String::new(),
         }
     }
 }
@@ -141,6 +145,15 @@ pub fn verdict_with_credential(
             "provider {p} is not usable: its usage limit (hit at {}: {}) lasts until {}; nothing was started (pass -SkipPreflight to launch anyway)",
             q.when, q.message, q.retry_after_iso
         );
+        if q.failure_kind == "window" {
+            // (wave 8 = plugin wave 30) a quota window observed at 98 % or more, its reset ahead
+            v.reason = format!("{}, resets {}", q.message, q.retry_after_iso);
+            v.preflight = format!("unavailable: {}", v.reason);
+            v.refusal = format!(
+                "provider {p} is not usable: its {} (observed at {}) until the window resets at {}; nothing was started (pass -SkipPreflight to launch anyway)",
+                q.message, q.when, q.retry_after_iso
+            );
+        }
         v.label = format!(
             "unavailable ({}) - a real run is refused: {}",
             v.reason, v.refusal
@@ -198,6 +211,14 @@ pub fn verdict_with_credential(
         );
     } else {
         v.label = format!("available ({})", cred.detail);
+        // (wave 8 = plugin wave 30) a window at 80 % or more: said in the verdict, not refused
+        if let Some(low) = health
+            .map(|h| h.window_low.clone())
+            .filter(|l| !l.is_empty())
+        {
+            v.label = format!("available ({}; {low})", cred.detail);
+            v.quota_warning = low;
+        }
     }
     v.credential = Some(cred);
     v

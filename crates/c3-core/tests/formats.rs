@@ -641,6 +641,7 @@ fn availability_record_out_quota_short() {
         credential: None,
         burst: false,
         plan_quota: None,
+        quota_warning: String::new(),
     };
     v.reason = "usage limit until 2026-09-26T15:00:00+02:00".into();
     let r = convert_to_availability_record(1, "ZAI", "glm", "codex", 0, Some(&v), "", now);
