@@ -1,0 +1,403 @@
+{
+  "schema_version": "1",
+  "verdict": "ADVISE",
+  "verdict_reason": "Proceed with a bounded watch and interactive browser prototype, but separate notification, execution, transport and recovery contracts before selecting the architecture.",
+  "reply_markdown": "The framing combines independent decisions. A status reader cannot itself prevent a model invocation; adapter placement does not determine transport; draft preparation is an interactive workflow. Compare against existing background `--wait` plus Monitor and manual `c3 pack` plus paste before adding infrastructure.\n\n**Q1.** Fold authoritative detached-run judgements, registered worker/build/peer completion records, unreadable or foreign-host states, and health changes that unblock this task. Do not copy worker prose or wake for unrelated ledger activity. Reuse `detached::judgement`, which already distinguishes `died`, `elsewhere` and `unreadable`.\n\nReturn a versioned result with `changed`, `unknown`, an observation cursor and a next-check deadline. A per-source revision vector is a smaller alternative to a global journal. Neither journal nor filesystem notification detects silent death without reconciliation. Subscribe before the initial scan and rescan after notification loss. A write after the observation belongs to the next cursor, rather than being inherently lost.\n\nThe cheapest reliable deadline is the earliest relevant lease/liveness check or explicit timeout; quota reset is only a reason to recheck availability. Cache refresh is a separate host policy. Measure actual cache lifetime and wake costs before preserving every heartbeat. Subcommand-specific exit codes are valid; use structured output to avoid wrapper ambiguity.\n\n**Q2.** Prefer Rust/WASM in a bounded helper process controlled by C3, with the extension enforcing capabilities again at the DOM boundary. This preserves the operator’s WASM ruling while isolating adapter resource failure. Minimum operations: bind a user-selected tab/document/thread, prepare a bounded draft, observe submission, subscribe to the matched reply, request stop, release; automated send is a separate grant. No arbitrary script evaluation or unrestricted DOM reads.\n\nCompare authenticated loopback with native messaging independently. Native messaging requires browser-initiated host attachment and origin validation; it is not automatic authentication of an existing C3 run. [Chrome documentation](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging).\n\nEarlier CSP claims need correction: isolated content scripts permit WASM; main-world scripts inherit page CSP. Store restrictions on remotely supplied executable code are distinct from runtime feasibility. [Content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), [remote code policy](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code).\n\nChoose after establishing distribution channel, installation tolerance, unattended-use requirement, adapter resource limits and actual web-only review volume. Declarative adapters remain an alternative requiring an explicit change to the primary-form ruling.\n\n**Q3.** Persist run/attempt identity, adapter hash, pack/revision digest, tab/document/thread binding, consent scope, human-wait duration, observed submission, reply identity/offsets, partial output and terminal reason. Separate `awaiting-send`, `submission-unknown`, `streaming`, `disconnected` and terminal states. Never automatically resend an uncertain submission. Record stop intent before acting and remote cancellation confirmation separately; closing a pipe does not prove generation stopped. Apply a human-wait deadline separately from generation stall detection. Start with interactive single runs; unattended seating requires explicit capability policy.\n\n**Q4.** Missing designs include a finite task supervisor instead of a permanent daemon, revision-vector watching, and the isolated adapter helper. Missing risks include accepting another turn’s valid JSON and giving a web reviewer only repository paths it cannot access. Reuse the HTTP pack boundary. Signing alone supplies neither resource limits nor review coverage.\n\n## Requested checks\n\n- **RC1:** Repository root; workspace-write: record cached-input and output usage for six matched status-first/watch-first wakes; establish whether invocation cost changes. Budget: one hour.\n- **RC2:** Repository root; workspace-write: exercise a watch harness with silent death, foreign host, same-second writes and a write during subscription setup; require eventual delivery or explicit unknown. Budget: one hour.\n- **RC3:** Repository root; workspace-write: use a fake browser bridge to disconnect after send but before acknowledgement, then replay an old schema-valid reply; require no resend and no false acceptance. Budget: 90 minutes.\n- **RC4:** Repository root; workspace-write: run looping and memory-exhausting test adapters in the proposed helper; require bounded termination with C3 responsive and recovery recorded. Budget: 30 minutes.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+          "line": 48
+        },
+        {
+          "path": "crates/c3/src/consult/detached.rs",
+          "line": 274
+        },
+        {
+          "path": "crates/c3/src/consult/detach.rs",
+          "line": 60
+        }
+      ],
+      "claim": "The watch lacks a defined observation and cursor contract. Timestamp-only comparisons can miss equal-timestamp changes and cannot infer silent death, but a write after a scan is not inherently lost if the returned cursor covers only observed state. A journal alone also cannot detect death, and independently updating status plus journal introduces a crash gap. Separate watch exit codes are not inherently invalid; ambiguity arises in callers that ignore which command produced them.",
+      "trigger": "A writer dies without updating status, two replacements share a timestamp, a write occurs during scan/subscription setup, or a process crashes between updating status and appending its notification.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/detach.rs:53-63",
+          "observation": "Status writes atomically replace the file and stamp updated with second-resolution wall-clock text."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/detached.rs:274-395",
+          "observation": "Judgement derives unreadable, elsewhere and died independently of file changes."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/detach.rs:1330-1336",
+          "observation": "The consult wait path returns 3 for a wait timeout; this establishes that command's meaning, not a universal prohibition on other subcommands using 3."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Brief watch sketch and proposed journal remedies",
+          "observation": "Neither cursor advancement nor atomicity between a proposed journal and existing status writes is specified."
+        }
+      ],
+      "verification": "Run RC2 and check that every transition is eventually observed or explicitly classified unknown, including a crash between status publication and notification.",
+      "remedy": "Specify snapshot/cursor semantics and command-scoped results; use per-source revisions or a transactional authoritative journal, reconcile liveness, detect cursor expiry, and subscribe before scanning. Treat notifications as hints unless their durable delivery is proven.",
+      "supersedes": [
+        "F20-1",
+        "F21-1",
+        "F24-3",
+        "F24-9",
+        "F27-1",
+        "F27-3",
+        "F28-1",
+        "F28-2",
+        "F29-4",
+        "F29-5"
+      ]
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+          "line": 57
+        }
+      ],
+      "claim": "Extension adapter feasibility depends on execution context and distribution channel; treating all extension WASM as impossible or inherently unmediated is incorrect. The actual unresolved constraint is dynamically supplying executable catalogue adapters to a Store-distributed extension, alongside correctly configuring and limiting its execution context.",
+      "trigger": "Architecture selection rejects bundled isolated-world WASM on page-CSP grounds, or assumes a successful unpacked-extension experiment establishes Store eligibility for downloaded adapters.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:28-31,55-58",
+          "observation": "The brief specifies a private plugin first and signed catalogue WASM, without defining extension distribution or whether adapter bytes are bundled."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts",
+          "observation": "Official documentation gives isolated content scripts a CSP containing wasm-unsafe-eval and distinguishes the main world, where page CSP applies."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code",
+          "observation": "Official documentation identifies externally loaded JavaScript and WASM as remotely hosted code and describes the Store's bundling requirement."
+        }
+      ],
+      "verification": "For the intended distribution channel, document whether executable bytes are bundled or fetched, then test the selected execution context separately from reviewing Store policy.",
+      "remedy": "Retain B' as a preference based on update and capability boundaries, not a false universal CSP constraint. Explicitly select the distribution model; sandbox adapter imports regardless of placement.",
+      "supersedes": [
+        "F19-3",
+        "F23-2",
+        "F25-4",
+        "F27-5",
+        "F28-5"
+      ]
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+          "line": 56
+        }
+      ],
+      "claim": "Native messaging is a useful omitted transport, but it does not automatically authenticate an existing consultation or prove remote cancellation. Chrome starts a native host; the sketch instead starts C3 first. Selecting native messaging therefore still requires a run-attachment protocol, content-script sender validation and explicit disconnect semantics.",
+      "trigger": "A browser-launched host must attach to an already-running detached C3 consultation, or a port closes while the vendor continues generating.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55-59",
+          "observation": "C3 initiates the proposed relay and owns the consultation lifecycle."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging",
+          "observation": "Chrome launches the host, communicates over framed stdio, limits host-to-browser messages, and explicitly requires validation of content-script senders before forwarding."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Native messaging lifecycle versus the browser engine sketch",
+          "observation": "Transport closure establishes a local disconnect, not cessation of a remote vendor turn."
+        }
+      ],
+      "verification": "Prototype browser-initiated attachment to two existing consultation IDs and require refusal of a mismatched run binding; disconnect one port and inspect the remote-turn status separately.",
+      "remedy": "Compare native messaging and loopback using the same run binding, capability and recovery requirements; include native-host installation, framing and chunking costs.",
+      "supersedes": [
+        "F19-4",
+        "F28-6"
+      ]
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+          "line": 55
+        },
+        {
+          "path": "crates/c3-core/src/engine.rs",
+          "line": 981
+        },
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 54
+        }
+      ],
+      "claim": "The browser engine needs an interactive recovery capability, not necessarily an OS process tree. The common Engine interface already admits HTTP plans; the missing contract is persisted human waiting, uncertain submission, bounded retries and distinction between local abandonment and confirmed remote stop. Draft-only and detached execution are compatible only with an explicit attendance/deadline policy.",
+      "trigger": "The user never sends, a repair needs another manual submission, the relay disappears, or a kick occurs while generation continues remotely.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/engine.rs:981-1001",
+          "observation": "Engine exposes planning, precheck and turn execution, and its plan documentation includes an HTTP request."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:4951",
+          "observation": "The HTTP engine explicitly has no subprocess."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/subprocess.rs:39-65",
+          "observation": "Stall handling and durable kill callbacks belong to the subprocess runner."
+        },
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55-61",
+          "observation": "The sketch promises the same recovery contract but does not specify human-wait states or remote cancellation evidence."
+        }
+      ],
+      "verification": "Run RC3, adding unsent expiry, manual format repair, operator stop and restart; require one durable local terminal result per attempt while preserving unknown remote status.",
+      "remedy": "Add interactive capabilities and state transitions above subprocess-specific hooks. Persist stop intent before action, distinguish attempted/confirmed/unknown cancellation, and give human waiting a separate bounded deadline.",
+      "supersedes": [
+        "F19-5",
+        "F20-6",
+        "F21-3",
+        "F24-5",
+        "F24-7",
+        "F25-1",
+        "F25-3",
+        "F27-6",
+        "F28-7",
+        "F29-3"
+      ]
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+          "line": 58
+        }
+      ],
+      "claim": "The browser protocol lacks turn ownership and submission reconciliation. Schema-valid JSON from a previous or concurrent turn can be accepted as the current review, and reconnecting after an unacknowledged send can duplicate a submission. Output schema validation establishes shape, not provenance.",
+      "trigger": "The user edits the draft, submits another message, regenerates a reply, navigates within the same tab, or the relay disconnects after send but before acknowledgement.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:57-61",
+          "observation": "The listed operations prepare text, read a stream and signal done; no attempt binding, submission acknowledgement or message identity is defined."
+        },
+        {
+          "kind": "read-code",
+          "reference": "C:/Users/Dmytro/gemini-mcp/extension/content.js:24-31,617-621",
+          "observation": "The prior implementation persists a current task ID and requests replay on reconnect, confirming that reconnect identity is a real concern in this environment."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Browser sketch's output-schema acceptance",
+          "observation": "An old response can satisfy the same schema without answering the current brief."
+        }
+      ],
+      "verification": "Run RC3 and require rejection of the replayed old reply and no automatic second send after the ambiguous acknowledgement.",
+      "remedy": "Bind every operation to run, attempt, tab, document and thread; record the prepared and observed submitted payload identities locally. Require evidence linking the assistant turn to that submission. Use submission-unknown and operator reconciliation when idempotency cannot be established.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+          "line": 55
+        },
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 2665
+        },
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 4951
+        }
+      ],
+      "claim": "The browser sketch specifies brief transport but omits the repository-evidence boundary. CLI reviewers can inspect local files; a web chat with the proposed DOM-only API cannot. Passing a normal path-based brief can therefore yield a structured review with no access to the evidence it was asked to assess.",
+      "trigger": "A browser reviewer receives a brief referring to repository files or a commit range without their contents being included.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:2665-2681",
+          "observation": "The implementation explicitly distinguishes repository-reading CLI engines from the HTTP engine's reviewer pack."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:4951-4952,5408-5409",
+          "observation": "HTTP builds and retains a reviewer pack and records its hash in provider configuration."
+        },
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55-61",
+          "observation": "Browser transport is specified as writing the brief; no pack construction or evidence-coverage contract is stated."
+        }
+      ],
+      "verification": "Give a mock browser seat a brief naming one local file and inspect the prepared payload; require the file's relevant content and revision identity or an explicit incomplete-coverage refusal.",
+      "remedy": "Reuse the sanitized HTTP pack path, retain its hash and source revision, and expose coverage limits to both reviewer and coordinator. Validate the exported context before composing the draft.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+          "line": 72
+        }
+      ],
+      "claim": "Running signed user-land adapters inside C3 without a resource-containment contract can disable the supervisor itself. A capability allowlist limits accessible operations but does not bound computation, memory, queued messages or blocking host calls.",
+      "trigger": "An otherwise valid adapter loops indefinitely, allocates excessively, floods reply chunks or blocks in a permitted bridge operation.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:28-31,72",
+          "observation": "The preference places adapters in C3's process and specifies signatures and denied capabilities, but no execution or resource limits."
+        },
+        {
+          "kind": "inferred",
+          "reference": "In-process adapter preference",
+          "observation": "An unbounded adapter shares availability with the component responsible for status and recovery."
+        }
+      ],
+      "verification": "Run RC4 and verify that adapter failure cannot prevent status queries or durable recovery recording.",
+      "remedy": "Use a supervised helper with bounded WASM memory and execution, bounded IPC queues and payloads, deadlines on host operations, and a killable JavaScript runtime if JavaScript adapters are enabled.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F03-1","status":"not-checked","note":"Panel A cost comparison was not revalidated."},
+    {"id":"F03-2","status":"not-checked","note":"Requested-effort provenance was outside this review."},
+    {"id":"F03-3","status":"not-checked","note":"No Claude hook experiment performed."},
+    {"id":"F03-4","status":"not-checked","note":"No scout/judge replay performed."},
+    {"id":"F03-5","status":"not-checked","note":"Worker rework attribution was not inspected."},
+    {"id":"F04-1","status":"not-checked","note":"The two worker outcome sketches were not compared."},
+    {"id":"F04-2","status":"still-open","note":"Read the closer and Details: only consultation/rating types and fixed fields are accepted."},
+    {"id":"F04-3","status":"not-checked","note":"No quota-attribution experiment performed."},
+    {"id":"F04-4","status":"not-checked","note":"Effort mapping policy was not traced."},
+    {"id":"F04-5","status":"not-checked","note":"No worker start/stop payloads captured."},
+    {"id":"F04-6","status":"not-checked","note":"Worker rating and intake paths were not inspected."},
+    {"id":"F04-7","status":"not-checked","note":"No compression-loss experiment performed."},
+    {"id":"F04-8","status":"not-checked","note":"Observational scoring design was outside scope."},
+    {"id":"F05-1","status":"not-checked","note":"No isolated quota measurements performed."},
+    {"id":"F05-2","status":"not-checked","note":"No blind paired review experiment performed."},
+    {"id":"F05-3","status":"not-checked","note":"Worker lifecycle histories were not exercised."},
+    {"id":"F05-4","status":"not-checked","note":"Resolved worker models were not observed."},
+    {"id":"F05-5","status":"not-checked","note":"Effort provenance across launch and rating was not traced."},
+    {"id":"F05-6","status":"not-checked","note":"Verification classification was not inspected."},
+    {"id":"F05-7","status":"not-checked","note":"No digest-only known-defect test performed."},
+    {"id":"F07-1","status":"not-checked","note":"Cross-plan scoring was not recalculated."},
+    {"id":"F07-2","status":"not-checked","note":"No paired z.ai effort requests performed."},
+    {"id":"F07-3","status":"not-checked","note":"Worker telemetry payloads were not sampled."},
+    {"id":"F07-4","status":"not-checked","note":"No telemetry re-identification test performed."},
+    {"id":"F07-5","status":"not-checked","note":"Scout falsification coverage was not tested."},
+    {"id":"F08-1","status":"not-checked","note":"Quota denominator attribution was not independently checked."},
+    {"id":"F08-2","status":"still-open","note":"Details has no effort fields; the proposed distinction cannot currently reach the wire."},
+    {"id":"F08-3","status":"not-checked","note":"Intake compatibility and schema-version handling were not inspected."},
+    {"id":"F08-4","status":"not-checked","note":"No host-kill hook experiment performed."},
+    {"id":"F08-5","status":"not-checked","note":"Worker output survival was not traced."},
+    {"id":"F08-6","status":"not-checked","note":"Worker note and scout export paths were not inspected."},
+    {"id":"F08-7","status":"not-checked","note":"Intake sample sizes and rating bias were not measured."},
+    {"id":"F08-8","status":"not-checked","note":"No stale-digest or known-defect replay performed."},
+    {"id":"F10-1","status":"not-checked","note":"Calibration design was outside this brief."},
+    {"id":"F10-2","status":"not-checked","note":"Worker role metadata was not inspected; a role alone would not establish rework attribution."},
+    {"id":"F11-1","status":"still-open","note":"Read Details: effort and cached-token fields remain absent; requested-tier design still needs resolution."},
+    {"id":"F11-2","status":"not-checked","note":"No account-window attribution measurements performed."},
+    {"id":"F11-3","status":"still-open","note":"close_event still rejects event types other than consultation and rating."},
+    {"id":"F11-4","status":"not-checked","note":"The worker-note sketches were not compared."},
+    {"id":"F11-5","status":"not-checked","note":"No resumed-worker stop sequence captured."},
+    {"id":"F11-6","status":"not-checked","note":"No scout/judge defect replay performed."},
+    {"id":"F12-1","status":"still-open","note":"Read the explicit consultation/rating allowlist at classes.rs:870."},
+    {"id":"F12-2","status":"still-open","note":"Read roster validation: effort and effort_policy are absent from allowed entry keys."},
+    {"id":"F12-3","status":"not-checked","note":"Capability and policy responsibilities were not reassessed."},
+    {"id":"F13-1","status":"not-checked","note":"Assignment confounding was not measured."},
+    {"id":"F13-2","status":"not-checked","note":"Cross-engine cost scoring was outside this review."},
+    {"id":"F13-3","status":"not-checked","note":"No digest-only reproduction performed."},
+    {"id":"F13-4","status":"not-checked","note":"No crash/backfill hook experiment performed."},
+    {"id":"F13-5","status":"not-checked","note":"Call-site effort overrides were not observed."},
+    {"id":"F13-6","status":"not-checked","note":"Preset and roster policy precedence was not examined."},
+    {"id":"F19-1","status":"still-open","note":"Existing judgement derives death without a status write; updated timestamps alone are insufficient."},
+    {"id":"F19-2","status":"still-open","note":"The skill explicitly requires cache-warming wakes; actual TTL and economic benefit remain unmeasured."},
+    {"id":"F19-3","status":"still-open","note":"Corrected and replaced by finding #2; the blanket content-script CSP claim is unsupported."},
+    {"id":"F19-4","status":"still-open","note":"Corrected and replaced by finding #3; native messaging remains an option, not automatic run authentication."},
+    {"id":"F19-5","status":"still-open","note":"Narrowed and replaced by finding #4; processlessness does not itself violate Engine."},
+    {"id":"F19-6","status":"still-open","note":"The brief still omits signer custody, rotation and revocation."},
+    {"id":"F20-1","status":"still-open","note":"Replaced by finding #1; ambiguity is caller-specific, not a globally forbidden numeric reuse."},
+    {"id":"F20-2","status":"still-open","note":"The sketch still lacks bounded liveness reconciliation."},
+    {"id":"F20-3","status":"still-open","note":"Read elsewhere judgement: foreign-host liveness is explicitly unavailable."},
+    {"id":"F20-4","status":"still-open","note":"Worker tails remain proposed inputs; raw prose must not become trusted instructions or telemetry."},
+    {"id":"F20-5","status":"still-open","note":"Adapter identity and catalogue lifecycle remain unspecified."},
+    {"id":"F20-6","status":"still-open","note":"Merged into the corrected interactive recovery contract in finding #4."},
+    {"id":"F20-7","status":"still-open","note":"Pre-send disclosure and read scope remain unresolved risks; vendor network behaviour and terms were not tested."},
+    {"id":"F21-1","status":"still-open","note":"Corrected by finding #1: cursor semantics determine loss; a concurrent write is not automatically lost."},
+    {"id":"F21-2","status":"still-open","note":"Budget and quota deadlines are recheck reasons, not completion predictions."},
+    {"id":"F21-3","status":"still-open","note":"Replaced by finding #4; the common interface already accommodates a non-subprocess engine."},
+    {"id":"F21-4","status":"still-open","note":"Bridge scope remains unspecified; per-read round trips are avoidable through bounded subscriptions or batches."},
+    {"id":"F23-1","status":"still-open","note":"Silent-death detection remains absent from the watch sketch; indefinite waiting is not established for every caller."},
+    {"id":"F23-2","status":"still-open","note":"Corrected by finding #2; extension placement does not inherently grant WASM unrestricted DOM access."},
+    {"id":"F23-3","status":"not-checked","note":"No multi-coordinator load evidence; jitter is not a prerequisite at demonstrated scale."},
+    {"id":"F24-1","status":"still-open","note":"A tool call inside an already-invoked model cannot remove that invocation's input cost; RC1 measures magnitude."},
+    {"id":"F24-2","status":"still-open","note":"Confirmed the existing judgement path derives died from process identity."},
+    {"id":"F24-3","status":"still-open","note":"Corrected by finding #1: a journal needs atomic publication/reconciliation and cannot itself observe silent death."},
+    {"id":"F24-4","status":"still-open","note":"The extension must independently enforce run, document and origin capabilities."},
+    {"id":"F24-5","status":"still-open","note":"Merged into finding #4's interactive retry and deadline contract."},
+    {"id":"F24-6","status":"still-open","note":"Extension update trust and relay authentication remain unspecified; no relay penetration test performed."},
+    {"id":"F24-7","status":"still-open","note":"Corrected by finding #4: durable abandonment is required, but an OS process tree is not universal."},
+    {"id":"F24-8","status":"still-open","note":"Human-wait time remains an unresolved panel metric and scheduling concern."},
+    {"id":"F24-9","status":"still-open","note":"Replaced by finding #1's command-scoped exit contract."},
+    {"id":"F25-1","status":"still-open","note":"Replaced by finding #4: bounded interactive waiting can coexist with detach under an explicit policy."},
+    {"id":"F25-2","status":"still-open","note":"Cache policy is unresolved; a fixed 1200-second ceiling is not validated by this review."},
+    {"id":"F25-3","status":"still-open","note":"Corrected by finding #4: local transport termination and remote cancellation need distinct evidence."},
+    {"id":"F25-4","status":"still-open","note":"Corrected by finding #2; unpacked runtime success/failure cannot alone establish Store compliance."},
+    {"id":"F27-1","status":"still-open","note":"Replaced by finding #1's precise liveness and observation contract."},
+    {"id":"F27-2","status":"still-open","note":"Host invocation cost and cache lifetime remain measurement gates."},
+    {"id":"F27-3","status":"still-open","note":"Replaced by finding #1; command-scoped codes are legitimate."},
+    {"id":"F27-4","status":"still-open","note":"Untrusted worker prose must remain outside trusted watch summaries and telemetry."},
+    {"id":"F27-5","status":"still-open","note":"Corrected by finding #2's context/distribution distinction."},
+    {"id":"F27-6","status":"still-open","note":"Merged into finding #4's interactive recovery contract."},
+    {"id":"F27-7","status":"still-open","note":"Signer lifecycle, adapter identity and extension trust remain unspecified."},
+    {"id":"F27-8","status":"still-open","note":"Draft disclosure, read scope and human-wait accounting remain unresolved; no real vendor run performed."},
+    {"id":"F27-9","status":"still-open","note":"Both alternatives remain relevant; findings #1 and #3 qualify their guarantees."},
+    {"id":"F28-1","status":"still-open","note":"Corrected by finding #1; sequence cursors are one solution, not the only sound option."},
+    {"id":"F28-2","status":"still-open","note":"Corrected by finding #1; numeric meanings need not be globally unique across subcommands."},
+    {"id":"F28-3","status":"still-open","note":"Wake/cache economics remain unresolved; the bundled jitter requirement lacks scale evidence."},
+    {"id":"F28-4","status":"still-open","note":"The sketch still lacks a safe structured boundary for worker state."},
+    {"id":"F28-5","status":"still-open","note":"Corrected by finding #2; extension placement is not universally infeasible."},
+    {"id":"F28-6","status":"still-open","note":"Replaced by finding #3's qualified native-messaging option."},
+    {"id":"F28-7","status":"still-open","note":"Corrected and merged into finding #4."},
+    {"id":"F28-8","status":"still-open","note":"Catalogue lifecycle, update identity and operation scope remain unspecified."},
+    {"id":"F28-9","status":"still-open","note":"The disclosure and attendance risks remain; vendor-specific behaviours and terms were not checked."},
+    {"id":"F29-1","status":"still-open","note":"The coordinate skill confirms pack support for chat models; a complete paste/import workflow was not verified."},
+    {"id":"F29-2","status":"still-open","note":"Declarative adapters remain worth comparing, but require changing the primary-form ruling and are not proven strictly cheaper."},
+    {"id":"F29-3","status":"still-open","note":"Corrected by finding #4; the policies are underspecified rather than inherently mutually exclusive."},
+    {"id":"F29-4","status":"still-open","note":"Corrected by finding #1; a separate watch command is valid with explicit command-scoped semantics."},
+    {"id":"F29-5","status":"still-open","note":"Corrected by finding #1; positive leases are useful but not mandatory where reliable local process reconciliation exists."}
+  ],
+  "unproven": [
+    "No watch or browser prototype was executed, and no files were changed.",
+    "Host cache TTL, cache refresh behaviour and per-wake token savings were not measured.",
+    "Chrome documentation was checked, but extension runtime contexts, Store review and native-host installation were not exercised.",
+    "The prior gemini-mcp extension was inspected selectively, not audited for security or correctness.",
+    "No vendor composer network behaviour, automation terms or remote cancellation semantics were tested.",
+    "Most Panel A findings were outside this brief and are explicitly marked not-checked.",
+    "Superseded findings retain still-open status because the underlying design decision remains unresolved; their original overbroad claims are not endorsed."
+  ],
+  "first_run_checklist": []
+}

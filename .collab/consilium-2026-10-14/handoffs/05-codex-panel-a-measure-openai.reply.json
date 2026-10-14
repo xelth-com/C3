@@ -1,0 +1,216 @@
+{
+  "schema_version": "1",
+  "verdict": "ADVISE",
+  "verdict_reason": "Proceed with versioned measurement and controlled experiments, but correct quota attribution, worker identity, and outcome semantics before using telemetry for routing.",
+  "reply_markdown": "The framing should optimize verified task outcomes under resource constraints, rather than assume a universal tier leaderboard. Missing options include deterministic scouting, local aggregation before upload, and randomized shadow evaluations that leave production routing unchanged. Choosing requires the task mix, tolerated misses, latency target, binding subscription limits, and coordinator rework cost.\n\n**Q1.** Initial experimental defaults—not measured optima:\n\n| Purpose | Astra | GLM-5.3 |\n|---|---|---|\n| Chore/extraction | low | low |\n| Reading/checkpoint | medium | high |\n| Framing/decision | high | high |\n| Diff-review/acceptance | high | max |\n| Core-contract/stuck | xhigh | max |\n\nTreat reading as a stage, not another purpose. Escalate on unresolved evidence or risk, not just the purpose label. [Z.ai documents](https://docs.z.ai/guides/llm/glm-5.3) exactly three tiers. [OpenAI documents](https://developers.openai.com/api/docs/models/gpt-6-astra) Astra `max` too; that does not establish support through this bridge’s subscription route.\n\nThere is no universal denominator. Confirmed findings are benefits, not costs. Compare independently verified task quality against quota consumption, elapsed time, paid usage/points, and rework separately. Within an isolated subscription experiment, use total quality benefit divided by total attributable quota consumption, including failed attempts; track both windows. Current quota snapshots are not attributable consumption (finding #1). Deduplicate confirmed findings and measure misses on known-defect cases; `implemented` alone is not confirmation. Randomize paired trials by task class and report uncertainty and rating coverage.\n\n**Q2.** Use command hooks at Start and Stop, plus reconciliation for missing endings; define an execution episode separately from a resumed worker. Current [hook documentation](https://code.claude.com/docs/en/hooks#common-input-fields) includes conditional `effort.level`, but Stop lacks a model field. Validate the installed host and resolve actual model identity locally; retain unknown effort instead of dropping workers.\n\nUpload only reconstructed allowlisted classes/counts. Exclude raw hook JSON, prompts, messages, transcripts, paths, commands, errors, agent names, session/thread/agent IDs, credentials, and notes. Mint random worker references; keep their mapping local. Apply existing telemetry opt-out and deletion behavior. Other hosts can submit the same adapter-neutral record with explicit provenance and missingness.\n\nRate worker contribution separately from final wave success: accepted unchanged, minor rework, substantial rework, discarded, or unknown; record rework duration and independent verification separately. Command execution does not prove verification passed.\n\n**Q3.** Promise versioned compatibility, not a vocabulary frozen forever. Add schema/capability/policy versions; requested and sent effort separately; confirmation state; policy source; resolved model class; work class/stage; measurement source/completeness; cost basis and attribution quality. Keep `none`, `unknown`, and `unsupported` distinct. Worker records need random reference, episode/revision, lifecycle outcome, duration/token buckets, rework class, verification result, and rating revision/judge. Copy effort metadata from the original run when rating. Aggregate finding outcomes locally against existing `consult_ref`; private finding IDs need not leave the machine.\n\n**Q4.** No digest cap guarantees honesty. Start at 1,000 tokens containing evidence pointers, invariants, hypotheses, omissions, and uncertainty. Give the judge the original brief, diff inventory, and direct source access; require independent inspection of relevant boundaries. Budget exhaustion means incomplete coverage, never automatic acceptance. Compare digest-assisted review against independent review.\n\n## Requested checks\n\n- **RC1:** In a disposable workspace, capture local Start/Stop payloads for completion, resume, cancellation, and forced termination with differing parent/child settings. Permission: workspace-write. Budget: four cases/20 minutes. Settle findings #3–4 through event counts and model/effort provenance; upload nothing.\n- **RC2:** In a disposable checkout, run eight frozen known-defect cases at two efforts in randomized order with isolated account usage and blind adjudication. Permission: workspace-write. Budget: 16 reviews, capped at 20 quota percentage points. Settle findings #1–2 through attributable cost, misses, precision, and rework.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 830
+        },
+        {
+          "path": ".collab/parity-0.6.1-2026-10-08/state.md",
+          "line": 208
+        }
+      ],
+      "claim": "The existing quota record is an account-window observation, not the incremental quota cost of a consultation; using it directly, or taking uncontrolled before/after differences, can misrank effort tiers.",
+      "trigger": "Other consumers use the account during a review, a reset occurs, or observations are stale or missing.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:818-861",
+          "observation": "codex_run_quota merges window observations and serializes the selected observation. Baseline subtraction is applied to token totals, not quota percentages."
+        },
+        {
+          "kind": "read-code",
+          "reference": ".collab/parity-0.6.1-2026-10-08/state.md:208",
+          "observation": "The coordinator records the account window rising from 8% to 72% without its runs and attributes this to another consumer."
+        }
+      ],
+      "verification": "Run RC2 with before/after observations from the same reset interval and account isolation; separately classify reset crossings, missing observations, and concurrent usage.",
+      "remedy": "Separate quota state from measured consumption. Record attribution quality and window identity locally; exclude contaminated or unavailable deltas from cost ratios rather than treating them as zero. Retain token, latency, and rework measurements.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md",
+          "line": 51
+        },
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md",
+          "line": 72
+        }
+      ],
+      "claim": "A reviewer-by-effort usefulness table, or a count of implemented findings, cannot by itself establish which effort causes better outcomes.",
+      "trigger": "Higher efforts receive harder tasks, routing preferentially selects past winners, only some runs receive ratings, or repeated findings and coordinator fixes receive credit.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:48-55,68-73",
+          "observation": "The sketch assigns effort by purpose, splits usefulness by reviewer and effort, and proposes treating implemented or verified findings as hits."
+        },
+        {
+          "kind": "inferred",
+          "reference": "The proposed purpose-dependent assignment and optional ratings",
+          "observation": "Task difficulty and selection affect both effort assignment and observed outcomes; implementation status does not independently prove the original finding was correct."
+        }
+      ],
+      "verification": "Run RC2 and compare the blind paired results with the observational ordering; include missed known defects and unrated runs.",
+      "remedy": "Use randomized shadow comparisons on frozen inputs, stratify by work class and stage, deduplicate independently confirmed findings, and report rating coverage, uncertainty, false positives, and misses. Keep production telemetry descriptive until calibration supports routing.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md",
+          "line": 57
+        }
+      ],
+      "claim": "One SubagentStop invocation cannot safely be equated with one completed worker or used alone to estimate worker failure rates.",
+      "trigger": "A worker resumes, a stop is blocked, an internal agent emits a stop event, or a process disappears without an observed ending.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:57-62",
+          "observation": "The proposal describes one event and one hook invocation per worker."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "web.open https://code.claude.com/docs/en/hooks#subagentstop",
+          "observation": "The documentation describes stops after responses, internal-agent stop events, resumable agents, and hooks that can prevent stopping."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Stop-only capture design",
+          "observation": "Without a start inventory, missing stop events cannot be distinguished from workers that never existed."
+        }
+      ],
+      "verification": "Run RC1 and compare observed starts, stops, and resumes with the four deliberately controlled execution histories.",
+      "remedy": "Maintain a local lifecycle journal with execution episodes, deduplicate delivery, reconcile unmatched starts as unknown endings, and distinguish coordinator-spawned workers from other agent activity. Keep hooks silent and non-blocking.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/parity-0.6.1-2026-10-08/state.md",
+          "line": 125
+        }
+      ],
+      "claim": "Classifying model tier from names such as opus-worker measures the agent definition's label rather than reliably measuring the model that executed.",
+      "trigger": "An agent definition changes model, inherits a model, uses an override, or runs through a floating alias.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/parity-0.6.1-2026-10-08/state.md:125-127",
+          "observation": "The sketch derives tier from plugin agent names and separately proposes an actual-model field."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "web.open https://code.claude.com/docs/en/hooks#common-input-fields",
+          "observation": "agent_type identifies the agent name. SubagentStop has no model field; effort.level is conditional."
+        }
+      ],
+      "verification": "In RC1, run a deliberately mismatched agent name and model, then compare the proposed tier with locally observed resolved model identity.",
+      "remedy": "Keep role classification separate from model family. Derive tier from confirmed resolved model identity, with source and completeness fields; use unknown when unavailable. Verify whether observed effort belongs to the child execution before attributing it.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md",
+          "line": 51
+        },
+        {
+          "path": "crates/c3-core/src/ledger.rs",
+          "line": 197
+        }
+      ],
+      "claim": "The sketch ambiguously defines effort_requested as a preset name, whereas the existing ledger represents requested effort separately from sent effort and capability metadata.",
+      "trigger": "A purpose default is overridden by roster policy or an explicit effort, or mapping sends a different endpoint tier.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:50-51",
+          "observation": "The event proposal calls effort_requested the preset name."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/ledger.rs:193-207; crates/c3-core/src/handoff.rs:322-323",
+          "observation": "The ledger distinguishes requested, sent, mapping, caps, and confirmation; the handoff example uses high as the requested value. Confirmation is reserved and currently null."
+        }
+      ],
+      "verification": "Trace a checkpoint preset with an explicit effort override through launch, ledger, consultation event, and later rating; verify each field retains one consistent meaning.",
+      "remedy": "Define effort_requested as the pre-mapping level, effort_sent as the emitted level, and policy_source/purpose separately. Preserve unknown confirmation and copy immutable execution metadata into rating events.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/parity-0.6.1-2026-10-08/state.md",
+          "line": 130
+        }
+      ],
+      "claim": "Recognizing a test-command pattern and labeling the worker verified can report successful verification when tests failed, never completed, or did not cover the result.",
+      "trigger": "A transcript contains cargo test, pytest, or another recognized command whose result is failing, cancelled, or irrelevant to the delivered work.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/parity-0.6.1-2026-10-08/state.md:128-130",
+          "observation": "The sketch maps the presence of verification-command patterns to verified."
+        },
+        {
+          "kind": "inferred",
+          "reference": "The proposed command-pattern classifier",
+          "observation": "A command name establishes an attempted action, not its exit status or adequacy."
+        }
+      ],
+      "verification": "Feed a local classifier fixture containing a recognized test command with a failing exit status and require attempted/failed rather than verified.",
+      "remedy": "Separate verification attempted, observed result, and independent acceptance. Use unknown for missing results and retain coordinator rework as a separate outcome.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md",
+          "line": 52
+        }
+      ],
+      "claim": "A digest-first judge constrained by a call cap can inherit the scout's omissions and issue an unsupported acceptance; reducing digest length does not resolve that risk.",
+      "trigger": "The defect lies in an omitted dependency, invariant, error path, or unchanged caller, and the judge lacks sufficient source inspection budget.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": ".collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:52-53",
+          "observation": "The proposed judge receives a scout digest plus a call cap."
+        },
+        {
+          "kind": "inferred",
+          "reference": "The proposed scout-to-judge information flow",
+          "observation": "A lossy summary cannot establish absence of defects in evidence it omits; the cap can prevent independent recovery."
+        }
+      ],
+      "verification": "Use a known-defect case whose relevant caller is omitted from the digest and check whether the judge independently finds it or explicitly reports incomplete coverage.",
+      "remedy": "Provide the original brief, diff inventory, source access, explicit omissions, and evidence pointers. Require independent boundary checks and an incomplete outcome when the budget prevents them. Evaluate the combined workflow against independent review at equal total cost.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [],
+  "unproven": [
+    "No controlled effort comparison was run; the recommended defaults are experimental policies, not measured optima.",
+    "The installed Claude Code version's hook payloads, cancellation behavior, and child-effort provenance were not exercised.",
+    "Provider documentation does not prove effective effort handling on the exact installed CLI, subscription, and endpoint routes.",
+    "The intake server's schema migration and unknown-field behavior were not inspected.",
+    "No files were written, no implementation changes were made, and no live model calls or tests were launched."
+  ],
+  "first_run_checklist": []
+}
