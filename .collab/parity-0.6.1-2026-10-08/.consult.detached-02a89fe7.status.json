@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "02a89fe7-806a-4b16-9092-4491d2cf75b7",
+    "id8":  "02a89fe7",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  1,
+    "started":  "2026-10-14T11:48:26+02:00",
+    "updated":  "2026-10-14T11:49:24+02:00",
+    "finished":  "2026-10-14T11:49:24+02:00",
+    "wall_seconds":  58.3,
+    "pid":  28272,
+    "start_time":  "2026-10-14T09:48:27.5910522Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave8-round6",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\56-claude-wave8-round6.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "failed",
+                        "outcome":  "failed: stopped at the quota budget: 5-hour window 72 % used, resets 16:14; the partial is kept",
+                        "wall_seconds":  34.4,
+                        "n":  33,
+                        "handoff":  "57",
+                        "reply":  "handoffs/57-codex-wave8-round6.md"
+                    }
+                ],
+    "summary":  "codex-consult: failed: stopped at the quota budget: 5-hour window 72 % used, resets 16:14; the partial is kept (wall 34.4 s)\nquota      : 5h 72% until 16:14; wk 63% until Oct 20; this run 31552 input tokens (0 cached) in 1 calls, max 31552 per call of 258400; sub-agents 0\nhint       : stopped at the quota budget: 5-hour window 72 % used, resets 16:14; the partial is kept - continue after the reset, or raise -Budget\npartial    : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\57-codex-wave8-round6.partial.md (killed at 34.4 s at the quota budget; thread 01a139d0-80f1-7250-a26c-12a4b5202207 - continue with `-Task parity-0.6.1-2026-10-08 -CollabDir C:\\Users\\Dmytro\\C3\\.collab -Mode resume -Thread 01a139d0-80f1-7250-a26c-12a4b5202207 -Purpose diff-review -ReplyName wave8-round6 -Range e76518e..cc03617 -Budget 70 -Prompt \"finish your review\"`)\nresume     : powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\\Users\\Dmytro\\claude-codex-consult\\plugins\\codex-consult\\scripts\\codex-consult.ps1\" -Task parity-0.6.1-2026-10-08 -CollabDir C:\\Users\\Dmytro\\C3\\.collab -Mode resume -Thread 01a139d0-80f1-7250-a26c-12a4b5202207 -Purpose diff-review -ReplyName wave8-round6 -Range e76518e..cc03617 -Budget 70 -Prompt \"finish your review\"\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\57-codex-wave8-round6.md\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\57-codex-wave8-round6.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-02a89fe7.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

@@ -1,0 +1,10 @@
+codex-consult: detached run 02a89fe7 (detach id 02a89fe7-806a-4b16-9092-4491d2cf75b7) - pid 28272 on LAPTOP-9SGIHQ03, started 2026-10-14T11:48:32+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-02a89fe7.status.json
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied)
+codex-consult: stopped at the quota budget: 5-hour window 72 % used, resets 16:14; the partial is kept (-Budget 70, -Budget)
+codex-consult: failed: stopped at the quota budget: 5-hour window 72 % used, resets 16:14; the partial is kept (wall 34.4 s)
+quota      : 5h 72% until 16:14; wk 63% until Oct 20; this run 31552 input tokens (0 cached) in 1 calls, max 31552 per call of 258400; sub-agents 0
+hint       : stopped at the quota budget: 5-hour window 72 % used, resets 16:14; the partial is kept - continue after the reset, or raise -Budget
+partial    : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\57-codex-wave8-round6.partial.md (killed at 34.4 s at the quota budget; thread 01a139d0-80f1-7250-a26c-12a4b5202207 - continue with `-Task parity-0.6.1-2026-10-08 -CollabDir C:\Users\Dmytro\C3\.collab -Mode resume -Thread 01a139d0-80f1-7250-a26c-12a4b5202207 -Purpose diff-review -ReplyName wave8-round6 -Range e76518e..cc03617 -Budget 70 -Prompt "finish your review"`)
+resume     : powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\Dmytro\claude-codex-consult\plugins\codex-consult\scripts\codex-consult.ps1" -Task parity-0.6.1-2026-10-08 -CollabDir C:\Users\Dmytro\C3\.collab -Mode resume -Thread 01a139d0-80f1-7250-a26c-12a4b5202207 -Purpose diff-review -ReplyName wave8-round6 -Range e76518e..cc03617 -Budget 70 -Prompt "finish your review"
+reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\57-codex-wave8-round6.md
+events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\57-codex-wave8-round6.events.jsonl

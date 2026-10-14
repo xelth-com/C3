@@ -204,3 +204,5 @@ Open questions for the panel: does z.ai expose more than three tiers on glm-5.3;
 enough for a reading pass; how to score a tier (usefulness per 5-hour-window share, not per run).
 
 2026-10-14 11:20 - wave 8 round 5 (n=32, handoff 55): HOLD on F55-1 major (a cached selection can hide an active blocking window) + F55-2 minor (a malformed newer record erases valid blocking evidence). Weekly window 53 %. Wave 8f, then round 6.
+
+2026-10-14 11:57 - round 6 launch n=33: the BUDGET STOP fired as designed (5-hour window 72 % >= budget 70 after 1 call / 31k tokens; partial kept; class quota). The window went 8 % -> 72 % between 11:18 and 11:55 WITHOUT our runs (weekly 53 -> 63 %): another consumer on the ChatGPT account (the operator's own Codex or a peer session). Round 6 (brief 56) re-armed for 16:16 (reset 16:14); the operator may say "go now" with -Budget 90.
