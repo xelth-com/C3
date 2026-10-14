@@ -10304,7 +10304,7 @@
                      },
                      {
                          "id":  "F48-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -10381,6 +10381,15 @@
                                              "evidence":  "",
                                              "base_commit":  "e4690dcc7d870fd8c069de0fdedf6d70a99be1ae",
                                              "tree_sha256":  "bf74d0ac3a15d0afcdbb274752f909ffa418593550829575bc15faa174b2a1e8"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T07:31:28+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 8c (0f2cddd): per-window merge at an equal observed_at (select_window, merge_observation); crossing tests in both orders",
+                                             "evidence":  "",
+                                             "base_commit":  "0f2cddd19b62b9cc3faefa05769d51b3c004c2f2",
+                                             "tree_sha256":  "e04467f4df8fd8fdbf65c92cb693dece1328ed2435f9dcbf8ec8b517a2086452"
                                          }
                                      ],
                          "reviewer_checks":  [
