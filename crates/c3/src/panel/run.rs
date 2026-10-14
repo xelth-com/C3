@@ -1881,6 +1881,9 @@ fn build_spec(
         "timeout_sec": if r.timeout_source == "explicit" { r.timeout_sec } else { 0 },
         "continue_sec": if o.continue_sec_given { r.continue_sec } else { -1 },
         "stall_sec": if r.stall_given { r.stall_sec } else { -1 },
+        // (wave 8 = plugin wave 30) the quota budget the panel run resolved
+        "budget": r.budget.percent,
+        "budget_source": r.budget.source,
         "range": o.range,
         "reply_name": s.reply_name,
         "artifact": o.artifacts,

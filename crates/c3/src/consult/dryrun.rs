@@ -122,6 +122,11 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
     if !ctx.preflight_warning.is_empty() {
         out.push(format!("WARNING: {}", ctx.preflight_warning));
     }
+    if ctx.engine == "codex" {
+        // (wave 8 = plugin wave 30, T15) the quota windows the preflight sees, the budget, the
+        // sub-agent switch, the replay guard
+        out.extend(quota_lines(ctx));
+    }
     out.push(format!("model       : {}", model_label(ctx)));
     out.push(format!(
         "purpose     : {} (effort {}, max words {})",
@@ -641,7 +646,102 @@ fn preview(ctx: &Context) -> Value {
         "commit_wait_ms",
         json!("<ms the commit waited for the write lock>"),
     );
+    // (wave 8 = plugin wave 30) a codex run's quota windows, tokens, sub-agent switch and budget
+    if ctx.engine == "codex" {
+        put(
+            "quota",
+            json!("<{primary, secondary, observed_at} - the windows the run's rollout names (null members when none)>"),
+        );
+        put(
+            "tokens",
+            json!("<{input, cached, output, thread_input, calls, max_input, context_window, subagents {count, input, calls}} from the rollout, or null>"),
+        );
+        put("subagents_allowed", json!(ctx.subagents_allowed));
+        put(
+            "budget",
+            json!({
+                "percent": ctx.budget.percent,
+                "source": ctx.budget.source,
+                "stopped": false,
+                "used_percent": null,
+                "resets_at": null,
+            }),
+        );
+    }
     Value::Object(m)
+}
+
+/// (wave 8 = plugin wave 30, T15) The dry run's `quota`, `budget`, `sub-agents` and `replay` lines
+/// of a codex run: the newest observed windows of the endpoint (`(observed HH:mm, recorded |
+/// rollout)`), the budget and its source, whether `-c features.multi_agent=false` is passed, and the
+/// parent rollout's size of a fork / resume.
+fn quota_lines(ctx: &Context) -> Vec<String> {
+    let mut out = Vec::new();
+    let now = chrono::Utc::now();
+    let window = if ctx.identity.resolved {
+        let consults = crate::providers::read_all_task_consults_health(&ctx.collab_root);
+        c3_core::health::endpoint_health(&consults, &ctx.identity.fingerprint, now).window
+    } else {
+        None
+    };
+    let shown = window.as_ref().and_then(|w| {
+        let text = c3_core::quota::format_windows(&w.quota, now);
+        (!text.is_empty()).then(|| {
+            format!(
+                "{text} (observed {}, {})",
+                c3_core::quota::format_reset(w.observed_at, now),
+                w.source
+            )
+        })
+    });
+    out.push(format!(
+        "quota       : {}",
+        shown.unwrap_or_else(|| "no window observed for this endpoint".to_string())
+    ));
+    out.push(format!(
+        "budget      : {}",
+        if ctx.budget.percent > 0 {
+            format!(
+                "{} % of the 5-hour window ({}) - the main turn is stopped there, the partial kept",
+                ctx.budget.percent, ctx.budget.source
+            )
+        } else {
+            format!("off ({})", ctx.budget.source)
+        }
+    ));
+    let off_passed = ctx
+        .argv
+        .iter()
+        .any(|a| a == c3_core::quota::MULTI_AGENT_OFF);
+    out.push(format!(
+        "sub-agents  : {}",
+        if ctx.subagents_allowed == Some(true) {
+            "allowed (-CodexConfig names features.multi_agent)"
+        } else if off_passed {
+            "off - -c features.multi_agent=false (-CodexConfig features.multi_agent=true allows them)"
+        } else {
+            "off (-CodexConfig names features.multi_agent)"
+        }
+    ));
+    if let Some(g) = ctx.fork_guard.as_ref().filter(|g| g.path.is_some()) {
+        let limit = if g.max_kb > 0 {
+            g.max_kb.to_string()
+        } else {
+            "off".to_string()
+        };
+        let tail = if !g.refusal.is_empty() {
+            " - a real run is refused"
+        } else if !g.warning.is_empty() {
+            " - warned"
+        } else {
+            ""
+        };
+        out.push(format!(
+            "replay      : the parent thread's rollout is {} KB (CODEX_CONSULT_FORK_MAX_KB {limit}){tail}",
+            g.kb
+        ));
+    }
+    out
 }
 
 /// The engine's command string for the dry-run `command :` line and the preview `command` field

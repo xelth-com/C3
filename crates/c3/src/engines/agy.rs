@@ -117,6 +117,7 @@ impl AgyEngine {
             }),
             env: None,
             crt_quote: false,
+            budget: None,
         };
         let result = run_turn(&spawn);
 

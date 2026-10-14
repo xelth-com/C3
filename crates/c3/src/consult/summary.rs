@@ -43,6 +43,14 @@ pub struct ResumeInputs {
     pub off_peak_only: bool,
     pub skip_preflight: bool,
     pub codex_exe: String,
+    /// (wave 8 = plugin wave 30) the run's explicit `-Budget` (named again in the hint), else `None`.
+    pub budget: Option<i64>,
+    /// (wave 8) `Some(partial)` when the thread's rollout is over `CODEX_CONSULT_FORK_MAX_KB`: the
+    /// hint continues in a NEW thread (`-Mode new -Provider -Model`, the brief and the partial named)
+    /// instead of a resume the replay guard would refuse.
+    pub new_thread_partial: Option<String>,
+    /// (wave 8) the run's brief (`-Brief <ref>`) for the new-thread hint; `""` without one.
+    pub brief: String,
 }
 
 /// Quote a value that contains a character outside `[A-Za-z0-9._:/\=+@~-]` (`$qa`).
@@ -76,9 +84,14 @@ pub fn build_resume_command(r: &ResumeInputs) -> String {
             }
         ));
     }
-    p.push(format!("-Mode resume -Thread {}", r.thread));
-    if r.no_roster {
+    if r.new_thread_partial.is_some() {
+        p.push("-Mode new".into());
         p.push(format!("-Provider {} -Model {}", r.provider, r.model));
+    } else {
+        p.push(format!("-Mode resume -Thread {}", r.thread));
+        if r.no_roster {
+            p.push(format!("-Provider {} -Model {}", r.provider, r.model));
+        }
     }
     if !r.purpose.is_empty() {
         p.push(format!("-Purpose {}", r.purpose));
@@ -138,7 +151,25 @@ pub fn build_resume_command(r: &ResumeInputs) -> String {
     if !r.codex_exe.is_empty() {
         p.push(format!("-CodexExe {}", qa(&r.codex_exe)));
     }
-    p.push("-Prompt \"finish your review\"".into());
+    match &r.new_thread_partial {
+        Some(partial) => {
+            if !r.brief.is_empty() {
+                p.push(format!("-Brief {}", qa(&r.brief)));
+            }
+            if let Some(b) = r.budget {
+                p.push(format!("-Budget {b}"));
+            }
+            p.push(format!(
+                "-Prompt \"the previous run was stopped; its partial reply is {partial} - finish the review\""
+            ));
+        }
+        None => {
+            if let Some(b) = r.budget {
+                p.push(format!("-Budget {b}"));
+            }
+            p.push("-Prompt \"finish your review\"".into());
+        }
+    }
     p.join(" ")
 }
 
@@ -163,6 +194,9 @@ pub struct SummaryInputs {
     pub consult_id: String,
     /// A failure's operator hint (context-window etc.), when the bridge can explain it.
     pub failure_hint: String,
+    /// (wave 8 = plugin wave 30) `quota      : 5h 42% until 16:27; wk 15% until Oct 16; this run
+    /// ...` (codex), `""` otherwise.
+    pub quota_line: String,
     /// The `continued  : ...` line when a timeout continuation ran (empty otherwise).
     pub continue_line: String,
     /// The `write lock : waited N ms for another commit of this task` line when the commit waited
@@ -221,6 +255,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
             "codex-consult: {} (wall {} s)",
             s.bridge_outcome, s.wall_seconds
         ));
+        if !s.quota_line.is_empty() {
+            out.push(s.quota_line.clone());
+        }
         if !s.failure_hint.is_empty() {
             out.push(format!("hint       : {}", s.failure_hint));
         }
@@ -264,6 +301,9 @@ pub fn render_summary(s: &SummaryInputs) -> Vec<String> {
     ));
     if let Some((from, reason)) = &s.mode_fallback {
         out.push(format!("mode       : {from} -> new ({reason})"));
+    }
+    if !s.quota_line.is_empty() {
+        out.push(s.quota_line.clone());
     }
     if !s.continue_line.is_empty() {
         out.push(s.continue_line.clone());
@@ -355,6 +395,28 @@ mod tests {
             format_retry: 1,
             ..Default::default()
         }
+    }
+
+    // (wave 8 = plugin wave 30) the explicit -Budget travels; a thread over the replay limit
+    // continues in a new thread with the brief and the partial named.
+    #[test]
+    fn resume_command_names_the_budget_and_a_new_thread_over_the_replay_limit() {
+        let mut r = base_resume();
+        r.budget = Some(90);
+        let cmd = build_resume_command(&r);
+        assert!(
+            cmd.ends_with("-Budget 90 -Prompt \"finish your review\""),
+            "{cmd}"
+        );
+        r.new_thread_partial = Some("handoffs/02-codex-b2.partial.md".into());
+        r.brief = "brief.md".into();
+        let cmd = build_resume_command(&r);
+        assert!(
+            cmd.starts_with("-Task t -Mode new -Provider openai -Model gpt-6-astra "),
+            "{cmd}"
+        );
+        assert!(!cmd.contains("-Thread"), "{cmd}");
+        assert!(cmd.ends_with("-Brief brief.md -Budget 90 -Prompt \"the previous run was stopped; its partial reply is handoffs/02-codex-b2.partial.md - finish the review\""), "{cmd}");
     }
 
     #[test]

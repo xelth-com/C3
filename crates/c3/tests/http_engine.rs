@@ -232,6 +232,7 @@ fn turn(continuation: Option<Continuation>) -> TurnRequest {
             sandbox: String::new(),
             schema_path: None,
             extra_config: vec![],
+            agent_config: Vec::new(),
             output_last_message: None,
             prompt_file: None,
             max_model_steps: None,

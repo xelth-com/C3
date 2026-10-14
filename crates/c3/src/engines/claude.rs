@@ -1342,6 +1342,7 @@ impl ClaudeEngine {
             }),
             env: Some(&env.env),
             crt_quote: true,
+            budget: None,
         };
         let result = run_turn(&spawn);
         if !result.started {

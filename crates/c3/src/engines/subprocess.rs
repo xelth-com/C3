@@ -72,6 +72,39 @@ pub struct SpawnRequest<'a> {
     /// TEXT travels in argv - on a batch launcher every argument goes through
     /// [`c3_core::claude::crt_arg`] verbatim.
     pub crt_quote: bool,
+    /// (wave 8 = plugin wave 30, T15) The quota budget watch of a codex MAIN turn; `None`: off.
+    pub budget: Option<&'a BudgetWatch>,
+}
+
+/// (wave 8 = plugin wave 30, T15) The quota budget of a codex turn (`Wait-EngineProcess
+/// -BudgetPercent`): every `poll_ms` (15 s; the test hook `CODEX_CONSULT_TEST_BUDGET_POLL_MS`), once
+/// the event stream names its thread, the 5-hour window of the thread's rollout under `codex_home` -
+/// an observation of THIS turn (not older than its start) at `percent` or more, its reset ahead,
+/// stops the turn like the stall cut ([`TurnStop::Budget`]).
+#[derive(Debug, Clone)]
+pub struct BudgetWatch {
+    pub percent: i64,
+    pub codex_home: String,
+    pub poll_ms: u64,
+}
+
+impl BudgetWatch {
+    /// The watch of a run's budget (`None` when it is off): the poll interval from the test hook
+    /// (test mode only) or 15 s.
+    pub fn of(percent: i64, codex_home: &str) -> Option<BudgetWatch> {
+        if percent <= 0 {
+            return None;
+        }
+        let poll_ms = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_BUDGET_POLL_MS")
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(c3_core::quota::BUDGET_POLL_MS);
+        Some(BudgetWatch {
+            percent,
+            codex_home: codex_home.to_string(),
+            poll_ms,
+        })
+    }
 }
 
 /// (wave 3e, F30-2) What a turn's tree kill tells its caller ([`SpawnRequest::on_kill`]).
@@ -121,6 +154,8 @@ pub enum TurnStop {
     Stall,
     /// The operator's kick file appeared and the tree was killed.
     Kick,
+    /// (wave 8 = plugin wave 30) The quota budget was reached and the tree was killed.
+    Budget,
 }
 
 /// The result of one subprocess turn.
@@ -158,6 +193,8 @@ pub struct TurnResult {
     pub stderr: String,
     /// A launch error, when the process could not be started.
     pub error: Option<String>,
+    /// (wave 8) The window that stopped the turn at its quota budget ([`TurnStop::Budget`]).
+    pub budget: Option<c3_core::quota::PrimaryWindow>,
 }
 
 impl TurnResult {
@@ -177,6 +214,7 @@ impl TurnResult {
             wall_seconds: 0.0,
             stderr: String::new(),
             error: Some(error),
+            budget: None,
         }
     }
 }
@@ -614,6 +652,13 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     let mut oversized_lines: u64 = 0;
     let mut discarding = false;
     let mut tool_open_since: Option<Instant> = None;
+    // (wave 8 = plugin wave 30) the quota budget watch: the thread (from the stream's head), its
+    // rollout, the next poll and the turn's start (an observation older than it never stops it)
+    let mut budget_hit: Option<c3_core::quota::PrimaryWindow> = None;
+    let mut budget_thread = String::new();
+    let mut budget_rollout: Option<std::path::PathBuf> = None;
+    let mut next_budget_ms: u64 = req.budget.map(|b| b.poll_ms).unwrap_or(0);
+    let turn_start = (chrono::Utc::now() - chrono::Duration::seconds(2)).fixed_offset();
     let kill_now = |child: &mut Child| -> (Vec<u32>, Option<c3_core::engine::KillCheck>) {
         // (wave 27c D16, 28c D8, 28e E1/E23) the tree kill, CONFIRMED (`Stop-ProcessTreeChecked`):
         // the survivors it saw, the descendants it could not verify, why it is not confirmed.
@@ -669,6 +714,37 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                             stop = TurnStop::Kick;
                             acknowledge_taken_kick(kp, kill_check.as_ref());
                             break None;
+                        }
+                    }
+                    // (wave 8 = plugin wave 30, T15) the quota budget.
+                    if let Some(b) = req.budget {
+                        let el = start.elapsed().as_millis() as u64;
+                        if b.percent > 0 && el >= next_budget_ms {
+                            next_budget_ms = el + b.poll_ms;
+                            if budget_thread.is_empty() {
+                                budget_thread =
+                                    c3_core::quota::thread_id_from_stream_head(req.events_path);
+                            }
+                            if !budget_thread.is_empty() && budget_rollout.is_none() {
+                                budget_rollout = c3_core::quota::codex_rollout_path(
+                                    &budget_thread,
+                                    &b.codex_home,
+                                );
+                            }
+                            if let Some(rp) = &budget_rollout {
+                                let w = c3_core::quota::read_primary_window(Some(rp));
+                                if c3_core::quota::budget_reached(
+                                    &w,
+                                    b.percent,
+                                    turn_start,
+                                    chrono::Utc::now(),
+                                ) {
+                                    budget_hit = Some(w);
+                                    (survivors, kill_check) = kill_now(&mut child);
+                                    stop = TurnStop::Budget;
+                                    break None;
+                                }
+                            }
                         }
                     }
                     // (wave 26b, D12 / 26c D3 / 27c D5+D6) the stall cut.
@@ -734,6 +810,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         stderr: read_text(req.stderr_path),
                         kick_late: false,
                         error: Some(format!("waiting on the child failed: {e}")),
+                        budget: None,
                     };
                 }
             }
@@ -773,6 +850,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         wall_seconds,
         stderr: read_text(req.stderr_path),
         error: None,
+        budget: budget_hit,
     }
 }
 

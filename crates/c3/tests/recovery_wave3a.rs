@@ -303,6 +303,7 @@ mod tree_kills {
             on_kill: None,
             env: None,
             crt_quote: false,
+            budget: None,
         };
         let result = run_turn(&req);
         assert!(matches!(result.stop, TurnStop::Timeout), "{tag}: timed out");

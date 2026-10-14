@@ -412,6 +412,11 @@ pub fn outcome_class(entry: &LedgerEntry) -> (String, &'static str) {
         .as_ref()
         .map(|p| p.class.trim().to_string())
         .unwrap_or_default();
+    // (wave 8 = plugin wave 30, T15) a run stopped at its quota budget is reported as the class
+    // quota (its ledger says budget in its outcome and hint only - no new class in the contract)
+    if bo.starts_with("failed: stopped at the quota budget") {
+        class = "quota".into();
+    }
     if class.is_empty() {
         class = if bo.starts_with("failed: timeout") {
             "timeout"
@@ -1224,6 +1229,12 @@ mod tests {
         e.provider_failure.as_mut().unwrap().class = "customer-acme".into();
         assert_eq!(outcome_class(&e).0, "failed:unknown");
         assert_eq!(verdict_class("customer-acme"), "other");
+        // (wave 8 = plugin wave 30) a budget stop (class operator in the ledger) is the EXISTING
+        // telemetry class quota, no new class
+        e.bridge_outcome = "failed: stopped at the quota budget: 5-hour window 91 % used, resets 18:32; the partial is kept".into();
+        e.provider_failure.as_mut().unwrap().class = "operator".into();
+        assert_eq!(outcome_class(&e), ("failed:quota".into(), "warning"));
+        assert!(!FAILURE_CLASSES.contains(&"budget"));
     }
 
     #[test]

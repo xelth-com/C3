@@ -39,6 +39,11 @@ pub struct Options {
     /// Whether `--stall-sec` was given explicitly (a negative value other than the sentinel is a
     /// refusal; an explicit value wins over the roster's `stall_sec`).
     pub stall_sec_given: bool,
+    /// (wave 8 = plugin wave 30, T15) `--budget <percent>`: the share of the 5-hour window at which
+    /// a codex run's main turn is stopped (`0` = off); `None` = `CODEX_CONSULT_QUOTA_BUDGET`, else 90.
+    pub budget: Option<i64>,
+    /// (wave 8) A panel member's budget source (the panel run's resolved one); `""` otherwise.
+    pub budget_source: String,
     pub range: String,
     pub reply_name: String,
     pub artifacts: Vec<String>,
@@ -140,6 +145,8 @@ pub struct Resolved {
     pub stall_sec: i64,
     /// Whether `--stall-sec` was given explicitly (the roster override only applies when not).
     pub stall_given: bool,
+    /// (wave 8 = plugin wave 30) The run's quota budget (percent, 0 = off) and its source.
+    pub budget: c3_core::quota::Budget,
     /// Whether a format-repair turn is enabled for this run.
     pub repair_enabled: bool,
     /// The `output-schema`|`prompt-only` override (empty = caps-v1 default).
@@ -232,6 +239,10 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
             o.stall_sec
         ));
     }
+    // (wave 8 = plugin wave 30, T15) -Budget: the share of the 5-hour window at which a codex run's
+    // main turn is stopped; unset = CODEX_CONSULT_QUOTA_BUDGET, else 90; 0 = off (a panel member gets
+    // the panel run's)
+    let budget = resolve_run_budget(o)?;
     if !o.range.is_empty() && !RANGE_PURPOSES.contains(&o.purpose.as_str()) {
         return Err(format!(
             "-Range goes with -Purpose diff-review or acceptance (got {}): it sizes a review of that range.",
@@ -467,6 +478,7 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         continue_sec,
         stall_sec,
         stall_given,
+        budget,
         repair_enabled,
         transport_override,
         extra_config,
@@ -482,6 +494,21 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         brief_prefix,
         brief_prefix_source,
     })
+}
+
+/// (wave 8 = plugin wave 30) The run's quota budget: a panel member's from the panel run (its
+/// percent and source), else `--budget` / `CODEX_CONSULT_QUOTA_BUDGET` / the default 90.
+pub fn resolve_run_budget(o: &Options) -> Result<c3_core::quota::Budget, String> {
+    if !o.budget_source.is_empty() {
+        if let Some(b) = o.budget.filter(|b| *b >= 0) {
+            return Ok(c3_core::quota::Budget {
+                percent: b,
+                source: o.budget_source.clone(),
+            });
+        }
+    }
+    let env = std::env::var("CODEX_CONSULT_QUOTA_BUDGET").ok();
+    c3_core::quota::resolve_budget(o.budget, env.as_deref())
 }
 
 /// The bridge's reply prefixes - every engine's handoff file prefix (`codex`, `agy`, `muse`,

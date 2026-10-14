@@ -95,6 +95,22 @@ struct Row {
     roster_selected: bool,
     verdict: String,
     health_source: String,
+    /// (wave 8 = plugin wave 30) the endpoint's newest observed quota windows: `{text, primary,
+    /// secondary, observed_at, source (recorded | rollout)}`, `None` when none was observed.
+    quota: Option<Value>,
+}
+
+/// (wave 8 = plugin wave 30) A row's `quota` object from the endpoint health's window.
+fn quota_json(health: Option<&c3_core::health::EndpointHealth>) -> Option<Value> {
+    let h = health?;
+    let w = h.window.as_ref()?;
+    Some(json!({
+        "text": h.window_text,
+        "primary": w.quota["primary"].clone(),
+        "secondary": w.quota["secondary"].clone(),
+        "observed_at": c3_core::health::format_offset_iso(c3_core::quota::to_local(w.observed_at)),
+        "source": w.source,
+    }))
 }
 
 pub(crate) struct Ctx {
@@ -339,9 +355,10 @@ pub fn short_line(opts: &Options) -> Result<String, String> {
     Ok(prepare(opts)?.availability_line)
 }
 
-/// The `-Provider` exit code: 0 available, 2 unavailable, 3 unknown.
+/// The `-Provider` exit code: 0 available (wave 8: `available (low quota: ...)` too), 2 unavailable,
+/// 3 unknown.
 pub fn exit_code_for_verdict(verdict: &str) -> i32 {
-    if verdict == "available" {
+    if verdict == "available" || verdict.starts_with("available (") {
         0
     } else if verdict.starts_with("unavailable") {
         2
@@ -1472,6 +1489,7 @@ impl Ctx {
         let _ = &mut cred_text;
 
         let rv = row_verdict.unwrap_or_else(|| synthetic_verdict(&verdict));
+        let quota = quota_json(health.as_ref());
         let last_limit = health
             .as_ref()
             .and_then(|h| h.last_limit.as_ref())
@@ -1505,6 +1523,7 @@ impl Ctx {
             roster_selected,
             verdict,
             health_source: health_source.to_string(),
+            quota,
         };
         (
             row,
@@ -1593,6 +1612,7 @@ impl Ctx {
             engine_transport = cap.schema_transport.to_string();
         }
 
+        let quota = quota_json(health.as_ref());
         let last_limit = health
             .as_ref()
             .and_then(|h| h.last_limit.as_ref())
@@ -1657,6 +1677,7 @@ impl Ctx {
             roster_selected,
             verdict,
             health_source: health_source.to_string(),
+            quota,
         };
         (
             row,
@@ -1750,6 +1771,11 @@ pub(crate) fn identity_credential(
 /// `Format-RowVerdict`.
 fn format_row_verdict(v: &PreflightVerdict, engine: &str) -> String {
     if v.state == "available" {
+        // (wave 8 = plugin wave 30) a window at 80 % or more:
+        // "available (low quota: 5-hour window 84 % until 18:32)"
+        if !v.quota_warning.is_empty() {
+            return format!("available ({})", v.quota_warning);
+        }
         return "available".into();
     }
     if v.state == "unavailable" {
@@ -1800,6 +1826,7 @@ fn synthetic_verdict(verdict: &str) -> PreflightVerdict {
         credential: None,
         burst: false,
         plan_quota: None,
+        quota_warning: String::new(),
     }
 }
 
@@ -1864,6 +1891,7 @@ fn print_rows_json(rows: &[Row]) {
                 "roster_selected": r.roster_selected,
                 "verdict": r.verdict,
                 "health_source": r.health_source,
+                "quota": r.quota.clone().unwrap_or(Value::Null),
             })
         })
         .collect();
@@ -1905,6 +1933,7 @@ fn print_table(
             "credentials",
             "effort",
             "limit",
+            "quota",
         ]
     } else {
         vec![
@@ -1915,6 +1944,7 @@ fn print_table(
             "credentials",
             "effort",
             "limit",
+            "quota",
         ]
     };
     // header + rows as maps of col -> string
@@ -1929,6 +1959,7 @@ fn print_table(
         ("credentials", "CREDENTIALS"),
         ("effort", "EFFORT"),
         ("limit", "LAST FAILURE"),
+        ("quota", "QUOTA"),
     ] {
         header.insert(k, v.to_string());
     }
@@ -1981,6 +2012,16 @@ fn print_table(
         m.insert("credentials", r.credentials.clone());
         m.insert("effort", effort_column(r));
         m.insert("limit", limit);
+        // (wave 8 = plugin wave 30) QUOTA last: the newest observed windows of the endpoint
+        m.insert(
+            "quota",
+            r.quota
+                .as_ref()
+                .and_then(|q| q["text"].as_str())
+                .filter(|t| !t.is_empty())
+                .unwrap_or("-")
+                .to_string(),
+        );
         lines.push(m);
     }
     let mut width: HashMap<&str, usize> = HashMap::new();
@@ -2077,6 +2118,15 @@ fn print_short_json(
 }
 
 // --------------------------------------------------------------------------- runtime helpers
+
+/// (wave 8 = plugin wave 30) Turn on the live source of the built-in openai endpoint's quota windows
+/// (the codex home's newest rollout, [`c3_core::quota::account_window`]) when the machine-wide health
+/// is on (`CODEX_CONSULT_HEALTH` not `none`), as the plugin's `Get-EndpointWindow` reads it.
+pub fn enable_quota_live_source() {
+    let home = get_codex_home();
+    let on = c3_core::health::machine_health_path(&home).is_some();
+    c3_core::quota::set_live_codex_home(on.then_some(home));
+}
 
 pub(crate) fn get_codex_home() -> String {
     if let Ok(h) = std::env::var("CODEX_HOME") {

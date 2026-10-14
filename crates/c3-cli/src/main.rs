@@ -98,6 +98,9 @@ fn stub(name: &str, milestone: u8) -> i32 {
 
 fn main() {
     let cli = Cli::parse();
+    // (wave 8 = plugin wave 30) the built-in openai endpoint's live quota windows: the codex home's
+    // newest rollout, read while the machine-wide health is on (CODEX_CONSULT_HEALTH not none)
+    providers::enable_quota_live_source();
     let code = match cli.command {
         Some(Commands::Providers(a)) => providers::run(providers::Options {
             provider: a.provider.unwrap_or_default(),

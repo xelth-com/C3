@@ -67,6 +67,7 @@ fn on_running_fires_with_child_pid_and_timeout_kills() {
         on_kill: None,
         env: None,
         crt_quote: false,
+        budget: None,
     };
     let result = run_turn(&req);
 
@@ -117,6 +118,7 @@ fn survivor_hook_adds_a_live_pid_to_the_kill() {
         on_kill: None,
         env: None,
         crt_quote: false,
+        budget: None,
     };
     let result = run_turn(&req);
 
@@ -152,4 +154,86 @@ fn recorded_start_time_reads_back_for_this_process() {
         !proc::pid_alive(me, "1999-01-01T00:00:00.0000000Z"),
         "a wrong start time is not alive"
     );
+}
+
+/// (wave 8 = plugin wave 30, T15) The quota budget watch on the real spawn/kill path: the child
+/// names its thread on the event stream, the thread's rollout under the codex home reports the
+/// 5-hour window at 95 % (observed during the turn, its reset ahead) and the watch (polling every
+/// 200 ms) stops the turn at a budget of 90 - `TurnStop::Budget` with the window, long before the
+/// child's own 30 s and the 20 s timeout; a budget of 96 lets the same turn run to its timeout.
+#[test]
+#[cfg(windows)]
+fn the_budget_watch_stops_the_turn_at_the_quota_budget() {
+    use c3::engines::subprocess::{BudgetWatch, TurnStop};
+    let dir = scratch_dir("subproc-budget");
+    let home = dir.join("codexhome");
+    let now = chrono::Utc::now();
+    let ms = format!("{:012x}", now.timestamp_millis());
+    let thread = format!("{}-{}-7abc-8def-0123456789ab", &ms[0..8], &ms[8..12]);
+    let local = now.with_timezone(&chrono::Local);
+    let day = home
+        .join("sessions")
+        .join(local.format("%Y").to_string())
+        .join(local.format("%m").to_string())
+        .join(local.format("%d").to_string());
+    std::fs::create_dir_all(&day).unwrap();
+    let at = (now + chrono::Duration::seconds(1)).format("%Y-%m-%dT%H:%M:%S%.3fZ");
+    let reset = (now + chrono::Duration::minutes(90)).timestamp();
+    let line = format!(
+        "{{\"timestamp\":\"{at}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"total_token_usage\":{{\"input_tokens\":10,\"cached_input_tokens\":0,\"output_tokens\":1}},\"last_token_usage\":{{\"input_tokens\":10}},\"model_context_window\":258400}},\"rate_limits\":{{\"limit_id\":\"codex\",\"primary\":{{\"used_percent\":95.0,\"window_minutes\":300,\"resets_at\":{reset}}},\"secondary\":null}}}}}}\n"
+    );
+    std::fs::write(
+        day.join(format!(
+            "rollout-{}-{thread}.jsonl",
+            local.format("%Y-%m-%dT%H-%M-%S")
+        )),
+        line,
+    )
+    .unwrap();
+    let launcher = dir.join("thread.cmd");
+    std::fs::write(
+        &launcher,
+        format!("@echo off\r\necho {{\"type\":\"thread.started\",\"thread_id\":\"{thread}\"}}\r\nping 127.0.0.1 -n 30 >nul\r\n"),
+    )
+    .unwrap();
+    let run = |budget: i64, timeout: u64| {
+        let events = dir.join(format!("out-{budget}.jsonl"));
+        let stderr = dir.join(format!("err-{budget}.txt"));
+        let watch = BudgetWatch {
+            percent: budget,
+            codex_home: home.to_string_lossy().to_string(),
+            poll_ms: 200,
+        };
+        let req = SpawnRequest {
+            launcher: launcher.to_str().unwrap(),
+            argv: &[],
+            cwd: &dir,
+            prompt_delivery: PromptDelivery::Stdin,
+            stdin_text: "",
+            events_path: &events,
+            stderr_path: &stderr,
+            timeout: Duration::from_secs(timeout),
+            stall_sec: 0,
+            kick_path: None,
+            tool_flight: None,
+            on_running: None,
+            on_kill: None,
+            env: None,
+            crt_quote: false,
+            budget: Some(&watch),
+        };
+        run_turn(&req)
+    };
+    let t0 = std::time::Instant::now();
+    let r = run(90, 20);
+    assert!(r.started);
+    assert_eq!(r.stop, TurnStop::Budget, "{r:?}");
+    assert!(t0.elapsed() < Duration::from_secs(15), "{:?}", t0.elapsed());
+    let w = r.budget.expect("the window that stopped the turn");
+    assert_eq!(w.used, Some(95.0));
+    assert_eq!(w.name, "5-hour window");
+    let r2 = run(96, 3);
+    assert_eq!(r2.stop, TurnStop::Timeout, "{r2:?}");
+    assert!(r2.budget.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
 }

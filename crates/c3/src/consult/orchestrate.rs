@@ -123,6 +123,23 @@ pub(crate) fn context_window_config(
 
 /// The codex `-c` items of a turn: the operator's (`-CodexConfig` / the roster's `codex_config`)
 /// followed by the context-window items (`$extraConfig` then `$contextConfig`, as the plugin's argv).
+/// (wave 8 = plugin wave 30, T15) Sub-agents off for reviews: every codex turn gets
+/// `-c features.multi_agent=false` unless the user's `-CodexConfig` (or the roster entry's
+/// `codex_config`) names `features.multi_agent` - theirs wins, the key is not refused.
+pub(crate) fn agent_config_for(engine: EngineKind, extra_config: &[String]) -> Vec<String> {
+    if engine == EngineKind::Codex && c3_core::quota::user_multi_agent(extra_config).is_none() {
+        vec![c3_core::quota::MULTI_AGENT_OFF.to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// (wave 8) The ledger's `subagents_allowed` of a codex run: the user's `features.multi_agent`,
+/// else `false` (the bridge passed `features.multi_agent=false`).
+pub(crate) fn subagents_allowed(extra_config: &[String]) -> bool {
+    c3_core::quota::user_multi_agent(extra_config).unwrap_or(false)
+}
+
 fn with_context_config(extra_config: &[String], context_config: &[String]) -> Vec<String> {
     let mut v = extra_config.to_vec();
     v.extend(context_config.iter().cloned());
@@ -202,6 +219,13 @@ pub(crate) fn compaction_count(paths: &[&Path]) -> u64 {
 /// so [`render_handoff`], [`build_entry`] and the summary render at their exact points.
 #[derive(Default)]
 struct Secondary {
+    // --- (wave 8 = plugin wave 30, T15) the quota windows and tokens of a codex run ---
+    /// The run's rollout reading (`Get-CodexRunQuota`), `None` for an engine.
+    run_quota: Option<c3_core::quota::RunQuota>,
+    /// The summary's `quota      : ...` line (`""` for an engine).
+    quota_line: String,
+    /// The ledger `budget` record of a codex run.
+    budget_record: Option<serde_json::Value>,
     // --- timeout continuation ---
     timeout_continue: Option<c3_core::ledger::TimeoutContinue>,
     continued: bool,
@@ -1381,6 +1405,53 @@ fn resolve_preflight(
     }
 }
 
+/// (wave 8 = plugin wave 30) The summary's quota line of a codex run: `quota      : 5h 42% until
+/// 16:27; wk 15% until Oct 16; this run 6000 input tokens (3000 cached) in 3 calls, max 3000 per
+/// call of 258400; sub-agents 0` - `no window in the rollout` when it names none, ` (the rollout of
+/// the thread was not found)` when there is none.
+fn quota_summary_line(rq: &c3_core::quota::RunQuota, now: chrono::DateTime<chrono::Utc>) -> String {
+    let q_text = c3_core::quota::format_windows(&rq.quota, now);
+    let mut line = format!(
+        "quota      : {}",
+        if q_text.is_empty() {
+            "no window in the rollout".to_string()
+        } else {
+            q_text
+        }
+    );
+    let n = |v: &serde_json::Value| -> String {
+        match v {
+            serde_json::Value::Null => String::new(),
+            other => other.to_string(),
+        }
+    };
+    match rq.tokens.as_ref().filter(|t| !t["input"].is_null()) {
+        Some(tk) => {
+            line.push_str(&format!(
+                "; this run {} input tokens ({} cached) in {} calls",
+                n(&tk["input"]),
+                n(&tk["cached"]),
+                n(&tk["calls"])
+            ));
+            if !tk["max_input"].is_null() {
+                line.push_str(&format!(", max {} per call", n(&tk["max_input"])));
+                if !tk["context_window"].is_null() {
+                    line.push_str(&format!(" of {}", n(&tk["context_window"])));
+                }
+            }
+            let sub = &tk["subagents"];
+            let count = sub["count"].as_i64().unwrap_or(0);
+            line.push_str(&format!("; sub-agents {count}"));
+            if count > 0 {
+                line.push_str(&format!(" ({} input tokens)", n(&sub["input"])));
+            }
+        }
+        None if rq.path.is_none() => line.push_str(" (the rollout of the thread was not found)"),
+        None => {}
+    }
+    line
+}
+
 /// The `-SkipPreflight` quota warning (`Format-QuotaWarning`): empty unless a quota record is
 /// active on the endpoint. A known reset names the reset time; a reset-less limit names the
 /// out-window end and marks a burst 429.
@@ -1605,6 +1676,14 @@ pub(crate) struct Context {
     /// (wave 26b, D10) this run's kick file `<task>/.consult.kick-<NN>`; the primary turn watches
     /// it and, when it appears, stops as `stopped by the operator (-Kick)`.
     pub(crate) kick_path: PathBuf,
+    /// (wave 8 = plugin wave 30, T15) The quota budget (percent of the 5-hour window, 0 = off) and
+    /// its source; the stall watch of a codex main turn stops it there.
+    pub(crate) budget: c3_core::quota::Budget,
+    /// (wave 8) A codex run's `subagents_allowed` (`None` for an engine): `false` when the bridge
+    /// passes `-c features.multi_agent=false`.
+    pub(crate) subagents_allowed: Option<bool>,
+    /// (wave 8) The replay guard of a codex fork / resume (`None` otherwise).
+    pub(crate) fork_guard: Option<c3_core::quota::ForkGuard>,
     // paths
     pub(crate) handoffs_dir: PathBuf,
     pub(crate) reply_path: PathBuf,
@@ -2102,6 +2181,9 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         continue_sec_given: continue_sec != -1,
         stall_sec: i("stall_sec", -1),
         stall_sec_given: i("stall_sec", -1) != -1,
+        // (wave 8 = plugin wave 30) the quota budget the panel run resolved, and its source
+        budget: a.get("budget").and_then(|v| v.as_i64()).filter(|b| *b >= 0),
+        budget_source: s("budget_source"),
         range: s("range"),
         reply_name: s("reply_name"),
         artifacts: list("artifact"),
@@ -3385,6 +3467,42 @@ fn build_context(
         }
     }
 
+    // (wave 8 = plugin wave 30, T15) the replay guard: a codex fork or resume replays the parent
+    // thread's context on EVERY tool call of the run (cached input counts against a subscription's
+    // window too) - a parent rollout over CODEX_CONSULT_FORK_MAX_KB (default 512) refuses the run
+    // before anything starts; from 128 KB to the limit it is warned about (console, warnings[], the
+    // handoff header). A dry run says a real run is refused.
+    let mut fork_guard: Option<c3_core::quota::ForkGuard> = None;
+    if is_codex
+        && !parent_thread.is_empty()
+        && (effective_mode == "fork" || effective_mode == "resume")
+    {
+        let g = c3_core::quota::fork_replay_guard(
+            &parent_thread,
+            &providers::get_codex_home(),
+            std::env::var("CODEX_CONSULT_FORK_MAX_KB").ok().as_deref(),
+        );
+        if !g.problem.is_empty() && !run_warnings.contains(&g.problem) {
+            run_warnings.push(g.problem.clone());
+        }
+        if !g.refusal.is_empty() {
+            if !o.dry_run {
+                // nothing was reserved or written yet: no ledger entry
+                return Err((format!("{}; nothing was started.", g.refusal), 1));
+            }
+            run_warnings.push(format!("a real run is refused: {}", g.refusal));
+        } else if !g.warning.is_empty() {
+            run_warnings.push(g.warning.clone());
+            if !o.dry_run {
+                println!("WARNING: {}", g.warning);
+            }
+        }
+        fork_guard = Some(g);
+    }
+    // (wave 8) the ledger's subagents_allowed of a codex run
+    let subagents_allowed = is_codex.then(|| subagents_allowed(&r.extra_config));
+    let run_budget = r.budget.clone();
+
     // The argv (byte-identical to the core plan): build the Request and plan it for the
     // selected engine.
     let engine_kind = engine_kind_of(&engine_name);
@@ -3635,6 +3753,9 @@ fn build_context(
         mode_fallback,
         stall_sec,
         kick_path,
+        budget: run_budget,
+        subagents_allowed,
+        fork_guard,
         handoffs_dir,
         reply_path,
         reply_json_path,
@@ -3728,6 +3849,7 @@ fn make_request(
         schema_path: schema_arg,
         // (wave 28b, D15) the operator's items, then the context-window items (codex only)
         extra_config: with_context_config(&r.extra_config, context_config),
+        agent_config: agent_config_for(engine, &r.extra_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(last_msg_path.to_path_buf())
         } else {
@@ -4693,6 +4815,7 @@ fn make_live_request_engine(ctx: &Context, mode: Mode) -> Request {
         sandbox,
         schema_path: schema_arg,
         extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
+        agent_config: agent_config_for(engine, &ctx.r.extra_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(ctx.last_msg_path.clone())
         } else {
@@ -4850,6 +4973,11 @@ fn run_primary_turn(
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
                 on_kill,
+                // (wave 8 = plugin wave 30, T15) the stall watch also reads the run's rollout
+                budget: crate::engines::subprocess::BudgetWatch::of(
+                    ctx.budget.percent,
+                    &providers::get_codex_home(),
+                ),
             };
             let request = make_live_request(ctx);
             let turn = TurnRequest {
@@ -5145,6 +5273,7 @@ fn make_live_request(ctx: &Context) -> Request {
         sandbox,
         schema_path: schema_arg,
         extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
+        agent_config: agent_config_for(EngineKind::Codex, &ctx.r.extra_config),
         output_last_message: Some(ctx.last_msg_path.clone()),
         prompt_file: None,
         max_model_steps: None,
@@ -5297,6 +5426,10 @@ fn finish(
     // fired. (wave 26b, D10) whether the operator stopped this run with -Kick.
     let mut stall_record: Option<c3_core::ledger::Stall> = None;
     let mut run_kicked = false;
+    // (wave 8 = plugin wave 30, T15) the main turn was stopped at the quota budget: no
+    // continuation, the partial is kept; its stop text and the window that stopped it.
+    let mut budget_stop_text = String::new();
+    let mut budget_window: Option<c3_core::quota::PrimaryWindow> = None;
     let mut thread_candidate = String::new();
     // The engine adapter's classified failure (correct class/code/message from the turn's
     // evidence); finalized at commit time with retry_after/kind/when and the forced class.
@@ -5440,6 +5573,18 @@ fn finish(
                     // Consume this run's kick file (the -Kick command waits for it to disappear).
                     let _ = std::fs::remove_file(&ctx.kick_path);
                 }
+                c3_core::engine::StopKind::Budget { window } => {
+                    // (wave 8 = plugin wave 30, T15) stopped at the quota budget: like the kick - no
+                    // continuation (it would spend more of the window); the salvage follows
+                    budget_stop_text =
+                        c3_core::quota::budget_stop_text(&window, chrono::Utc::now());
+                    bridge_outcome = format!("failed: {budget_stop_text}");
+                    println!(
+                        "codex-consult: {budget_stop_text} (-Budget {}, {})",
+                        ctx.budget.percent, ctx.budget.source
+                    );
+                    budget_window = Some(window);
+                }
             }
             timeout_survivors = survivors;
             // (wave 27c, D16; 28e, E1/E18) a stall or kick kill is a process-tree kill too: told
@@ -5447,17 +5592,18 @@ fn finish(
             // survivors or descendants it could not verify).
             let check = main_kill_check(kill, &base_record, &timeout_survivors);
             let unconfirmed_main = !check.confirmed && timeout_survivors.is_empty();
+            let stop_label = if budget_window.is_some() {
+                budget_stop_text.clone()
+            } else {
+                "stopped by the operator (-Kick)".to_string()
+            };
             if main_timed_out {
                 bridge_outcome = main_kill_outcome(&stall_stop_text, &check, &timeout_survivors);
             } else if !timeout_survivors.is_empty() || !check.unverified.is_empty() {
-                bridge_outcome = main_kill_outcome(
-                    "stopped by the operator (-Kick)",
-                    &check,
-                    &timeout_survivors,
-                );
+                bridge_outcome = main_kill_outcome(&stop_label, &check, &timeout_survivors);
             } else if unconfirmed_main {
                 bridge_outcome = format!(
-                    "failed: stopped by the operator (-Kick) {}",
+                    "failed: {stop_label} {}",
                     format_kill_text(&check, &timeout_survivors)
                 );
             }
@@ -5911,6 +6057,22 @@ fn finish(
             ..Default::default()
         });
     }
+    // (wave 8 = plugin wave 30, T15) the operator's quota budget stopped the run: no endpoint's
+    // fault (class operator: the endpoint is not marked out at the budget - a window at 98 % is);
+    // the text says budget, the telemetry event says quota.
+    if budget_window.is_some()
+        && provider_failure.is_none()
+        && bridge_outcome.starts_with("failed: stopped at the quota budget")
+    {
+        provider_failure = Some(c3_core::ledger::ProviderFailure {
+            class: "operator".into(),
+            message: budget_stop_text.clone(),
+            hint: Some(format!(
+                "{budget_stop_text} - continue after the reset, or raise -Budget"
+            )),
+            ..Default::default()
+        });
+    }
     // A failed run records a classified provider_failure derived from its evidence
     // (`codex-consult.ps1:4093`), unless a continuation already supplied one. An engine failure
     // keeps the adapter's classified failure (verbatim reason/class from the turn), with the
@@ -5941,6 +6103,43 @@ fn finish(
         bridge_outcome = "usable reply (after a timeout continuation)".to_string();
     }
 
+    // (wave 8 = plugin wave 30, T15) the quota windows and the tokens of this run, read from its
+    // rollout (and the sub-agent rollouts of its thread): ledger quota / tokens / budget, the
+    // machine-wide record, the summary and the handoff header
+    if ctx.is_codex() {
+        let quota_thread = if !thread.is_empty() {
+            thread.clone()
+        } else {
+            sec.continue_thread.clone()
+        };
+        let started_at = chrono::DateTime::parse_from_rfc3339(&base_record.started)
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or_else(|_| chrono::Utc::now());
+        let baseline = if ctx.effective_mode == "fork" || ctx.effective_mode == "resume" {
+            ctx.parent_thread.clone()
+        } else {
+            String::new()
+        };
+        let rq = c3_core::quota::codex_run_quota(
+            &quota_thread,
+            started_at,
+            &baseline,
+            &providers::get_codex_home(),
+        );
+        sec.quota_line = quota_summary_line(&rq, chrono::Utc::now());
+        sec.run_quota = Some(rq);
+        sec.budget_record = Some(serde_json::json!({
+            "percent": ctx.budget.percent,
+            "source": ctx.budget.source,
+            "stopped": budget_window.is_some(),
+            "used_percent": budget_window.as_ref().and_then(|w| w.used),
+            "resets_at": budget_window
+                .as_ref()
+                .and_then(|w| w.resets_at)
+                .map(c3_core::health::format_offset_iso),
+        }));
+    }
+
     // Salvaged partial reply: a turn the bridge killed on its timeout with no usable
     // continuation leaves `handoffs/NN-codex-<slug>.partial.md` (`codex-consult.ps1:4108`).
     build_partial_reply(
@@ -5954,6 +6153,7 @@ fn finish(
         usable,
         &bridge_outcome,
         &thread,
+        budget_window.as_ref().map(|_| budget_stop_text.as_str()),
     );
 
     // Build the finding delta + ids for a structured reply.
@@ -6181,6 +6381,20 @@ fn finish(
     // first finish) hold for concurrent members.
     entry.when = when_iso;
     entry.thread_candidate = thread_candidate.clone();
+    // (wave 8 = plugin wave 30, T15) a codex run's quota windows, tokens, sub-agent switch and
+    // budget - appended at the END of the entry, after commit_wait_ms (the order of the keys before
+    // stays as it was; an entry without them stays valid)
+    if ctx.is_codex() {
+        entry.quota = Some(
+            sec.run_quota
+                .as_ref()
+                .map(|q| q.quota.clone())
+                .unwrap_or_else(c3_core::quota::null_quota),
+        );
+        entry.tokens = Some(sec.run_quota.as_ref().and_then(|q| q.tokens.clone()));
+        entry.subagents_allowed = Some(ctx.subagents_allowed);
+        entry.budget = sec.budget_record.clone();
+    }
     // (wave 27c, D16) `kill_confirmed`: present as `null` when no tree kill happened this run,
     // `true` when the kill was confirmed, `false` when it could not be. An unconfirmed kill also
     // pushes the warning naming the pid that may still run (the continuation was already
@@ -6373,12 +6587,15 @@ fn finish(
                 retry_after: m.retry_after.clone(),
                 message: m.message.clone(),
             });
-        c3_core::health::new_machine_health_record_marked(
+        // (wave 8 = plugin wave 30) the run's quota windows travel on the record; a run without an
+        // outcome record (a timeout, a stall, a budget stop) writes a record of class '' with them
+        c3_core::health::new_machine_health_record_quota(
             &ctx.identity.fingerprint,
             &bridge_outcome,
             failure.as_ref(),
             &health_repo,
             mark.as_ref(),
+            sec.run_quota.as_ref().map(|q| &q.quota),
         )
     });
     let health_alive = |pid: u32, st: &str| crate::liveness::proc::pid_alive(pid, st);
@@ -6678,6 +6895,7 @@ fn finish(
         thread_source: thread_source.clone(),
         thread_candidate: thread_candidate.clone(),
         consult_id: ctx.consult_id.clone(),
+        quota_line: sec.quota_line.clone(),
         continue_line: continue_line.unwrap_or_default(),
         repair_console: sec.repair_console.clone(),
         repair_drift: sec.drift_notes.clone(),
@@ -6900,6 +7118,7 @@ fn run_codex_secondary(
         sandbox: sandbox.to_string(),
         schema_path: schema_arg,
         extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
+        agent_config: agent_config_for(engine, &ctx.r.extra_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(last_path.to_path_buf())
         } else {
@@ -7019,6 +7238,7 @@ fn run_codex_secondary(
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
+                budget: None,
             };
             (eng.run(&turn).unwrap_or_else(plan_err), String::new())
         }
@@ -7102,6 +7322,26 @@ fn run_timeout_continuation(
         }
         if !moved.is_empty() {
             skip = format!("files changed during the run ({})", moved.join(", "));
+        }
+    }
+    // (wave 8 = plugin wave 30, T15) a continuation spends more of the window: none once the
+    // thread's 5-hour window is already at the quota budget
+    if skip.is_empty() && ctx.is_codex() && ctx.budget.percent > 0 {
+        let rp = c3_core::quota::codex_rollout_path(&continue_thread, &providers::get_codex_home());
+        let w = c3_core::quota::read_primary_window(rp.as_deref());
+        if let Some(used) = w.used {
+            let ahead = w
+                .resets_at
+                .map(|r| r.with_timezone(&chrono::Utc) > chrono::Utc::now())
+                .unwrap_or(true);
+            if used >= ctx.budget.percent as f64 && ahead {
+                skip = format!(
+                    "the {} is {} % used - at the quota budget {} %",
+                    w.name,
+                    c3_core::quota::format_percent(used),
+                    ctx.budget.percent
+                );
+            }
         }
     }
     if skip.is_empty()
@@ -8172,11 +8412,14 @@ fn build_partial_reply(
     usable: bool,
     bridge_outcome: &str,
     main_thread: &str,
+    // (wave 8 = plugin wave 30, T15) the main turn was stopped at the quota budget: its stop text
+    budget_stop: Option<&str>,
 ) {
     let killed_partial = (main_timed_out && !sec.continued)
         || sec.continue_killed
         || sec.repair_killed
-        || run_kicked;
+        || run_kicked
+        || budget_stop.is_some();
     // (wave 26b, D15) ANY failed run keeps what its reviewer produced: when the run is not usable
     // and its main event stream holds at least one agent message, reasoning text or tool call, the
     // salvage is written even though no turn was killed (codex only; engines keep their own path).
@@ -8210,7 +8453,9 @@ fn build_partial_reply(
     let mut killed_at: Vec<String> = Vec::new();
     turns.push(super::secondary::PartialTurn {
         label: "Turn 1 - the main turn".to_string(),
-        note: if run_kicked {
+        note: if let Some(bs) = budget_stop {
+            format!("stopped at {} s: {bs}", fmt_wall(main_wall))
+        } else if run_kicked {
             format!(
                 "stopped by the operator (-Kick) at {} s",
                 fmt_wall(main_wall)
@@ -8234,7 +8479,12 @@ fn build_partial_reply(
         },
         salvage: turn_salvage(&ctx.engine, main_events_text),
     });
-    if run_kicked {
+    if budget_stop.is_some() {
+        killed_at.push(format!(
+            "{} s at the quota budget (the main turn)",
+            fmt_wall(main_wall)
+        ));
+    } else if run_kicked {
         killed_at.push(format!("{} s (the main turn)", fmt_wall(main_wall)));
     } else if main_timed_out && !stall {
         killed_at.push(format!(
@@ -8296,9 +8546,12 @@ fn build_partial_reply(
 
     // The resume thread: the killed turn's continuation thread, else (D15, a mid-run failure that
     // never ran a continuation) the run's own thread.
+    // (wave 8) a kicked or budget-stopped codex turn names its own thread too (the plugin's
+    // `$threadId` first).
     let resume_thread = if !sec.continue_thread.is_empty() {
         sec.continue_thread.clone()
-    } else if partial_on_failure && !main_thread.is_empty() {
+    } else if (partial_on_failure || run_kicked || budget_stop.is_some()) && !main_thread.is_empty()
+    {
         main_thread.to_string()
     } else {
         String::new()
@@ -8320,6 +8573,17 @@ fn build_partial_reply(
         format!("killed at {killed_text}")
     };
     if !resume_thread.is_empty() {
+        // (wave 8 = plugin wave 30, T15) a codex thread whose rollout is over
+        // CODEX_CONSULT_FORK_MAX_KB would be refused by the replay guard: the hint continues in a
+        // NEW thread with the brief and the partial
+        let resume_guard = ctx.is_codex().then(|| {
+            c3_core::quota::fork_replay_guard(
+                &resume_thread,
+                &providers::get_codex_home(),
+                std::env::var("CODEX_CONSULT_FORK_MAX_KB").ok().as_deref(),
+            )
+        });
+        let resume_new = resume_guard.as_ref().map(|g| g.over_limit).unwrap_or(false);
         let args = summary::build_resume_command(&summary::ResumeInputs {
             task: ctx.o.task.clone(),
             collab_dir: ctx.o.collab_dir.clone(),
@@ -8346,9 +8610,17 @@ fn build_partial_reply(
             off_peak_only: ctx.o.off_peak_only,
             skip_preflight: ctx.o.skip_preflight,
             codex_exe: ctx.o.codex_exe.clone(),
+            budget: ctx.o.budget.filter(|_| ctx.o.budget_source.is_empty()),
+            new_thread_partial: resume_new.then(|| sec.partial_rel.clone()),
+            brief: ctx.brief_ref.clone(),
         });
-        sec.partial_footer =
-            format!("{ended_text}; thread {resume_thread} - continue with `{args}`");
+        sec.partial_footer = match resume_guard.filter(|g| g.over_limit) {
+            Some(g) => format!(
+                "{ended_text}; thread {resume_thread} replays {} KB on every tool call (over CODEX_CONSULT_FORK_MAX_KB {}) - continue in a new thread with `{args}`",
+                g.kb, g.max_kb
+            ),
+            None => format!("{ended_text}; thread {resume_thread} - continue with `{args}`"),
+        };
         sec.resume_command = args;
     } else {
         let which = if killed_at.is_empty() {
@@ -8599,6 +8871,27 @@ fn render_handoff(
         }
     };
     let mut records = OptionalRecords {
+        // (wave 8 = plugin wave 30) `Quota (rollout): ...` after the Bridge outcome line
+        quota: (!sec.quota_line.is_empty()).then(|| {
+            format!(
+                "Quota (rollout): {}; sub-agents {}; budget {}.",
+                sec.quota_line
+                    .trim_start_matches("quota")
+                    .trim_start()
+                    .trim_start_matches(':')
+                    .trim_start(),
+                if ctx.subagents_allowed == Some(true) {
+                    "allowed"
+                } else {
+                    "off (features.multi_agent=false)"
+                },
+                if ctx.budget.percent > 0 {
+                    format!("{} % of the 5-hour window", ctx.budget.percent)
+                } else {
+                    "off".to_string()
+                }
+            )
+        }),
         recovery_lines: ctx
             .recovery_lines
             .iter()

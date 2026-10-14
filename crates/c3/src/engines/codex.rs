@@ -51,6 +51,8 @@ pub struct CodexEngine {
     /// (wave 3e, F30-2) Told around every tree kill of a turn (`SpawnRequest::on_kill`): the
     /// orchestrator writes the recovery record that names the tree BEFORE the kill. `None`: nothing.
     pub on_kill: Option<super::subprocess::KillHook>,
+    /// (wave 8 = plugin wave 30, T15) The quota budget watch of the PRIMARY turn (`None` = off).
+    pub budget: Option<super::subprocess::BudgetWatch>,
 }
 
 /// (wave 26c, D3 / 28b, D12) One codex `--json` line's effect on the tool calls in flight
@@ -160,6 +162,12 @@ impl CodexEngine {
             }),
             env: None,
             crt_quote: false,
+            // (wave 8) the quota budget watches only the primary (main) turn
+            budget: if is_primary {
+                self.budget.as_ref()
+            } else {
+                None
+            },
         };
         let result = run_turn(&spawn);
 
@@ -203,6 +211,21 @@ impl CodexEngine {
                         tool_open_seconds: result.tool_open_seconds,
                         open_tools: result.open_tools.clone(),
                         last_event: result.last_event.clone(),
+                    },
+                    partial: salvage_partial(&events_text),
+                    survivors: result.survivors,
+                    kill: result.kill.clone(),
+                    conversation: conversation(false),
+                    wall_seconds: result.wall_seconds,
+                });
+            }
+            TurnStop::Budget => {
+                return Ok(AttemptOutcome::Stopped {
+                    kind: StopKind::Budget {
+                        window: result
+                            .budget
+                            .clone()
+                            .unwrap_or_else(|| c3_core::quota::read_primary_window(None)),
                     },
                     partial: salvage_partial(&events_text),
                     survivors: result.survivors,

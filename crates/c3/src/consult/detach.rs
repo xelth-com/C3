@@ -252,6 +252,9 @@ struct DetachArgs {
     /// (wave 27, R13 D6) the run's `-BriefPrefix` (empty: the environment decides).
     #[serde(default)]
     brief_prefix: String,
+    /// (wave 8 = plugin wave 30) the run's `-Budget` (absent: the environment decides).
+    #[serde(default)]
+    budget: Option<i64>,
 }
 
 fn minus_one() -> i64 {
@@ -333,6 +336,7 @@ impl DetachArgs {
             roles: o.roles.clone(),
             topic: o.topic.clone(),
             brief_prefix: o.brief_prefix.clone(),
+            budget: o.budget,
         }
     }
 
@@ -360,6 +364,8 @@ impl DetachArgs {
             // explicit --stall-sec is not preserved across detach); -Kick acts by the kick file.
             stall_sec: -1,
             stall_sec_given: false,
+            budget: self.budget,
+            budget_source: String::new(),
             range: self.range,
             reply_name: self.reply_name,
             artifacts: self.artifacts,

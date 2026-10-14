@@ -78,6 +78,9 @@ param(
     [int]$TimeoutSec = 0,
     [int]$ContinueSec = -1,
     [int]$StallSec = -1,
+    # (wave 8 = plugin wave 30) the quota budget: forwarded only when bound (c3 resolves
+    # CODEX_CONSULT_QUOTA_BUDGET and the default 90 itself; a bound -1 reaches c3 and is refused)
+    [int]$Budget = -1,
     [string]$Range = '',
     [string]$ReplyName = 'reply',
     [string[]]$Artifact = @(),
@@ -292,6 +295,7 @@ if ($MaxWords -ne 0) { $c3Args.Add('--max-words'); $c3Args.Add([string]$MaxWords
 if ($TimeoutSec -ne 0) { $c3Args.Add('--timeout-sec'); $c3Args.Add([string]$TimeoutSec) }
 if ($ContinueSec -ne -1) { $c3Args.Add('--continue-sec'); $c3Args.Add([string]$ContinueSec) }
 if ($StallSec -ne -1) { $c3Args.Add('--stall-sec'); $c3Args.Add([string]$StallSec) }
+if ($PSBoundParameters.ContainsKey('Budget')) { $c3Args.Add('--budget'); $c3Args.Add([string]$Budget) }
 if ($Range) { $c3Args.Add('--range'); $c3Args.Add($Range) }
 if ($ReplyName) { $c3Args.Add('--reply-name'); $c3Args.Add($ReplyName) }
 foreach ($a in $Artifact) {

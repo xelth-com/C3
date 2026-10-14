@@ -55,8 +55,21 @@ pub mod presets {
         }
     }
 
-    /// The purpose paragraph appended to the prompt.
-    pub fn text(purpose: &str) -> &'static str {
+    /// The purpose paragraph appended to the prompt. (wave 8 = plugin wave 30, T15) The paragraphs
+    /// of the reviewing purposes (checkpoint, core-contract, acceptance, diff-review) end with the
+    /// reading discipline ([`c3_core::quota::READING_DISCIPLINE`]): a reviewer that prints whole
+    /// files replays them on every later tool call of its thread.
+    pub fn text(purpose: &str) -> String {
+        let base = base_text(purpose);
+        if c3_core::quota::READING_DISCIPLINE_PURPOSES.contains(&purpose) {
+            format!("{base} {}", c3_core::quota::READING_DISCIPLINE)
+        } else {
+            base.to_string()
+        }
+    }
+
+    /// The purpose paragraph without the reading discipline.
+    fn base_text(purpose: &str) -> &'static str {
         match purpose {
             "framing" => "Surface the options the brief does not list and challenge the framing itself before answering inside it. Say what you would need to know to choose between the options.",
             "decision" => "Rank the alternatives. For each one, name the deciding factor and its failure mode.",

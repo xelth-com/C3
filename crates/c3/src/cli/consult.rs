@@ -58,6 +58,11 @@ pub struct ConsultArgs {
     /// else 900). `allow_hyphen_values` so a negative value reaches the validator.
     #[arg(long, allow_hyphen_values = true, default_value_t = -1)]
     pub stall_sec: i64,
+    /// (wave 8 = plugin wave 30) The quota budget of a codex run in percent of its 5-hour window:
+    /// the main turn is stopped there, the partial kept (0 = off; unset = CODEX_CONSULT_QUOTA_BUDGET,
+    /// else 90).
+    #[arg(long, allow_hyphen_values = true)]
+    pub budget: Option<i64>,
     /// base..head or base...head (diff-review / acceptance only).
     #[arg(long, default_value = "")]
     pub range: String,
@@ -253,6 +258,8 @@ pub fn run(args: ConsultArgs) -> i32 {
         continue_sec_given,
         stall_sec: args.stall_sec,
         stall_sec_given,
+        budget: args.budget,
+        budget_source: String::new(),
         range: args.range,
         reply_name: args.reply_name,
         artifacts: args.artifact,
