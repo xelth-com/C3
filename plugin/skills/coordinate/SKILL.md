@@ -73,6 +73,14 @@ skill's `reference.md`.
 Park a detached run in the task's `state.md` (the detach id, the brief path, the come-back
 command); a later session finds it there and in the SessionStart line.
 
+**Quota windows (wave 8).** Before a wave of reviews on a subscription plan, read the QUOTA column of
+`c3 providers` (`5h 96% until 18:32; wk 15% until Oct 20`): a quota window at 98 % or more makes
+the reviewer out until its reset, like a usage limit - ask the operator whether to wait or to go on
+without that reviewer. Keep review threads small: prefer `--mode new` with a brief that names the
+earlier reply over forking a large thread (a parent rollout over `CODEX_CONSULT_FORK_MAX_KB` is refused,
+it would be replayed on every tool call); the bridge stops a run at `--budget` (90 % by default) with its
+partial kept, and turns the reviewer's sub-agents off.
+
 ## Supporting c3 commands
 
 - `c3 pack --brief <b> --out <o> [--focus <glob>] [--budget <n>] [--task <t>]` — build a

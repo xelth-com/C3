@@ -47,6 +47,18 @@ anyway. A refused preflight is not a bridge failure. Run it in the repository wh
 consultations you mean: health comes from THAT repository's ledgers. **If a provider you need
 is missing**, follow the `setup-providers` skill; never handle the key yourself.
 
+**Quota windows (wave 8).** A subscription's 5-hour window can be spent by ONE review. The
+bridge reads the windows Codex writes into each thread's rollout: `c3 providers` shows them in
+its QUOTA column (`5h 96% until 18:32; wk 15% until Oct 20`), a window at 98 % or more is
+`unavailable (5-hour window 99 % used, resets <iso>)` exactly like a usage limit, 80 % or more adds
+`low quota: ...` to an available verdict - plan around it like any other outage. Every codex run
+stops its main turn at `--budget` (default 90 % of the 5-hour window, env `CODEX_CONSULT_QUOTA_BUDGET`,
+`0` = off) and keeps the partial; it passes `-c features.multi_agent=false` (the reviewer's sub-agents
+replay their own context; `--codex-config features.multi_agent=true` allows them); a `--mode fork` or
+`resume` whose parent rollout is over `CODEX_CONSULT_FORK_MAX_KB` (512) is refused - start a NEW
+thread (`--mode new`) and point the brief at the earlier reply instead of forking a large thread. The
+ledger's `quota` and `tokens` say what each run spent (`docs/port/wave8-quota.md`).
+
 ## 1. Write the brief
 
 Write it yourself, in English, to `.collab/<task>/handoffs/<NN>-claude-<slug>.md` — `<NN>` is

@@ -7,6 +7,29 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
+## [Unreleased]
+
+### Added
+
+- **Wave 8 - quota windows** (`docs/port/wave8-quota.md`; the plugin's wave 30 / TECH_DEBT T15 of
+  its `[Unreleased]` 0.6.2, `bade7cb..a162b8d`): after every codex run the ledger records `quota`
+  `{primary, secondary, observed_at}`, `tokens` `{input, cached, output, thread_input, calls,
+  max_input, context_window, subagents {count, input, calls}}`, `subagents_allowed` and `budget`
+  after `commit_wait_ms`, read from the thread's rollout and its sub-agent rollouts
+  (`c3_core::quota`); the endpoint health takes the newest observed window (ledgers, machine-wide
+  records - which now carry `quota`, a run without an outcome record writing class `""` -, the
+  codex home's newest rollout for the built-in openai endpoint): >= 98 % with its reset ahead is
+  `unavailable (5-hour window 99 % used, resets <iso>)` like a usage limit, >= 80 % says `low
+  quota: ...`, a past reset shows `5h reset (last 96% until 18:32)`; `c3 providers` has a QUOTA
+  column and `--json` rows a `quota` object; `--budget <percent>` (env
+  `CODEX_CONSULT_QUOTA_BUDGET`, default 90, 0 off) stops the main turn at the budget (partial kept,
+  no continuation, class operator, telemetry class quota; detached runs and panel members the
+  same); the replay guard `CODEX_CONSULT_FORK_MAX_KB` (default 512; warned from 128 KB) and the
+  partial's `--mode new` hint; `-c features.multi_agent=false` on every codex turn unless the
+  user's config names `features.multi_agent`; the reading discipline in the purpose paragraphs of
+  acceptance, diff-review, checkpoint and core-contract; the dry run's `quota`, `budget`,
+  `sub-agents` and `replay` lines; the consult shim forwards `-Budget`.
+
 ## [0.2.0] - 2026-10-14
 
 The compatibility release: parity with claude-codex-consult 0.6.1, measured by the plugin's pinned

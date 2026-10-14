@@ -276,3 +276,13 @@ references, locks and deletion transaction stay under `<codex home>/c3/telemetry
 allow-listed environment only; it receives this hook as `CODEX_CONSULT_TEST_TELEMETRY_PLUGIN_HOME`
 (the sender-hook prefix the allow list admits in test mode), so its last flush's record lands in
 the same place (`wave6-live-diffs.md`).
+
+### Wave 8 (the plugin's wave 30, at its HEAD)
+
+The consult shim forwards `-Budget <percent>` as `--budget` when the parameter is bound (a bound `-1`
+reaches c3 and is refused with the plugin's text; unbound, c3 resolves `CODEX_CONSULT_QUOTA_BUDGET`
+and the default 90 itself). The fakes' `FAKE_CODEX_QUOTA*` switches and the
+`CODEX_CONSULT_TEST_BUDGET_POLL_MS` / `CODEX_CONSULT_FORK_MAX_KB` variables need no mapping: the
+engine child inherits `CODEX_HOME` and the `FAKE_*` variables, and c3 reads the test hook itself (test
+mode only). The HEAD harnesses run from an archive of the plugin's HEAD (`git archive HEAD`) with the
+shims over its `plugins/codex-consult/scripts` - `wave8-quota.md`.

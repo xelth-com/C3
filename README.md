@@ -139,6 +139,38 @@ MiMo (credits 0.17x, wall 1.16x - no faster than codex on that plan, structured 
 marks 5.0 vs 3.08).**" (plugin README, "Engines (wave 29)", "Endpoint mode"). Ported in
 `docs/port/wave4-claude.md`; setup text in `plugin/skills/setup-providers/SKILL.md` section 4c.
 
+## Quota windows and the reading budget (plugin wave 30; C3 wave 8)
+
+A subscription's quota is spent in windows - on a ChatGPT plan a 5-hour window and a weekly one -
+and ONE review can spend a whole 5-hour window: a fork replays its parent's context on every tool
+call, and a reviewer's own sub-agents replay theirs. C3 reads what Codex itself writes into each
+thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.jsonl`, the last
+`token_count` that names a window) and acts on it, as the plugin does (`docs/port/wave8-quota.md`):
+
+- **Ledger** (codex runs, after `commit_wait_ms`): `quota {primary, secondary, observed_at}`,
+  `tokens {input, cached, output, thread_input, calls, max_input, context_window, subagents {count,
+  input, calls}}` (the run's share of the thread's running total - a fork inherits its parent's),
+  `subagents_allowed`, `budget`; the summary's `quota      :` line and the handoff's
+  `Quota (rollout):` line.
+- **Verdict**: the newest observed window of an endpoint (its ledgers, the machine-wide health
+  records - which now carry `quota` - and, for the built-in `openai` endpoint while the
+  machine-wide health is on, the codex home's newest rollout): at 98 % or more with its reset ahead
+  the endpoint is `unavailable (5-hour window 99 % used, resets <iso>)` like a usage limit with a
+  known reset (roster walk, `--require`, panel, `--short`, a real run refused); at 80 % or more the
+  verdict says `available (low quota: 5-hour window 84 % until 18:32)`. `c3 providers` has a QUOTA
+  column (`5h 96% until 18:32; wk 15% until Oct 20`) and `--json` rows a `quota` object.
+- **`--budget <percent>`** (env `CODEX_CONSULT_QUOTA_BUDGET`, default 90, 0 = off): the stall watch
+  reads the run's rollout every 15 s and stops the main turn at the budget - the partial kept, no
+  continuation, `failed: stopped at the quota budget: 5-hour window 91 % used, resets 18:32; the
+  partial is kept` (provider_failure class `operator`, telemetry class `quota`).
+- **Replay guard**: a `--mode fork|resume` whose parent rollout is over `CODEX_CONSULT_FORK_MAX_KB`
+  (default 512) is refused before anything starts; from 128 KB on it is warned about.
+- **Sub-agents off**: every codex turn passes `-c features.multi_agent=false` right after `-m`
+  unless `--codex-config` (or the roster's `codex_config`) names `features.multi_agent`.
+- **Reading discipline**: the purpose paragraphs of acceptance, diff-review, checkpoint and
+  core-contract end with the plugin's block (`git diff <range> --stat` first, one path at a time
+  with a line cap, the documents first, the verdict even on an incomplete read).
+
 ## Telemetry (on by default, off with one line)
 
 Installing C3 means accepting these terms. C3 reports **one anonymous event per
