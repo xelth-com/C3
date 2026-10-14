@@ -1,0 +1,130 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The new equal-time comparison can still discard a blocking weekly window because it prioritizes primary usage over secondary usage.",
+  "reply_markdown": "1. **Yes—finding #1.** At the same observation time, A=(primary 30%, secondary 99%) loses to B=(primary 31%, secondary 10%) in either recorded order. With future resets, A blocks and B does not. The same issue affects live replacement. Contrary to the handoff, `newer_wins` compares `max(primary, secondary)`; the new helper compares a lexicographic tuple. A blocking observation selected from sub-agents can therefore lose during endpoint selection.\n\n   The original primary-only F46-1 example is fixed, but its broader blocking-window invariant remains incomplete. Both inspected tests omit competing secondary windows.\n\n2. **HOLD; do not tag v0.2.1 yet.** Resolve finding #1 and run RC1. Two existing test-executable cases passed: the new recorded primary tie test and the existing `newer_wins` test. These were prebuilt binaries; their exact source revision was not established. No files were written.\n\nReading covered all three non-`.collab` changed paths and targeted aggregation/health context. `.collab` changes were skipped as instructed, apart from handoffs 47 and 45. The broader wave-8 implementation, external plugin sources/harnesses, and unrelated prior findings were not re-reviewed. Checkout HEAD was `e4690dc`, beyond the requested endpoint; the changed hunks were read from the explicit range.\n\n## Requested checks\n\n- **RC1:** From repository root, with **workspace-write** permission, add equal-time fixtures A=(30,99), B=(31,10), both resets future; exercise both recorded orders, both recorded/live assignments, and sub-agent aggregation feeding endpoint selection. Run `cargo test -p c3-core quota -j 2`. Every path must preserve weekly blocking. Budget: 30 minutes.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 992
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1036
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1052
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 619
+        },
+        {
+          "path": "docs/port/wave8-quota.md",
+          "line": 91
+        }
+      ],
+      "claim": "The replacement equal-time rule can hide a blocking secondary window: lexicographic comparison prioritizes any higher primary percentage over a 99% secondary percentage. It also differs from the existing rollout/sub-agent rule, which compares the maximum usage across both windows. Consequently, an endpoint can remain available despite an equally recent blocking weekly observation.",
+      "trigger": "For the same endpoint and observed_at, observation A has primary=30 and secondary=99, while B has primary=31 and secondary=10; all reset times are in the future. Recorded selection chooses B in either order. Recorded B also rejects live A, and live B replaces recorded A.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "git diff bf1bd4a..c23869d -- crates/c3-core/src/quota.rs",
+          "observation": "window_obs_wins compares (primary used_percent, secondary used_percent) with tuple > and is used by both recorded selection and live replacement."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:166-173,603-619,670-679,936",
+          "observation": "Observation::fullest returns max(primary, secondary); newer_wins uses that value for equal timestamps in sub-agent and account-rollout selection."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:799-810,861-867; crates/c3-core/src/health.rs:1151-1163",
+          "observation": "Either window blocks at usage >=98 with a future reset, but health evaluates only the observation retained by endpoint_window."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Equal-time A=(30,99), B=(31,10), future resets",
+          "observation": "The tuple comparison always selects B, which has no blocking window, although A has a blocking weekly window."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "target/debug/deps/c3_core-a4af68ba455879d7.exe: exact recorded-tie and newer_wins unit tests",
+          "observation": "Both tests passed. Their inspected fixtures do not test competing secondary usage, so these passes do not establish the requested invariant; binary revision was not verified."
+        }
+      ],
+      "verification": "Run RC1 with both input orders and both recorded/live assignments; require the resulting endpoint quota to retain the 99% weekly block.",
+      "remedy": "Use one consistent equal-time selection policy across recorded, live, and sub-agent aggregation that preserves the blocking secondary observation; align the endpoint helper with the existing fullest-window rule for this case and add cross-window regression tests. Correct the documentation's assertion that the current rules are equivalent.",
+      "supersedes": [
+        "F46-1"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Outside this review's quota delta."},
+    {"id":"F02-3","status":"not-checked","note":"Outside this review's quota delta."},
+    {"id":"F02-4","status":"not-checked","note":"Harness coverage map not audited."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction not inspected."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt generation not inspected."},
+    {"id":"F02-7","status":"not-checked","note":"Plan compatibility not inspected."},
+    {"id":"F02-8","status":"not-checked","note":"No three-route benchmark reviewed."},
+    {"id":"F04-1","status":"not-checked","note":"Process classification not inspected."},
+    {"id":"F04-2","status":"not-checked","note":"Windows timezone behavior not tested."},
+    {"id":"F04-3","status":"not-checked","note":"Panel metadata not inspected."},
+    {"id":"F06-1","status":"not-checked","note":"Historical timezone behavior not inspected."},
+    {"id":"F09-1","status":"not-checked","note":"Context configuration not inspected."},
+    {"id":"F09-2","status":"not-checked","note":"Telemetry locking not inspected."},
+    {"id":"F09-3","status":"not-checked","note":"Deletion cleanup not inspected."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread handling not inspected."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy telemetry sanitization not inspected."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor inference not inspected."},
+    {"id":"F11-1","status":"not-checked","note":"Health journal I/O not inspected."},
+    {"id":"F11-2","status":"not-checked","note":"Required-reviewer launcher resolution not inspected."},
+    {"id":"F11-3","status":"not-checked","note":"Shared-plan required-reviewer filtering not inspected."},
+    {"id":"F11-4","status":"not-checked","note":"Hook command execution not inspected."},
+    {"id":"F11-5","status":"not-checked","note":"AGY stall handling not inspected."},
+    {"id":"F14-1","status":"not-checked","note":"Local deletion transactions not inspected."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization not inspected."},
+    {"id":"F19-2","status":"not-checked","note":"Salt cleanup errors not inspected."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key sanitization not inspected."},
+    {"id":"F22-1","status":"not-checked","note":"Health journal replay retention not inspected."},
+    {"id":"F23-1","status":"not-checked","note":"Process metadata failure handling not inspected."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown creation-time recovery not inspected."},
+    {"id":"F23-3","status":"not-checked","note":"Kill-evidence durability not inspected."},
+    {"id":"F23-4","status":"not-checked","note":"Recovery fixtures not inspected."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa behavior not tested."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled fallback accounting not inspected."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated suffix accounting not inspected."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent cleanup enumeration not inspected."},
+    {"id":"F24-4","status":"not-checked","note":"Not-spooled status baseline not inspected."},
+    {"id":"F24-5","status":"not-checked","note":"Plugin-home adapter coverage not inspected."},
+    {"id":"F24-6","status":"not-checked","note":"Fold record rewrite handling not inspected."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript guard not inspected."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case handling not inspected."},
+    {"id":"F25-4","status":"not-checked","note":"Child environment debug formatting not inspected."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree helper recovery not inspected."},
+    {"id":"F30-2","status":"not-checked","note":"Pre-kill persistence not inspected."},
+    {"id":"F30-3","status":"not-checked","note":"Kill-site durability coverage not inspected."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer fallback accounting not inspected."},
+    {"id":"F36-1","status":"not-checked","note":"Unicode path handling not inspected."},
+    {"id":"F36-2","status":"not-checked","note":"Transcript path normalization not inspected."},
+    {"id":"F38-1","status":"not-checked","note":"Recovery persistence fallback not inspected."},
+    {"id":"F40-1","status":"not-checked","note":"Recovery-copy enumeration errors not inspected."},
+    {"id":"F40-2","status":"not-checked","note":"Kick acknowledgement failure handling not inspected."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata errors not inspected."},
+    {"id":"F46-1","status":"still-open","note":"The primary-only 30%/99% example is fixed. Finding #1 supersedes the broader claim with the remaining secondary-window failure and inconsistent aggregation rules."}
+  ],
+  "unproven": [
+    "RC1's cross-window recorded/live/sub-agent cases were inferred from code, not executed.",
+    "Equal-time observations with differing reset times, expired windows, or missing windows were not exercised.",
+    "The two passing prebuilt test cases were not established to come from c23869d.",
+    "The full workspace suite and external plugin harness results were not independently rerun.",
+    "The broader a7f2626..bf1bd4a wave-8 implementation and unrelated prior fixes were not re-reviewed.",
+    "The .collab diff artifacts were skipped as requested; external plugin sources and harness scripts were not read."
+  ],
+  "first_run_checklist": []
+}
