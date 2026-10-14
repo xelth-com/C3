@@ -145,3 +145,21 @@ before R keeps A, one between R and S keeps B, both block),
 `a_non_finite_percent_never_hides_a_valid_block`,
 `the_tie_selection_is_the_same_for_every_order_of_six` (720 orders, a past reset and a NaN included).
 The plugin's T17 fix needs the same single instant and the finite check.
+
+## 8f - the account cache keeps raw observations, newer invalid windows do not replace (F55-1, F55-2)
+
+F55-1: `account_window` cached only the WINNER picked at an earlier instant and returned it for 60 s,
+so after that winner's reset a discarded equal-time observation that still blocked was lost. The
+cache (per codex home) now holds the RAW observations of the account's rollouts
+(`read_account_observations`); `account_window_at` runs the selection (`merge_observation`) at
+every lookup with the requested `now`, the 60 s TTL only bounds how often the rollouts are read.
+F55-2 (fail closed, per window): an observation with no VALID window is absent; a strictly newer
+observation replaces a window only where its own window is valid, otherwise the older valid window
+of that kind stays, and an older observation fills only the kinds the newer one lacks - in
+`select_window` (recorded and live) and in `merge_observation`; at an equal instant the 8d rank
+decides. Tests: `the_account_cache_selects_at_each_requested_instant`,
+`a_newer_invalid_record_keeps_the_older_valid_window` (NaN / out of range, both orders, plus the
+newer-partial case), and the permutation test now runs 5040 orders of seven observations (a
+NaN-only newer record included). The tests that read `endpoint_window` are serialised with those
+that switch the process-wide live source on (a flake of the shared global). The plugin's T17 fix
+needs the same cache shape and the per-window validation.
