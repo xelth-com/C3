@@ -170,3 +170,5 @@ Worker telemetry, additions (the operator, 2026-10-14 00:00): (1) the worker's R
   over the live roster and add a claude `auth: subscription` entry (haiku-5-5, chore) and the Kimi pair.
 - To resume: a fresh session reads this section; the machine rules and the harness recipe are above and in
   `docs/port/harness-shim.md`.
+
+2026-10-14 06:10 - wave 8 (quota windows, the plugin wave 30 ported) merged: bf1bd4a, 811 tests, seven harnesses at plugin HEAD on target (quota 57/0, 0.3 229/0, claude 87/0 - RC7's E2 65/1 not reproducible). Diff review by Astra (brief 45) -> tag v0.2.1 on ACCEPT. The site: xelth.com/C3/ announces 0.2.0 (58e352a + the parity strings), deployed.
