@@ -113,3 +113,17 @@ built on `newer_wins`, which still decides newer-or-not) apply it. Tests:
 `the_live_window_merges_per_window_with_a_crossing_recorded_one` (both assignments),
 `merge_observation_keeps_each_fuller_window_at_an_equal_instant`; the 8b tests stay.
 The plugin's T17 fix of the tie (see 8b) must use the same per-window rule.
+
+## 8d - a total order for tied windows (reviewer finding F50-1)
+
+At an equal `observed_at` and an equal `used_percent` the per-window pick kept the FIRST window's
+reset, so a null or past reset could hide a future one by ordering. One comparator
+(`quota::cmp_window_rank`, used by `select_window` for the recorded and live selections and by
+`merge_observation`) now ranks two observations of the same window at the comparison time `now`:
+(1) a known FUTURE reset beats a known PAST reset beats a missing (null) one; (2) the higher
+`used_percent`; (3) the later `resets_at`; (4) identical - either. A strictly newer `observed_at`
+still replaces both windows. Tests: `equal_shares_rank_by_the_reset_in_every_order`,
+`the_live_window_ranks_a_future_reset_over_a_null_one_at_a_tie`,
+`a_past_reset_never_hides_a_future_one_whatever_the_share`,
+`the_tie_selection_is_the_same_for_every_permutation` (4 observations, all 24 orders).
+The plugin's T17 fix must use this full ordering (future > past > null, then share, then later reset).
