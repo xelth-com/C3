@@ -8695,6 +8695,198 @@
                                                       "used_percent":  null,
                                                       "resets_at":  null
                                                   }
+                                   },
+                                   {
+                                       "n":  31,
+                                       "when":  "2026-10-14T08:37:32+02:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "f7bc1310-9566-4ada-97b0-a3d4f5890311",
+                                       "consult_ref":  "5273d8dc-8500-463a-a048-16708ce2ada4",
+                                       "reviewer":  {
+                                                        "provider":  "openai",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "gpt-6-astra",
+                                                        "model_source":  "roster",
+                                                        "engine":  "codex",
+                                                        "harness":  "codex-cli 0.155.1",
+                                                        "provider_fingerprint":  "56d97b6ece36e75295a290d931ca6bbe2dd0b1f0807454b21a63a6fd17b32d7c",
+                                                        "provider_config":  {
+                                                                                "builtin":  "openai"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openai :: gpt-6-astra",
+                                       "coordinator":  {
+                                                           "provider":  "anthropic",
+                                                           "model":  "claude-fable-5-1",
+                                                           "engine":  "codex",
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "explicit",
+                                                           "in_roster":  false,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: Logged in using ChatGPT",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json",
+                                                      "position":  1,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "01a13921-6e0d-7280-b4ba-6d40347a1dd1",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "codex exec --sandbox read-only --color never --json -m gpt-6-astra -c features.multi_agent=false -c model_reasoning_effort=\"high\" -c model_provider=\"openai\" -o C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-last-50993afb59124bc580892a89feca1f2d.md --output-schema C:\\Users\\Dmytro\\claude-codex-consult\\plugins\\codex-consult\\schemas\\consult-reply.schema.json -",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/parity-0.6.1-2026-10-08/handoffs/53-claude-wave8-round5.md",
+                                       "range":  {
+                                                     "spec":  "83ca5dd..e76518e",
+                                                     "files":  13,
+                                                     "insertions":  1970,
+                                                     "deletions":  31,
+                                                     "lines":  2001
+                                                 },
+                                       "prompt_chars":  44262,
+                                       "reply":  "handoffs/54-codex-wave8-round5.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/54-codex-wave8-round5.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "gpt-6-astra",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-14T08:37:32+02:00",
+                                       "structured":  false,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "output-schema",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "e4567a5edc720bb8eead811242028dff4b8eaae4",
+                                       "reviewed_revision":  "e4567a5",
+                                       "tree_sha256":  "37641d7a5de7da185db0673289cd5e999df14818c5ff47300663eb8c77957ef5",
+                                       "tree_sha256_after":  "37641d7a5de7da185db0673289cd5e999df14818c5ff47300663eb8c77957ef5",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "05c728156504aa56954826c1b0b2e8becceba1087f068e8bd380da418570c959",
+                                       "brief_sha256_after":  "05c728156504aa56954826c1b0b2e8becceba1087f068e8bd380da418570c959",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (2 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  null,
+                                       "bridge_outcome":  "failed: codex exit 1 - You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 11:10 AM.",
+                                       "provider_failure":  {
+                                                                "class":  "quota",
+                                                                "kind":  "",
+                                                                "code":  "",
+                                                                "message":  "You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 11:10 AM.",
+                                                                "when":  "2026-10-14T08:37:44+02:00",
+                                                                "retry_after":  "2026-10-14T11:10:00+02:00",
+                                                                "hint":  ""
+                                                            },
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  null,
+                                       "engine_run":  null,
+                                       "wall_seconds":  11.4,
+                                       "finished_at":  "2026-10-14T08:37:45+02:00",
+                                       "commit_wait_ms":  0,
+                                       "quota":  {
+                                                     "primary":  null,
+                                                     "secondary":  null,
+                                                     "observed_at":  "2026-10-14T08:37:43+02:00"
+                                                 },
+                                       "tokens":  {
+                                                      "input":  null,
+                                                      "cached":  null,
+                                                      "output":  null,
+                                                      "thread_input":  null,
+                                                      "calls":  0,
+                                                      "max_input":  null,
+                                                      "context_window":  null,
+                                                      "subagents":  {
+                                                                        "count":  0,
+                                                                        "input":  0,
+                                                                        "calls":  0
+                                                                    }
+                                                  },
+                                       "subagents_allowed":  false,
+                                       "budget":  {
+                                                      "percent":  85,
+                                                      "source":  "-Budget",
+                                                      "stopped":  false,
+                                                      "used_percent":  null,
+                                                      "resets_at":  null
+                                                  }
                                    }
                                ]
               }

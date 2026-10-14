@@ -180,3 +180,5 @@ Worker telemetry, additions (the operator, 2026-10-14 00:00): (1) the worker's R
 2026-10-14 08:05 - wave 8 round 3 (n=29, handoff 50): HOLD on F50-1 major (equal time AND equal percent keep the FIRST reset; a past reset can replace a future one). Final ordering per window at an equal observed_at: a reset in the future beats a past one, then the higher used_percent, then the later resets_at. Wave 8d, then round 4.
 
 2026-10-14 08:45 - wave 8 round 4 (n=30, handoff 52): HOLD on F52-1 major (the comparator samples the wall clock per comparison: a reset crossing from future to past mid-aggregation makes the pick order-dependent) + F52-2 minor (non-finite percentages). Wave 8e: one `now` per evaluation threaded through; percentages clamped/total order. Window 65 % until 11:10.
+
+2026-10-14 09:02 - round 5 launch n=31 refused by the server: the 5-hour window hit 100 % (the bridge's last observation was 65 % after n=30 - nothing newer in the rollouts, so the preflight let it through; the window went 30 -> 65 % inside n=30 for 260k tokens, nonlinear). Astra out until 11:10. Round 5 (brief 53) re-armed for 11:12.
