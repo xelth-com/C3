@@ -202,3 +202,5 @@ say which tier pays. Design for the consilium (topic 3 of the framing panel, wit
    from the roster policy; the digest survives a cold cache (the quota lesson).
 Open questions for the panel: does z.ai expose more than three tiers on glm-5.3; is `medium` on gpt-6-astra good
 enough for a reading pass; how to score a tier (usefulness per 5-hour-window share, not per run).
+
+2026-10-14 11:20 - wave 8 round 5 (n=32, handoff 55): HOLD on F55-1 major (a cached selection can hide an active blocking window) + F55-2 minor (a malformed newer record erases valid blocking evidence). Weekly window 53 %. Wave 8f, then round 6.

@@ -1,0 +1,169 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The targeted fixes address the reported comparisons, but cached selection can still hide an active blocking window, and malformed newer records can erase valid blocking evidence.",
+  "reply_markdown": "1. **Q1:** Two remaining paths hide blocking windows. Finding #1: the account cache retains a time-dependent winner across its reset, losing another observation that still blocks. Finding #2: a newer record containing only an invalid percentage replaces valid blocking evidence before percentage validation. The new permutation tests cover neither path.\n\nF52-1’s per-comparison clock sampling and F52-2’s equal-time NaN case are fixed by inspection. F46-1, F48-1 and F50-1’s specific cases are also addressed. Other prior findings were not rechecked.\n\n2. **Q2: HOLD** tagging v0.2.1 on finding #1; also address finding #2.\n\nRead: the brief, wave note, all four non-`.collab` diff paths, and targeted surrounding implementation/tests. Unread: the nine `.collab` diff paths, earlier handoffs, external plugin oracle and broader wave-8 implementation. Tests were not executed; reported pass counts remain coordinator evidence.\n\n## Requested checks\n\n- **RC1:** Working directory `C:\\Users\\Dmytro\\C3`; workspace-write; budget 20 minutes. Add/run a test with two same-time openai rollouts: A=(100%, R), B=(99%, S), R<S. Call `account_window_at` before R, then between R/S within the cache TTL. Require the second result to retain B and block, matching a fresh-home evaluation (finding #1).\n- **RC2:** Same directory; workspace-write; budget 10 minutes. Add/run an `endpoint_window_at` test with an older 99% future-reset record and a newer NaN-only record, in both orders. Require the valid block to survive (finding #2).",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 992
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 998
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1038
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1175
+        }
+      ],
+      "claim": "The account cache stores only the winner selected at an earlier comparison instant and returns it for 60 seconds without considering the requested instant. After that winner resets, a discarded equal-time observation can still block, but endpoint health sees only the expired cached window and can report availability.",
+      "trigger": "Two account rollouts have the same observed_at and primary windows A=(100%, reset R), B=(99%, reset S), with R<S. A lookup before R caches A. Another lookup in the same process and home occurs after R but before S, within the cache TTL, with no independent recorded block. It returns expired A instead of still-blocking B.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:638-651,992-1039",
+          "observation": "Ranking depends on now; account aggregation retains only the selected observation. Cache hits return v.clone() based solely on elapsed monotonic time, without using the supplied now."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:881-892,1173-1183; crates/c3-core/src/health.rs:1151-1155",
+          "observation": "Endpoint selection consumes the cached account window, while blocking evaluation treats resets at or before the current comparison instant as expired."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:2105-2130",
+          "observation": "The new clock regression test recomputes from all observations at each instant; it does not exercise the account cache across a reset."
+        },
+        {
+          "kind": "inferred",
+          "reference": "account_window_at cache-hit path",
+          "observation": "A warm-cache lookup between R and S returns nonblocking A, whereas an uncached aggregation at that same instant selects blocking B."
+        }
+      ],
+      "verification": "Run RC1: compare warm-cache and fresh-home account_window_at results across R, requiring the 99% window ending at S to survive and block.",
+      "remedy": "Cache the underlying observations and select them using each caller's instant, or invalidate the cached aggregate whenever a reset boundary that can change selection is crossed.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1094
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1149
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 872
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 2138
+        }
+      ],
+      "claim": "Invalid percentages are not treated as absent before recorded-observation selection. A strictly newer record with no valid windows can replace an older valid blocking record; subsequent window evaluation discards the invalid percentage and produces no block.",
+      "trigger": "For one endpoint, an older observation has primary used_percent=99 with a future reset. A newer observation has primary used_percent=\"NaN\" (or another rejected percentage) and secondary=null. Both record orders select the malformed newer observation and lose the valid block.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:1147-1171",
+          "observation": "Recorded candidates are excluded only when quota is not an object or both window fields are null; a window object containing an invalid percentage passes this gate."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:1085-1103",
+          "observation": "A strictly newer candidate replaces the current observation before quota_used applies finite_percent; validation occurs only in the equal-time merge."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:624-630,872-875,2138-2153",
+          "observation": "Window evaluation skips invalid percentages, while the new NaN regression test gives both observations the same timestamp."
+        },
+        {
+          "kind": "inferred",
+          "reference": "endpoint_window_at followed by blocking_window",
+          "observation": "The malformed newer record becomes the selected quota but contributes no window state, suppressing the older future-reset block."
+        }
+      ],
+      "verification": "Run RC2 with a newer NaN-only record and an older valid blocking record in both input orders; require the valid block to remain.",
+      "remedy": "Normalize and validate recorded windows before candidate admission, and skip observations with no valid windows, consistently with the documented absent-window treatment.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Telemetry spool is outside this review range."},
+    {"id":"F02-3","status":"not-checked","note":"Deletion retry behavior was not rechecked."},
+    {"id":"F02-4","status":"not-checked","note":"Harness implementation coverage was not rechecked."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction ordering was not rechecked."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt anchors were not rechecked."},
+    {"id":"F02-7","status":"not-checked","note":"Shared-plan identity was not rechecked."},
+    {"id":"F02-8","status":"not-checked","note":"No native Messages benchmark was reviewed."},
+    {"id":"F04-1","status":"not-checked","note":"Process-name Unicode handling was not rechecked."},
+    {"id":"F04-2","status":"not-checked","note":"Windows timezone boundary behavior was not rechecked."},
+    {"id":"F04-3","status":"not-checked","note":"Required-light panel metadata was not rechecked."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa timezone behavior was not rechecked."},
+    {"id":"F09-1","status":"not-checked","note":"Context-window configuration Unicode handling was not rechecked."},
+    {"id":"F09-2","status":"not-checked","note":"Flush/deletion synchronization was not rechecked."},
+    {"id":"F09-3","status":"not-checked","note":"Recoverable deletion cleanup was not rechecked."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread failure handling was not rechecked."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy telemetry sanitization was not rechecked."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor inference was not rechecked."},
+    {"id":"F11-1","status":"not-checked","note":"Health journal I/O failure handling was not rechecked."},
+    {"id":"F11-2","status":"not-checked","note":"Required-reviewer launcher propagation was not rechecked."},
+    {"id":"F11-3","status":"not-checked","note":"Required-reviewer shared-plan evaluation was not rechecked."},
+    {"id":"F11-4","status":"not-checked","note":"PowerShell hook pointer execution was not rechecked."},
+    {"id":"F11-5","status":"not-checked","note":"AGY tool stall handling was not rechecked."},
+    {"id":"F14-1","status":"not-checked","note":"Local-only deletion transaction persistence was not rechecked."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization was not rechecked."},
+    {"id":"F19-2","status":"not-checked","note":"Unreadable-salt cleanup behavior was not rechecked."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key telemetry sanitization was not rechecked."},
+    {"id":"F22-1","status":"not-checked","note":"Durable health-journal deduplication was not rechecked."},
+    {"id":"F23-1","status":"not-checked","note":"Process metadata lookup failure handling was not rechecked."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown creation-time recovery behavior was not rechecked."},
+    {"id":"F23-3","status":"not-checked","note":"Kill evidence persistence was not rechecked."},
+    {"id":"F23-4","status":"not-checked","note":"Recovery test coverage was not rechecked."},
+    {"id":"F23-5","status":"not-checked","note":"Production Windows Samoa behavior was not rechecked."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled fallback accounting was not rechecked."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated not-spooled suffix accounting was not rechecked."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent not-spooled cleanup was not rechecked."},
+    {"id":"F24-4","status":"not-checked","note":"Not-spooled status baseline behavior was not rechecked."},
+    {"id":"F24-5","status":"not-checked","note":"Plugin-home adapter and lock-domain coverage was not rechecked."},
+    {"id":"F24-6","status":"not-checked","note":"Post-fold record rewrite failure handling was not rechecked."},
+    {"id":"F25-2","status":"not-checked","note":"Claude endpoint transcript guard was not rechecked."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case normalization was not rechecked."},
+    {"id":"F25-4","status":"not-checked","note":"Child environment credential redaction was not rechecked."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree helper detection was not rechecked."},
+    {"id":"F30-2","status":"not-checked","note":"Pre-kill evidence durability was not rechecked."},
+    {"id":"F30-3","status":"not-checked","note":"Continuation and repair kill-site coverage was not rechecked."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer fallback accounting was not rechecked."},
+    {"id":"F36-1","status":"not-checked","note":"Transcript-path Unicode slicing was not rechecked."},
+    {"id":"F36-2","status":"not-checked","note":"Transcript-path NFC normalization was not rechecked."},
+    {"id":"F38-1","status":"not-checked","note":"Recovery after multiple persistence failures was not rechecked."},
+    {"id":"F40-1","status":"not-checked","note":"Kill-copy directory enumeration failures were not rechecked."},
+    {"id":"F40-2","status":"not-checked","note":"Kick acknowledgement after persistence failure was not rechecked."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata failures were not rechecked."},
+    {"id":"F46-1","status":"fixed","note":"By inspection, equal-time valid observations merge per window rather than retaining the first; relevant regression tests were read, not run."},
+    {"id":"F48-1","status":"fixed","note":"By inspection, primary and secondary windows are selected independently, preserving the stated crossing-window case."},
+    {"id":"F50-1","status":"fixed","note":"By inspection, future reset information outranks missing reset information for tied valid observations."},
+    {"id":"F52-1","status":"fixed","note":"The reported within-fold clock sampling is removed: aggregation passes one instant, also shared with health evaluation. Finding #1 concerns separate cache reuse across instants."},
+    {"id":"F52-2","status":"fixed","note":"The reported equal-time NaN case is addressed by finite_percent before tie comparison. Finding #2 concerns strictly newer malformed observations."}
+  ],
+  "unproven": [
+    "Neither new finding was reproduced by executing Rust code; both follow from inspected control flow.",
+    "The reported 34 quota tests and 823 workspace tests were not independently executed.",
+    "The nine .collab paths in the diff, earlier handoffs, external plugin oracle, and broader wave-8 implementation were not reviewed.",
+    "Earlier findings outside quota selection were not revalidated."
+  ],
+  "first_run_checklist": []
+}
