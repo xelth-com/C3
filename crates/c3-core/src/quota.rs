@@ -148,6 +148,24 @@ pub struct Totals {
     pub output: Option<i64>,
 }
 
+/// An observation instant as a record stores it (wave 8i): RFC3339 with the fractional seconds it
+/// has (`2026-10-13T12:00:00.900+00:00`; none when it has none), so it reads back exactly.
+fn iso_instant(v: DateTime<FixedOffset>) -> String {
+    v.to_rfc3339_opts(chrono::SecondsFormat::AutoSi, false)
+}
+
+/// Compare two observation instants. An instant WITHOUT a fractional part is imprecise (a legacy
+/// aggregate `observed_at`, a record written with second precision, a whole-second rollout stamp):
+/// when either side is, compare at whole-second granularity (equal = the same second); with both
+/// precise, compare exactly.
+fn cmp_instants(a: DateTime<FixedOffset>, b: DateTime<FixedOffset>) -> std::cmp::Ordering {
+    if a.timestamp_subsec_nanos() == 0 || b.timestamp_subsec_nanos() == 0 {
+        a.timestamp().cmp(&b.timestamp())
+    } else {
+        a.cmp(&b)
+    }
+}
+
 /// The keys of a recorded `quota` that carry each window's OWN observation instant (wave 8h),
 /// primary then secondary.
 pub const WINDOW_AT_KEYS: [&str; 2] = ["primary_observed_at", "secondary_observed_at"];
@@ -210,7 +228,7 @@ impl Observation {
                 self.secondary.is_some()
             };
             if let (true, Some(t)) = (present, self.window_at(kind)) {
-                q[*key] = Value::String(iso(to_local(t)));
+                q[*key] = Value::String(iso_instant(to_local(t)));
             }
         }
         q
@@ -727,7 +745,10 @@ pub fn merge_observation(
         let take_b = match (&aw, &bw) {
             (_, None) => false,
             (None, Some(_)) => true,
-            (Some(x), Some(y)) => match b_at.cmp(&a_at) {
+            (Some(x), Some(y)) => match match (b_at, a_at) {
+                (Some(bt), Some(at)) => cmp_instants(bt, at),
+                (b_t, a_t) => b_t.cmp(&a_t),
+            } {
                 std::cmp::Ordering::Greater => true,
                 std::cmp::Ordering::Less => false,
                 std::cmp::Ordering::Equal => {
@@ -1014,6 +1035,9 @@ pub struct EndpointWindow {
     /// The observation instant of each retained window (primary, secondary): the replacement
     /// decisions compare a candidate with THESE, never with `observed_at`.
     pub window_at: [Option<DateTime<FixedOffset>>; 2],
+    /// A window whose instant is UNKNOWN (a record written before wave 8h: `window_at` holds the
+    /// aggregate `observed_at`): it never wins on recency against a window with a known instant.
+    pub window_legacy: [bool; 2],
     /// `recorded` (a ledger entry or a machine-wide record) | `rollout` (the codex home's newest).
     pub source: &'static str,
     pub fingerprint: String,
@@ -1158,6 +1182,7 @@ fn quota_used(q: &Value, key: &str) -> Option<f64> {
 fn select_window(
     best: Option<EndpointWindow>,
     cand_at: [Option<DateTime<FixedOffset>>; 2],
+    cand_legacy: [bool; 2],
     quota: &Value,
     source: &'static str,
     fingerprint: String,
@@ -1174,6 +1199,7 @@ fn select_window(
             quota: json!({"primary": null, "secondary": null, "observed_at": quota["observed_at"].clone()}),
             observed_at: cand_at[0].or(cand_at[1])?,
             window_at: [None, None],
+            window_legacy: [false, false],
             source,
             fingerprint,
         };
@@ -1181,35 +1207,46 @@ fn select_window(
             if cand_valid(k) {
                 w.quota[KEYS[k]] = quota[KEYS[k]].clone();
                 w.window_at[k] = cand_at[k];
+                w.window_legacy[k] = cand_legacy[k];
             }
         }
         w.observed_at = w.window_at.iter().flatten().max().copied()?;
         stamp_window_instants(&mut w);
         return Some(w);
     };
+    // recency is only decided between instants of the same kind: a window of unknown instant
+    // (legacy) against a known one is decided by the 8d rank alone
+    let recency =
+        |c: Option<DateTime<FixedOffset>>, cur: DateTime<FixedOffset>, same_kind: bool| match c {
+            Some(c) if same_kind => cmp_instants(c, cur),
+            _ => std::cmp::Ordering::Equal,
+        };
     let mut took = false;
     for k in 0..2 {
         if !cand_valid(k) {
             continue;
         }
         let take = match (quota_used(&out.quota, KEYS[k]), out.window_at[k]) {
-            (Some(cu), Some(cur_at)) => match cand_at[k].cmp(&Some(cur_at)) {
-                std::cmp::Ordering::Greater => true,
-                std::cmp::Ordering::Less => false,
-                std::cmp::Ordering::Equal => {
-                    let reset = |q: &Value| when_offset(&q[KEYS[k]]["resets_at"]);
-                    cmp_window_rank(
-                        (quota_used(quota, KEYS[k]).unwrap_or(0.0), reset(quota)),
-                        (cu, reset(&out.quota)),
-                        now,
-                    ) == std::cmp::Ordering::Greater
+            (Some(cu), Some(cur_at)) => {
+                match recency(cand_at[k], cur_at, cand_legacy[k] == out.window_legacy[k]) {
+                    std::cmp::Ordering::Greater => true,
+                    std::cmp::Ordering::Less => false,
+                    std::cmp::Ordering::Equal => {
+                        let reset = |q: &Value| when_offset(&q[KEYS[k]]["resets_at"]);
+                        cmp_window_rank(
+                            (quota_used(quota, KEYS[k]).unwrap_or(0.0), reset(quota)),
+                            (cu, reset(&out.quota)),
+                            now,
+                        ) == std::cmp::Ordering::Greater
+                    }
                 }
-            },
+            }
             _ => true,
         };
         if take {
             out.quota[KEYS[k]] = quota[KEYS[k]].clone();
             out.window_at[k] = cand_at[k];
+            out.window_legacy[k] = cand_legacy[k];
             took = true;
         }
     }
@@ -1234,7 +1271,9 @@ fn stamp_window_instants(w: &mut EndpointWindow) {
             w.window_at[k],
             quota_used(&w.quota, ["primary", "secondary"][k]),
         ) {
-            (Some(t), Some(_)) => w.quota[*key] = Value::String(iso(to_local(t))),
+            (Some(t), Some(_)) if !w.window_legacy[k] => {
+                w.quota[*key] = Value::String(iso_instant(to_local(t)))
+            }
             _ => {
                 if let Some(o) = w.quota.as_object_mut() {
                     o.remove(*key);
@@ -1286,14 +1325,16 @@ pub fn endpoint_window_at(
         let legacy = when_offset(&q["observed_at"])
             .or_else(|| when_offset(&c["finished_at"]))
             .or_else(|| when_offset(&c["when"]));
-        let ats = [
-            when_offset(&q[WINDOW_AT_KEYS[0]]).or(legacy),
-            when_offset(&q[WINDOW_AT_KEYS[1]]).or(legacy),
+        let own = [
+            when_offset(&q[WINDOW_AT_KEYS[0]]),
+            when_offset(&q[WINDOW_AT_KEYS[1]]),
         ];
+        let ats = [own[0].or(legacy), own[1].or(legacy)];
         if ats[0].is_none() && ats[1].is_none() {
             continue;
         }
-        best = select_window(best, ats, q, "recorded", fp, now);
+        let unknown = [own[0].is_none(), own[1].is_none()];
+        best = select_window(best, ats, unknown, q, "recorded", fp, now);
     }
     if fp_set.contains(&builtin_fingerprint) {
         if let Some(home) = live_codex_home() {
@@ -1301,6 +1342,7 @@ pub fn endpoint_window_at(
                 best = select_window(
                     best,
                     live.window_at,
+                    [false, false],
                     &live.quota,
                     "rollout",
                     builtin_fingerprint.to_string(),
@@ -2709,26 +2751,139 @@ mod tests {
         check_abc(&w.unwrap(), &t, now, "live");
     }
 
-    // UNIT (F60-1): a record written before 8h (no per-window instants) falls back to its single
-    // aggregate instant for both windows - the pre-8h selection.
+    fn primary_obs(used: f64, at: DateTime<Utc>, reset: DateTime<Utc>) -> Observation {
+        Observation {
+            primary: Some(Window {
+                used_percent: used,
+                window_minutes: Some(300),
+                resets_at: Some(reset.to_rfc3339()),
+            }),
+            secondary: None,
+            at: Some(at.fixed_offset()),
+            primary_at: None,
+            secondary_at: None,
+            limit_id: "codex".into(),
+        }
+    }
+
+    // a ledger entry (real serde round trip) carrying `quota`
+    fn ledger_roundtrip(quota: Value, finished: DateTime<Utc>) -> Value {
+        let mut entry = crate::ledger::LedgerEntry {
+            n: 1,
+            finished_at: iso_s(finished),
+            quota: Some(quota),
+            ..Default::default()
+        };
+        entry.reviewer.provider_fingerprint = "fp".into();
+        let text = serde_json::to_string(&entry).unwrap();
+        let back: crate::ledger::LedgerEntry = serde_json::from_str(&text).unwrap();
+        serde_json::to_value(&back).unwrap()
+    }
+
+    // a live rollout (one token_count) with primary `used` at `at`; returns the home
+    fn live_rollout(tag: &str, used: f64, at: DateTime<Utc>, reset: DateTime<Utc>) -> PathBuf {
+        let home = scratch(tag);
+        let id = v7(at, 41);
+        let lines = vec![
+            meta_line(at, &id, ""),
+            token_line(at, 10, 0, 1, 10, &win(used, reset, 300), "null", "codex"),
+        ];
+        write_rollout(&home, &id, &lines, at);
+        home
+    }
+
+    // UNIT (F62-1, RC1): the instants are stored losslessly (fraction kept), and a recorded 99 %
+    // observed at :00.900 is NOT replaced by an OLDER live 30 % at :00.100 of the same second.
     #[test]
-    fn a_legacy_record_without_window_instants_uses_the_aggregate_instant() {
+    fn a_subsecond_instant_survives_the_record_and_beats_an_older_live_one() {
+        let now = Utc::now();
+        let base = secs(now - Duration::minutes(10));
+        let reset = now + Duration::minutes(120);
+        let rec_at = base + Duration::milliseconds(900);
+        let live_at = base + Duration::milliseconds(100);
+        let q = primary_obs(99.0, rec_at, reset).to_quota();
+        let stored = q["primary_observed_at"].as_str().unwrap().to_string();
+        assert!(stored.contains(".900"), "{stored}");
+        let v = ledger_roundtrip(q, rec_at);
+        assert_eq!(v["quota"]["primary_observed_at"].as_str().unwrap(), stored);
+        assert_eq!(
+            when_offset(&v["quota"]["primary_observed_at"])
+                .unwrap()
+                .timestamp_subsec_millis(),
+            900
+        );
+        let _live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let home = live_rollout("subsec-live", 30.0, live_at, reset);
+        set_live_codex_home(Some(home.to_string_lossy().to_string()));
+        let w = super::endpoint_window_at(std::slice::from_ref(&v), &["fp"], "fp", now);
+        set_live_codex_home(None);
+        let _ = std::fs::remove_dir_all(&home);
+        let w = w.unwrap();
+        assert_eq!(w.quota["primary"]["used_percent"], 99.0);
+        assert!(blocking_window(&w.quota, now).is_some());
+    }
+
+    // UNIT (F62-1): a record with SECOND precision (an 8h-style one) against a live instant of the
+    // same second is a tie -> the 8d rank (the higher share) decides, not recency.
+    #[test]
+    fn a_second_precision_record_ties_with_a_live_instant_of_the_same_second() {
+        let now = Utc::now();
+        let base = secs(now - Duration::minutes(10));
+        let reset = now + Duration::minutes(120);
+        let q = primary_obs(99.0, base, reset).to_quota();
+        let stored = q["primary_observed_at"].as_str().unwrap().to_string();
+        assert!(!stored.contains('.'), "{stored}");
+        let v = ledger_roundtrip(q, base);
+        let _live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        for (live_used, live_at) in [
+            (30.0, base + Duration::milliseconds(100)),
+            (30.0, base + Duration::milliseconds(900)),
+        ] {
+            let home = live_rollout("sec-live", live_used, live_at, reset);
+            set_live_codex_home(Some(home.to_string_lossy().to_string()));
+            let w = super::endpoint_window_at(std::slice::from_ref(&v), &["fp"], "fp", now);
+            set_live_codex_home(None);
+            let _ = std::fs::remove_dir_all(&home);
+            let w = w.unwrap();
+            assert_eq!(w.quota["primary"]["used_percent"], 99.0);
+            assert!(blocking_window(&w.quota, now).is_some());
+        }
+        // a strictly later whole second does win on recency
+        let home = live_rollout("sec-live2", 30.0, base + Duration::seconds(2), reset);
+        set_live_codex_home(Some(home.to_string_lossy().to_string()));
+        let w = super::endpoint_window_at(std::slice::from_ref(&v), &["fp"], "fp", now);
+        set_live_codex_home(None);
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(w.unwrap().quota["primary"]["used_percent"], 30.0);
+    }
+
+    // UNIT (F62-1 / F60-1 legacy): a record WITHOUT per-window fields has UNKNOWN window instants;
+    // the promoted 30 % of a legacy aggregate never beats a known, genuinely newer 99 % on recency,
+    // and the endpoint health evaluation sees the block. Legacy against legacy keeps the aggregate.
+    #[test]
+    fn a_legacy_record_never_wins_on_recency_against_a_known_instant() {
         let now = Utc::now();
         let (t, obs, mut agg, _m) = persisted_ab(now);
         let q = agg["quota"].as_object_mut().unwrap();
         q.remove("primary_observed_at");
         q.remove("secondary_observed_at");
-        let w = t_endpoint_window_at(&[agg.clone(), obs[2].clone()], &["fp"], "fp", now).unwrap();
-        // the aggregate (all at t3) beats C (t2): the old, legacy behaviour
+        // C as a CURRENT record (known per-window instants)
+        let reset = now + Duration::minutes(120);
+        let c_known = ledger_roundtrip(primary_obs(99.0, t[1], reset).to_quota(), t[1]);
+        for order in [
+            vec![agg.clone(), c_known.clone()],
+            vec![c_known.clone(), agg.clone()],
+        ] {
+            let w = t_endpoint_window_at(&order, &["fp"], "fp", now).unwrap();
+            assert_eq!(w.quota["primary"]["used_percent"], 99.0);
+            assert!(blocking_window(&w.quota, now).is_some());
+            // the endpoint health evaluation (the verdict) sees the block
+            let h = crate::health::endpoint_health(&order, "fp", now);
+            assert!(h.quota.is_some(), "health sees the block");
+        }
+        // legacy vs legacy: the aggregate instant still orders them (the pre-8h behaviour)
+        let w = t_endpoint_window_at(&[agg, obs[2].clone()], &["fp"], "fp", now).unwrap();
         assert_eq!(w.quota["primary"]["used_percent"], 30.0);
-        assert_eq!(
-            w.window_at[0].map(|x| x.timestamp()),
-            Some(t[2].timestamp())
-        );
-        assert_eq!(
-            w.window_at[1].map(|x| x.timestamp()),
-            Some(t[2].timestamp())
-        );
     }
 
     // UNIT (F48-1): the sub-agent / rollout aggregation merges per window at an equal instant.

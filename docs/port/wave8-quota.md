@@ -203,3 +203,29 @@ which is unchanged. Tests: `the_quota_record_carries_per_window_instants_through
 `a_persisted_aggregate_cannot_promote_its_older_window` (both recorded orders and C live),
 `a_legacy_record_without_window_instants_uses_the_aggregate_instant`. The plugin's T17 fix needs
 the same two ledger fields.
+
+## 8i - lossless instants, the imprecise rule, the legacy policy (reviewer finding F62-1)
+
+8h stored each window's instant through a seconds-only formatter, so a recorded 99 % observed at
+12:00:00.900 read back as 12:00:00 and an OLDER live 30 % at 12:00:00.100 looked strictly newer and
+replaced it. Three rules now:
+1. **Lossless**: `primary_observed_at` / `secondary_observed_at` are written as RFC3339 with the
+   fractional seconds the instant has (`2026-10-13T12:00:00.900+00:00`; no fraction when it has none),
+   in `to_quota` and in the re-stamp of `select_window`; read back exactly. The aggregate
+   `observed_at` keeps its seconds-only format (compat).
+2. **Imprecise compare** (`cmp_instants`): an instant without a fractional part is imprecise (a legacy
+   aggregate, a second-precision record, a whole-second rollout stamp). If either side is, the two
+   are compared at whole-second granularity: a recency win needs a strictly later whole second, the
+   same second is a tie and the 8d rank decides (future reset > past > null, higher share, later
+   reset). Both precise: exact. (A precise instant that happens to be exactly on a second reads as
+   imprecise - the conservative side.)
+3. **Legacy records** (no per-window keys): the window instants are UNKNOWN (`EndpointWindow.
+   window_legacy`; the aggregate stands in only for the legacy-vs-legacy comparison). A legacy window
+   never wins on recency against a window with a known instant - that pair is decided by the 8d rank
+   alone; no per-window key is written for a legacy window.
+Tests: `a_subsecond_instant_survives_the_record_and_beats_an_older_live_one`,
+`a_second_precision_record_ties_with_a_live_instant_of_the_same_second`,
+`a_legacy_record_never_wins_on_recency_against_a_known_instant` (replaces the 8h legacy test; the
+health verdict sees the block). Pairwise comparisons mixing precise and imprecise instants are not
+strictly transitive across three or more observations within one second; the rank keeps each pair
+deterministic. The plugin's T17 fix needs the same three rules.

@@ -46,3 +46,10 @@ Details and the port table: `docs/port/wave8-quota.md`.
 - Decided: new keys follow observed_at and only for present windows, so the null quota keeps its
   three keys (the plugin oracle's only strict key check).
 - Next: Astra round 8; plugin T17 mirrors the two ledger fields.
+
+## Wave 8i (F62-1 + the legacy remainder of F60-1, on main)
+- Done: per-window instants serialised losslessly (AutoSi); `cmp_instants` compares at whole-second
+  granularity when either side has no fraction (tie -> 8d rank); legacy records have UNKNOWN window
+  instants (`EndpointWindow.window_legacy`) and never win on recency against a known one.
+- Decided: an instant exactly on a second reads as imprecise (conservative).
+- Next: Astra round 9; plugin T17 mirrors the three rules.
