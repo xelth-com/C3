@@ -222,3 +222,7 @@ enough for a reading pass; how to score a tier (usefulness per 5-hour-window sha
 2026-10-14 19:15 - the operator's decisions: install 0.2.1 (cargo install running; the plugin is read from ~/C3/plugin at user scope, 0.2.1 already, applies at the next session start), update the /C3/ page (worker on xelth.com), the plugin T17 wave NOT now; after the install and a restart start the consilium (framing panels).
 
 2026-10-14 21:53 - consilium done (task consilium-2026-10-14, commit 3b44fed): panels A and B through C3, decisions in notes-decisions.md; roster moved to claude-first (10 entries). Implementation order: telemetry prerequisites -> worker event + effort fields -> watch -> usage tiers -> browser engine; C3 defects to file first (panel fork default, come-back line, task lock for single runs, 429 class on monthly plans). Idle from here unless the operator starts a wave.
+
+2026-10-14 22:14 - idle since 22:15 (consilium committed and pushed; roster claude-first, 9 entries; waiting for the operator to start the first implementation wave).
+
+2026-10-14 22:44 - idle since 22:40 (index-surreal flipped to opt-in, 1246f02/68774db pushed; next: 0.2.2 with the four consilium defects, or the first implementation wave - the operator's call).
