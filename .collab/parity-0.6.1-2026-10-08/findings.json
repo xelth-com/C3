@@ -11939,7 +11939,7 @@
                      },
                      {
                          "id":  "F55-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -12007,6 +12007,15 @@
                                              "evidence":  "",
                                              "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                              "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T11:47:51+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 8f (cc03617): the account cache holds raw observations, selection at each lookup; per-window validity before replacement",
+                                             "evidence":  "",
+                                             "base_commit":  "cc03617d01cfa1c9e8365e5835670a47df8d8b9d",
+                                             "tree_sha256":  "4642ba7671210539178793afab570c8d44b99db836e846c4e9482559f5e6bd3f"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -12015,7 +12024,7 @@
                      },
                      {
                          "id":  "F55-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -12083,6 +12092,15 @@
                                              "evidence":  "",
                                              "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                              "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T11:47:55+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 8f (cc03617): the account cache holds raw observations, selection at each lookup; per-window validity before replacement",
+                                             "evidence":  "",
+                                             "base_commit":  "cc03617d01cfa1c9e8365e5835670a47df8d8b9d",
+                                             "tree_sha256":  "4642ba7671210539178793afab570c8d44b99db836e846c4e9482559f5e6bd3f"
                                          }
                                      ],
                          "reviewer_checks":  [
