@@ -10821,7 +10821,7 @@
                      },
                      {
                          "id":  "F50-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -10894,6 +10894,15 @@
                                              "evidence":  "",
                                              "base_commit":  "e1a0a9032c514d6302b9f4dbf7a73b725cf25755",
                                              "tree_sha256":  "cbd0c0bf9c9c9b7f78978b7a07ece36a2d9f5eb1a5224f68326b2dfd8599b004"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T08:14:58+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 8d (83ca5dd): cmp_window_rank - future \u003e past \u003e null reset, then used_percent, then later resets_at; permutation test",
+                                             "evidence":  "",
+                                             "base_commit":  "83ca5dde062d5a68b46c59cf0bddcce13c83b8f1",
+                                             "tree_sha256":  "289e1ed7d12ff8797109b61ff817a0c084ef906c88ebee503f43bfcd824488bc"
                                          }
                                      ],
                          "reviewer_checks":  [
