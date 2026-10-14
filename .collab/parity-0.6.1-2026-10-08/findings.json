@@ -9803,7 +9803,7 @@
                      },
                      {
                          "id":  "F46-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -9872,6 +9872,15 @@
                                              "evidence":  "",
                                              "base_commit":  "ef6d979c880803ccbe72f0c6f607b0f9baf21c62",
                                              "tree_sha256":  "8edb003f929b342186e8a502aa4a265f344b5dce8f90bb53bc595b23e9743cb1"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T06:55:13+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 8b (c23869d): window_obs_wins - newer wins, equal time -\u003e higher used_percent; both selections; tests in both orders",
+                                             "evidence":  "",
+                                             "base_commit":  "c23869db64f88de174ecebf466f71c9695fb1439",
+                                             "tree_sha256":  "29cd72c0d43fdcbd7fb809503fb364cd38f73a81f39b4ed70dbe525ce904c760"
                                          }
                                      ],
                          "reviewer_checks":  [
