@@ -1,0 +1,59 @@
+{
+    "status_version":  1,
+    "id":  "e51a9549-7d83-4400-8627-2675d41ac907",
+    "id8":  "e51a9549",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-14T06:08:59+02:00",
+    "updated":  "2026-10-14T06:17:05+02:00",
+    "finished":  "2026-10-14T06:17:04+02:00",
+    "wall_seconds":  485.8,
+    "pid":  33452,
+    "start_time":  "2026-10-14T04:09:03.6005892Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave8-quota-review",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\45-claude-wave8-quota-review.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  428.8,
+                        "n":  27,
+                        "handoff":  "46",
+                        "reply":  "handoffs/46-codex-wave8-quota-review.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a1389a-3229-79d2-9030-8cb73d51faf0 (source: events), wall 428.8 s\nquota      : 5h 9% until 11:10; wk 37% until Oct 20; this run 595616 input tokens (513664 cached) in 11 calls, max 80028 per call of 258400; sub-agents 0\nverdict    : HOLD - Endpoint quota aggregation can discard a blocking observation when timestamps tie, allowing a reviewer to remain available.\nfindings   : 0 blocker, 1 major, 0 minor, 0 note -\u003e F46-1 in findings.json\nprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked\nreply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\46-codex-wave8-quota-review.md\nreply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\46-codex-wave8-quota-review.reply.json\nevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\46-codex-wave8-quota-review.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-e51a9549.log",
+    "args":  null,
+    "coordinator":  {
+                        "provider":  "anthropic",
+                        "model":  "claude-fable-5-1",
+                        "engine":  "codex",
+                        "host":  "claude-code",
+                        "host_by":  "markers",
+                        "source":  "explicit",
+                        "in_roster":  false,
+                        "unresolved":  null
+                    },
+    "child_env_scrubbed":  [
+                               "AI_AGENT",
+                               "CLAUDECODE",
+                               "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                               "CLAUDE_CODE_CHILD_SESSION",
+                               "CLAUDE_CODE_ENTRYPOINT",
+                               "CLAUDE_CODE_EXECPATH",
+                               "CLAUDE_CODE_MESSAGING_SOCKET",
+                               "CLAUDE_CODE_MESSAGING_TOKEN",
+                               "CLAUDE_CODE_SESSION_ATTENDED",
+                               "CLAUDE_CODE_SESSION_ID",
+                               "CLAUDE_EFFORT",
+                               "CLAUDE_PID"
+                           ]
+}

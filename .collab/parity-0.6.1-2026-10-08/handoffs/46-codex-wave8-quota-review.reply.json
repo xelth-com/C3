@@ -1,0 +1,120 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Endpoint quota aggregation can discard a blocking observation when timestamps tie, allowing a reviewer to remain available.",
+  "reply_markdown": "1. **Q1 — One blocking issue: finding #1.** Endpoint aggregation keeps the first observation at an equal timestamp, even when another observation reports 99% usage with a future reset. This violates the documented fullest-on-tie rule and can permit a run against an exhausted window. Serialization drops fractional seconds, making ties possible even between distinct observations.\n\n   The inspected window-state code correctly excludes expired resets from blocking decisions and skips null windows. The main-turn watcher locates the current thread’s rollout and applies an observation-time guard. These reads do not establish complete continuation or cross-provider correctness.\n\n2. **Q2 — No interchange defect established in the inspected schema/header changes.** The four optional ledger fields follow `commit_wait_ms`; the test asserts that order and preserves absent versus present-null token records. The header renderer inserts the optional quota line after the outcome line. Compatibility with older plugin readers was not independently executed.\n\n3. **Q3 — HOLD; fix finding #1 before tagging v0.2.1.** This is an incomplete, read-only review, not an independent confirmation of the reported harness results. The harness’s UNIT assertions inspected here call PowerShell helpers; their passes do not independently validate C3’s implementations.\n\nI reached the ten-tool-call limit. Unread material includes the remaining quota/health/orchestrator hunks, argument and propagation wiring, dry-run/prompt changes, most tests, and several outputs omitted by tool-result truncation. Specific paths are recorded in `unproven`. All supplied prior findings remain **not-checked** in this review; their “implemented” labels alone do not establish fixes.\n\n## Requested checks\n\n- **RC1 — finding #1:** Working directory `C:\\Users\\Dmytro\\C3`; permission **workspace-write**; budget **one regression test, 10 minutes**. Add a quota unit test passing `endpoint_window` two entries for the same fingerprint and identical `observed_at`, with primary usage 30% and 99% and the same future reset; repeat with reversed ordering. Assert `blocking_window` returns the 99% window in both cases, then run `cargo test -p c3-core quota::tests`. The current first-entry selection should fail one ordering; the fix must pass both.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 979
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 79
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1145
+        }
+      ],
+      "claim": "Endpoint quota aggregation is order-dependent for equal observation timestamps: it retains the first quota instead of the fuller observation, so an active 99% window can be hidden by a 30% observation and the endpoint can remain available. Quota serialization removes fractional seconds, increasing the chance of these ties.",
+      "trigger": "Two quota-bearing consultations for the same endpoint have identical serialized observed_at values and future reset times; the lower-usage entry precedes the blocking entry. The equal-time live-observation replacement also requires strictly newer time and cannot correct an exactly tied lower recorded observation.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:979, endpoint_window",
+          "observation": "Both recorded-observation selection and live-observation replacement compare timestamps with strict greater-than; neither resolves equal timestamps by usage."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:603, newer_wins",
+          "observation": "The rollout aggregation helper explicitly selects the fullest observation at equal timestamps, demonstrating the intended tie rule."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:79 and Observation::to_quota",
+          "observation": "The serialized observation uses an ISO formatter without fractional seconds."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1145",
+          "observation": "Endpoint health derives its window-based blocking record solely from the observation selected by endpoint_window."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git -c safe.directory=C:/Users/Dmytro/claude-codex-consult -C C:/Users/Dmytro/claude-codex-consult show a162b8d:README.md, quota section",
+          "observation": "The pinned reference documents that the fuller share wins at the same observation instant."
+        }
+      ],
+      "verification": "Run RC1 with both consultation orderings and require the 99% future-reset window to block in both.",
+      "remedy": "Use a consistent newest-then-fullest comparator for recorded and live endpoint observations, matching newer_wins; add equal-time order-independence tests.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Telemetry spool synchronization was not rechecked."},
+    {"id":"F02-3","status":"not-checked","note":"Deletion retry identity was not rechecked."},
+    {"id":"F02-4","status":"not-checked","note":"A complete harness implementation coverage map was not audited."},
+    {"id":"F02-5","status":"not-checked","note":"Rating commit-before-spool behavior was not rechecked."},
+    {"id":"F02-6","status":"not-checked","note":"Context-budget anchor behavior was not rechecked."},
+    {"id":"F02-7","status":"not-checked","note":"Cross-engine shared-plan validation and execution were not rechecked."},
+    {"id":"F02-8","status":"not-checked","note":"No three-route benchmark evidence was evaluated."},
+    {"id":"F04-1","status":"not-checked","note":"Unicode process classification was not rechecked."},
+    {"id":"F04-2","status":"not-checked","note":"Production Windows DST boundaries were not tested."},
+    {"id":"F04-3","status":"not-checked","note":"Required-light ledger metadata was not rechecked."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa offset normalization was not rechecked."},
+    {"id":"F09-1","status":"not-checked","note":"Unicode context configuration handling was not rechecked."},
+    {"id":"F09-2","status":"not-checked","note":"Flush versus pending-deletion lock ordering was not rechecked."},
+    {"id":"F09-3","status":"not-checked","note":"Recoverable post-deletion cleanup was not rechecked."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread failure preservation was not rechecked."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy event sanitization was not rechecked."},
+    {"id":"F09-6","status":"not-checked","note":"Bare-provider rating model inference was not rechecked."},
+    {"id":"F11-1","status":"not-checked","note":"Health journal I/O failure handling was outside the inspected hunks."},
+    {"id":"F11-2","status":"not-checked","note":"Required AGY launcher override propagation was not rechecked."},
+    {"id":"F11-3","status":"not-checked","note":"Required-reviewer shared-plan roster coverage was not rechecked."},
+    {"id":"F11-4","status":"not-checked","note":"PowerShell hook command execution was not rechecked."},
+    {"id":"F11-5","status":"not-checked","note":"AGY tool stall allowance was not rechecked."},
+    {"id":"F14-1","status":"not-checked","note":"Local-only deletion transaction persistence was not rechecked."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization was not rechecked."},
+    {"id":"F19-2","status":"not-checked","note":"Unreadable salt cleanup handling was not rechecked."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key telemetry sanitization was not rechecked."},
+    {"id":"F22-1","status":"not-checked","note":"Durable health journal deduplication was not rechecked."},
+    {"id":"F23-1","status":"not-checked","note":"Live PID metadata inspection failure handling was not rechecked."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown creation-time recovery blocking was not rechecked."},
+    {"id":"F23-3","status":"not-checked","note":"Kill-evidence persistence was not rechecked."},
+    {"id":"F23-4","status":"not-checked","note":"Deterministic recovery proof coverage was not rechecked."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa boundary evidence was not evaluated."},
+    {"id":"F24-1","status":"not-checked","note":"Gone-producer fallback accounting was not rechecked."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated not-spooled suffix accounting was not rechecked."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent not-spooled creation during cleanup was not rechecked."},
+    {"id":"F24-4","status":"not-checked","note":"Unseen-suffix status timestamps were not rechecked."},
+    {"id":"F24-5","status":"not-checked","note":"Plugin-home marker and cross-runtime locking coverage was not rechecked."},
+    {"id":"F24-6","status":"not-checked","note":"Post-fold record rewrite failure handling was not rechecked."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript-location preflight was not rechecked."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case normalization was not rechecked."},
+    {"id":"F25-4","status":"not-checked","note":"Credential redaction in debug formatting was not rechecked."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree generic-helper recovery was not rechecked."},
+    {"id":"F30-2","status":"not-checked","note":"Pre-kill durability and write-failure continuation were not rechecked."},
+    {"id":"F30-3","status":"not-checked","note":"Continuation and repair kill-site proof coverage was not rechecked."},
+    {"id":"F31-1","status":"not-checked","note":"Live-to-gone producer accounting was not rechecked."},
+    {"id":"F36-1","status":"not-checked","note":"Unicode transcript guard slicing was not rechecked."},
+    {"id":"F36-2","status":"not-checked","note":"NFC transcript destination normalization was not rechecked."},
+    {"id":"F38-1","status":"not-checked","note":"Recovery after all local kill-record writes fail was not rechecked."},
+    {"id":"F40-1","status":"not-checked","note":"Kill-copy directory enumeration errors were not rechecked."},
+    {"id":"F40-2","status":"not-checked","note":"Kick acknowledgement after all persistence writes fail was not rechecked."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata inspection errors were not rechecked."}
+  ],
+  "unproven": [
+    "No tests, harnesses, builds, or live reviewer runs were executed; reported results in the brief were not independently reproduced.",
+    "The equal-timestamp defect is supported by code inspection, not an executed regression.",
+    "Quota rollout discovery, the remaining quota tests, health pruning/conversion changes, and later orchestrator continuation/repair/header wiring were not fully read.",
+    "Changed paths not substantively inspected: crates/c3-cli/src/main.rs; crates/c3-cli/tests/telemetry_parity.rs; crates/c3-core/src/engine.rs; crates/c3-core/src/lib.rs; crates/c3-core/tests/formats.rs; crates/c3/src/cli/consult.rs; crates/c3/src/consult/args.rs; crates/c3/src/consult/detach.rs; crates/c3/src/consult/dryrun.rs; crates/c3/src/consult/http.rs; crates/c3/src/consult/prompt.rs; crates/c3/src/engines/agy.rs; crates/c3/src/engines/claude.rs; crates/c3/src/engines/muse.rs; crates/c3/src/panel/run.rs; crates/c3/src/telemetry/classes.rs; crates/c3/tests/http_engine.rs; crates/c3/tests/recovery_wave3a.rs; plugin/skills/consult/SKILL.md; plugin/skills/coordinate/SKILL.md; tests/shim/codex-consult.ps1.",
+    "Tool-result truncation omitted requested plugin function excerpts, later quota guard/test excerpts, selected harness procedures, crates/c3/src/consult/summary.rs, and docs/port/harness-shim.md; these were not credited as inspected evidence.",
+    "The .collab changes were deliberately skipped as requested by the brief.",
+    "Cross-provider account attribution, null-primary and expired-reset integration behavior, detached/panel budget propagation, timeout continuation suppression, and legacy plugin round trips remain unproven by this review."
+  ],
+  "first_run_checklist": []
+}

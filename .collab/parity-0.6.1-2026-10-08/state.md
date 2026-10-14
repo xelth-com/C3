@@ -172,3 +172,5 @@ Worker telemetry, additions (the operator, 2026-10-14 00:00): (1) the worker's R
   `docs/port/harness-shim.md`.
 
 2026-10-14 06:10 - wave 8 (quota windows, the plugin wave 30 ported) merged: bf1bd4a, 811 tests, seven harnesses at plugin HEAD on target (quota 57/0, 0.3 229/0, claude 87/0 - RC7's E2 65/1 not reproducible). Diff review by Astra (brief 45) -> tag v0.2.1 on ACCEPT. The site: xelth.com/C3/ announces 0.2.0 (58e352a + the parity strings), deployed.
+
+2026-10-14 06:25 - wave 8 review (n=27, handoff 46): HOLD on F46-1 major (endpoint quota aggregation keeps the FIRST observation on an equal observed_at instead of the fuller one; observed_at has no fractions, so ties happen; the live-observation replacement needs strictly newer too). Wave 8b: tie -> the higher used_percent wins, in both places; RC1 unit test both orders. Then round 2 and tag v0.2.1.
