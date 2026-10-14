@@ -148,6 +148,10 @@ pub struct Totals {
     pub output: Option<i64>,
 }
 
+/// The keys of a recorded `quota` that carry each window's OWN observation instant (wave 8h),
+/// primary then secondary.
+pub const WINDOW_AT_KEYS: [&str; 2] = ["primary_observed_at", "secondary_observed_at"];
+
 /// One observation of the windows: the windows of one `token_count` event and when it was written.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Observation {
@@ -189,13 +193,27 @@ impl Observation {
         p.max(s)
     }
 
-    /// The ledger's `quota` `{primary, secondary, observed_at}` (observed_at local).
+    /// The ledger's `quota` `{primary, secondary, observed_at}` (observed_at local), then - only for
+    /// a window that is present - `primary_observed_at` / `secondary_observed_at`: the instant
+    /// each retained window was OBSERVED (wave 8h; `observed_at` is the derived aggregate, the
+    /// legacy fallback of a record written without them).
     pub fn to_quota(&self) -> Value {
-        json!({
+        let mut q = json!({
             "primary": self.primary.as_ref().map(Window::to_json),
             "secondary": self.secondary.as_ref().map(Window::to_json),
             "observed_at": self.at.map(|a| iso(to_local(a))),
-        })
+        });
+        for (kind, key) in WINDOW_AT_KEYS.iter().enumerate() {
+            let present = if kind == 0 {
+                self.primary.is_some()
+            } else {
+                self.secondary.is_some()
+            };
+            if let (true, Some(t)) = (present, self.window_at(kind)) {
+                q[*key] = Value::String(iso(to_local(t)));
+            }
+        }
+        q
     }
 }
 
@@ -1166,6 +1184,7 @@ fn select_window(
             }
         }
         w.observed_at = w.window_at.iter().flatten().max().copied()?;
+        stamp_window_instants(&mut w);
         return Some(w);
     };
     let mut took = false;
@@ -1203,8 +1222,26 @@ fn select_window(
             }
             out.observed_at = l;
         }
+        stamp_window_instants(&mut out);
     }
     Some(out)
+}
+
+/// Write each retained window's instant into the selected `quota` (the keys of [`WINDOW_AT_KEYS`]).
+fn stamp_window_instants(w: &mut EndpointWindow) {
+    for (k, key) in WINDOW_AT_KEYS.iter().enumerate() {
+        match (
+            w.window_at[k],
+            quota_used(&w.quota, ["primary", "secondary"][k]),
+        ) {
+            (Some(t), Some(_)) => w.quota[*key] = Value::String(iso(to_local(t))),
+            _ => {
+                if let Some(o) = w.quota.as_object_mut() {
+                    o.remove(*key);
+                }
+            }
+        }
+    }
 }
 
 /// `Get-EndpointWindow`: every consultation (ledger entry or machine-wide record) of `fp_set` that
@@ -1245,14 +1282,18 @@ pub fn endpoint_window_at(
         if fp.is_empty() || !fp_set.contains(&fp.as_str()) {
             continue;
         }
-        let at = when_offset(&q["observed_at"])
+        // the aggregate instant is the LEGACY fallback (a record written before wave 8h)
+        let legacy = when_offset(&q["observed_at"])
             .or_else(|| when_offset(&c["finished_at"]))
             .or_else(|| when_offset(&c["when"]));
-        let at = match at {
-            Some(a) => a,
-            None => continue,
-        };
-        best = select_window(best, [Some(at), Some(at)], q, "recorded", fp, now);
+        let ats = [
+            when_offset(&q[WINDOW_AT_KEYS[0]]).or(legacy),
+            when_offset(&q[WINDOW_AT_KEYS[1]]).or(legacy),
+        ];
+        if ats[0].is_none() && ats[1].is_none() {
+            continue;
+        }
+        best = select_window(best, ats, q, "recorded", fp, now);
     }
     if fp_set.contains(&builtin_fingerprint) {
         if let Some(home) = live_codex_home() {
@@ -2574,6 +2615,120 @@ mod tests {
         let f = first.unwrap();
         assert_eq!(f.0 .0, Some(99.0));
         assert_eq!(f.1 .0, Some(40.0));
+    }
+
+    // A and B merged (the production path: merge_observation -> to_quota), written as a ledger
+    // entry and read back through the real serde of the ledger.
+    fn persisted_ab(now: DateTime<Utc>) -> ([DateTime<Utc>; 3], [Value; 3], Value, Observation) {
+        let (t, obs) = abc(now);
+        let m = merge_observation(
+            Some(obs_of(&obs[0], at_of(&obs[0]))),
+            Some(&obs_of(&obs[1], at_of(&obs[1]))),
+            now,
+        )
+        .unwrap();
+        let mut entry = crate::ledger::LedgerEntry {
+            n: 1,
+            finished_at: iso_s(t[2]),
+            quota: Some(m.to_quota()),
+            ..Default::default()
+        };
+        entry.reviewer.provider_fingerprint = "fp".into();
+        let text = serde_json::to_string(&entry).unwrap();
+        let back: crate::ledger::LedgerEntry = serde_json::from_str(&text).unwrap();
+        let v: Value = serde_json::to_value(&back).unwrap();
+        (t, obs, v, m)
+    }
+
+    // UNIT (F60-1): the record written for an aggregate carries each window's own instant and it
+    // survives the ledger entry and the machine-wide health record round trips.
+    #[test]
+    fn the_quota_record_carries_per_window_instants_through_ledger_and_health() {
+        let now = Utc::now();
+        let (t, _obs, v, m) = persisted_ab(now);
+        let q = &v["quota"];
+        assert_eq!(
+            ts_of(q["primary_observed_at"].as_str()),
+            Some(t[0].timestamp())
+        );
+        assert_eq!(
+            ts_of(q["secondary_observed_at"].as_str()),
+            Some(t[2].timestamp())
+        );
+        assert_eq!(ts_of(q["observed_at"].as_str()), Some(t[2].timestamp()));
+        // an absent window writes no instant; a null quota keeps exactly its three keys
+        let only = Observation {
+            secondary: None,
+            ..m.clone()
+        };
+        assert!(only.to_quota().get("secondary_observed_at").is_none());
+        let nq = null_quota();
+        let keys: Vec<&String> = nq.as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["primary", "secondary", "observed_at"]);
+        // the machine-wide health record
+        let rec = crate::health::new_machine_health_record_quota(
+            "fp",
+            "usable reply",
+            None,
+            "r",
+            None,
+            Some(&m.to_quota()),
+        )
+        .unwrap();
+        let text = serde_json::to_string(&rec).unwrap();
+        let back: crate::health::MachineEndpoint = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.quota.unwrap(), m.to_quota());
+    }
+
+    // UNIT (F60-1): the persisted aggregate (A primary 30 at t1 + B secondary 10 at t3) against C
+    // (primary 99 at t2): recorded in both orders, and with C live - primary 99 % at t2 survives
+    // and blocks.
+    #[test]
+    fn a_persisted_aggregate_cannot_promote_its_older_window() {
+        let now = Utc::now();
+        let (t, obs, agg, _m) = persisted_ab(now);
+        let c = obs[2].clone();
+        for order in [vec![agg.clone(), c.clone()], vec![c.clone(), agg.clone()]] {
+            let w = t_endpoint_window_at(&order, &["fp"], "fp", now).unwrap();
+            check_abc(&w, &t, now, "recorded");
+        }
+        // C live (a rollout), the aggregate recorded
+        let _live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let home = scratch("persisted-live");
+        let reset = now + Duration::minutes(120);
+        let id = v7(t[1], 31);
+        let lines = vec![
+            meta_line(t[1], &id, ""),
+            token_line(t[1], 10, 0, 1, 10, &win(99.0, reset, 300), "null", "codex"),
+        ];
+        write_rollout(&home, &id, &lines, t[1]);
+        set_live_codex_home(Some(home.to_string_lossy().to_string()));
+        let w = super::endpoint_window_at(std::slice::from_ref(&agg), &["fp"], "fp", now);
+        set_live_codex_home(None);
+        let _ = std::fs::remove_dir_all(&home);
+        check_abc(&w.unwrap(), &t, now, "live");
+    }
+
+    // UNIT (F60-1): a record written before 8h (no per-window instants) falls back to its single
+    // aggregate instant for both windows - the pre-8h selection.
+    #[test]
+    fn a_legacy_record_without_window_instants_uses_the_aggregate_instant() {
+        let now = Utc::now();
+        let (t, obs, mut agg, _m) = persisted_ab(now);
+        let q = agg["quota"].as_object_mut().unwrap();
+        q.remove("primary_observed_at");
+        q.remove("secondary_observed_at");
+        let w = t_endpoint_window_at(&[agg.clone(), obs[2].clone()], &["fp"], "fp", now).unwrap();
+        // the aggregate (all at t3) beats C (t2): the old, legacy behaviour
+        assert_eq!(w.quota["primary"]["used_percent"], 30.0);
+        assert_eq!(
+            w.window_at[0].map(|x| x.timestamp()),
+            Some(t[2].timestamp())
+        );
+        assert_eq!(
+            w.window_at[1].map(|x| x.timestamp()),
+            Some(t[2].timestamp())
+        );
     }
 
     // UNIT (F48-1): the sub-agent / rollout aggregation merges per window at an equal instant.

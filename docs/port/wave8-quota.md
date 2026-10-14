@@ -184,3 +184,22 @@ window with `EndpointWindow.window_at`). Tests: `partial_windows_keep_their_own_
 `partial_windows_keep_their_own_instants_across_the_recorded_live_split`,
 `distinct_instant_partial_windows_are_order_independent` (720 orders, distinct instants, partial
 windows, a NaN-only one). The plugin's T17 fix needs per-window timestamps too.
+
+## 8h - the per-window instants survive persistence (reviewer finding F60-1, supersedes F58-1)
+
+8g kept each window's instant in memory, but `Observation::to_quota` wrote ONE aggregate
+`observed_at`, so a recorded aggregate (the ledger's `quota`, the machine-wide health record - both
+carry the quota object verbatim) lost the provenance: `endpoint_window_at` rebuilt both instants
+from it, and an aggregate of A (primary 30 at t1) and B (secondary 10 at t3) labelled its primary
+with t3 and beat C (primary 99 at t2). The quota record now carries two optional keys after
+`observed_at`: `primary_observed_at` and `secondary_observed_at` (ISO, local offset), written by
+`to_quota` only for a window that is present (a null quota keeps exactly `primary, secondary,
+observed_at`). They are written wherever the quota is written (the ledger entry of a codex run, the
+machine-wide record) and read by the recorded selection in `endpoint_window_at`; the aggregate
+`observed_at` is only the LEGACY fallback of a record written before 8h (keys absent), and the
+selected `EndpointWindow.quota` is re-stamped with them. Plugin compatibility: the oracle reads
+only keys it knows; its one strict key check is on the NULL quota (`primary,secondary,observed_at`),
+which is unchanged. Tests: `the_quota_record_carries_per_window_instants_through_ledger_and_health`,
+`a_persisted_aggregate_cannot_promote_its_older_window` (both recorded orders and C live),
+`a_legacy_record_without_window_instants_uses_the_aggregate_instant`. The plugin's T17 fix needs
+the same two ledger fields.

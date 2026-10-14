@@ -38,3 +38,11 @@ Details and the port table: `docs/port/wave8-quota.md`.
 - Decided: a candidate window is compared only with the instant of the retained window of that kind.
 - Next: Astra round 7; the plugin's T17 must mirror per-window rank, one instant, finite
   percentages, the raw account cache and per-window instants.
+
+## Wave 8h (F60-1, on main)
+- Done: the quota record carries `primary_observed_at` / `secondary_observed_at` (to_quota writes
+  them for present windows; the recorded selection reads them; aggregate observed_at = legacy
+  fallback). Ledger entry and machine record carry the quota Value verbatim, so no schema change.
+- Decided: new keys follow observed_at and only for present windows, so the null quota keeps its
+  three keys (the plugin oracle's only strict key check).
+- Next: Astra round 8; plugin T17 mirrors the two ledger fields.
