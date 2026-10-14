@@ -1,0 +1,372 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Per-window timestamps survive in-memory aggregation but are lost during quota serialization, allowing recorded aggregates to hide a newer blocking window.",
+  "reply_markdown": "1. **Yes—across serialization.** Let t1 < t2 < t3. Merge A(primary=30 at t1) with B(secondary=10 at t3), then serialize through `Observation::to_quota`, as `codex_run_quota` does. Only aggregate `observed_at=t3` survives. Recorded selection consequently treats primary=30 as observed at t3 and rejects C(primary=99 at t2), in either record order. All resets can remain in the future. The same recorded aggregate defeats live C. The new permutation tests preserve timestamps in memory; they do not test this serialization boundary.\n\n2. **HOLD—F58-1 remains open through finding #1, which narrows the remaining defect to persistence.** Do not tag v0.2.1 yet. The direct merge correction looks sound for the supplied timestamped fixtures.\n\nI read every source/document diff hunk and targeted surrounding code. A read-only Python model reproduced the serialization counterexample; it was not a Rust execution. I did not rerun Cargo tests, inspect the changed `.collab` artifacts beyond the brief, read historical handoffs, or re-audit unrelated earlier findings. Earlier wave-note sections were inspected selectively.\n\n## Requested checks\n\n- **RC1:** In `C:\\Users\\Dmytro\\C3`, with **workspace-write** permission, add and run a Rust regression that merges A/B, serializes with `to_quota`, and supplies that quota to `endpoint_window_at` against C in both recorded orders and as live C. Require primary=99 at t2 and an active block. Budget: one fixture, 20 minutes. This settles finding #1.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 193
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 806
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1255
+        },
+        {
+          "path": "crates/c3/src/consult/orchestrate.rs",
+          "line": 6388
+        },
+        {
+          "path": "docs/port/wave8-quota.md",
+          "line": 177
+        }
+      ],
+      "claim": "F58-1 remains at the persistence boundary: Observation::to_quota discards primary_at and secondary_at, while endpoint_window_at reconstructs both window instants from the aggregate observed_at. A saved run aggregate therefore promotes an older retained window to the newer sibling's timestamp and can suppress a genuinely newer blocking observation, despite the corrected in-memory merge.",
+      "trigger": "For one endpoint, merge primary=30 at t1 with secondary=10 at t3, where t1<t2<t3, and persist the result through codex_run_quota. Compare that recorded aggregate against primary=99 at t2, either recorded or live. Give every window a future reset and no independent quota-failure record. The serialized aggregate labels primary=30 with t3 and wins over the 99% observation.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:193-198, 794-806",
+          "observation": "codex_run_quota merges parent/sub-agent observations and calls to_quota, which emits primary, secondary and one aggregate observed_at, without the per-window instants."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:6123-6130; search matches at 6388-6392 and 6592-6598",
+          "observation": "The consultation obtains codex_run_quota, stores it in secondary state, and passes its quota value into the ledger and machine-health recording paths."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:1248-1266",
+          "observation": "Recorded selection supplies [Some(at), Some(at)] from the single serialized timestamp; only live AccountWindow candidates supply their preserved per-window timestamps."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:2447-2574",
+          "observation": "The new tests exercise raw recorded observations, direct in-memory merges and recorded/live partitions, but do not serialize a merged Observation before recorded selection."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "Read-only Python model executed through python -B -",
+          "observation": "Direct merging retained primary=99 at t2 in all six permutations. Serializing the A/B aggregate and reconstructing recorded timestamps produced primary=30 at t3 and no block in both record orders. This modeled the inspected operations; it did not execute Rust."
+        }
+      ],
+      "verification": "Run RC1: round-trip a merged partial observation through production quota serialization before recorded/live selection, asserting that primary=99 at t2 and its active block survive.",
+      "remedy": "Persist each retained window's observation instant and consume those instants during recorded selection, using the aggregate timestamp only as a legacy fallback. Preserve the metadata through ledger and machine-health records and add a serialization-boundary regression.",
+      "supersedes": [
+        "F58-1"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Telemetry spool concurrency was outside this review."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Deletion retry behavior was outside this review."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Harness implementation coverage was not re-audited."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating transaction ordering was outside this review."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Prompt anchors were outside this review."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Shared-plan roster behavior was outside this review."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "Native Messages benchmarking was outside this review."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Unicode process classification was outside this review."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Windows local-zone boundary behavior was not tested."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light ledger metadata was outside this review."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Historical Samoa offset handling was outside this review."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Unicode configuration handling was outside this review."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Flush/deletion synchronization was outside this review."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Recoverable deletion cleanup was outside this review."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Spool reread failure handling was outside this review."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Legacy telemetry sanitization was outside this review."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Rating actor inference was outside this review."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Health journal I/O recovery was outside this review."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required-reviewer launcher resolution was outside this review."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Required-reviewer shared-plan evaluation was outside this review."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "PowerShell hook invocation was outside this review."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "AGY tool-call stall handling was outside this review."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Local-only deletion durability was outside this review."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Complaint/deletion synchronization was outside this review."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Unreadable-salt cleanup behavior was outside this review."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Duplicate-key telemetry sanitization was outside this review."
+    },
+    {
+      "id": "F22-1",
+      "status": "not-checked",
+      "note": "Health journal replay deduplication was outside this review."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "Process metadata lookup failures were outside this review."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Unknown process creation-time recovery was outside this review."
+    },
+    {
+      "id": "F23-3",
+      "status": "not-checked",
+      "note": "Kill-evidence durability was outside this review."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "Recovery fixture coverage was outside this review."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Production Windows Samoa behavior was not tested."
+    },
+    {
+      "id": "F24-1",
+      "status": "not-checked",
+      "note": "Not-spooled fallback accounting was outside this review."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated not-spooled suffix handling was outside this review."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Concurrent not-spooled cleanup was outside this review."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Not-spooled latest-event reporting was outside this review."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Plugin-home marker and lock compatibility were outside this review."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Fold-record rewrite failures were outside this review."
+    },
+    {
+      "id": "F25-2",
+      "status": "not-checked",
+      "note": "Endpoint transcript-location guards were outside this review."
+    },
+    {
+      "id": "F25-3",
+      "status": "not-checked",
+      "note": "Claude model case normalization was outside this review."
+    },
+    {
+      "id": "F25-4",
+      "status": "not-checked",
+      "note": "Credential redaction in Debug output was outside this review."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Unknown helper ancestry recovery was outside this review."
+    },
+    {
+      "id": "F30-2",
+      "status": "not-checked",
+      "note": "Pre-kill persistence and write-failure behavior were outside this review."
+    },
+    {
+      "id": "F30-3",
+      "status": "not-checked",
+      "note": "Continuation and repair kill fixtures were outside this review."
+    },
+    {
+      "id": "F31-1",
+      "status": "not-checked",
+      "note": "Live-producer fallback accounting was outside this review."
+    },
+    {
+      "id": "F36-1",
+      "status": "not-checked",
+      "note": "Unicode transcript path handling was outside this review."
+    },
+    {
+      "id": "F36-2",
+      "status": "not-checked",
+      "note": "NFC transcript path normalization was outside this review."
+    },
+    {
+      "id": "F38-1",
+      "status": "not-checked",
+      "note": "Recovery after failed kill-record writes was outside this review."
+    },
+    {
+      "id": "F40-1",
+      "status": "not-checked",
+      "note": "Kill-copy enumeration failures were outside this review."
+    },
+    {
+      "id": "F40-2",
+      "status": "not-checked",
+      "note": "Kick acknowledgement on persistence failure was outside this review."
+    },
+    {
+      "id": "F42-1",
+      "status": "not-checked",
+      "note": "Recovery-copy metadata failures were outside this review."
+    },
+    {
+      "id": "F46-1",
+      "status": "fixed",
+      "note": "Static inspection shows equal-time candidates are ranked per window rather than retaining the first quota unconditionally; Rust tests were not rerun."
+    },
+    {
+      "id": "F48-1",
+      "status": "fixed",
+      "note": "Both selection paths compare primary and secondary independently, eliminating primary-first lexicographic suppression."
+    },
+    {
+      "id": "F50-1",
+      "status": "fixed",
+      "note": "The shared comparator ranks future reset completeness before percentage, preserving the future-reset window in the stated tie."
+    },
+    {
+      "id": "F52-1",
+      "status": "fixed",
+      "note": "The inspected aggregation paths pass one comparison instant into merging and ranking rather than sampling inside each comparison."
+    },
+    {
+      "id": "F52-2",
+      "status": "fixed",
+      "note": "Recorded selection uses finite_percent to reject NaN and out-of-range percentages before comparison."
+    },
+    {
+      "id": "F55-1",
+      "status": "fixed",
+      "note": "AccountCache retains raw rollout observations and account_window_at recomputes the winner at the requested instant; runtime cache tests were not rerun."
+    },
+    {
+      "id": "F55-2",
+      "status": "fixed",
+      "note": "select_window rejects invalid candidate windows independently, retaining older valid windows when a newer record supplies none."
+    },
+    {
+      "id": "F58-1",
+      "status": "still-open",
+      "note": "The in-memory timestamp promotion is repaired, but serialization discards the new per-window instants and recreates the failure on recorded aggregates; finding #1 narrows and supersedes the original claim."
+    }
+  ],
+  "unproven": [
+    "No Rust tests, builds, clippy checks or plugin harnesses were executed; reported test results were not independently verified.",
+    "The serialization counterexample was reproduced with an in-memory Python model of the inspected code, not with the compiled Rust implementation.",
+    "Changed .collab artifacts were excluded as instructed, apart from the current brief; historical handoffs and unrelated prior-finding implementations were not read.",
+    "The broader wave a7f2626..f4dd195 was not fully reviewed; review covered the requested source/document diff and selected surrounding paths.",
+    "The new fixtures do not establish partial-window preservation across multiple token_count events within a single rollout."
+  ],
+  "first_run_checklist": []
+}

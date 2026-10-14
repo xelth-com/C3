@@ -1,0 +1,129 @@
+# Handoff 60 - Codex: wave8-round7
+
+Date: 2026-10-14 16:35 local. Author: Codex (model gpt-6-astra, effort high), Codex CLI 0.155.1.
+Reviewer: openai :: gpt-6-astra (provider from -Provider, model from roster; endpoint builtin:openai; provider fingerprint 56d97b6ece36; harness codex-cli 0.155.1).
+Preflight: ok: Logged in using ChatGPT.
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 1 of 12 for -Provider openai (model applied).
+Effort: high sent (requested high, mapping openai, by caps-v1: builtin:openai, any model; not confirmed by the provider). Consultation id: e29605d9-191d-4056-933b-d4b1e28841db.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only, purpose: diff-review). Argv: `codex exec --sandbox read-only --color never --json -m gpt-6-astra -c features.multi_agent=false -c model_reasoning_effort="high" -c model_provider="openai" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-98b5f0cd24ff4f8cb21affaa043e3729.md --output-schema C:\Users\Dmytro\claude-codex-consult\plugins\codex-consult\schemas\consult-reply.schema.json -` (prompt on stdin).
+Parent thread: (none - new thread). Result thread: `01a13ad6-abfd-7f32-b6f4-7ab9a4623d2b` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/59-claude-wave8-round7.md` (sha256 2f8738609ac9). Reviewed: 126ca18, base 126ca18180b39ee63672a1a21159a0873a18aa6a, tree sha256 a2779e19cf2c, 0 changed files.
+Bridge outcome: usable reply. Wall time: 231.1 s. Tokens: in 263516 (cached 198400), out 5974, reasoning 822.
+Quota (rollout): 5h 46% until 21:23; wk 73% until Oct 20; this run 263516 input tokens (198400 cached) in 6 calls, max 64299 per call of 258400; sub-agents 0; sub-agents off (features.multi_agent=false); budget 90 % of the 5-hour window.
+Timeout: 2400 s (the default of purpose diff-review); continuation after a timeout kill: up to 900 s. Range: `cc03617..f4dd195` - the range changes 13 files, 824 lines (746 insertions, 78 deletions).
+Verdict: HOLD - Per-window timestamps survive in-memory aggregation but are lost during quota serialization, allowing recorded aggregates to hide a newer blocking window. Findings: 0 blocker, 1 major, 0 minor, 0 note (F60-1, tracked in `findings.json`). Structured reply: `handoffs/60-codex-wave8-round7.reply.json`.
+Raw event stream: `handoffs/60-codex-wave8-round7.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+1. **Yes—across serialization.** Let t1 < t2 < t3. Merge A(primary=30 at t1) with B(secondary=10 at t3), then serialize through `Observation::to_quota`, as `codex_run_quota` does. Only aggregate `observed_at=t3` survives. Recorded selection consequently treats primary=30 as observed at t3 and rejects C(primary=99 at t2), in either record order. All resets can remain in the future. The same recorded aggregate defeats live C. The new permutation tests preserve timestamps in memory; they do not test this serialization boundary.
+
+2. **HOLD—F58-1 remains open through finding #1, which narrows the remaining defect to persistence.** Do not tag v0.2.1 yet. The direct merge correction looks sound for the supplied timestamped fixtures.
+
+I read every source/document diff hunk and targeted surrounding code. A read-only Python model reproduced the serialization counterexample; it was not a Rust execution. I did not rerun Cargo tests, inspect the changed `.collab` artifacts beyond the brief, read historical handoffs, or re-audit unrelated earlier findings. Earlier wave-note sections were inspected selectively.
+
+## Requested checks
+
+- **RC1:** In `C:\Users\Dmytro\C3`, with **workspace-write** permission, add and run a Rust regression that merges A/B, serializes with `to_quota`, and supplies that quota to `endpoint_window_at` against C in both recorded orders and as live C. Require primary=99 at t2 and an active block. Budget: one fixture, 20 minutes. This settles finding #1.
+
+---
+
+### Findings
+
+- **F60-1** [major] `crates/c3-core/src/quota.rs:193`, `crates/c3-core/src/quota.rs:806`, `crates/c3-core/src/quota.rs:1255`, `crates/c3/src/consult/orchestrate.rs:6388`, `docs/port/wave8-quota.md:177` - F58-1 remains at the persistence boundary: Observation::to_quota discards primary_at and secondary_at, while endpoint_window_at reconstructs both window instants from the aggregate observed_at. A saved run aggregate therefore promotes an older retained window to the newer sibling's timestamp and can suppress a genuinely newer blocking observation, despite the corrected in-memory merge. Trigger: For one endpoint, merge primary=30 at t1 with secondary=10 at t3, where t1<t2<t3, and persist the result through codex_run_quota. Compare that recorded aggregate against primary=99 at t2, either recorded or live. Give every window a future reset and no independent quota-failure record. The serialized aggregate labels primary=30 with t3 and wins over the 99% observation. Evidence: read-code: codex_run_quota merges parent/sub-agent observations and calls to_quota, which emits primary, secondary and one aggregate observed_at, without the per-window instants.; read-code: The consultation obtains codex_run_quota, stores it in secondary state, and passes its quota value into the ledger and machine-health recording paths.; read-code: Recorded selection supplies [Some(at), Some(at)] from the single serialized timestamp; only live AccountWindow candidates supply their preserved per-window timestamps.; read-code: The new tests exercise raw recorded observations, direct in-memory merges and recorded/live partitions, but do not serialize a merged Observation before recorded selection.; ran-command: Direct merging retained primary=99 at t2 in all six permutations. Serializing the A/B aggregate and reconstructing recorded timestamps produced primary=30 at t3 and no block in both record orders. This modeled the inspected operations; it did not execute Rust. Verify: Run RC1: round-trip a merged partial observation through production quota serialization before recorded/live selection, asserting that primary=99 at t2 and its active block survive. Remedy: Persist each retained window's observation instant and consume those instants during recorded selection, using the aggregate timestamp only as a legacy fallback. Preserve the metadata through ledger and machine-health records and add a serialization-boundary regression. Supersedes: F58-1.
+
+### Prior findings
+
+- F02-1 - not-checked - Telemetry spool concurrency was outside this review.
+- F02-3 - not-checked - Deletion retry behavior was outside this review.
+- F02-4 - not-checked - Harness implementation coverage was not re-audited.
+- F02-5 - not-checked - Rating transaction ordering was outside this review.
+- F02-6 - not-checked - Prompt anchors were outside this review.
+- F02-7 - not-checked - Shared-plan roster behavior was outside this review.
+- F02-8 - not-checked - Native Messages benchmarking was outside this review.
+- F04-1 - not-checked - Unicode process classification was outside this review.
+- F04-2 - not-checked - Windows local-zone boundary behavior was not tested.
+- F04-3 - not-checked - Required-light ledger metadata was outside this review.
+- F06-1 - not-checked - Historical Samoa offset handling was outside this review.
+- F09-1 - not-checked - Unicode configuration handling was outside this review.
+- F09-2 - not-checked - Flush/deletion synchronization was outside this review.
+- F09-3 - not-checked - Recoverable deletion cleanup was outside this review.
+- F09-4 - not-checked - Spool reread failure handling was outside this review.
+- F09-5 - not-checked - Legacy telemetry sanitization was outside this review.
+- F09-6 - not-checked - Rating actor inference was outside this review.
+- F11-1 - not-checked - Health journal I/O recovery was outside this review.
+- F11-2 - not-checked - Required-reviewer launcher resolution was outside this review.
+- F11-3 - not-checked - Required-reviewer shared-plan evaluation was outside this review.
+- F11-4 - not-checked - PowerShell hook invocation was outside this review.
+- F11-5 - not-checked - AGY tool-call stall handling was outside this review.
+- F14-1 - not-checked - Local-only deletion durability was outside this review.
+- F19-1 - not-checked - Complaint/deletion synchronization was outside this review.
+- F19-2 - not-checked - Unreadable-salt cleanup behavior was outside this review.
+- F19-3 - not-checked - Duplicate-key telemetry sanitization was outside this review.
+- F22-1 - not-checked - Health journal replay deduplication was outside this review.
+- F23-1 - not-checked - Process metadata lookup failures were outside this review.
+- F23-2 - not-checked - Unknown process creation-time recovery was outside this review.
+- F23-3 - not-checked - Kill-evidence durability was outside this review.
+- F23-4 - not-checked - Recovery fixture coverage was outside this review.
+- F23-5 - not-checked - Production Windows Samoa behavior was not tested.
+- F24-1 - not-checked - Not-spooled fallback accounting was outside this review.
+- F24-2 - not-checked - Unterminated not-spooled suffix handling was outside this review.
+- F24-3 - not-checked - Concurrent not-spooled cleanup was outside this review.
+- F24-4 - not-checked - Not-spooled latest-event reporting was outside this review.
+- F24-5 - not-checked - Plugin-home marker and lock compatibility were outside this review.
+- F24-6 - not-checked - Fold-record rewrite failures were outside this review.
+- F25-2 - not-checked - Endpoint transcript-location guards were outside this review.
+- F25-3 - not-checked - Claude model case normalization was outside this review.
+- F25-4 - not-checked - Credential redaction in Debug output was outside this review.
+- F30-1 - not-checked - Unknown helper ancestry recovery was outside this review.
+- F30-2 - not-checked - Pre-kill persistence and write-failure behavior were outside this review.
+- F30-3 - not-checked - Continuation and repair kill fixtures were outside this review.
+- F31-1 - not-checked - Live-producer fallback accounting was outside this review.
+- F36-1 - not-checked - Unicode transcript path handling was outside this review.
+- F36-2 - not-checked - NFC transcript path normalization was outside this review.
+- F38-1 - not-checked - Recovery after failed kill-record writes was outside this review.
+- F40-1 - not-checked - Kill-copy enumeration failures were outside this review.
+- F40-2 - not-checked - Kick acknowledgement on persistence failure was outside this review.
+- F42-1 - not-checked - Recovery-copy metadata failures were outside this review.
+- F46-1 - fixed - Static inspection shows equal-time candidates are ranked per window rather than retaining the first quota unconditionally; Rust tests were not rerun.
+- F48-1 - fixed - Both selection paths compare primary and secondary independently, eliminating primary-first lexicographic suppression.
+- F50-1 - fixed - The shared comparator ranks future reset completeness before percentage, preserving the future-reset window in the stated tie.
+- F52-1 - fixed - The inspected aggregation paths pass one comparison instant into merging and ranking rather than sampling inside each comparison.
+- F52-2 - fixed - Recorded selection uses finite_percent to reject NaN and out-of-range percentages before comparison.
+- F55-1 - fixed - AccountCache retains raw rollout observations and account_window_at recomputes the winner at the requested instant; runtime cache tests were not rerun.
+- F55-2 - fixed - select_window rejects invalid candidate windows independently, retaining older valid windows when a newer record supplies none.
+- F58-1 - still-open - The in-memory timestamp promotion is repaired, but serialization discards the new per-window instants and recreates the failure on recorded aggregates; finding #1 narrows and supersedes the original claim.
+
+## Verdict: HOLD
+
+Per-window timestamps survive in-memory aggregation but are lost during quota serialization, allowing recorded aggregates to hide a newer blocking window.
+
+### Blockers
+
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542`, `crates/c3/src/telemetry/complaint.rs:240`, `crates/c3/src/telemetry/complaint.rs:673` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending'). Verify: Add a test: forget_with with ForgetRequest{public_ref: None, local: true, yes: true} and an injected remove failing on spool.ndjson; assert whether forget-pending.json exists and whether a subsequent flush posts the retained events. Remedy: In the None arm, persist the transaction (phase cleaning) via write_transaction before calling finish_cleanup (or pass phase confirmed so run_local_cleanup writes it), so an interruption leaves the blocking, resumable record the docs and the CLI message promise.
+- **F22-1** (prior, not-checked) `crates/c3-core/src/health.rs:1563`, `crates/c3-core/src/health.rs:1915`, `crates/c3-core/src/health.rs:1942`, `crates/c3-core/src/health.rs:1960`, `crates/c3-core/src/health.rs:2028` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false. Verify: Add a deterministic test with an unwritable `.bad` path, one recent journal record, and 500 newer endpoint records; run two updates and assert the journal record is neither resurrected nor allowed to displace another endpoint. Remedy: Persist a monotonic journal applied-sequence marker or equivalent durable consumed state, and truncate the journal by that sequence independently of endpoint retention; do not use the mutable endpoint set as the only replay ledger.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97`, `crates/c3/src/liveness/proc.rs:100`, `crates/c3/src/liveness/pending.rs:283`, `crates/c3/src/liveness/pending.rs:344` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time. Verify: Inject `name_and_parent -> None` while `process_start_iso -> Some(start)` and require `test_unverified_process`/`test_recorded_process` to return running or an explicit inspection failure. Remedy: Distinguish process absence from inspection failure; return an unknown/running verdict when the pid exists but metadata cannot be read.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753`, `crates/c3/src/liveness/proc.rs:775`, `crates/c3/src/liveness/proc.rs:827`, `crates/c3/src/liveness/pending.rs:790` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs. Verify: Run `test_pending_active` on a `kill_unconfirmed` record with a live scan row whose `created` is `None`; require refusal/failed verification, never release. Remedy: Treat unknown creation/start as blocking evidence or fail the scan; do not silently filter those rows.
+- **F23-3** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:5105`, `crates/c3/src/consult/orchestrate.rs:5143`, `docs/port/wave3a-recovery.md:59` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree. Verify: Add a pause between the kill and the end-of-run pending write, terminate the bridge there, and inspect the recovery record for the expected `unverified`/`kill_unconfirmed` fields. Remedy: Persist the kill disposition at each kill site, or write a durable kill journal before continuing the run.
+- **F24-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:640`, `crates/c3/src/telemetry/spool.rs:668`, `crates/c3/src/telemetry/notspooled.rs:704` - The spool-lock fallback marks all non-legacy not-spooled lines as seen without folding or retaining per-file provenance; a later fold counts the same gone-producer files again, so the accounting can double-count and temporarily hide the count. Verify: Hold `spool.lock` for over one second during flush 1 with N gone-producer lines, then run flush 2 and compare both records; require exactly one accounting of N. Remedy: In the fallback, retain per-file folded entries or mark only positively kept files seen; never advance the global baseline for files that remain foldable.
+- **F25-2** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:357`, `crates/c3/src/engines/claude_auth.rs:374` - Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed. Verify: Make endpoint-mode `auth status` report an in-repository projects directory and require refusal before spawn. Remedy: Probe the status facts for endpoint mode too, without reading or logging the token, and reject unsafe transcript locations.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815`, `crates/c3/src/liveness/pending.rs:297`, `crates/c3/src/liveness/pending.rs:902` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process. Verify: Run `test_pending_active_with` with the wrapper/helper synthetic table and require the record to remain active; repeat with a readable non-codex command line. Remedy: Scan full descendant relationships and treat unknown-start or command-line-unreadable/generic-runtime rows as blocking unless positive evidence proves they are unrelated.
+- **F30-2** (prior, not-checked) `crates/c3/src/engines/subprocess.rs:536`, `crates/c3/src/consult/orchestrate.rs:587`, `crates/c3/src/consult/orchestrate.rs:4927`, `crates/c3/src/consult/orchestrate.rs:5674` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues. Verify: Add a pause between `kill_tree_checked` and `KillSite::write`, terminate there, and separately inject `write_pending` errors before continuation or commit. Remedy: Persist the kill record synchronously from the kill path or an append-only sidecar before returning, and fail closed when that persistence fails.
+- **F31-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:668`, `crates/c3/src/telemetry/notspooled.rs:886`, `crates/c3/src/telemetry/notspooled.rs:950` - The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history. Verify: Run the RC1 schedule and compare the first record’s `not_spooled_seen`, the second record’s fold note, and the total accounting for the N lines. Remedy: Persist per-file seen byte/line prefixes or carry the fallback’s kept-file provenance into the next fold, and subtract those already-seen lines when folding a formerly-live producer.
+- **F36-1** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:425`, `crates/c3/src/engines/claude_auth.rs:540`, `crates/c3-core/src/paths.rs:41` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary. Verify: Run RC1 and assert the guard returns normally for the stated paths. Remedy: Use boundary-safe prefix comparison, such as str::get before comparing, or an appropriate path-component comparison; add the Unicode regression.
+- **F38-1** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:687`, `crates/c3/src/engines/subprocess.rs:912`, `crates/c3/src/liveness/pending.rs:1026`, `crates/c3/src/liveness/proc.rs:878`, `crates/c3-cli/tests/kill_record_durable.rs:589` - The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge. Verify: Run RC1 from Requested checks with an isolated process table or controlled Windows tree, proving the helper remains alive and requiring the restarted task to refuse before spawning another engine turn. Remedy: Make an interrupted launch remain conservatively blocked when complete kill evidence cannot be persisted. Establish that recovery obligation durably before spawning, or require explicit operator release of an unresolved launch record instead of treating these empty scans as proof of termination. Add the missing dead-intermediate regression.
+- **F40-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:170`, `crates/c3/src/liveness/pending.rs:173`, `crates/c3/src/consult/recovery.rs:71` - Recovery silently treats failure to enumerate the Codex-home kill-copy directory, or errors while iterating it, as absence of recovery copies. A durable copy naming a live helper can therefore be omitted and the task released. Verify: Extend the existing RC1 fixture to inject PermissionDenied and an entry-iteration error during kill-copy discovery; require recovery to refuse before writing the engine-turn marker while the helper remains alive. Remedy: Return discovery errors to all recovery consumers and refuse on non-NotFound directory or entry errors. Distinguish a genuinely absent copy directory from failed inspection; do not flatten away iteration errors.
+- **F42-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:306`, `crates/c3/src/consult/recovery.rs:88`, `crates/c3/src/liveness/pending.rs:380` - A metadata inspection error on an enumerated recovery copy is treated as absence. read_pending_file uses Path::exists(), which converts metadata errors to false, and returns exists=false with no error. Recovery and findings checks then skip the copy, potentially releasing a task while a helper named only in that durable copy remains alive. Verify: Extend the existing RC1 integration fixture with a metadata-error injection after successful copy enumeration; require restart refusal before any engine-turn marker while the helper remains alive. Remedy: Replace the boolean existence precheck with an error-preserving read or metadata operation. Treat only a confirmed NotFound as absence; propagate other errors as unusable-record inspection failures. Add the copy-file failure fixture alongside the directory-error tests.
+
+### Unproven scenarios
+
+- No Rust tests, builds, clippy checks or plugin harnesses were executed; reported test results were not independently verified.
+- The serialization counterexample was reproduced with an in-memory Python model of the inspected code, not with the compiled Rust implementation.
+- Changed .collab artifacts were excluded as instructed, apart from the current brief; historical handoffs and unrelated prior-finding implementations were not read.
+- The broader wave a7f2626..f4dd195 was not fully reviewed; review covered the requested source/document diff and selected surrounding paths.
+- The new fixtures do not establish partial-window preservation across multiple token_count events within a single rollout.
+
+### First-run checklist (observable)
+
+_(none)_
