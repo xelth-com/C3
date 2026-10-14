@@ -53,3 +53,9 @@ Details and the port table: `docs/port/wave8-quota.md`.
   instants (`EndpointWindow.window_legacy`) and never win on recency against a known one.
 - Decided: an instant exactly on a second reads as imprecise (conservative).
 - Next: Astra round 9; plugin T17 mirrors the three rules.
+
+## Wave 8j (the 8i transitivity caveat, on main)
+- Done: `cmp_instants` = whole-second floor, tie -> 8d rank; `select_window` keeps the best known and
+  the best legacy candidate per window and resolves the visible one (set-based, order-independent).
+- Decided: fractions are bookkeeping (stored/round-tripped), never an ordering key.
+- Next: Astra round 9; plugin T17 mirrors the total order.

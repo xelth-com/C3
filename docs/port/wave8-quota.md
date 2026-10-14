@@ -229,3 +229,26 @@ Tests: `a_subsecond_instant_survives_the_record_and_beats_an_older_live_one`,
 health verdict sees the block). Pairwise comparisons mixing precise and imprecise instants are not
 strictly transitive across three or more observations within one second; the rank keeps each pair
 deterministic. The plugin's T17 fix needs the same three rules.
+
+## 8j - ONE total order per window (supersedes the 8i pairwise precision rule)
+
+The 8i rule (whole-second compare only when a side is imprecise) was not transitive across mixed
+precisions inside one second, and a legacy window decided by rank against known ones broke the fold
+the same way. Now every instant comparison in the selection and the merge is made at WHOLE-SECOND
+granularity (`cmp_instants`: floor to the second; fractions are never an ordering key): a strictly
+later second wins on recency; the same second is a tie that `cmp_window_rank` (8d) decides. The
+fractional instants stay stored, re-stamped and round-tripped exactly (8i) - bookkeeping, not a
+key. Within one kind of window (known instants, or legacy aggregates compared at the same
+granularity) (floor second, rank) is a lexicographic total order. The legacy rule stays - an unknown
+instant never wins on recency against a known one, the rank alone decides - and to keep the fold
+order-independent `select_window` keeps the best KNOWN and the best LEGACY candidate per window
+(`EndpointWindow` slots) and resolves the visible window from that pair (the legacy one only if it
+outranks the known one by the rank), so the pick is a function of the candidate SET. Inside one
+second the higher-usage window wins: the conservative side (usage only rises within a window; a
+reset is already ranked by future/past). Tests: `whole_second_order_is_transitive_for_the_abc_precision_case`
+(a imprecise :00 50 %, b :00.100 99 %, c :00.900 30 %, six orders -> 99 %),
+`mixed_precision_candidates_give_one_pick_in_every_order` (six candidates - two imprecise, two with
+fractions in one second, one in the next second, one legacy, partial windows - 720 orders through
+the recorded selection and `merge_observation`, plus a recorded/live split); the 8i sub-second test
+now passes by rank (99 % at :00.900 against live 30 % at :00.100). The plugin's T17 fix uses the
+same total order.
