@@ -182,3 +182,23 @@ Worker telemetry, additions (the operator, 2026-10-14 00:00): (1) the worker's R
 2026-10-14 08:45 - wave 8 round 4 (n=30, handoff 52): HOLD on F52-1 major (the comparator samples the wall clock per comparison: a reset crossing from future to past mid-aggregation makes the pick order-dependent) + F52-2 minor (non-finite percentages). Wave 8e: one `now` per evaluation threaded through; percentages clamped/total order. Window 65 % until 11:10.
 
 2026-10-14 09:02 - round 5 launch n=31 refused by the server: the 5-hour window hit 100 % (the bridge's last observation was 65 % after n=30 - nothing newer in the rollouts, so the preflight let it through; the window went 30 -> 65 % inside n=30 for 260k tokens, nonlinear). Astra out until 11:10. Round 5 (brief 53) re-armed for 11:12.
+
+## Planned (the operator, 2026-10-14 10:40): usage tiers for the two standing consultants (GLM and Astra)
+
+The telemetry shows two standing consultants: ZAI :: glm-5.3 and openai :: gpt-6-astra. Both have thinking tiers
+the bridge already maps per endpoint (caps-v1): openai `low|medium|high|xhigh`, z.ai `low|high|max` (medium -> high,
+xhigh -> max). Today the effort comes only from the PURPOSE preset (chore low, checkpoint medium, acceptance high,
+core-contract/stuck xhigh) or `-Effort`; the roster entry carries no effort, and NO telemetry event carries the
+effort (plugin, C3 and the intake alike: `effort_sent` lives only in the ledger) - so the usefulness table cannot
+say which tier pays. Design for the consilium (topic 3 of the framing panel, with worker telemetry and watch):
+1. Roster: an optional per-entry effort policy - `"effort": {"chore": "low", "checkpoint": "high", "acceptance":
+   "max"}` (purpose -> tier in the endpoint's own vocabulary, validated against caps-v1) or a floor/cap pair; the
+   purpose preset stays the default; `-Effort` still overrides for one run.
+2. Telemetry: the consult event and the rating event carry `effort` = the tier SENT after the mapping (closed
+   vocabulary: none|low|medium|high|xhigh|max) and `effort_requested` (the preset name); the intake's usefulness
+   table splits per reviewer x effort; the public page shows it; the C3 scoreboard too.
+3. Routing: "scout and judge" - a reading pass by a cheap tier (GLM low or Haiku) writes the digest handoff, the
+   judge (Astra high, or GLM max) gets the digest + a call cap; the routed panel can seat the scout and the judge
+   from the roster policy; the digest survives a cold cache (the quota lesson).
+Open questions for the panel: does z.ai expose more than three tiers on glm-5.3; is `medium` on gpt-6-astra good
+enough for a reading pass; how to score a tier (usefulness per 5-hour-window share, not per run).
