@@ -176,3 +176,5 @@ Worker telemetry, additions (the operator, 2026-10-14 00:00): (1) the worker's R
 2026-10-14 06:25 - wave 8 review (n=27, handoff 46): HOLD on F46-1 major (endpoint quota aggregation keeps the FIRST observation on an equal observed_at instead of the fuller one; observed_at has no fractions, so ties happen; the live-observation replacement needs strictly newer too). Wave 8b: tie -> the higher used_percent wins, in both places; RC1 unit test both orders. Then round 2 and tag v0.2.1.
 
 2026-10-14 07:25 - wave 8 round 2 (n=28, handoff 48): HOLD on F48-1 major - my tie rule (primary first) can hide a blocking WEEKLY window. Decision: at an equal observed_at merge PER WINDOW (each window takes the higher used_percent with its own reset) - a blocking window of either kind always survives. Wave 8c by the same worker, then round 3.
+
+2026-10-14 08:05 - wave 8 round 3 (n=29, handoff 50): HOLD on F50-1 major (equal time AND equal percent keep the FIRST reset; a past reset can replace a future one). Final ordering per window at an equal observed_at: a reset in the future beats a past one, then the higher used_percent, then the later resets_at. Wave 8d, then round 4.

@@ -1,0 +1,336 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Equal-percentage observations still retain the first reset, allowing a blocking window to disappear depending on observation order.",
+  "reply_markdown": "1. **Q1:** F48-1’s crossing-window case is fixed: each selected window carries its own reset. However, **F49-1 (finding #1)** remains: equal timestamps and equal percentages retain the first window even when it lacks a reset and the second supplies a future reset. With both at 99%, missing-reset-first produces no block; reversing them produces a block. This affects recorded/live selection and rollout/sub-agent aggregation. The new tests cover differing percentages, not this tie or exact reset preservation.\n\n2. **Q2: HOLD** on F49-1; defer tagging v0.2.1. F46-1 and F48-1’s specific reported cases are fixed by inspection.\n\nRead all source and documentation diff hunks, relevant quota context, and the health consumer. Skipped `.collab/` changes as instructed, except the supplied brief. Did not rereview earlier wave implementations, external plugin sources, or unrelated prior findings. No files changed; tests were not executed. Reported suite results remain independently unverified.\n\n## Requested checks\n\n- **RC1:** In `C:\\Users\\Dmytro\\C3` (**workspace-write**, 20 minutes), add and run focused quota regressions with identical timestamps and 99% usage: one window has `resets_at=null`, the other a future reset. Exercise both recorded orders, both recorded/live assignments, and both `merge_observation` orders, for primary and secondary separately. Run `cargo test -p c3-core quota -j 2`; require the future reset and resulting block in every case. This settles finding #1.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 638
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1062
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 851
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1184
+        }
+      ],
+      "claim": "F49-1: The per-window merge remains order-dependent when observation timestamps and usage percentages tie. It retains a window without a reset over an equally recent window with a future reset, suppressing an otherwise active quota block.",
+      "trigger": "For the same endpoint and observed_at, observation A has primary used_percent=99 and resets_at=null, while B has primary used_percent=99 and a valid future resets_at; secondary is absent. Processing A before B retains A and produces no blocking window. Reversing them retains B and blocks. The same case applies to secondary windows, recorded/live assignments, and rollout/sub-agent aggregation.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:634-646",
+          "observation": "merge_observation selects the candidate window only when its used_percent is strictly greater; equal percentages retain the existing whole Window, including a missing reset."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:1057-1065",
+          "observation": "select_window also replaces an existing window only for strictly greater usage, without considering reset completeness on equal usage."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:840-851; crates/c3-core/src/health.rs:1184",
+          "observation": "A block requires a parsed future reset. quota_window_record returns no quota failure when blocking_window returns None."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:1757-1837",
+          "observation": "The new regressions use crossing usage percentages. The direct observation-merge fixture supplies no resets, and none tests equal percentages with conflicting reset information."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Equal-time, equal-percentage merge followed by window_states",
+          "observation": "Missing-reset-first necessarily suppresses the block, while future-reset-first preserves it. This conclusion is from code inspection, not an executed regression."
+        }
+      ],
+      "verification": "Run RC1: cover both input orders and recorded/live assignments with tied 99% windows differing only in reset completeness, and assert the future reset and block survive.",
+      "remedy": "Define and share a deterministic reset-aware tie rule for equal usage: prefer a valid reset over a missing reset and conservatively resolve differing valid resets, retaining the selected window's complete metadata. Add order-invariance and exact-reset assertions across both merge implementations.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Outside the quota delta; not rechecked."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Outside the quota delta; not rechecked."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Harness coverage map not audited."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating transaction ordering not rechecked."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Prompt anchors not rechecked."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Plan identity compatibility not rechecked."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "Native Messages benchmark evidence not reviewed."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Process-name handling not rechecked."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Windows timezone boundaries not rechecked."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light ledger metadata not rechecked."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Historical Samoa normalization not rechecked."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Unicode configuration handling not rechecked."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Telemetry deletion locking not rechecked."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Recoverable deletion cleanup not rechecked."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Spool reread failure handling not rechecked."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Legacy telemetry sanitization not rechecked."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Rating actor inference not rechecked."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Health journal I/O handling not rechecked."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required-reviewer launcher override not rechecked."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Shared-plan availability scope not rechecked."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "PowerShell hook invocation not rechecked."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "AGY tool stall allowance not rechecked."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Local-only deletion persistence not rechecked."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Complaint/deletion synchronization not rechecked."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Unreadable-salt cleanup handling not rechecked."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Duplicate-key telemetry sanitization not rechecked."
+    },
+    {
+      "id": "F22-1",
+      "status": "not-checked",
+      "note": "Durable journal replay deduplication not rechecked."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "Process metadata lookup failures not rechecked."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Unknown creation-time recovery behavior not rechecked."
+    },
+    {
+      "id": "F23-3",
+      "status": "not-checked",
+      "note": "Kill evidence durability not rechecked."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "Recovery test coverage not rechecked."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Production Samoa boundary evidence not reviewed."
+    },
+    {
+      "id": "F24-1",
+      "status": "not-checked",
+      "note": "Not-spooled fallback provenance not rechecked."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated not-spooled suffix handling not rechecked."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Concurrent not-spooled cleanup not rechecked."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Not-spooled status baseline handling not rechecked."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Plugin-home adapter coverage not audited."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Fold record rewrite failure handling not rechecked."
+    },
+    {
+      "id": "F25-2",
+      "status": "not-checked",
+      "note": "Endpoint transcript destination guard not rechecked."
+    },
+    {
+      "id": "F25-3",
+      "status": "not-checked",
+      "note": "Claude model case normalization not rechecked."
+    },
+    {
+      "id": "F25-4",
+      "status": "not-checked",
+      "note": "Credential debug redaction not rechecked."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Unknown helper ancestry recovery not rechecked."
+    },
+    {
+      "id": "F30-2",
+      "status": "not-checked",
+      "note": "Pre-kill record durability not rechecked."
+    },
+    {
+      "id": "F30-3",
+      "status": "not-checked",
+      "note": "Continuation and repair kill coverage not rechecked."
+    },
+    {
+      "id": "F31-1",
+      "status": "not-checked",
+      "note": "Live-producer not-spooled accounting not rechecked."
+    },
+    {
+      "id": "F36-1",
+      "status": "not-checked",
+      "note": "Unicode transcript path handling not rechecked."
+    },
+    {
+      "id": "F36-2",
+      "status": "not-checked",
+      "note": "Transcript path NFC normalization not rechecked."
+    },
+    {
+      "id": "F38-1",
+      "status": "not-checked",
+      "note": "Recovery after failed durability writes not rechecked."
+    },
+    {
+      "id": "F40-1",
+      "status": "not-checked",
+      "note": "Kill-copy directory enumeration failures not rechecked."
+    },
+    {
+      "id": "F40-2",
+      "status": "not-checked",
+      "note": "Kick acknowledgement on failed durability writes not rechecked."
+    },
+    {
+      "id": "F42-1",
+      "status": "not-checked",
+      "note": "Recovery-copy metadata errors not rechecked."
+    },
+    {
+      "id": "F46-1",
+      "status": "fixed",
+      "note": "By inspection, equal-time 30% versus 99% selection retains 99% in either order and through live selection. Tests read, not executed; equal-percentage reset handling is a distinct defect."
+    },
+    {
+      "id": "F48-1",
+      "status": "fixed",
+      "note": "By inspection, independent primary/secondary merging preserves the reported crossing 99% weekly window across recorded, live, and observation aggregation. Tests read, not executed."
+    }
+  ],
+  "unproven": [
+    "RC1 has not been executed; finding #1 is supported by static control-flow analysis.",
+    "The reported cargo, clippy, formatting, and plugin harness results were not independently reproduced.",
+    "The full earlier wave-8 implementation and external plugin oracle sources were not rereviewed.",
+    "Changed .collab artifacts were skipped as instructed, except the supplied handoff; unrelated historical findings were not revalidated.",
+    "The new tests do not assert exact reset preservation for merged windows."
+  ],
+  "first_run_checklist": []
+}
