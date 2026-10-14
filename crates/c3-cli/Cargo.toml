@@ -13,14 +13,14 @@ name = "c3"
 path = "src/main.rs"
 
 [dependencies]
-# default-features = false so `--no-default-features` on the binary turns the index off;
-# the `index-surreal` feature below forwards to c3 and is on by default.
+# default-features = false; the opt-in `index-surreal` feature below forwards to c3
+# (the default install is the light bundle, flipped 2026-10-14).
 c3 = { workspace = true, default-features = false }
 c3-core.workspace = true
 clap.workspace = true
 
 [features]
-default = ["index-surreal"]
+default = []
 index-surreal = ["c3/index-surreal"]
 
 [dev-dependencies]

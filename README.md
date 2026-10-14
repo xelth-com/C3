@@ -9,7 +9,7 @@ The full surface runs. The parity port (milestones 1–6) is in the binary —
 `forget-me`, the reviewer roster and the routed **panel** with detach/status/wait/prune/kick —
 and so are the heavy subsystems after it: **packs and the `http` engine** (milestone 7,
 run live against OpenRouter — see `docs/port/m7-status.md`), the **index** (milestone 8,
-SurrealDB behind a default feature), the **router** (milestone 9) and the **stdio MCP server**
+SurrealDB behind the opt-in `index-surreal` feature), the **router** (milestone 9) and the **stdio MCP server**
 (milestone 10, `c3 mcp`). What is measured by which harness: milestone-1 parity by
 `docs/port/m1-acceptance.md` (byte-for-byte against `codex-providers.ps1`) and the per-milestone
 `m*-acceptance.md` / `m7-status.md` notes, plus `cargo test` (the c3 lib, `c3-core`, and the
@@ -68,7 +68,7 @@ Steps 1-6 are the parity port. The heavy subsystems are explicit milestones afte
 7. **Packs and the `http` engine** — snapshots and reviewer/explainer packs from one
    sanitizing builder; OpenRouter reviewers get a pack, never tools.
 8. **Index** — embedded SurrealDB (per project, or one server per user across projects),
-   rebuildable from files + repo, never required for a consultation.
+   rebuildable from files + repo, opt-in (`--features index-surreal`), never required for a consultation.
 9. **Router** — panel thickness (`shadow` / `council` / `consilium`) and a versioned,
    auditable draw from the scoreboard with priors distributed by the maintainer's server.
 10. **MCP server** — read-and-record tools for Claude Code without the plugin.
@@ -265,19 +265,26 @@ cargo build --release          # target/release/c3
 ./target/release/c3 --version
 ./target/release/c3 providers --short   # the reviewer availability line
 cargo test && cargo clippy --all-targets -- -D warnings
-cargo build --no-default-features   # fast dev loop: drops SurrealDB (`c3 index` reports `none`)
 ```
 
-The `index-surreal` feature (on by default) pulls in SurrealDB, which adds ~26 min to a
-cold release build; `--no-default-features` compiles it out for a fast development loop and
-CI builds both variants.
+### Light bundle or indexed bundle
+
+- **Light bundle (the default).** `cargo install --path crates/c3-cli` builds without
+  SurrealDB, in minutes; `c3 index` reports `none`. Every consultation works: the reviewers
+  that run through Codex, Claude Code, agy and muse read the repository themselves.
+- **Indexed bundle.** `cargo install --path crates/c3-cli --features index-surreal` adds the
+  embedded SurrealDB code index (~26 min more to build, ~180 MiB store per project). Build it
+  for the `http` engine's reviewer packs and the planned browser engine, where the pack's
+  periphery comes from the index. `--features index-surreal,embeddings` adds the vector option.
+- **Invariant:** the index is never required for a consultation. (Flipped 2026-10-14: the
+  index is opt-in.) CI builds the default on Linux and Windows and the indexed bundle on Linux.
 
 ### Platforms
 
 Windows 11 is where every harness ran and where the PowerShell plugin's evals are the oracle;
 since the Linux port (`docs/port/linux-port.md`) the same tree builds, lints and tests on
 Ubuntu x86_64 too, and `.github/workflows/ci.yml` runs fmt, clippy and the test suites on
-`ubuntu-latest` and `windows-latest` (the SurrealDB build only on Ubuntu). What differs on
+`ubuntu-latest` and `windows-latest` (the `index-surreal` build only on Ubuntu). What differs on
 Linux: process liveness and the tree kill come from `/proc` and `kill` instead of the Win32
 APIs and `taskkill /T`, the file locks are `flock` advisory locks instead of share modes, and
 a detached run is a child in its own process group instead of a `cmd.exe` launch; the files
@@ -289,7 +296,7 @@ egress proxy carries the credential and re-terminates TLS, the `http` engine hon
 
 A cargo workspace of three crates: `crates/c3-core` (contracts and file formats),
 `crates/c3` (runtime modules), `crates/c3-cli` (the binary). Each ported piece brings its
-own dependencies when it needs them; SurrealDB arrives with milestone 8 behind a feature.
+own dependencies when it needs them; SurrealDB arrives with milestone 8 behind the opt-in `index-surreal` feature.
 The plugin's harnesses can drive the binary through `tests/shim/` (see
 `docs/port/harness-shim.md`); `docs/port/m1-acceptance.md` lists the assertions milestone 1
 answers to.
@@ -334,9 +341,8 @@ switch-over procedure from the PowerShell plugin to C3 is
 Another Claude Code session on the same machine, from a local checkout: `claude plugin marketplace
 add <path to the C3 checkout>`, then `claude plugin install c3@c3` (the marketplace is named `c3`;
 user scope; other sessions pick it up at their next restart), and the binary
-`cargo install --path crates/c3-cli --force` (the default build includes the local code index;
-`--no-default-features` drops the `index-surreal` feature, i.e. the embedded SurrealDB index - use it
-only if that feature is the problem). Once a newer plugin version is published (the version is
+`cargo install --path crates/c3-cli --force` (the light bundle; add
+`--features index-surreal` for the embedded SurrealDB index - see "Light bundle or indexed bundle"). Once a newer plugin version is published (the version is
 bumped at each release), `claude plugin update c3@c3`.
 
 ## License

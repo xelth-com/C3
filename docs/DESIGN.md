@@ -64,7 +64,7 @@ OpenRouter panel with an advisory judge, and the T-hub telemetry client.
   explainer pack), `telemetry` (T-hub client, spool, priors download).
 - `c3-cli` - the `c3` binary: CLI commands and the stdio MCP server.
 
-Feature `index-surreal` gates whole modules and is on by default in the release binary; `embeddings` is a separate feature,
+Feature `index-surreal` gates whole modules and is opt-in (flipped 2026-10-14: the index is opt-in); `embeddings` is a separate feature,
 off by default. `Index: none` exists in every build.
 
 ### Contracts
@@ -161,8 +161,8 @@ hash.
   opens the embedded index, for the shortest span it needs (the MCP server closes between operations); any other
   process runs with `Index: none` the moment the open fails, without retry loops; a detached panel plus a foreground
   command on one repository is the case that needs the per-user server (`ws://`), and C3 says so in the plan it prints.
-  Build cost: the `surrealdb` dependency adds about 26 minutes to a cold release build, so `--no-default-features`
-  is the documented fast development loop and CI builds both variants.
+  Build cost: the `surrealdb` dependency adds about 26 minutes to a cold release build, so the default build
+  omits it (the light bundle; flipped 2026-10-14: the index is opt-in) and CI builds both variants.
 - `rebuild` is an acceptance test; the index is never required for a consultation.
 - Measured (2026-09-29, Windows 11, release binary, this repo - 249 files, 2707 entities, 25420 `calls`
   edges; medians of three): a cold `index build` 19.4 s, a no-change build 2.6 s (it diffs by file hash and

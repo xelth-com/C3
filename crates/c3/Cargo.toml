@@ -30,11 +30,11 @@ surrealdb = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 
 [features]
-# ON by default so the release library carries the index; a `--no-default-features` build
-# drops surrealdb/tokio entirely and every ContextIndex call becomes `Index: none`. This is
-# the documented fast development loop (DESIGN §7). `c3-cli` re-exposes the same feature and
-# forwards it, and turns it off by depending on c3 with `default-features = false`.
-default = ["index-surreal"]
+# OPT-IN (flipped 2026-10-14): the default build is the light bundle - no surrealdb/tokio, and
+# every ContextIndex call is `Index: none`. `--features index-surreal` builds the embedded
+# index (DESIGN §7). `c3-cli` re-exposes the same feature and forwards it, and depends on c3
+# with `default-features = false`.
+default = []
 index-surreal = ["dep:surrealdb", "dep:tokio"]
 
 # The embedded index lock (`<collab>/.c3/index.lock`) uses the same exclusive share-mode

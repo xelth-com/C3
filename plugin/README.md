@@ -40,8 +40,8 @@ from the PowerShell plugin to `c3`'s subcommands.
   version is published (the version is bumped at each release): `claude plugin update c3@c3`.
 - **Install the binary:**
   - from source: `cargo install --path crates/c3-cli --force` (from a checkout of the C3
-    repository; `--no-default-features` drops the `index-surreal` feature, the embedded
-    SurrealDB code index - use the default build unless that feature is the problem) puts `c3` on `PATH` via cargo's own bin directory; or
+    repository; the default is the light bundle; add `--features index-surreal` for the embedded
+    SurrealDB code index, needed only for the `http`/browser packs) puts `c3` on `PATH` via cargo's own bin directory; or
   - a release download, once published, placed anywhere on `PATH`, or pointed at with
     `C3_EXE=<path>`.
 - **Verify:** `c3 providers` → at least one row `available`; then a `--dry-run`

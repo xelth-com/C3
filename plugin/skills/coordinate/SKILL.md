@@ -112,7 +112,7 @@ partial kept, and turns the reviewer's sub-agents off.
   one claim. **It leaves the machine only after you confirm** (`--yes` skips the prompt).
 - `c3 snapshot [--delta] [--depth 0-9] [--budget <n>] [--focus <glob>]` — a repository snapshot,
   optionally a git delta since the last full snapshot's anchor.
-- `c3 index build|rebuild|query|stats` — the local code index (embedded SurrealDB, per project).
+- `c3 index build|rebuild|query|stats` — the local code index (embedded SurrealDB, per project; opt-in: `cargo install --features index-surreal`, else it reports `none`).
   Never required for a consultation; `query` is BM25 + reciprocal-rank with a bounded 1-hop
   expansion.
 - `c3 router simulate|replay|priors|explain` — routing insight: `explain` prints the score table
