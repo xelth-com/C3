@@ -9,6 +9,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ## [Unreleased]
 
+- Plugin: the coordinate skill carries the waiting rule (wakeups instead of blocking waits); the SessionStart hook prints it; README: the local-checkout install path.
+
 ### Fixed
 
 - **Wave 8i - lossless quota instants (F62-1)**: the per-window instants keep their fractional seconds, a comparison involving a whole-second instant is made at second granularity (a tie goes to the rank), and a legacy record's unknown window instants never win on recency against a known one (`docs/port/wave8-quota.md`).

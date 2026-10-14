@@ -18,6 +18,8 @@
 #
 # Runs on macOS and Linux under sh/bash.
 
+wait_rule="c3: coordinator rules - the c3:coordinate skill; while waiting on workers, panels, builds or peers schedule a wakeup (ScheduleWakeup, about 20 min) instead of blocking, small reads at each wake - the prompt cache stays warm"
+
 collab_dir=".collab"
 if [ -n "$1" ]; then
   collab_dir="$1"
@@ -34,6 +36,7 @@ fi
 
 if [ -z "$c3_exe" ]; then
   echo "c3: not installed - place the c3 binary on PATH or set C3_EXE (see plugin/README.md)"
+  echo "$wait_rule"
   exit 0
 fi
 
@@ -49,4 +52,5 @@ pointer=$(printf '%s\n' "$out" | grep -m1 '^codex-consult: coordinator rules - '
 if [ -n "$pointer" ] && [ "$pointer" != "$first" ]; then
   echo "$pointer"
 fi
+echo "$wait_rule"
 exit 0

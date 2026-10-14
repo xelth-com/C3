@@ -24,6 +24,28 @@ here.) The consultation procedure itself is the `consult` skill; wiring reviewer
   launch, a wait and a re-brief cost more than a brief written once.
 - **English to reviewers and workers.** Briefs, prompts and handoff titles are in English;
   source material in another language is translated or summarised, never pasted.
+- **Wait without blocking; keep the prompt cache warm.** Poll a state file or `c3 consult --task
+  <task> --status`; never sit in a blocking foreground wait longer than the shell tool's limit.
+  After the cache's lifetime the next request re-writes the whole context, so a large context
+  must not go cold by oversight.
+  - *Running work* (keeps the wake armed, idle count zero): a worker or subagent that has not
+    reported; a detached consultation or panel (start `c3 consult --task <task> --wait` in the
+    background - its exit is the signal - or poll `--status`); a long shell job (a suite, a
+    build); a window you gave another session, until it says it is done; an operator step with a
+    named end ("I install it and come back"); a cooldown with a named end (a provider's
+    `retry_after`, a quota window). Idle is only: none of these, and nothing can be done without
+    the operator.
+  - *The means in Claude Code:* a Monitor or a background wait is the primary signal; the
+    `ScheduleWakeup` tool is the heartbeat - about 20 minutes (1200 s), armed at the first
+    delegation or wait of the session and kept while running work goes on. Every wake: small
+    reads only (a state file's tail, `c3 consult --task <task> --status`); one line when nothing
+    finished. Anything finished or needing action is activity: act, and the idle count restarts.
+  - *Idle:* idle wake 1 - one line in the state file ("idle since <time>"); idle wake 2 - write
+    the handover on disk, stop the wakeups, and tell the operator in one line the cheap ways
+    back: a fresh session from the state file; `/compact` is the operator's to run.
+  - *Compaction* only at a wave boundary (the report is read, the state is on disk) and only
+    while the cache is warm. In Claude Code the agent has no means to compact itself: while work
+    runs, keep the context warm however long the wait; when idle, hand over as above.
 - **Rate every consultation** once its reply is read (`c3 findings --task <task> --rate <n>
   --useful yes|partly|no`). A routed panel draws its seats from these marks.
 - **Ask the operator before going on without a required reviewer** — when one the topic needs is

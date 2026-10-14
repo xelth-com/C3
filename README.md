@@ -331,6 +331,14 @@ to the PowerShell [`codex-consult`](https://github.com/xelth-com/claude-codex-co
 switch-over procedure from the PowerShell plugin to C3 is
 [docs/port/phase2-switch.md](docs/port/phase2-switch.md).
 
+Another Claude Code session on the same machine, from a local checkout: `claude plugin marketplace
+add <path to the C3 checkout>`, then `claude plugin install c3@c3` (the marketplace is named `c3`;
+user scope; other sessions pick it up at their next restart), and the binary
+`cargo install --path crates/c3-cli --force` (the default build includes the local code index;
+`--no-default-features` drops the `index-surreal` feature, i.e. the embedded SurrealDB index - use it
+only if that feature is the problem). Once a newer plugin version is published (the version is
+bumped at each release), `claude plugin update c3@c3`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
