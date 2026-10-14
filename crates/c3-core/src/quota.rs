@@ -153,11 +153,27 @@ pub struct Totals {
 pub struct Observation {
     pub primary: Option<Window>,
     pub secondary: Option<Window>,
+    /// When the observation was written; for an AGGREGATE, derived (the latest of the per-window
+    /// instants) and for display only - never a replacement decision.
     pub at: Option<DateTime<FixedOffset>>,
+    /// The instant of the primary window / of the secondary window when it differs from `at` (an
+    /// aggregate keeps each retained window's OWN observation instant); `None` = `at`.
+    pub primary_at: Option<DateTime<FixedOffset>>,
+    pub secondary_at: Option<DateTime<FixedOffset>>,
     pub limit_id: String,
 }
 
 impl Observation {
+    /// The observation instant of ONE window (0 = primary, 1 = secondary): its own, else `at`.
+    pub fn window_at(&self, kind: usize) -> Option<DateTime<FixedOffset>> {
+        let own = if kind == 0 {
+            self.primary_at
+        } else {
+            self.secondary_at
+        };
+        own.or(self.at)
+    }
+
     /// It names a window (primary or secondary).
     pub fn named(&self) -> bool {
         self.primary.is_some() || self.secondary.is_some()
@@ -395,6 +411,8 @@ pub fn rollout_usage(
                 primary: ev.primary,
                 secondary: ev.secondary,
                 at: ev.at,
+                primary_at: None,
+                secondary_at: None,
                 limit_id: ev.limit_id,
             };
             if w.named() {
@@ -651,10 +669,11 @@ fn cmp_window_rank(
         .then(a.1.cmp(&b.1))
 }
 
-/// The observation the thread/sub-agent aggregation keeps after seeing `b` ([`newer_wins`] for the
-/// newer instant); at an EQUAL instant each window is merged on its own - the higher primary
-/// `used_percent` (with its reset) and, independently, the higher secondary - so a fuller weekly
-/// window is never hidden behind a fuller 5-hour one.
+/// The observation the thread/sub-agent/account aggregation keeps after seeing `b`: PER WINDOW,
+/// a candidate window is compared with the instant of THAT retained window - strictly newer
+/// replaces, an equal instant takes the total [`cmp_window_rank`] at `now`, older is kept; a window
+/// the candidate lacks (or an invalid one) never replaces. Each kept window carries its own
+/// instant; `at` of the result is derived (the latest of them), for display only.
 pub fn merge_observation(
     a: Option<Observation>,
     b: Option<&Observation>,
@@ -675,27 +694,52 @@ pub fn merge_observation(
                 .and_then(|r| DateTime::parse_from_rfc3339(r).ok()),
         )
     };
-    // the newer observation replaces a window ONLY where its own is valid; the older one fills
-    // the rest; at an equal instant each window takes the total rank
-    let (newer, older) = if bv.at > av.at { (bv, av) } else { (av, bv) };
-    let equal = av.at == bv.at;
-    let pick = |n: &Option<Window>, o: &Option<Window>| match (n, o) {
-        (Some(n), Some(o)) if equal => Some(
-            if cmp_window_rank(key(n), key(o), now) != std::cmp::Ordering::Less {
-                n
+    let mut wins: [Option<Window>; 2] = [None, None];
+    let mut ats: [Option<DateTime<FixedOffset>>; 2] = [None, None];
+    for kind in 0..2 {
+        let win = |o: &Observation| {
+            if kind == 0 {
+                o.primary.clone()
             } else {
-                o
+                o.secondary.clone()
             }
-            .clone(),
-        ),
-        (Some(n), _) => Some(n.clone()),
-        (None, o) => o.clone(),
-    };
+        };
+        let (aw, bw) = (win(av), win(bv));
+        let (a_at, b_at) = (av.window_at(kind), bv.window_at(kind));
+        let take_b = match (&aw, &bw) {
+            (_, None) => false,
+            (None, Some(_)) => true,
+            (Some(x), Some(y)) => match b_at.cmp(&a_at) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Less => false,
+                std::cmp::Ordering::Equal => {
+                    cmp_window_rank(key(y), key(x), now) == std::cmp::Ordering::Greater
+                }
+            },
+        };
+        if take_b {
+            wins[kind] = bw;
+            ats[kind] = b_at;
+        } else {
+            wins[kind] = aw;
+            ats[kind] = a_at;
+        }
+    }
+    let [primary, secondary] = wins;
+    let [primary_at, secondary_at] = ats;
+    let at = [(&primary, primary_at), (&secondary, secondary_at)]
+        .into_iter()
+        .filter(|(w, _)| w.is_some())
+        .filter_map(|(_, t)| t)
+        .max();
+    let newest = if bv.at > av.at { bv } else { av };
     Some(Observation {
-        primary: pick(&newer.primary, &older.primary),
-        secondary: pick(&newer.secondary, &older.secondary),
-        at: newer.at,
-        limit_id: newer.limit_id.clone(),
+        primary,
+        secondary,
+        at,
+        primary_at,
+        secondary_at,
+        limit_id: newest.limit_id.clone(),
     })
 }
 
@@ -947,7 +991,11 @@ pub fn blocking_window(quota: &Value, now: DateTime<Utc>) -> Option<WindowState>
 pub struct EndpointWindow {
     /// `{primary, secondary, observed_at}`.
     pub quota: Value,
+    /// Derived: the latest of the per-window instants (display, the age of the record).
     pub observed_at: DateTime<FixedOffset>,
+    /// The observation instant of each retained window (primary, secondary): the replacement
+    /// decisions compare a candidate with THESE, never with `observed_at`.
+    pub window_at: [Option<DateTime<FixedOffset>>; 2],
     /// `recorded` (a ledger entry or a machine-wide record) | `rollout` (the codex home's newest).
     pub source: &'static str,
     pub fingerprint: String,
@@ -958,7 +1006,10 @@ pub struct EndpointWindow {
 #[derive(Debug, Clone)]
 pub struct AccountWindow {
     pub quota: Value,
+    /// Derived (the latest per-window instant).
     pub observed_at: DateTime<FixedOffset>,
+    /// The instant of each retained window (primary, secondary).
+    pub window_at: [Option<DateTime<FixedOffset>>; 2],
     pub path: PathBuf,
 }
 
@@ -1014,6 +1065,10 @@ pub fn account_window_at(codex_home: &str, now: DateTime<Utc>) -> Option<Account
         .map(|b| AccountWindow {
             quota: b.to_quota(),
             observed_at: b.at.unwrap(),
+            window_at: [
+                b.primary.as_ref().and(b.window_at(0)),
+                b.secondary.as_ref().and(b.window_at(1)),
+            ],
             path: best_path,
         })
 }
@@ -1084,72 +1139,71 @@ fn quota_used(q: &Value, key: &str) -> Option<f64> {
 /// fuller 5-hour one. `source` of the result is the candidate's when it contributed a window.
 fn select_window(
     best: Option<EndpointWindow>,
-    at: DateTime<FixedOffset>,
+    cand_at: [Option<DateTime<FixedOffset>>; 2],
     quota: &Value,
     source: &'static str,
     fingerprint: String,
     now: DateTime<Utc>,
 ) -> Option<EndpointWindow> {
-    // an observation with no VALID window is absent (fail closed)
-    if quota_used(quota, "primary").is_none() && quota_used(quota, "secondary").is_none() {
+    const KEYS: [&str; 2] = ["primary", "secondary"];
+    // a window is VALID with a finite share AND an instant; an invalid one never replaces
+    let cand_valid = |k: usize| quota_used(quota, KEYS[k]).is_some() && cand_at[k].is_some();
+    if !cand_valid(0) && !cand_valid(1) {
         return best;
     }
-    let cand = EndpointWindow {
-        quota: quota.clone(),
-        observed_at: at,
-        source,
-        fingerprint,
-    };
-    let Some(cur) = best else {
-        return Some(cand);
-    };
-    // per window: a newer observation replaces a window ONLY where its own is valid, an older one
-    // fills only where the newer has none, at an equal instant the total rank decides
-    let newer_is_cand = at > cur.observed_at;
-    let equal = at == cur.observed_at;
-    let (newer, older) = if newer_is_cand {
-        (&cand.quota, &cur.quota)
-    } else {
-        (&cur.quota, &cand.quota)
-    };
-    let mut merged =
-        json!({"primary": null, "secondary": null, "observed_at": newer["observed_at"].clone()});
-    let mut took_cand = false;
-    for key in ["primary", "secondary"] {
-        let (n, o) = (quota_used(newer, key), quota_used(older, key));
-        let pick_newer = match (n, o) {
-            (Some(_), None) | (None, None) => true,
-            (None, Some(_)) => false,
-            (Some(nu), Some(ou)) => {
-                if equal {
-                    let reset = |q: &Value| when_offset(&q[key]["resets_at"]);
-                    cmp_window_rank((nu, reset(newer)), (ou, reset(older)), now)
-                        != std::cmp::Ordering::Less
-                } else {
-                    true
-                }
-            }
+    let Some(mut out) = best else {
+        let mut w = EndpointWindow {
+            quota: json!({"primary": null, "secondary": null, "observed_at": quota["observed_at"].clone()}),
+            observed_at: cand_at[0].or(cand_at[1])?,
+            window_at: [None, None],
+            source,
+            fingerprint,
         };
-        let from_newer = pick_newer;
-        let src = if from_newer { newer } else { older };
-        merged[key] = src[key].clone();
-        if n.is_some() || o.is_some() {
-            let cand_side = from_newer == newer_is_cand;
-            if cand_side && (if from_newer { n } else { o }).is_some() {
-                took_cand = true;
+        for k in 0..2 {
+            if cand_valid(k) {
+                w.quota[KEYS[k]] = quota[KEYS[k]].clone();
+                w.window_at[k] = cand_at[k];
             }
         }
-    }
-    let mut out = if newer_is_cand && took_cand {
-        cand
-    } else {
-        cur
+        w.observed_at = w.window_at.iter().flatten().max().copied()?;
+        return Some(w);
     };
-    if equal && took_cand {
-        out.source = source;
+    let mut took = false;
+    for k in 0..2 {
+        if !cand_valid(k) {
+            continue;
+        }
+        let take = match (quota_used(&out.quota, KEYS[k]), out.window_at[k]) {
+            (Some(cu), Some(cur_at)) => match cand_at[k].cmp(&Some(cur_at)) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Less => false,
+                std::cmp::Ordering::Equal => {
+                    let reset = |q: &Value| when_offset(&q[KEYS[k]]["resets_at"]);
+                    cmp_window_rank(
+                        (quota_used(quota, KEYS[k]).unwrap_or(0.0), reset(quota)),
+                        (cu, reset(&out.quota)),
+                        now,
+                    ) == std::cmp::Ordering::Greater
+                }
+            },
+            _ => true,
+        };
+        if take {
+            out.quota[KEYS[k]] = quota[KEYS[k]].clone();
+            out.window_at[k] = cand_at[k];
+            took = true;
+        }
     }
-    out.quota = merged;
-    out.observed_at = out.observed_at.max(at);
+    if took {
+        out.source = source;
+        if let Some(l) = out.window_at.iter().flatten().max().copied() {
+            if l > out.observed_at {
+                out.quota["observed_at"] = quota["observed_at"].clone();
+                out.fingerprint = fingerprint;
+            }
+            out.observed_at = l;
+        }
+    }
     Some(out)
 }
 
@@ -1198,14 +1252,14 @@ pub fn endpoint_window_at(
             Some(a) => a,
             None => continue,
         };
-        best = select_window(best, at, q, "recorded", fp, now);
+        best = select_window(best, [Some(at), Some(at)], q, "recorded", fp, now);
     }
     if fp_set.contains(&builtin_fingerprint) {
         if let Some(home) = live_codex_home() {
             if let Some(live) = account_window_at(&home, now) {
                 best = select_window(
                     best,
-                    live.observed_at,
+                    live.window_at,
                     &live.quota,
                     "rollout",
                     builtin_fingerprint.to_string(),
@@ -1946,6 +2000,8 @@ mod tests {
             primary: win("primary"),
             secondary: win("secondary"),
             at: Some(at),
+            primary_at: None,
+            secondary_at: None,
             limit_id: "codex".into(),
         }
     }
@@ -2342,6 +2398,184 @@ mod tests {
         }
     }
 
+    fn iso_s(t: DateTime<Utc>) -> String {
+        t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    }
+
+    fn secs(t: DateTime<Utc>) -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(t.timestamp(), 0).unwrap()
+    }
+
+    fn at_of(c: &Value) -> DateTime<FixedOffset> {
+        when_offset(&c["finished_at"]).unwrap()
+    }
+
+    // The reviewer's F58-1 fixture: t1 < t2 < t3, every window with a future reset.
+    // A = primary 30 % at t1, B = secondary 10 % at t3, C = primary 99 % at t2.
+    fn abc(now: DateTime<Utc>) -> ([DateTime<Utc>; 3], [Value; 3]) {
+        let t = [
+            secs(now - Duration::minutes(30)),
+            secs(now - Duration::minutes(20)),
+            secs(now - Duration::minutes(10)),
+        ];
+        let reset = now + Duration::minutes(120);
+        let a = rq(Some((30.0, Some(reset))), None, &iso_s(t[0]));
+        let b = rq(None, Some((10.0, Some(reset))), &iso_s(t[2]));
+        let c = rq(Some((99.0, Some(reset))), None, &iso_s(t[1]));
+        (t, [a, b, c])
+    }
+
+    fn check_abc(w: &EndpointWindow, t: &[DateTime<Utc>; 3], now: DateTime<Utc>, what: &str) {
+        assert_eq!(w.quota["primary"]["used_percent"], 99.0, "{what}");
+        assert_eq!(w.quota["secondary"]["used_percent"], 10.0, "{what}");
+        assert_eq!(
+            w.window_at[0].map(|x| x.timestamp()),
+            Some(t[1].timestamp()),
+            "{what}"
+        );
+        assert_eq!(
+            w.window_at[1].map(|x| x.timestamp()),
+            Some(t[2].timestamp()),
+            "{what}"
+        );
+        assert_eq!(w.observed_at.timestamp(), t[2].timestamp(), "{what}");
+        assert!(blocking_window(&w.quota, now).is_some(), "{what}");
+    }
+
+    // UNIT (F58-1, a): the recorded selection keeps each window at ITS OWN instant - all six orders.
+    #[test]
+    fn partial_windows_keep_their_own_instants_in_the_recorded_selection() {
+        let now = Utc::now();
+        let (t, obs) = abc(now);
+        for perm in perms_of(3) {
+            let list: Vec<Value> = perm.iter().map(|i| obs[*i].clone()).collect();
+            let w = t_endpoint_window_at(&list, &["fp"], "fp", now).unwrap();
+            check_abc(&w, &t, now, &format!("{perm:?}"));
+        }
+    }
+
+    // UNIT (F58-1, b): merge_observation (the rollout / account aggregation) - all six orders.
+    #[test]
+    fn partial_windows_keep_their_own_instants_in_merge_observation() {
+        let now = Utc::now();
+        let (t, obs) = abc(now);
+        for perm in perms_of(3) {
+            let mut m = None;
+            for i in &perm {
+                m = merge_observation(m, Some(&obs_of(&obs[*i], at_of(&obs[*i]))), now);
+            }
+            let m = m.unwrap();
+            assert_eq!(m.primary.as_ref().unwrap().used_percent, 99.0, "{perm:?}");
+            assert_eq!(m.secondary.as_ref().unwrap().used_percent, 10.0, "{perm:?}");
+            assert_eq!(m.window_at(0).unwrap().timestamp(), t[1].timestamp());
+            assert_eq!(m.window_at(1).unwrap().timestamp(), t[2].timestamp());
+            assert_eq!(m.at.unwrap().timestamp(), t[2].timestamp());
+        }
+    }
+
+    // UNIT (F58-1, c): the recorded/live split - the rollout window instants travel into the
+    // endpoint selection (A,B recorded + C live, and C recorded + A,B live).
+    #[test]
+    fn partial_windows_keep_their_own_instants_across_the_recorded_live_split() {
+        let now = Utc::now();
+        let (t, obs) = abc(now);
+        let reset = now + Duration::minutes(120);
+        // observation index: 0 = A, 1 = B, 2 = C (the instants are t[0], t[2], t[1])
+        let at_idx = [t[0], t[2], t[1]];
+        let rollout = |home: &Path, idx: usize, salt: u32| {
+            let at = at_idx[idx];
+            let id = v7(at, salt);
+            let (p, s_) = match idx {
+                0 => (win(30.0, reset, 300), "null".to_string()),
+                1 => ("null".to_string(), win(10.0, reset, 10080)),
+                _ => (win(99.0, reset, 300), "null".to_string()),
+            };
+            let lines = vec![
+                meta_line(at, &id, ""),
+                token_line(at, 10, 0, 1, 10, &p, &s_, "codex"),
+            ];
+            write_rollout(home, &id, &lines, at);
+        };
+        // (live rollouts, recorded entries)
+        let cases: [(&[usize], &[usize]); 4] = [
+            (&[2], &[0, 1]),
+            (&[2], &[1, 0]),
+            (&[0, 1], &[2]),
+            (&[1, 0], &[2]),
+        ];
+        for (n, (live, rec)) in cases.iter().enumerate() {
+            let _live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+            let home = scratch("split-live");
+            for (k, idx) in live.iter().enumerate() {
+                rollout(&home, *idx, 20 + k as u32);
+            }
+            let recorded: Vec<Value> = rec.iter().map(|i| obs[*i].clone()).collect();
+            set_live_codex_home(Some(home.to_string_lossy().to_string()));
+            let w = super::endpoint_window_at(&recorded, &["fp"], "fp", now);
+            set_live_codex_home(None);
+            let _ = std::fs::remove_dir_all(&home);
+            check_abc(&w.unwrap(), &t, now, &format!("case {n}"));
+        }
+    }
+
+    // UNIT (F58-1, d): distinct instants and partial windows, 720 orders - the result is the same
+    // for recorded selection and merge_observation: primary 99 % at t2, secondary 40 % at t4.
+    #[test]
+    fn distinct_instant_partial_windows_are_order_independent() {
+        let now = Utc::now();
+        let t: Vec<DateTime<Utc>> = (1..=4)
+            .map(|k| secs(now - Duration::minutes(50 - 10 * k)))
+            .collect();
+        let reset = now + Duration::minutes(120);
+        let obs = [
+            rq(Some((30.0, Some(reset))), None, &iso_s(t[0])),
+            rq(None, Some((10.0, Some(reset))), &iso_s(t[2])),
+            rq(Some((99.0, Some(reset))), None, &iso_s(t[1])),
+            rq(None, Some((5.0, Some(reset))), &iso_s(t[1])),
+            nan_quota(json!("NaN"), reset, &iso_s(t[3])),
+            rq(None, Some((40.0, Some(reset))), &iso_s(t[3])),
+        ];
+        let fingerprint = |q: &Value| {
+            let f = |k: &str| {
+                (
+                    q[k]["used_percent"].as_f64(),
+                    ts_of(q[k]["resets_at"].as_str()),
+                )
+            };
+            (f("primary"), f("secondary"))
+        };
+        let mut first = None;
+        for perm in perms_of(6) {
+            let list: Vec<Value> = perm.iter().map(|i| obs[*i].clone()).collect();
+            let w = t_endpoint_window_at(&list, &["fp"], "fp", now).unwrap();
+            assert_eq!(
+                w.window_at[0].map(|x| x.timestamp()),
+                Some(t[1].timestamp())
+            );
+            assert_eq!(
+                w.window_at[1].map(|x| x.timestamp()),
+                Some(t[3].timestamp())
+            );
+            let n = fingerprint(&w.quota);
+            let mut m = None;
+            for c in &list {
+                m = merge_observation(m, Some(&obs_of(c, at_of(c))), now);
+            }
+            let m = m.unwrap();
+            assert_eq!(m.primary.as_ref().unwrap().used_percent, 99.0, "{perm:?}");
+            assert_eq!(m.secondary.as_ref().unwrap().used_percent, 40.0, "{perm:?}");
+            assert_eq!(m.window_at(0).unwrap().timestamp(), t[1].timestamp());
+            assert_eq!(m.window_at(1).unwrap().timestamp(), t[3].timestamp());
+            match &first {
+                None => first = Some(n),
+                Some(f) => assert_eq!(&n, f, "{perm:?}"),
+            }
+        }
+        let f = first.unwrap();
+        assert_eq!(f.0 .0, Some(99.0));
+        assert_eq!(f.1 .0, Some(40.0));
+    }
+
     // UNIT (F48-1): the sub-agent / rollout aggregation merges per window at an equal instant.
     #[test]
     fn merge_observation_keeps_each_fuller_window_at_an_equal_instant() {
@@ -2358,6 +2592,8 @@ mod tests {
                 resets_at: None,
             }),
             at: Some(at),
+            primary_at: None,
+            secondary_at: None,
             limit_id: "codex".into(),
         };
         for (a, b) in [
@@ -2387,12 +2623,16 @@ mod tests {
             }),
             secondary: None,
             at: Some(at),
+            primary_at: None,
+            secondary_at: None,
             limit_id: "codex".into(),
         };
         let none = Observation {
             primary: None,
             secondary: None,
             at: Some(at),
+            primary_at: None,
+            secondary_at: None,
             limit_id: "premium".into(),
         };
         assert!(newer_wins(

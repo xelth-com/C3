@@ -30,3 +30,11 @@ Details and the port table: `docs/port/wave8-quota.md`.
 
 ## Next
 - Coordinator: diff-review of `main..wave-8-quota`, merge, re-run RC suite as needed.
+
+## Wave 8g (F58-1, on main)
+- Done: 8b F46-1, 8c F48-1, 8d F50-1, 8e F52-1/2, 8f F55-1/2, 8g F58-1 (per-window observation
+  instants: Observation.primary_at/secondary_at, EndpointWindow/AccountWindow.window_at; the
+  aggregate observed_at is derived and display-only; an invalid window has no instant).
+- Decided: a candidate window is compared only with the instant of the retained window of that kind.
+- Next: Astra round 7; the plugin's T17 must mirror per-window rank, one instant, finite
+  percentages, the raw account cache and per-window instants.

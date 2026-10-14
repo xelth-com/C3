@@ -163,3 +163,24 @@ newer-partial case), and the permutation test now runs 5040 orders of seven obse
 NaN-only newer record included). The tests that read `endpoint_window` are serialised with those
 that switch the process-wide live source on (a flake of the shared global). The plugin's T17 fix
 needs the same cache shape and the per-window validation.
+
+## 8g - every window carries its OWN observation instant (reviewer finding F58-1)
+
+Partial-window aggregation kept an older observation's window but stamped the aggregate with the
+NEWER observation's instant, so a later comparison treated the retained window as newer than it
+was: with t1 < t2 < t3, A = primary 30 % at t1, B = secondary 10 % at t3, C = primary 99 % at t2,
+the fold A, B, C kept 30 % (B had promoted A's primary to t3) and A, C, B kept 99 %. Now
+`Observation` carries `primary_at` / `secondary_at` (`window_at(kind)`: its own, else `at`),
+`EndpointWindow` and `AccountWindow` carry `window_at: [primary, secondary]`, and a candidate window
+is compared only with the instant of THAT retained window (strictly newer replaces, equal takes the
+8d rank, older is kept; an invalid window has no instant and never replaces). The aggregate
+`observed_at` / `at` is derived (the latest per-window instant) for display and the age of the
+record, never for a replacement decision. The instants flow: rollout parse (`at` of the event) ->
+`merge_observation` (per-window instants kept) -> `account_window_at` (`AccountWindow.window_at`
+from the aggregate, over the raw cache) -> `endpoint_window_at` (recorded candidates carry their
+entry instant on both windows, the live candidate its `window_at`) -> `select_window` (compares per
+window with `EndpointWindow.window_at`). Tests: `partial_windows_keep_their_own_instants_in_the_recorded_selection`,
+`partial_windows_keep_their_own_instants_in_merge_observation`,
+`partial_windows_keep_their_own_instants_across_the_recorded_live_split`,
+`distinct_instant_partial_windows_are_order_independent` (720 orders, distinct instants, partial
+windows, a NaN-only one). The plugin's T17 fix needs per-window timestamps too.
