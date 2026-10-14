@@ -9,6 +9,8 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-14
+
 - Plugin: the coordinate skill carries the waiting rule (wakeups instead of blocking waits); the SessionStart hook prints it; README: the local-checkout install path.
 
 ### Fixed

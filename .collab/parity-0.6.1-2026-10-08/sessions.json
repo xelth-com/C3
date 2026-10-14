@@ -10804,6 +10804,459 @@
                                                       "used_percent":  null,
                                                       "resets_at":  null
                                                   }
+                                   },
+                                   {
+                                       "n":  37,
+                                       "when":  "2026-10-14T18:46:42+02:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "7a981894-dead-43da-bec8-b34e56b7c66d",
+                                       "consult_ref":  "4d1c71b8-4bd4-4c66-bae4-f0f0ad0a4312",
+                                       "reviewer":  {
+                                                        "provider":  "openai",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "gpt-6-astra",
+                                                        "model_source":  "roster",
+                                                        "engine":  "codex",
+                                                        "harness":  "codex-cli 0.155.1",
+                                                        "provider_fingerprint":  "56d97b6ece36e75295a290d931ca6bbe2dd0b1f0807454b21a63a6fd17b32d7c",
+                                                        "provider_config":  {
+                                                                                "builtin":  "openai"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openai :: gpt-6-astra",
+                                       "coordinator":  {
+                                                           "provider":  "anthropic",
+                                                           "model":  "claude-fable-5-1",
+                                                           "engine":  "codex",
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "explicit",
+                                                           "in_roster":  false,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: Logged in using ChatGPT",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json",
+                                                      "position":  1,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "01a13b4f-2c01-7110-9650-9ea3a2cb6976",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "codex exec --sandbox read-only --color never --json -m gpt-6-astra -c features.multi_agent=false -c model_reasoning_effort=\"high\" -c model_provider=\"openai\" -o C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-last-33c6d64c9f59409c87b97c47c03931b0.md --output-schema C:\\Users\\Dmytro\\claude-codex-consult\\plugins\\codex-consult\\schemas\\consult-reply.schema.json -",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_BRIDGE_SESSION_ID",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/parity-0.6.1-2026-10-08/handoffs/63-claude-wave8-round9.md",
+                                       "range":  {
+                                                     "spec":  "a0404b1..409481f",
+                                                     "files":  16,
+                                                     "insertions":  2105,
+                                                     "deletions":  63,
+                                                     "lines":  2168
+                                                 },
+                                       "prompt_chars":  49485,
+                                       "reply":  "handoffs/64-codex-wave8-round9.md",
+                                       "reply_json":  "handoffs/64-codex-wave8-round9.reply.json",
+                                       "events":  "handoffs/64-codex-wave8-round9.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "gpt-6-astra",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-10-14T18:46:42+02:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "output-schema",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "fd0ab41264578806d83179e1bf4bbd0314f99d27",
+                                       "reviewed_revision":  "fd0ab41",
+                                       "tree_sha256":  "853826ed89f20a1bdc021dd075e7a22d773106277ef021ae25ac9064798df81e",
+                                       "tree_sha256_after":  "853826ed89f20a1bdc021dd075e7a22d773106277ef021ae25ac9064798df81e",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "749851ce6a6d7d74e9e9502904b63a7670877abcd20958e04b0288d6d60058c9",
+                                       "brief_sha256_after":  "749851ce6a6d7d74e9e9502904b63a7670877abcd20958e04b0288d6d60058c9",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (8 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  null,
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "ACCEPT",
+                                       "verdict_reason":  "The reviewed quota changes address F62-1 and make blocking-window selection order-independent at a fixed comparison instant; no new release-blocking defect was found.",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+                                                              {
+                                                                  "id":  "F02-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-6",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-7",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-8",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F06-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F09-6",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F11-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F14-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F19-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F19-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F19-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F22-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F23-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F23-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F23-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F23-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F23-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F24-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F24-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F24-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F24-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F24-5",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F24-6",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F25-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F25-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F25-4",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F30-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F30-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F30-3",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F31-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F36-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F36-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F38-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F40-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F40-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F42-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F46-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F48-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F50-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F52-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F52-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F55-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F55-2",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F58-1",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F60-1",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F62-1",
+                                                                  "status":  "fixed"
+                                                              }
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+                                                                        "F14-1",
+                                                                        "F22-1",
+                                                                        "F23-1",
+                                                                        "F23-2",
+                                                                        "F23-3",
+                                                                        "F24-1",
+                                                                        "F25-2",
+                                                                        "F30-1",
+                                                                        "F30-2",
+                                                                        "F31-1",
+                                                                        "F36-1",
+                                                                        "F38-1",
+                                                                        "F40-1",
+                                                                        "F42-1"
+                                                                    ],
+                                       "usage":  {
+                                                     "input_tokens":  256377,
+                                                     "cached_input_tokens":  176768,
+                                                     "output_tokens":  3656,
+                                                     "reasoning_output_tokens":  642
+                                                 },
+                                       "compactions":  null,
+                                       "engine_run":  null,
+                                       "wall_seconds":  234.4,
+                                       "finished_at":  "2026-10-14T18:50:39+02:00",
+                                       "commit_wait_ms":  0,
+                                       "quota":  {
+                                                     "primary":  {
+                                                                     "used_percent":  68,
+                                                                     "window_minutes":  300,
+                                                                     "resets_at":  "2026-10-14T21:23:06+02:00"
+                                                                 },
+                                                     "secondary":  {
+                                                                       "used_percent":  76,
+                                                                       "window_minutes":  10080,
+                                                                       "resets_at":  "2026-10-20T13:32:16+02:00"
+                                                                   },
+                                                     "observed_at":  "2026-10-14T18:50:35+02:00"
+                                                 },
+                                       "tokens":  {
+                                                      "input":  256377,
+                                                      "cached":  176768,
+                                                      "output":  3656,
+                                                      "thread_input":  256377,
+                                                      "calls":  6,
+                                                      "max_input":  58641,
+                                                      "context_window":  258400,
+                                                      "subagents":  {
+                                                                        "count":  0,
+                                                                        "input":  0,
+                                                                        "calls":  0
+                                                                    }
+                                                  },
+                                       "subagents_allowed":  false,
+                                       "budget":  {
+                                                      "percent":  90,
+                                                      "source":  "-Budget",
+                                                      "stopped":  false,
+                                                      "used_percent":  null,
+                                                      "resets_at":  null
+                                                  }
                                    }
                                ]
               }
