@@ -619,6 +619,49 @@ pub fn newer_wins(a: Option<&Observation>, b: Option<&Observation>) -> bool {
     bw.fullest() > aw.fullest()
 }
 
+/// The observation the thread/sub-agent aggregation keeps after seeing `b` ([`newer_wins`] for the
+/// newer instant); at an EQUAL instant each window is merged on its own - the higher primary
+/// `used_percent` (with its reset) and, independently, the higher secondary - so a fuller weekly
+/// window is never hidden behind a fuller 5-hour one.
+pub fn merge_observation(a: Option<Observation>, b: Option<&Observation>) -> Option<Observation> {
+    let (Some(av), Some(bv)) = (a.as_ref(), b) else {
+        return if newer_wins(a.as_ref(), b) {
+            b.cloned()
+        } else {
+            a
+        };
+    };
+    match (av.named(), bv.named(), av.at, bv.at) {
+        (true, true, Some(x), Some(y)) if x == y => {
+            let pick = |p: &Option<Window>, q: &Option<Window>| match (p, q) {
+                (Some(p), Some(q)) => Some(
+                    if q.used_percent > p.used_percent {
+                        q
+                    } else {
+                        p
+                    }
+                    .clone(),
+                ),
+                (Some(p), None) => Some(p.clone()),
+                (None, q) => q.clone(),
+            };
+            Some(Observation {
+                primary: pick(&av.primary, &bv.primary),
+                secondary: pick(&av.secondary, &bv.secondary),
+                at: av.at,
+                limit_id: av.limit_id.clone(),
+            })
+        }
+        _ => {
+            if newer_wins(a.as_ref(), b) {
+                b.cloned()
+            } else {
+                a
+            }
+        }
+    }
+}
+
 /// `Get-CodexRunQuota`'s result: the ledger's `quota` and `tokens` of ONE codex run.
 #[derive(Debug, Clone)]
 pub struct RunQuota {
@@ -674,9 +717,7 @@ pub fn codex_run_quota(
         if let Some(i) = su.total.and_then(|t| t.input) {
             sub_input += i;
         }
-        if newer_wins(win.as_ref(), su.window.as_ref()) {
-            win = su.window.clone();
-        }
+        win = merge_observation(win, su.window.as_ref());
     }
     if let Some(w) = &win {
         r.quota = w.to_quota();
@@ -933,8 +974,9 @@ pub fn account_window(codex_home: &str) -> Option<AccountWindow> {
                 }
             }
             let u = rollout_usage(&p, None, ROLLOUT_TAIL_BYTES);
-            if newer_wins(best.as_ref(), u.window.as_ref()) {
-                best = u.window;
+            let before = best.clone();
+            best = merge_observation(best, u.window.as_ref());
+            if best != before {
                 best_path = p;
             }
         }
@@ -972,29 +1014,62 @@ pub fn live_codex_home() -> Option<String> {
     live_home().lock().ok().and_then(|l| l.clone())
 }
 
-/// The used share of a recorded `quota` member (`primary` / `secondary`), 0 when absent.
-fn quota_used(q: &Value, key: &str) -> f64 {
+/// The used share of a recorded `quota` member (`primary` / `secondary`); `None` when it names
+/// no window.
+fn quota_used(q: &Value, key: &str) -> Option<f64> {
+    if !q[key].is_object() {
+        return None;
+    }
     match &q[key]["used_percent"] {
-        Value::Number(n) => n.as_f64().unwrap_or(0.0),
-        Value::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
-        _ => 0.0,
+        Value::Number(n) => n.as_f64(),
+        Value::String(s) => s.trim().parse::<f64>().ok(),
+        _ => None,
     }
 }
 
-/// The ONE comparison of the endpoint window selection (recorded and live): a candidate at `at`
-/// with `quota` replaces `best` when it is strictly newer; at an equal `observed_at` (the ledger
-/// serialises without fractions, so ties happen) the higher primary share wins, then the higher
-/// secondary - the same fuller-wins tie rule as [`newer_wins`].
-fn window_obs_wins(at: DateTime<FixedOffset>, quota: &Value, best: &EndpointWindow) -> bool {
-    if at != best.observed_at {
-        return at > best.observed_at;
+/// The ONE selection of the endpoint window (recorded and live): a candidate strictly newer than
+/// `best` replaces it; at an EQUAL `observed_at` (the ledger serialises without fractions, so ties
+/// happen) the windows merge PER WINDOW - the higher primary `used_percent` keeps its own reset,
+/// and independently the higher secondary - so a blocking weekly window is never hidden behind a
+/// fuller 5-hour one. `source` of the result is the candidate's when it contributed a window.
+fn select_window(
+    best: Option<EndpointWindow>,
+    at: DateTime<FixedOffset>,
+    quota: &Value,
+    source: &'static str,
+    fingerprint: String,
+) -> Option<EndpointWindow> {
+    let cand = EndpointWindow {
+        quota: quota.clone(),
+        observed_at: at,
+        source,
+        fingerprint,
+    };
+    let Some(mut cur) = best else {
+        return Some(cand);
+    };
+    if at > cur.observed_at {
+        return Some(cand);
     }
-    let cand = (quota_used(quota, "primary"), quota_used(quota, "secondary"));
-    let cur = (
-        quota_used(&best.quota, "primary"),
-        quota_used(&best.quota, "secondary"),
-    );
-    cand > cur
+    if at < cur.observed_at {
+        return Some(cur);
+    }
+    let mut merged = cur.quota.clone();
+    let mut took = false;
+    for key in ["primary", "secondary"] {
+        let (c, b) = (quota_used(quota, key), quota_used(&cur.quota, key));
+        if let Some(cu) = c {
+            if b.map(|bu| cu > bu).unwrap_or(true) {
+                merged[key] = quota[key].clone();
+                took = true;
+            }
+        }
+    }
+    if took {
+        cur.quota = merged;
+        cur.source = source;
+    }
+    Some(cur)
 }
 
 /// `Get-EndpointWindow`: every consultation (ledger entry or machine-wide record) of `fp_set` that
@@ -1031,34 +1106,18 @@ pub fn endpoint_window(
             Some(a) => a,
             None => continue,
         };
-        if best
-            .as_ref()
-            .map(|b| window_obs_wins(at, q, b))
-            .unwrap_or(true)
-        {
-            best = Some(EndpointWindow {
-                quota: q.clone(),
-                observed_at: at,
-                source: "recorded",
-                fingerprint: fp,
-            });
-        }
+        best = select_window(best, at, q, "recorded", fp);
     }
     if fp_set.contains(&builtin_fingerprint) {
         if let Some(home) = live_codex_home() {
             if let Some(live) = account_window(&home) {
-                if best
-                    .as_ref()
-                    .map(|b| window_obs_wins(live.observed_at, &live.quota, b))
-                    .unwrap_or(true)
-                {
-                    best = Some(EndpointWindow {
-                        quota: live.quota,
-                        observed_at: live.observed_at,
-                        source: "rollout",
-                        fingerprint: builtin_fingerprint.to_string(),
-                    });
-                }
+                best = select_window(
+                    best,
+                    live.observed_at,
+                    &live.quota,
+                    "rollout",
+                    builtin_fingerprint.to_string(),
+                );
             }
         }
     }
@@ -1680,6 +1739,102 @@ mod tests {
         let w = w.unwrap();
         assert_eq!(w.source, "rollout");
         assert_eq!(w.quota["primary"]["used_percent"], 99.0);
+    }
+
+    fn cross_consult(p: f64, w: f64, at: &str, reset: DateTime<Utc>) -> Value {
+        json!({
+            "finished_at": at,
+            "quota": {
+                "primary": {"used_percent": p, "window_minutes": 300, "resets_at": reset.to_rfc3339()},
+                "secondary": {"used_percent": w, "window_minutes": 10080, "resets_at": (reset + Duration::days(3)).to_rfc3339()},
+                "observed_at": at
+            }
+        })
+    }
+
+    // UNIT (F48-1): at an equal time each window is merged on its own, in both orders.
+    #[test]
+    fn endpoint_window_at_an_equal_time_merges_per_window_in_both_orders() {
+        let reset = Utc::now() + Duration::minutes(120);
+        let at = "2026-10-13T11:35:49+00:00";
+        let a = cross_consult(40.0, 99.0, at, reset);
+        let b = cross_consult(50.0, 20.0, at, reset + Duration::minutes(7));
+        for order in [vec![a.clone(), b.clone()], vec![b, a]] {
+            let w = endpoint_window(&order, &["fp"], "fp").unwrap();
+            assert_eq!(w.quota["primary"]["used_percent"], 50.0);
+            assert_eq!(w.quota["secondary"]["used_percent"], 99.0);
+            let blocking = blocking_window(&w.quota, Utc::now()).unwrap();
+            assert_eq!(blocking.name, "weekly window");
+        }
+    }
+
+    // UNIT (F48-1): the live rollout crossing a recorded observation, either way round.
+    #[test]
+    fn the_live_window_merges_per_window_with_a_crossing_recorded_one() {
+        for (live_p, live_w, rec_p, rec_w) in [(50.0, 20.0, 40.0, 99.0), (40.0, 99.0, 50.0, 20.0)] {
+            let home = scratch("cross-live");
+            let h = home.to_string_lossy().to_string();
+            let now = Utc::now();
+            let at = DateTime::<Utc>::from_timestamp(now.timestamp(), 0).unwrap();
+            let reset = now + Duration::minutes(120);
+            let id = v7(at, 9);
+            let lines = vec![
+                meta_line(at, &id, ""),
+                token_line(
+                    at,
+                    10,
+                    0,
+                    1,
+                    10,
+                    &win(live_p, reset, 300),
+                    &win(live_w, reset + Duration::days(3), 10080),
+                    "codex",
+                ),
+            ];
+            write_rollout(&home, &id, &lines, at);
+            let rec = cross_consult(rec_p, rec_w, &at.to_rfc3339(), reset);
+            set_live_codex_home(Some(h));
+            let w = endpoint_window(&[rec], &["fp"], "fp");
+            set_live_codex_home(None);
+            let _ = std::fs::remove_dir_all(&home);
+            let w = w.unwrap();
+            assert_eq!(w.quota["primary"]["used_percent"], 50.0);
+            assert_eq!(w.quota["secondary"]["used_percent"], 99.0);
+        }
+    }
+
+    // UNIT (F48-1): the sub-agent / rollout aggregation merges per window at an equal instant.
+    #[test]
+    fn merge_observation_keeps_each_fuller_window_at_an_equal_instant() {
+        let at: DateTime<FixedOffset> = "2026-10-13T12:00:00+00:00".parse().unwrap();
+        let mk = |p: f64, w: f64| Observation {
+            primary: Some(Window {
+                used_percent: p,
+                window_minutes: Some(300),
+                resets_at: None,
+            }),
+            secondary: Some(Window {
+                used_percent: w,
+                window_minutes: Some(10080),
+                resets_at: None,
+            }),
+            at: Some(at),
+            limit_id: "codex".into(),
+        };
+        for (a, b) in [
+            (mk(30.0, 99.0), mk(31.0, 10.0)),
+            (mk(31.0, 10.0), mk(30.0, 99.0)),
+        ] {
+            let m = merge_observation(Some(a), Some(&b)).unwrap();
+            assert_eq!(m.primary.unwrap().used_percent, 31.0);
+            assert_eq!(m.secondary.unwrap().used_percent, 99.0);
+        }
+        let newer = Observation {
+            at: Some(at + Duration::seconds(1)),
+            ..mk(1.0, 2.0)
+        };
+        let m = merge_observation(Some(mk(30.0, 99.0)), Some(&newer)).unwrap();
+        assert_eq!(m.secondary.unwrap().used_percent, 2.0);
     }
 
     #[test]

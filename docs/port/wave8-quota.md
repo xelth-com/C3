@@ -98,3 +98,18 @@ record merge has no `observed_at` comparison (n.a.).
 Plugin parity: `codex-consult-common.ps1` `Get-EndpointWindow` (lines ~6985 and ~6989) uses
 `-gt $best.ObservedAt` for both the recorded and the live selection - the SAME tie. A plugin
 TECH_DEBT candidate (not edited here).
+
+## 8c - the equal-time merge per window (reviewer finding F48-1)
+
+The 8b tuple rule (primary first) could hide a blocking weekly window: at an equal `observed_at`,
+primary 40 % / secondary 99 % lost to primary 50 % / secondary 20 %. The coordinator's rule: at an
+EQUAL `observed_at` the windows merge PER WINDOW - the endpoint's primary is the observation with
+the higher primary `used_percent` (with that observation's reset), the secondary independently the
+higher secondary (with its reset); a strictly newer `observed_at` still replaces both.
+`quota::select_window` (recorded and live selection of `endpoint_window`, replacing
+`window_obs_wins`) and `quota::merge_observation` (the sub-agent and account-rollout aggregation,
+built on `newer_wins`, which still decides newer-or-not) apply it. Tests:
+`endpoint_window_at_an_equal_time_merges_per_window_in_both_orders`,
+`the_live_window_merges_per_window_with_a_crossing_recorded_one` (both assignments),
+`merge_observation_keeps_each_fuller_window_at_an_equal_instant`; the 8b tests stay.
+The plugin's T17 fix of the tie (see 8b) must use the same per-window rule.
