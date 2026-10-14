@@ -236,6 +236,152 @@ pub fn format_machine_wait(
     )
 }
 
+// ------------------------------------------------------------ the declared plan cap (wave 9, D4)
+
+/// The next instant a declared plan cap resets after `after`, from the roster's `ext.c3.reset_hint`:
+/// `monthly:<DD>T<HH:MM><offset>` (day of the month, clamped to the month's length),
+/// `weekly:<Mon..Sun>T<HH:MM><offset>` or `daily:<HH:MM><offset>` (`offset` like `+08:00`). `None`
+/// when the hint does not parse.
+pub fn next_cap_reset(hint: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    use chrono::{Datelike, Duration, FixedOffset, NaiveDate, NaiveTime, TimeZone, Weekday};
+    let (kind, rest) = hint.split_once(':')?;
+    // the clock and the offset: "HH:MM+08:00" (the last 6 characters are the offset)
+    let split_clock = |s: &str| -> Option<(NaiveTime, FixedOffset)> {
+        if s.len() < 11 {
+            return None;
+        }
+        let (clock, off) = s.split_at(s.len() - 6);
+        let t = NaiveTime::parse_from_str(clock, "%H:%M").ok()?;
+        let sign = match off.as_bytes()[0] {
+            b'+' => 1,
+            b'-' => -1,
+            _ => return None,
+        };
+        let (oh, om) = off[1..].split_once(':')?;
+        let secs = sign * (oh.parse::<i32>().ok()? * 3600 + om.parse::<i32>().ok()? * 60);
+        Some((t, FixedOffset::east_opt(secs)?))
+    };
+    match kind {
+        "monthly" => {
+            let (day, clock) = rest.split_once('T')?;
+            let day: u32 = day.parse().ok().filter(|d| (1..=31).contains(d))?;
+            let (t, off) = split_clock(clock)?;
+            let local = after.with_timezone(&off);
+            let (mut y, mut m) = (local.year(), local.month());
+            for _ in 0..14 {
+                let last = (28..=31)
+                    .rev()
+                    .find(|d| NaiveDate::from_ymd_opt(y, m, *d).is_some())?;
+                let d = NaiveDate::from_ymd_opt(y, m, day.min(last))?;
+                let cand = off.from_local_datetime(&d.and_time(t)).single()?;
+                if cand.with_timezone(&Utc) > after {
+                    return Some(cand.with_timezone(&Utc));
+                }
+                if m == 12 {
+                    y += 1;
+                    m = 1;
+                } else {
+                    m += 1;
+                }
+            }
+            None
+        }
+        "weekly" => {
+            let (wd, clock) = rest.split_once('T')?;
+            let wd: Weekday = wd.parse().ok()?;
+            let (t, off) = split_clock(clock)?;
+            let local = after.with_timezone(&off);
+            for add in 0..=7 {
+                let d = local.date_naive() + Duration::days(add);
+                if d.weekday() != wd {
+                    continue;
+                }
+                let cand = off.from_local_datetime(&d.and_time(t)).single()?;
+                if cand.with_timezone(&Utc) > after {
+                    return Some(cand.with_timezone(&Utc));
+                }
+            }
+            None
+        }
+        "daily" => {
+            let (t, off) = split_clock(rest)?;
+            let local = after.with_timezone(&off);
+            for add in 0..=1 {
+                let d = local.date_naive() + Duration::days(add);
+                let cand = off.from_local_datetime(&d.and_time(t)).single()?;
+                if cand.with_timezone(&Utc) > after {
+                    return Some(cand.with_timezone(&Utc));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// (wave 9, D4) The verdict of a roster entry that declares a plan cap (`ext.c3.plan_caps`): an
+/// instant 429 with no window text - `n >= 2` of them within 60 minutes of each other, newer than
+/// the endpoint's newest usable reply - marks the entry `unavailable (plan quota: 429 twice in <n>
+/// min, no window text; retry after <next reset>)` until the cap's next reset (the entry's
+/// `reset_hint`, else 24 hours after the second hit), instead of the 10-minute burst. An entry
+/// without a declared cap keeps `verdict` as it is.
+pub fn plan_cap_verdict(
+    verdict: PreflightVerdict,
+    entry: &crate::roster::RosterEntry,
+    health: Option<&crate::health::EndpointHealth>,
+    now: DateTime<Utc>,
+) -> PreflightVerdict {
+    use chrono::Duration;
+    if entry.plan_caps.is_empty()
+        || !(verdict.kind.is_empty() || verdict.kind == "quota-unknown-reset")
+    {
+        return verdict;
+    }
+    let Some(hits) = health.map(|h| &h.instant_429s).filter(|h| h.len() >= 2) else {
+        return verdict;
+    };
+    // the newest hit and the newest earlier one within the hour
+    let second = hits[0];
+    let Some(first) = hits[1..]
+        .iter()
+        .find(|h| second - **h <= Duration::minutes(60))
+    else {
+        return verdict;
+    };
+    let gap_min = ((second - *first).num_seconds() as f64 / 60.0).ceil() as i64;
+    let second_utc = second.with_timezone(&Utc);
+    let until_utc = if entry.reset_hint.is_empty() {
+        second_utc + Duration::hours(24)
+    } else {
+        next_cap_reset(&entry.reset_hint, second_utc).unwrap_or(second_utc + Duration::hours(24))
+    };
+    if until_utc <= now {
+        return verdict;
+    }
+    let until = until_utc.with_timezone(second.offset());
+    let until_iso = format_offset_iso(until);
+    let mut v = verdict;
+    v.state = "unavailable".into();
+    v.kind = "quota".into();
+    v.burst = false;
+    v.hit = Some(second);
+    v.until = Some(until);
+    v.reason =
+        format!("plan quota: 429 twice in {gap_min} min, no window text; retry after {until_iso}");
+    v.preflight = format!("unavailable: {}", v.reason);
+    v.refusal = format!(
+        "provider {} is not usable: {} (the plan declares a {} cap); nothing was started (pass -SkipPreflight to launch anyway)",
+        entry.provider,
+        v.reason,
+        entry.plan_caps.join("/")
+    );
+    v.label = format!(
+        "unavailable ({}) - a real run is refused: {}",
+        v.reason, v.refusal
+    );
+    v
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +390,121 @@ mod tests {
     use crate::verdict::verdict_with_credential;
     use chrono::TimeZone;
     use serde_json::json;
+
+    // UNIT (wave 9, D4): the declared cap's reset rule and the two-instant-429 verdict.
+    #[test]
+    fn the_cap_reset_hint_names_the_next_reset() {
+        let at = |s: &str| s.parse::<DateTime<Utc>>().unwrap();
+        // monthly:27T00:00+08:00 = the 26th, 16:00 UTC
+        assert_eq!(
+            next_cap_reset("monthly:27T00:00+08:00", at("2026-10-14T20:10:00Z")),
+            Some(at("2026-10-26T16:00:00Z"))
+        );
+        // already past this month: the next one
+        assert_eq!(
+            next_cap_reset("monthly:27T00:00+08:00", at("2026-10-27T01:00:00Z")),
+            Some(at("2026-11-26T16:00:00Z"))
+        );
+        // the 31st clamps to the month's length
+        assert_eq!(
+            next_cap_reset("monthly:31T00:00+00:00", at("2026-11-02T00:00:00Z")),
+            Some(at("2026-11-30T00:00:00Z"))
+        );
+        assert_eq!(
+            next_cap_reset("daily:04:00+00:00", at("2026-10-14T05:00:00Z")),
+            Some(at("2026-10-15T04:00:00Z"))
+        );
+        assert_eq!(
+            next_cap_reset("weekly:MonT00:00+00:00", at("2026-10-14T05:00:00Z")),
+            Some(at("2026-10-19T00:00:00Z"))
+        );
+        assert_eq!(
+            next_cap_reset("monthly:99T00:00+08:00", at("2026-10-14T05:00:00Z")),
+            None
+        );
+        assert_eq!(next_cap_reset("hourly:1", at("2026-10-14T05:00:00Z")), None);
+    }
+
+    #[test]
+    fn two_instant_429s_inside_an_hour_mark_a_capped_entry_out_until_the_reset() {
+        use crate::health::endpoint_health;
+        use crate::roster::RosterEntry;
+        let now = Utc.with_ymd_and_hms(2026, 10, 14, 20, 10, 0).unwrap();
+        let hit = |n: i64, when: &str, fin: &str| {
+            json!({"n": n, "when": when, "finished_at": fin,
+                "bridge_outcome": "failed: 429 Too Many Requests",
+                "reviewer": {"provider_fingerprint": FP_A},
+                "provider_failure": {"class": "quota", "code": "429",
+                    "message": "429 Too Many Requests", "when": when, "retry_after": null}})
+        };
+        let one = hit(1, "2026-10-14T19:29:00+00:00", "2026-10-14T19:29:01+00:00");
+        let two = hit(2, "2026-10-14T20:06:00+00:00", "2026-10-14T20:06:00+00:00");
+        let capped = RosterEntry {
+            provider: "ali".into(),
+            plan_caps: vec!["monthly".into()],
+            reset_hint: "monthly:27T00:00+08:00".into(),
+            ..Default::default()
+        };
+        let plain = RosterEntry {
+            provider: "ali".into(),
+            ..Default::default()
+        };
+        let avail = || PreflightVerdict::available();
+        let h = endpoint_health(&[one.clone(), two.clone()], FP_A, now);
+        assert_eq!(h.instant_429s.len(), 2);
+        let v = plan_cap_verdict(avail(), &capped, Some(&h), now);
+        assert_eq!(
+            (v.state.as_str(), v.kind.as_str()),
+            ("unavailable", "quota")
+        );
+        assert_eq!(
+            v.until.map(|u| u.with_timezone(&Utc)),
+            Some(Utc.with_ymd_and_hms(2026, 10, 26, 16, 0, 0).unwrap())
+        );
+        assert!(
+            v.reason.starts_with(
+                "plan quota: 429 twice in 37 min, no window text; retry after 2026-10-26"
+            ),
+            "{}",
+            v.reason
+        );
+        // without the declaration, nothing changes (the 10-minute burst stays the verdict's job)
+        assert_eq!(
+            plan_cap_verdict(avail(), &plain, Some(&h), now).state,
+            "available"
+        );
+        // the capped entry without a hint: +24 h after the second hit
+        let no_hint = RosterEntry {
+            reset_hint: String::new(),
+            ..capped.clone()
+        };
+        let v24 = plan_cap_verdict(avail(), &no_hint, Some(&h), now);
+        assert_eq!(
+            v24.until.map(|u| u.with_timezone(&Utc)),
+            Some(Utc.with_ymd_and_hms(2026, 10, 15, 20, 6, 0).unwrap())
+        );
+        // more than an hour apart: no cap verdict
+        let far = hit(0, "2026-10-14T18:00:00+00:00", "2026-10-14T18:00:01+00:00");
+        let h_far = endpoint_health(&[far, two.clone()], FP_A, now);
+        assert_eq!(
+            plan_cap_verdict(avail(), &capped, Some(&h_far), now).state,
+            "available"
+        );
+        // not instant (a 5 s turn): not counted
+        let slow = hit(1, "2026-10-14T19:29:00+00:00", "2026-10-14T19:29:05+00:00");
+        let h_slow = endpoint_health(&[slow, two.clone()], FP_A, now);
+        assert_eq!(
+            plan_cap_verdict(avail(), &capped, Some(&h_slow), now).state,
+            "available"
+        );
+        // after the cap's reset: available again
+        let later = Utc.with_ymd_and_hms(2026, 10, 26, 17, 0, 0).unwrap();
+        let h_late = endpoint_health(&[one, two], FP_A, later);
+        assert_eq!(
+            plan_cap_verdict(avail(), &capped, Some(&h_late), later).state,
+            "available"
+        );
+    }
 
     const FP_A: &str = "fp-zai-codex";
     const FP_B: &str = "fp-zai-other";

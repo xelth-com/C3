@@ -98,6 +98,8 @@ try {
         $explainScript = Join-Path $PSScriptRoot 'codex-consult.ps1'
         $explainCmd = $(if ($null -eq $IsWindows -or $IsWindows) { "powershell -NoProfile -ExecutionPolicy Bypass -File ""$explainScript"" -Explain coordinate" } else { "pwsh -NoProfile -File ""$explainScript"" -Explain coordinate" })
         $hookArgs = Get-NativeArgs @('hook', '--collab-dir', $CollabDir, '--explain-command', $explainCmd)
+        # (wave 9, D2) c3's own lines name `c3 ...`; the plugin's harness oracle texts name the .ps1 scripts and its panels fork by default (wave 9, D1)
+        $env:C3_PLUGIN_COMPAT = '1'
         $raw = @(& $c3 @hookArgs 2>&1 | ForEach-Object { "$_" })
         $code = $LASTEXITCODE
         $ErrorActionPreference = $previous

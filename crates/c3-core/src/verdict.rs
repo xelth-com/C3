@@ -113,8 +113,9 @@ pub fn verdict_with_credential(
         v.state = "unavailable".into();
         v.kind = "credentials".into();
         v.refusal = format!(
-            "provider {p} is not usable: {}; nothing was started (run codex-providers.ps1 for the full picture)",
-            cred.reason
+            "provider {p} is not usable: {}; nothing was started (run {} for the full picture)",
+            cred.reason,
+            crate::spelling::providers_cmd()
         );
         v.label = format!(
             "unavailable ({}) - a real run is refused: {}",

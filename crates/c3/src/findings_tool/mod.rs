@@ -1372,10 +1372,10 @@ fn mode_status(ctx: &Ctx) -> Result<i32, String> {
         Some(i) => i,
         None => {
             return Err(format!(
-                "unknown finding id '{}' in {} (codex-findings.ps1 -Task {} -List -All shows every id).",
+                "unknown finding id '{}' in {} ({} shows every id).",
                 ctx.args.id,
                 ctx.findings_path.display(),
-                ctx.args.task
+                c3_core::spelling::findings_list_all_cmd(&ctx.args.task)
             ))
         }
     };

@@ -417,8 +417,9 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                 selection.error
             } else {
                 format!(
-                    "no reviewer of the roster '{}' is eligible for this panel; nothing was started (run codex-providers.ps1 for the full picture)",
-                    roster.path
+                    "no reviewer of the roster '{}' is eligible for this panel; nothing was started (run {} for the full picture)",
+                    roster.path,
+                    c3_core::spelling::providers_cmd()
                 )
             },
             1,
@@ -967,6 +968,18 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
         b.roster_path,
         b.panel_id
     );
+    // (wave 9, D1) the thread mode of the members; the plugin-compat run (the harness oracle)
+    // prints the plugin's header alone
+    if !c3_core::spelling::plugin() {
+        match o.mode.as_str() {
+            "fork" => println!(
+                "  mode: fork - each member forks the newest thread of its lineage (the fork guard CODEX_CONSULT_FORK_MAX_KB applies)"
+            ),
+            _ => println!(
+                "  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)"
+            ),
+        }
+    }
     for row in &b.rows {
         let state_shown = if row.state == "run" {
             let s = &slots[row.runner.unwrap()];

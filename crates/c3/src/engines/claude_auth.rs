@@ -377,7 +377,10 @@ pub fn engine_credential(
         return CredentialResult::with_detail(
             c3_core::credential::State::Unknown,
             "sign-in not checked",
-            "not checked (launcher present; run codex-providers.ps1)",
+            format!(
+                "not checked (launcher present; run {})",
+                c3_core::spelling::providers_cmd()
+            ),
         );
     }
     let mut timeout = 45u64;

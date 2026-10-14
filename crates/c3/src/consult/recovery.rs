@@ -36,6 +36,10 @@ pub struct RecoveryItem {
     pub check: String,
     /// The refusal message, when active.
     pub message: String,
+    /// (wave 9, D3) The reserved record of a CONCURRENT detached single run: a member-style
+    /// file name without a panel parent (`parent_pid`). A run that is itself a concurrent
+    /// detached single run does not wait for it or refuse on it.
+    pub concurrent: bool,
 }
 
 /// The whole recovery assessment of a task.
@@ -51,6 +55,15 @@ impl Recovery {
         self.items
             .iter()
             .find(|i| i.active)
+            .map(|i| i.message.clone())
+    }
+
+    /// (wave 9, D3) As [`Self::active_message`], but the live records of other CONCURRENT detached
+    /// single runs are not an obstacle to a detached single run.
+    pub fn active_message_for_detached_single(&self) -> Option<String> {
+        self.items
+            .iter()
+            .find(|i| i.active && !i.concurrent)
             .map(|i| i.message.clone())
     }
 }
@@ -113,6 +126,8 @@ pub fn assess(store: &FilesStore, task: &TaskSlug) -> Recovery {
         } else {
             !nn.is_empty()
         };
+        let concurrent = !name.eq_ignore_ascii_case(".consult.pending.json")
+            && record.get("parent_pid").is_none_or(|v| v.is_null());
         items.push(RecoveryItem {
             path,
             name,
@@ -123,6 +138,7 @@ pub fn assess(store: &FilesStore, task: &TaskSlug) -> Recovery {
             active: check.active,
             check: check.check,
             message: check.message,
+            concurrent,
         });
     }
     Recovery { error: None, items }
@@ -287,6 +303,7 @@ mod tests {
             active: false,
             check: "codex pid(s) 1234 no longer running".into(),
             message: String::new(),
+            concurrent: false,
         };
         assert_eq!(
             run_line(&it),
@@ -306,6 +323,7 @@ mod tests {
             active: false,
             check: "reserved: codex was never started".into(),
             message: String::new(),
+            concurrent: false,
         };
         assert!(run_line(&it).contains("(.consult.pending-07.json: state 'reserved'"));
     }

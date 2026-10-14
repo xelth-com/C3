@@ -132,5 +132,7 @@ if ($Short) { $c3Args.Add('--short') }
 # harness's -Json parse (which reads the ENTIRE merged 2>&1 text) sees nothing but
 # c3's own output, and so the "wrote nothing" byte-identical check is unaffected by
 # anything this shim does.
+# (wave 9, D2) c3's own lines name `c3 ...`; the plugin's harness oracle texts name the .ps1 scripts and its panels fork by default (wave 9, D1)
+$env:C3_PLUGIN_COMPAT = '1'
 & $c3 @c3Args
 exit $LASTEXITCODE

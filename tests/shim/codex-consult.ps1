@@ -206,6 +206,8 @@ $env:CODEX_CONSULT_TEST_BRIDGE_PID = "$PID"
 # templates/ (role files) and skills/ (-Explain). The plugin derives it from $PSScriptRoot, never
 # from the environment, so the shim sets it whatever the caller had.
 $env:CLAUDE_PLUGIN_ROOT = Split-Path -Parent $PSScriptRoot
+# (wave 9, D2) c3's own lines name `c3 ...`; the plugin's harness oracle texts name the .ps1 scripts and its panels fork by default (wave 9, D1)
+$env:C3_PLUGIN_COMPAT = '1'
 # (wave 2b) the plugin's schema file beside its scripts: c3 names it in the engine's argv
 # (--output-schema / --json-schema) when it holds exactly the embedded schema.
 $schemaFile = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\consult-reply.schema.json'))

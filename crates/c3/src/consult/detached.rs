@@ -412,8 +412,9 @@ pub fn list_line(
         return String::new();
     }
     format!(
-        "detached {id8}: {} (codex-consult.ps1 -Task {task} -Status -Id {id8})",
-        j.text
+        "detached {id8}: {} ({})",
+        j.text,
+        c3_core::spelling::status_cmd(task, None, id8)
     )
 }
 
@@ -632,7 +633,7 @@ mod tests {
             rec_json(serde_json::json!({"id":"x","state":"starting","started":now.to_rfc3339()}));
         let l = list_line(Some(&r), "", "abcd1234", "my-task", now, "HOST");
         assert!(l.starts_with("detached abcd1234: starting"));
-        assert!(l.contains("-Status -Id abcd1234"));
+        assert!(l.contains("--status --id abcd1234"));
     }
 
     #[test]

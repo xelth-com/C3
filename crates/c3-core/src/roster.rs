@@ -93,6 +93,13 @@ pub struct RosterEntry {
     /// [`PLAN_SLUG_RE`]); `""` when the entry names none. Every entry of one plan shares its
     /// quota (a usage limit on one route marks the others out) and its scheduling group.
     pub plan: String,
+    /// (wave 9, D4) The plan's cap windows the entry declares under `ext.c3.plan_caps`
+    /// (`monthly` | `weekly` | `daily`); empty when it declares none. The plugin validates `ext`
+    /// as an object only, so the key is invisible to it.
+    pub plan_caps: Vec<String>,
+    /// (wave 9, D4) `ext.c3.reset_hint` - when the declared cap resets (see
+    /// [`crate::plan::next_cap_reset`]); `""` when none.
+    pub reset_hint: String,
     /// (0.6.0, wave 29b E1) The claude entry's endpoint (auth `endpoint` only; its `plan` is the
     /// entry's).
     pub endpoint: Option<crate::claude::ClaudeEndpoint>,
@@ -562,10 +569,49 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 stall_sec = sv.as_i64().unwrap_or(-1);
             }
             // ext (D12): validated as an object, otherwise ignored.
+            let mut plan_caps: Vec<String> = Vec::new();
+            let mut reset_hint = String::new();
             if let Some(xv) = iobj.get("ext") {
                 if !xv.is_object() {
                     why = format!("{at}: ext must be an object (the extension point of other implementations; got {})", compact(xv));
                     break;
+                }
+                // (wave 9, D4) C3's own per-entry extension: the plan's cap windows and when they reset
+                if let Some(c3x) = xv.get("c3").and_then(|c| c.as_object()) {
+                    if let Some(pc) = c3x.get("plan_caps") {
+                        match pc.as_array() {
+                            Some(a)
+                                if !a.is_empty()
+                                    && a.iter().all(|v| {
+                                        v.as_str().is_some_and(|s| {
+                                            ["monthly", "weekly", "daily"].contains(&s)
+                                        })
+                                    }) =>
+                            {
+                                plan_caps = a
+                                    .iter()
+                                    .filter_map(|v| v.as_str().map(str::to_string))
+                                    .collect();
+                            }
+                            _ => {
+                                why = format!("{at}: ext.c3.plan_caps must be a non-empty array of \"monthly\", \"weekly\" or \"daily\" (got {})", compact(pc));
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(rh) = c3x.get("reset_hint") {
+                        match rh.as_str() {
+                            Some(s)
+                                if crate::plan::next_cap_reset(s, chrono::Utc::now()).is_some() =>
+                            {
+                                reset_hint = s.to_string()
+                            }
+                            _ => {
+                                why = format!("{at}: ext.c3.reset_hint must be \"monthly:<DD>T<HH:MM><offset>\", \"weekly:<Mon..Sun>T<HH:MM><offset>\" or \"daily:<HH:MM><offset>\" (got {})", compact(rh));
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             // (0.6.0, wave 29b E5) the plan (the quota a route shares with the other routes to the
@@ -830,6 +876,8 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 stall_sec,
                 context_tokens,
                 plan,
+                plan_caps,
+                reset_hint,
                 endpoint: entry_endpoint,
             });
         }
@@ -1199,6 +1247,33 @@ mod tests {
             "{}",
             bad.error
         );
+    }
+
+    // UNIT (wave 9, D4): an entry declares its plan cap under ext.c3 (invisible to the plugin).
+    #[test]
+    fn an_entry_declares_its_plan_cap_under_ext_c3() {
+        let ok = validate_roster(
+            "R.json",
+            r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","model":"qwen3.8-max","ext":{"c3":{"plan_caps":["monthly"],"reset_hint":"monthly:27T00:00+08:00"}}}]}"#,
+            None,
+        );
+        assert!(ok.error.is_empty(), "{}", ok.error);
+        assert_eq!(ok.entries[0].plan_caps, vec!["monthly".to_string()]);
+        assert_eq!(ok.entries[0].reset_hint, "monthly:27T00:00+08:00");
+        let plain = validate_roster(
+            "R.json",
+            r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","model":"qwen3.8-max","ext":{"other":1}}]}"#,
+            None,
+        );
+        assert!(plain.entries[0].plan_caps.is_empty() && plain.entries[0].reset_hint.is_empty());
+        assert!(why(
+            r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","model":"m","ext":{"c3":{"plan_caps":["yearly"]}}}]}"#
+        )
+        .contains("ext.c3.plan_caps must be"));
+        assert!(why(
+            r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","model":"m","ext":{"c3":{"reset_hint":"soon"}}}]}"#
+        )
+        .contains("ext.c3.reset_hint must be"));
     }
 
     fn why(json: &str) -> String {

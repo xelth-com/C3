@@ -361,6 +361,8 @@ impl HttpReviewer {
             stall_sec: -1,
             context_tokens: 0,
             plan: self.plan.clone(),
+            plan_caps: Vec::new(),
+            reset_hint: String::new(),
             endpoint: None,
         }
     }

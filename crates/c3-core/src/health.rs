@@ -91,6 +91,8 @@ pub fn provider_failure_class(message: &str) -> String {
 pub const BURST_OUT_MINUTES: i64 = 10;
 /// Minutes a reset-less usage-limit failure keeps the endpoint out (`$script:QuotaOutMinutes`).
 pub const QUOTA_OUT_MINUTES: i64 = 60;
+/// (wave 9, D4) A 429 that came back in less than this many seconds is an INSTANT 429.
+pub const INSTANT_429_SECS: f64 = 2.0;
 
 fn burst_text_re() -> Regex {
     Regex::new(r"(?i)\b429\b|too many requests|concurren").unwrap()
@@ -874,6 +876,8 @@ pub struct Record {
     /// [`crate::quota::QUOTA_BLOCK_PERCENT`] or more with its reset ahead (`New-QuotaWindowRecord`),
     /// else `""`.
     pub failure_kind: String,
+    /// (wave 9, D4) Seconds the run took (`finished_at - when`, else the recorded wall seconds).
+    pub wall_secs: f64,
     // sort keys
     order: DateTime<FixedOffset>,
     n: i64,
@@ -893,6 +897,11 @@ pub struct EndpointHealth {
     /// (wave 8 = plugin wave 30) The newest observed quota windows of the endpoint
     /// ([`crate::quota::endpoint_window`]), `None` when none was observed.
     pub window: Option<crate::quota::EndpointWindow>,
+    /// (wave 9, D4) The hits (newest first) of the instant 429s with no window text - burst
+    /// failures that came back in under 2 s - newer than the endpoint's newest usable reply. A
+    /// roster entry that declares a monthly/weekly/daily plan cap reads them in
+    /// [`crate::plan::plan_cap_verdict`].
+    pub instant_429s: Vec<DateTime<FixedOffset>>,
     /// The QUOTA column / the dry run's quota line (`5h 96% until 18:32; wk 15% until Oct 20`).
     pub window_text: String,
     /// `low quota: 5-hour window 84 % until 18:32` (a window at 80 % or more), else `""`.
@@ -1028,6 +1037,10 @@ pub fn endpoint_health_set(
             hit_iso: String::new(),
             until: at + Duration::minutes(60),
             failure_kind: String::new(),
+            wall_secs: order
+                .map(|o| (o - at).num_milliseconds() as f64 / 1000.0)
+                .unwrap_or(0.0)
+                .max(0.0),
             order: order.unwrap(),
             n,
             ok,
@@ -1104,6 +1117,20 @@ pub fn endpoint_health_set(
             .then(b.until.cmp(&a.until))
     });
 
+    {
+        let newest_ok = records.iter().find(|r| r.ok).map(|r| r.order);
+        h.instant_429s = records
+            .iter()
+            .filter(|r| {
+                !r.ok
+                    && r.class == "quota"
+                    && r.kind == "burst"
+                    && r.wall_secs < INSTANT_429_SECS
+                    && newest_ok.is_none_or(|o| r.order > o)
+            })
+            .map(|r| r.hit)
+            .collect();
+    }
     let auth = records.iter().find(|r| r.ok || r.class == "auth").cloned();
     if let Some(a) = auth {
         if !a.ok && a.age_minutes <= 24 * 60 {
@@ -1201,6 +1228,7 @@ pub fn quota_window_record(
         hit_iso: format_offset_iso(local_obs),
         until: resets,
         failure_kind: "window".into(),
+        wall_secs: 0.0,
         order: obs,
         n: 0,
         ok: false,

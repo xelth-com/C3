@@ -1386,7 +1386,7 @@ fn resolve_preflight(
     let mut v = verdict_with_credential(id, health.as_ref(), cred, false);
     // (wave 29b, E5) a usage limit on another route of the roster entry's plan refuses the run too
     if let Some(pc) = plan {
-        if pc.roster.exists && !pc.entry.plan.is_empty() {
+        if pc.roster.exists && (!pc.entry.plan.is_empty() || !pc.entry.plan_caps.is_empty()) {
             let ctx = providers::Ctx::for_consult(
                 config.clone(),
                 consults,
@@ -1782,6 +1782,16 @@ fn run_inner(o: Options) -> i32 {
     run_normal(o)
 }
 
+/// (wave 9, D1) A panel starts NEW threads for every member unless `--mode fork` is given (a panel
+/// with a new brief used to fork the previous threads, 0.8-1.2 MB each, and the fork guard then
+/// refused members). Under the plugin-compat switch (the `tests/shim` forwarders) the mode stays
+/// automatic - the plugin forks the newest thread of each lineage - because its harness pins that.
+fn apply_panel_default_mode(o: &mut Options) {
+    if o.mode.is_empty() && !c3_core::spelling::plugin() {
+        o.mode = "new".into();
+    }
+}
+
 /// The normal run flow (a single run or a panel), reused by the detached background.
 fn run_normal(mut o: Options) -> i32 {
     let home = std::env::var("HOME")
@@ -1794,6 +1804,7 @@ fn run_normal(mut o: Options) -> i32 {
     };
     r.apply_companions(&mut o);
     if o.panel || o.panel_all {
+        apply_panel_default_mode(&mut o);
         return crate::panel::run::run(o, r, home.as_deref());
     }
     dispatch(build_context(o, r, None))
@@ -1816,6 +1827,7 @@ fn detach_foreground(mut o: Options, home: Option<&str>) -> i32 {
     };
     r.apply_companions(&mut o);
     if o.panel || o.panel_all {
+        apply_panel_default_mode(&mut o);
         return crate::panel::run::detach_foreground(o, r, home);
     }
     // A single detached run: build the context (the identity/preflight/launcher/brief refusals a
@@ -1855,7 +1867,7 @@ fn detach_foreground(mut o: Options, home: Option<&str>) -> i32 {
     if let Some(err) = assessed.error {
         return refuse(&err);
     }
-    if let Some(msg) = assessed.active_message() {
+    if let Some(msg) = assessed.active_message_for_detached_single() {
         return refuse(&msg);
     }
     // The budget (D4), the one planned member, the plan line, then spawn.
@@ -4394,27 +4406,48 @@ fn run_live(mut ctx: Context) -> i32 {
         println!("WARNING: {}", ctx.preflight_warning);
     }
     let store = FilesStore::new(ctx.collab_root.clone());
-    let reply_rel = ctx.hf("md");
+    let mut reply_rel = ctx.hf("md");
     let is_member = ctx.panel_member.is_some();
-    let pending = match &ctx.panel_member {
+    // (wave 9, D3) a DETACHED single run holds the task lock only while it does its bookkeeping
+    // (the recovery assessment, its numbers and its reservation), not for the whole reviewer turn:
+    // it runs like a panel member (a member-style recovery record) and commits under the write
+    // lock, so several detached runs of one task run side by side.
+    let concurrent = !is_member && super::detach::is_active();
+    let mut pending = match &ctx.panel_member {
         Some(m) => PendingRef::member(ctx.task.clone(), m.nn as u32),
         None => PendingRef::single(ctx.task.clone()),
     };
 
-    // Task ownership lock: a single run takes it (fail-fast); a panel member runs under the panel
-    // run's lock and never takes one of its own (`codex-consult.ps1:3387`).
-    let _task_lock = if is_member {
+    // Task ownership lock: a single run takes it (fail-fast; a concurrent detached run retries for
+    // up to a minute - the others hold it for moments); a panel member runs under the panel run's
+    // lock and never takes one of its own (`codex-consult.ps1:3387`).
+    let mut task_lock = if is_member {
         None
     } else {
         let lock_record = LockRecord::now(&ctx.task, None);
-        match store.take_task_lock(&ctx.task, &lock_record) {
-            Ok(l) => Some(l),
-            Err(_) => {
-                let lock_path = store.task_dir(&ctx.task).join(".consult.lock");
-                return refuse(&format_task_lock_refusal(&lock_path, ctx.task.as_str()));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            match store.take_task_lock(&ctx.task, &lock_record) {
+                Ok(l) => break Some(l),
+                Err(_) if concurrent && std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(_) => {
+                    let lock_path = store.task_dir(&ctx.task).join(".consult.lock");
+                    return refuse(&format_task_lock_refusal(&lock_path, ctx.task.as_str()));
+                }
             }
         }
     };
+    if concurrent {
+        // the numbers are taken under the lock, past every ledger entry and reservation
+        if let Ok(nn_n) = store.next_numbers(&ctx.task) {
+            ctx.nn = nn_n.nn;
+            ctx.consult_n = nn_n.n;
+        }
+        reply_rel = ctx.hf("md");
+        pending = PendingRef::member(ctx.task.clone(), ctx.nn);
+    }
 
     let mut rec = if let Some(m) = ctx.panel_member.clone() {
         // A panel member never consumes the task's other records; it accepts the reserved record
@@ -4436,11 +4469,19 @@ fn run_live(mut ctx: Context) -> i32 {
             if let Some(err) = assessed.error {
                 return refuse(&err);
             }
-            if let Some(msg) = assessed.active_message() {
+            let blocking = if concurrent {
+                assessed.active_message_for_detached_single()
+            } else {
+                assessed.active_message()
+            };
+            if let Some(msg) = blocking {
                 return refuse(&msg);
             }
             let own = pending.file_name();
             for item in &assessed.items {
+                if concurrent && item.active && item.concurrent {
+                    continue; // another detached run's live reservation: not ours to judge
+                }
                 let line = super::recovery::run_line(item);
                 println!("{TOOL}: {line}");
                 ctx.recovery_lines.push(line);
@@ -4476,6 +4517,11 @@ fn run_live(mut ctx: Context) -> i32 {
         }
         rec
     };
+    if concurrent {
+        // bookkeeping done: the reviewer turn runs without the task lock
+        task_lock = None;
+    }
+    let _task_lock = task_lock;
 
     // The plugin fingerprints the tree AFTER the lock and recovery record exist, so the
     // `.consult.*` files under the collab dir are counted among the excluded entries

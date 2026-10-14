@@ -576,9 +576,10 @@ impl Ctx {
             };
         }
         let error = format!(
-            "no reviewer of the roster '{}' is available; nothing was started: {} (run codex-providers.ps1 for the full picture)",
+            "no reviewer of the roster '{}' is available; nothing was started: {} (run {} for the full picture)",
             self.roster.path,
-            listing.join("; ")
+            listing.join("; "),
+            c3_core::spelling::providers_cmd()
         );
         RosterWalk {
             entry: None,
@@ -823,9 +824,10 @@ impl Ctx {
             }
         } else if !members.iter().any(|m| m.state == "run") {
             error = format!(
-                "no reviewer of the roster '{}' is available; nothing was started: {} (run codex-providers.ps1 for the full picture)",
+                "no reviewer of the roster '{}' is available; nothing was started: {} (run {} for the full picture)",
                 self.roster.path,
-                listing.join("; ")
+                listing.join("; "),
+                c3_core::spelling::providers_cmd()
             );
         }
         PanelSelection { members, error }
@@ -1017,7 +1019,10 @@ impl Ctx {
             return CredentialResult::with_detail(
                 State::Unknown,
                 "sign-in not checked",
-                "not checked (launcher present; run codex-providers.ps1)",
+                format!(
+                    "not checked (launcher present; run {})",
+                    c3_core::spelling::providers_cmd()
+                ),
             );
         }
         if spec.local_sign_in {
@@ -1081,6 +1086,13 @@ impl Ctx {
         id: &ReviewerIdentity,
         roster_walk: bool,
     ) -> PreflightVerdict {
+        // (wave 9, D4) a declared plan cap: two instant 429s mark the entry out until the cap resets
+        let verdict = if !entry.plan_caps.is_empty() && id.resolved {
+            let h = c3_core::health::endpoint_health(&self.consults, &id.fingerprint, self.utc_now);
+            c3_core::plan::plan_cap_verdict(verdict, entry, Some(&h), self.utc_now)
+        } else {
+            verdict
+        };
         if entry.plan.is_empty()
             || !(verdict.state == "available"
                 || (verdict.state == "unknown" && verdict.kind == "unknown"))
@@ -3272,6 +3284,95 @@ mod roster_walk_tests {
         assert!(v
             .refusal
             .ends_with("; nothing was started (pass -SkipPreflight to launch anyway)"));
+    }
+
+    // UNIT (wave 9, D4): two instant 429s (no window text) inside an hour on an entry that
+    // declares a plan cap mark it out until the cap's reset; the same history on an entry without
+    // the declaration keeps the 10-minute burst.
+    #[test]
+    fn two_instant_429s_on_a_capped_plan_mark_the_entry_out_until_the_reset() {
+        let toml = "model = \"gpt-5.1\"
+
+[model_providers.ALI]
+base_url = \"https://ali.example/api/v1\"
+wire_api = \"responses\"
+
+[model_providers.ALIB]
+base_url = \"https://alib.example/api/v1\"
+wire_api = \"responses\"
+";
+        let config = scan_config_text("", toml);
+        let fp = |p: &str| resolve_reviewer_identity(&config, p, "m", "", "codex", "").fingerprint;
+        let (fp_a, fp_b) = (fp("ALI"), fp("ALIB"));
+        let now = Utc::now();
+        let iso = |d: DateTime<Utc>| {
+            format_offset_iso(d.with_timezone(&FixedOffset::east_opt(0).unwrap()))
+        };
+        let hit = |n: i64, fp: &str, mins_ago: i64| {
+            json!({
+                "n": n,
+                "when": iso(now - chrono::Duration::minutes(mins_ago)),
+                "finished_at": iso(now - chrono::Duration::minutes(mins_ago) + chrono::Duration::seconds(1)),
+                "bridge_outcome": "failed: 429 Too Many Requests",
+                "reviewer": { "provider_fingerprint": fp },
+                "provider_failure": {
+                    "class": "quota", "code": "429", "message": "429 Too Many Requests",
+                    "when": iso(now - chrono::Duration::minutes(mins_ago)), "retry_after": null
+                }
+            })
+        };
+        let consults = vec![
+            hit(1, &fp_a, 35),
+            hit(2, &fp_a, 5),
+            hit(3, &fp_b, 35),
+            hit(4, &fp_b, 5),
+        ];
+        let entry_of = |pos: usize, p: &str| RosterEntry {
+            auth: "none".into(),
+            ..entry(pos, p, "m")
+        };
+        let capped = RosterEntry {
+            plan_caps: vec!["monthly".into()],
+            reset_hint: "monthly:27T00:00+08:00".into(),
+            ..entry_of(1, "ALI")
+        };
+        let ctx = Ctx::for_consult(
+            config,
+            consults,
+            roster(vec![capped, entry_of(2, "ALIB")]),
+            String::new(),
+            String::new(),
+            now,
+        );
+        let w = ctx.walk_full("", "", false);
+        assert_eq!(w.skipped.len(), 2, "{:?}", w.skipped);
+        assert!(
+            w.skipped[0]
+                .3
+                .starts_with("plan quota: 429 twice in 30 min, no window text; retry after "),
+            "{}",
+            w.skipped[0].3
+        );
+        // the entry without the declaration: the 10-minute burst
+        assert!(
+            w.skipped[1].3.starts_with("burst limit (429)"),
+            "{}",
+            w.skipped[1].3
+        );
+        // the availability view says it is out until the cap's reset (the 27th, 00:00 +08:00)
+        let recs = ctx.roster_availability();
+        assert_eq!(recs[0].state, "out");
+        assert!(recs[0].short.starts_with("until "), "{}", recs[0].short);
+        assert!(recs[0].short.contains(", in "), "{}", recs[0].short);
+        // a usable reply after the second hit clears the capped entry's verdict
+        let mut with_ok = ctx.consults.clone();
+        with_ok.push(json!({
+            "n": 9, "when": iso(now - chrono::Duration::minutes(1)),
+            "finished_at": iso(now), "bridge_outcome": "usable reply",
+            "reviewer": { "provider_fingerprint": fp_a }
+        }));
+        let h = c3_core::health::endpoint_health(&with_ok, &fp_a, now);
+        assert!(h.instant_429s.is_empty());
     }
 
     #[test]

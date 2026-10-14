@@ -576,11 +576,7 @@ pub fn start_detached_run(
             println!("WARNING: {w}");
         }
     }
-    let collab_opt = if o.collab_dir != ".collab" {
-        format!(" -CollabDir \"{collab_abs}\"")
-    } else {
-        String::new()
-    };
+    let collab_for_cmd = (o.collab_dir != ".collab").then(|| collab_abs.to_string());
     println!(
         "Detached {}: {plan} - it runs in the background (detach id {new_id}; budget {budget} s).",
         paths.id8
@@ -591,8 +587,9 @@ pub fn start_detached_run(
         paths.log.display()
     );
     println!(
-        "come back  : codex-consult.ps1 -Task {}{collab_opt} -Status -Id {} (exit 0 done and usable, 1 a failure, 2 still running); -Wait -Id {} waits until it is done (default: its budget, {budget} s)",
-        o.task, paths.id8, paths.id8
+        "come back  : {} (exit 0 done and usable, 1 a failure, 2 still running); {} waits until it is done (default: its budget, {budget} s)",
+        c3_core::spelling::status_cmd(&o.task, collab_for_cmd.as_deref(), &paths.id8),
+        c3_core::spelling::wait_flags(&paths.id8)
     );
     // (wave 28b, D10) the test-mode line after the detach lines (the first line stays
     // "Detached <id8>: ...").

@@ -40,6 +40,7 @@ pub mod quota;
 pub mod roster;
 pub mod roster_ext;
 pub mod schema;
+pub mod spelling;
 pub mod store;
 pub mod task_slug;
 pub mod test_hooks;

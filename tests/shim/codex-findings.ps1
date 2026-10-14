@@ -100,5 +100,7 @@ if ($Useful) { $c3Args.Add('--useful'); $c3Args.Add($Useful) }
 if ($Telemetry) { $c3Args.Add('--telemetry'); $c3Args.Add($Telemetry) }
 if ($Json) { $c3Args.Add('--json') }
 
+# (wave 9, D2) c3's own lines name `c3 ...`; the plugin's harness oracle texts name the .ps1 scripts and its panels fork by default (wave 9, D1)
+$env:C3_PLUGIN_COMPAT = '1'
 & $c3 @c3Args
 exit $LASTEXITCODE
