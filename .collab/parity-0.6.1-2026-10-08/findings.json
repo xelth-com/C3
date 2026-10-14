@@ -256,6 +256,14 @@
                                                      "note":  "Telemetry spool is outside this review range.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Telemetry implementation is outside this diff review.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -622,6 +630,14 @@
                                                      "note":  "Deletion retry behavior was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Deletion implementation is outside this diff review.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -889,6 +905,14 @@
                                                      "note":  "Harness implementation coverage was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Harness coverage mapping was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -1147,6 +1171,14 @@
                                                      "note":  "Rating transaction ordering was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Rating transaction ordering was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -1410,6 +1442,14 @@
                                                      "note":  "Prompt anchors were not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Prompt anchors were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -1677,6 +1717,14 @@
                                                      "note":  "Shared-plan identity was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Roster plan compatibility was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -1927,6 +1975,14 @@
                                                      "note":  "No native Messages benchmark was reviewed.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "No three-route benchmark evidence was examined.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -2191,6 +2247,14 @@
                                                      "note":  "Process-name Unicode handling was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Process classification is outside this diff.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -2459,6 +2523,14 @@
                                                      "note":  "Windows timezone boundary behavior was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Windows timezone behavior was not exercised.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -2732,6 +2804,14 @@
                                                      "note":  "Required-light panel metadata was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Panel ledger metadata was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -2989,6 +3069,14 @@
                                                      "note":  "Historical Samoa timezone behavior was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Historical Samoa handling was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -3228,6 +3316,14 @@
                                                      "note":  "Context-window configuration Unicode handling was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Configuration parsing is outside this diff.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -3467,6 +3563,14 @@
                                                      "note":  "Flush/deletion synchronization was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Telemetry deletion locking was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -3706,6 +3810,14 @@
                                                      "note":  "Recoverable deletion cleanup was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Deletion cleanup durability was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -3940,6 +4052,14 @@
                                                      "note":  "Spool reread failure handling was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Spool reread failure handling was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -4179,6 +4299,14 @@
                                                      "note":  "Legacy telemetry sanitization was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Legacy telemetry sanitization was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -4422,6 +4550,14 @@
                                                      "note":  "Rating actor inference was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Rating actor inference was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -4666,6 +4802,14 @@
                                                      "note":  "Health journal I/O failure handling was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Health journal I/O recovery was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -4906,6 +5050,14 @@
                                                      "note":  "Required-reviewer launcher propagation was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Required-reviewer launcher resolution was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -5142,6 +5294,14 @@
                                                      "note":  "Required-reviewer shared-plan evaluation was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Shared-plan availability evaluation was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -5377,6 +5537,14 @@
                                                      "note":  "PowerShell hook pointer execution was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "PowerShell hook commands were not exercised.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -5613,6 +5781,14 @@
                                                      "note":  "AGY tool stall handling was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "AGY stall handling was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -5850,6 +6026,14 @@
                                                      "note":  "Local-only deletion transaction persistence was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Local deletion transaction persistence was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -6136,6 +6320,14 @@
                                                      "note":  "Complaint/deletion synchronization was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Complaint/deletion synchronization was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -6359,6 +6551,14 @@
                                                      "note":  "Unreadable-salt cleanup behavior was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Salt read failure handling was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -6574,6 +6774,14 @@
                                                      "note":  "Duplicate-key telemetry sanitization was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Duplicate-key telemetry sanitization was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -6798,6 +7006,14 @@
                                                      "note":  "Durable health-journal deduplication was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Journal replay deduplication was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -7005,6 +7221,14 @@
                                                      "note":  "Process metadata lookup failure handling was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Process metadata failure handling was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -7212,6 +7436,14 @@
                                                      "note":  "Unknown creation-time recovery behavior was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Unknown-start recovery scans were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -7425,6 +7657,14 @@
                                                      "note":  "Kill evidence persistence was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Kill evidence durability was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -7632,6 +7872,14 @@
                                                      "note":  "Recovery test coverage was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Recovery test coverage was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -7830,6 +8078,14 @@
                                                      "note":  "Production Windows Samoa behavior was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Production Windows Samoa behavior was not exercised.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -8025,6 +8281,14 @@
                                                      "note":  "Not-spooled fallback accounting was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Not-spooled fallback accounting was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -8211,6 +8475,14 @@
                                                      "note":  "Unterminated not-spooled suffix accounting was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Unterminated suffix accounting was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -8397,6 +8669,14 @@
                                                      "note":  "Concurrent not-spooled cleanup was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Concurrent not-spooled cleanup was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -8578,6 +8858,14 @@
                                                      "note":  "Not-spooled status baseline behavior was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Not-spooled status timestamps were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -8773,6 +9061,14 @@
                                                      "note":  "Plugin-home adapter and lock-domain coverage was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Plugin-home adapter coverage was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -8950,6 +9246,14 @@
                                                      "note":  "Post-fold record rewrite failure handling was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Fold record rewrite failures were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -9243,6 +9547,14 @@
                                                      "note":  "Claude endpoint transcript guard was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Endpoint transcript safety was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -9421,6 +9733,14 @@
                                                      "note":  "Claude model case normalization was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Claude model case handling was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -9590,6 +9910,14 @@
                                                      "note":  "Child environment credential redaction was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Child environment redaction was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -9881,6 +10209,14 @@
                                                      "note":  "Unknown-tree helper detection was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Unknown helper recovery was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -10065,6 +10401,14 @@
                                                      "note":  "Pre-kill evidence durability was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Pre-kill persistence failures were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -10227,6 +10571,14 @@
                                                      "note":  "Continuation and repair kill-site coverage was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Kill-site integration coverage was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -10390,6 +10742,14 @@
                                                      "note":  "Live-producer fallback accounting was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Live-producer fallback accounting was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -10726,6 +11086,14 @@
                                                      "note":  "Transcript-path Unicode slicing was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Unicode transcript-path handling was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -10878,6 +11246,14 @@
                                                      "note":  "Transcript-path NFC normalization was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Transcript-path normalization was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11036,6 +11412,14 @@
                                                      "note":  "Recovery after multiple persistence failures was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Recovery after failed persistence was not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11172,6 +11556,14 @@
                                                      "note":  "Kill-copy directory enumeration failures were not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Recovery-copy enumeration failures were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11307,6 +11699,14 @@
                                                      "note":  "Kick acknowledgement after persistence failure was not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Kick acknowledgements were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11430,6 +11830,14 @@
                                                      "note":  "Recovery-copy metadata failures were not rechecked.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Recovery-copy metadata failures were not audited.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11547,6 +11955,14 @@
                                                      "note":  "By inspection, equal-time valid observations merge per window rather than retaining the first; relevant regression tests were read, not run.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Read the equal-time per-window ranking and regression coverage; the original lower-first tie case is addressed. Tests were not run.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11664,6 +12080,14 @@
                                                      "note":  "By inspection, primary and secondary windows are selected independently, preserving the stated crossing-window case.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Equal-time selection ranks primary and secondary independently, addressing the original crossing-window case. Tests were not run.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11769,6 +12193,14 @@
                                                      "note":  "By inspection, future reset information outranks missing reset information for tied valid observations.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The equal-time comparator ranks reset completeness before percentage, preserving a future reset over a missing one. Tests were not run.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11856,6 +12288,14 @@
                                                      "note":  "The reported within-fold clock sampling is removed: aggregation passes one instant, also shared with health evaluation. Finding #1 concerns separate cache reuse across instants.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Endpoint and account paths pass a fixed comparison instant, but the complete rollout/sub-agent entry path was not inspected.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -11934,6 +12374,14 @@
                                                      "note":  "The reported equal-time NaN case is addressed by finite_percent before tie comparison. Finding #2 concerns strictly newer malformed observations.",
                                                      "base_commit":  "fe4c4779a3957e58b8112a3633b5cf7a78456995",
                                                      "tree_sha256":  "a66a41ccf5364ca260e46bc717616cf40f6af5f9126b3d0325a243c6bdcf56aa"
+                                                 },
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Finite percentage validation and invalid-only rejection address the reported NaN-first recorded case. Tests were not run.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
                                                  }
                                              ]
                      },
@@ -12019,7 +12467,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The cache stores rollout observations and reruns selection at each requested instant; the warm-cache/fresh-home regression directly covers the original trigger. Tests were not run.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
+                                                 }
                                              ]
                      },
                      {
@@ -12101,6 +12556,107 @@
                                              "evidence":  "",
                                              "base_commit":  "cc03617d01cfa1c9e8365e5835670a47df8d8b9d",
                                              "tree_sha256":  "4642ba7671210539178793afab570c8d44b99db836e846c4e9482559f5e6bd3f"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  34,
+                                                     "when":  "2026-10-14T16:02:15+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Invalid-only recorded candidates are rejected before replacement; the added regression covers both orders. Finding #1 is a distinct three-observation regression introduced by retaining partial windows without their timestamps.",
+                                                     "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                                     "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F58-1",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  680
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  697
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  1108
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  1152
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  1206
+                                           }
+                                       ],
+                         "claim":  "Partial-window aggregation retains older windows but assigns the aggregate the newest observation timestamp. Subsequent comparisons therefore treat an older retained window as newer than it actually is, making aggregation order-dependent and allowing a valid blocking window to be hidden. This affects both recorded endpoint selection and rollout/account aggregation, and the aggregate timestamp is also passed into recorded/live selection.",
+                         "trigger":  "For one endpoint, use three observations with t1 \u003c t2 \u003c t3: A has primary=30 at t1 and no secondary; B has secondary=10 at t3 and no primary; C has primary=99 at t2 and no secondary. Every present window has a future reset. A→B→C produces primary=30 and secondary=10, while A→C→B produces primary=99 and secondary=10.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:680-697",
+                                              "observation":  "merge_observation fills missing newer windows from the older observation but stores only newer.at; later replacement compares that shared timestamp."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:1108-1152",
+                                              "observation":  "select_window likewise retains older window values while advancing out.observed_at to the maximum observation time."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:1176-1213",
+                                              "observation":  "Endpoint selection folds consultations in their input order, then merges the account result using its single aggregate observed_at."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "functions.exec: in-memory JavaScript model of the unequal-time merge branches",
+                                              "observation":  "The model returned {at:3,p:30,s:10} for A/B/C and {at:3,p:99,s:10} for A/C/B. This was a branch model, not execution of the Rust implementation."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:2233-2344",
+                                              "observation":  "The expanded permutation fixture adds an invalid-only newer record, while the partial-window regression merges only two observations; neither exercises retained-window timestamp promotion followed by an intermediate-time observation."
+                                          }
+                                      ],
+                         "verification":  "Run RC1 with all six permutations and a recorded/live partition; every result must retain the primary 99% window observed at t2 and report an active block.",
+                         "remedy":  "Track observation timestamps separately for primary and secondary windows, comparing each candidate against the timestamp of that specific retained window. Preserve that provenance across account aggregation and recorded/live merging, or retain raw candidates until final per-window selection.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  34,
+                                        "reply":  "handoffs/58-codex-wave8-round6.md",
+                                        "thread":  "01a13ab5-c462-7962-8f48-21984326887a",
+                                        "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                        "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-14T16:02:15+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "1949e02b01c028f59fdaa152d3a9de5204bae3fd",
+                                             "tree_sha256":  "de846f00ec0c036c7f96bf45797741a67d9d0d3920c5222350daa4216401aac0"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T16:34:20+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "f4dd195 wave 8g: Observation.primary_at/secondary_at, EndpointWindow/AccountWindow.window_at; merge_observation and select_window compare per window against the retained window\u0027s own instant; 4 tests incl. all six A/B/C orders in the recorded selection and merge_observation, the recorded/live split, 720 distinct-instant orders",
+                                             "base_commit":  "f4dd1952efca32c695b1e5be31fbf8ec8f99aa00",
+                                             "tree_sha256":  "5cc0a5012e1802bd13de134190ee94f66b075371b82bc680776278287cbdc00a"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -12191,15 +12747,15 @@
                                    ],
                         "consult_when":  "2026-10-09T03:15:56+02:00",
                         "useful":  "yes",
-                        "note":  "HOLD with five majors on the outbox and forgetting interlocks (a sender passing the deletion check before the lock, cleanup order after a confirmed DELETE, a reread error erasing events, legacy payloads with private labels), a Unicode slice panic in the context-window helper, and the bare-label judge inference; the identity question answered: keep C3\u0027s app id and outbox separate, adapt the harness fixtures",
-                        "when":  "2026-10-09T03:45:48+02:00",
-                        "rating_rev":  1,
+                        "note":  "Round 6 (n=34): HOLD on F58-1 major - a real order-dependence: a retained older window inherits the newer observation\u0027s timestamp, so an intermediate-time observation of that window cannot replace it; concrete 3-observation trigger, both merge paths named; 183 s, 10 percent of the 5-hour window",
+                        "when":  "2026-10-14T16:02:53+02:00",
+                        "rating_rev":  2,
                         "judge":  {
                                       "provider":  "anthropic",
                                       "model":  "claude-fable-5-1",
                                       "source":  "consult_coordinator"
                                   },
-                        "telemetry_sent":  1791510350
+                        "telemetry_sent":  1791986574
                     },
                     {
                         "n":  6,
@@ -12729,6 +13285,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1791969524
+                    },
+                    {
+                        "n":  34,
+                        "consult_id":  "63a5a6ef-9331-4cdc-bf5e-f9fc01918426",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-14T15:59:10+02:00",
+                        "useful":  "yes",
+                        "note":  "Round 6: HOLD on F58-1 major - a real order-dependence: a retained older window inherits the newer observation\u0027s timestamp, so an intermediate-time observation of that window cannot replace it; concrete 3-observation trigger, both merge paths named; 183 s, 10 percent of the 5-hour window",
+                        "when":  "2026-10-14T16:03:10+02:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "claude-fable-5-1",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1791986591
                     }
                 ]
 }

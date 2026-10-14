@@ -1,0 +1,132 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The partial-window merge loses per-window observation timestamps, allowing input order to suppress an active quota block.",
+  "reply_markdown": "1. **Yes: finding #1 identifies a remaining replacement failure.** With observation times t1 < t2 < t3, use A=(primary 30%, t1), B=(secondary 10%, t3), and C=(primary 99%, t2), all with future resets. Folding A→B→C retains primary 30%; A→C→B retains 99%. Merging B promotes A’s retained primary to t3, so C cannot replace it. Both endpoint selection and rollout aggregation use this logic.\n\n   F55-1’s cache redesign fixes its reported reset-crossing case. F55-2’s original invalid-only replacement case is also fixed. The new tests cover two-record partial merges and permutations with an invalid-only newer record; they do not cover three distinct timestamps with a valid partial newest observation. A small in-memory model reproduced the divergent results; Rust tests were not executed.\n\n2. **HOLD tagging v0.2.1 pending finding #1.** Preserve each window’s observation timestamp throughout aggregation, including the account-to-endpoint handoff.\n\nRead: the handoff, wave note, complete quota diff, both documentation diffs, and targeted surrounding code. Skipped: the 13 changed `.collab` artifacts as instructed, historical handoffs, upstream oracle sources, and unchanged implementations outside those excerpts. Unrelated prior findings remain unverified.\n\n## Requested checks\n\n- **RC1:** From `C:\\Users\\Dmytro\\C3`, add and run a regression covering all six A/B/C permutations through endpoint selection and rollout aggregation, plus a recorded/live split. Permission: workspace-write. Require primary 99% and an active block in every case. Budget: one focused test, 15 minutes; confirms finding #1.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 680
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 697
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1108
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1152
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1206
+        }
+      ],
+      "claim": "Partial-window aggregation retains older windows but assigns the aggregate the newest observation timestamp. Subsequent comparisons therefore treat an older retained window as newer than it actually is, making aggregation order-dependent and allowing a valid blocking window to be hidden. This affects both recorded endpoint selection and rollout/account aggregation, and the aggregate timestamp is also passed into recorded/live selection.",
+      "trigger": "For one endpoint, use three observations with t1 < t2 < t3: A has primary=30 at t1 and no secondary; B has secondary=10 at t3 and no primary; C has primary=99 at t2 and no secondary. Every present window has a future reset. A→B→C produces primary=30 and secondary=10, while A→C→B produces primary=99 and secondary=10.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:680-697",
+          "observation": "merge_observation fills missing newer windows from the older observation but stores only newer.at; later replacement compares that shared timestamp."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:1108-1152",
+          "observation": "select_window likewise retains older window values while advancing out.observed_at to the maximum observation time."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:1176-1213",
+          "observation": "Endpoint selection folds consultations in their input order, then merges the account result using its single aggregate observed_at."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "functions.exec: in-memory JavaScript model of the unequal-time merge branches",
+          "observation": "The model returned {at:3,p:30,s:10} for A/B/C and {at:3,p:99,s:10} for A/C/B. This was a branch model, not execution of the Rust implementation."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:2233-2344",
+          "observation": "The expanded permutation fixture adds an invalid-only newer record, while the partial-window regression merges only two observations; neither exercises retained-window timestamp promotion followed by an intermediate-time observation."
+        }
+      ],
+      "verification": "Run RC1 with all six permutations and a recorded/live partition; every result must retain the primary 99% window observed at t2 and report an active block.",
+      "remedy": "Track observation timestamps separately for primary and secondary windows, comparing each candidate against the timestamp of that specific retained window. Preserve that provenance across account aggregation and recorded/live merging, or retain raw candidates until final per-window selection.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Telemetry implementation is outside this diff review."},
+    {"id":"F02-3","status":"not-checked","note":"Deletion implementation is outside this diff review."},
+    {"id":"F02-4","status":"not-checked","note":"Harness coverage mapping was not audited."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction ordering was not audited."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt anchors were not audited."},
+    {"id":"F02-7","status":"not-checked","note":"Roster plan compatibility was not audited."},
+    {"id":"F02-8","status":"not-checked","note":"No three-route benchmark evidence was examined."},
+    {"id":"F04-1","status":"not-checked","note":"Process classification is outside this diff."},
+    {"id":"F04-2","status":"not-checked","note":"Windows timezone behavior was not exercised."},
+    {"id":"F04-3","status":"not-checked","note":"Panel ledger metadata was not audited."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa handling was not audited."},
+    {"id":"F09-1","status":"not-checked","note":"Configuration parsing is outside this diff."},
+    {"id":"F09-2","status":"not-checked","note":"Telemetry deletion locking was not audited."},
+    {"id":"F09-3","status":"not-checked","note":"Deletion cleanup durability was not audited."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread failure handling was not audited."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy telemetry sanitization was not audited."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor inference was not audited."},
+    {"id":"F11-1","status":"not-checked","note":"Health journal I/O recovery was not audited."},
+    {"id":"F11-2","status":"not-checked","note":"Required-reviewer launcher resolution was not audited."},
+    {"id":"F11-3","status":"not-checked","note":"Shared-plan availability evaluation was not audited."},
+    {"id":"F11-4","status":"not-checked","note":"PowerShell hook commands were not exercised."},
+    {"id":"F11-5","status":"not-checked","note":"AGY stall handling was not audited."},
+    {"id":"F14-1","status":"not-checked","note":"Local deletion transaction persistence was not audited."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization was not audited."},
+    {"id":"F19-2","status":"not-checked","note":"Salt read failure handling was not audited."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key telemetry sanitization was not audited."},
+    {"id":"F22-1","status":"not-checked","note":"Journal replay deduplication was not audited."},
+    {"id":"F23-1","status":"not-checked","note":"Process metadata failure handling was not audited."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown-start recovery scans were not audited."},
+    {"id":"F23-3","status":"not-checked","note":"Kill evidence durability was not audited."},
+    {"id":"F23-4","status":"not-checked","note":"Recovery test coverage was not audited."},
+    {"id":"F23-5","status":"not-checked","note":"Production Windows Samoa behavior was not exercised."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled fallback accounting was not audited."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated suffix accounting was not audited."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent not-spooled cleanup was not audited."},
+    {"id":"F24-4","status":"not-checked","note":"Not-spooled status timestamps were not audited."},
+    {"id":"F24-5","status":"not-checked","note":"Plugin-home adapter coverage was not audited."},
+    {"id":"F24-6","status":"not-checked","note":"Fold record rewrite failures were not audited."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript safety was not audited."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case handling was not audited."},
+    {"id":"F25-4","status":"not-checked","note":"Child environment redaction was not audited."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown helper recovery was not audited."},
+    {"id":"F30-2","status":"not-checked","note":"Pre-kill persistence failures were not audited."},
+    {"id":"F30-3","status":"not-checked","note":"Kill-site integration coverage was not audited."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer fallback accounting was not audited."},
+    {"id":"F36-1","status":"not-checked","note":"Unicode transcript-path handling was not audited."},
+    {"id":"F36-2","status":"not-checked","note":"Transcript-path normalization was not audited."},
+    {"id":"F38-1","status":"not-checked","note":"Recovery after failed persistence was not audited."},
+    {"id":"F40-1","status":"not-checked","note":"Recovery-copy enumeration failures were not audited."},
+    {"id":"F40-2","status":"not-checked","note":"Kick acknowledgements were not audited."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata failures were not audited."},
+    {"id":"F46-1","status":"fixed","note":"Read the equal-time per-window ranking and regression coverage; the original lower-first tie case is addressed. Tests were not run."},
+    {"id":"F48-1","status":"fixed","note":"Equal-time selection ranks primary and secondary independently, addressing the original crossing-window case. Tests were not run."},
+    {"id":"F50-1","status":"fixed","note":"The equal-time comparator ranks reset completeness before percentage, preserving a future reset over a missing one. Tests were not run."},
+    {"id":"F52-1","status":"not-checked","note":"Endpoint and account paths pass a fixed comparison instant, but the complete rollout/sub-agent entry path was not inspected."},
+    {"id":"F52-2","status":"fixed","note":"Finite percentage validation and invalid-only rejection address the reported NaN-first recorded case. Tests were not run."},
+    {"id":"F55-1","status":"fixed","note":"The cache stores rollout observations and reruns selection at each requested instant; the warm-cache/fresh-home regression directly covers the original trigger. Tests were not run."},
+    {"id":"F55-2","status":"fixed","note":"Invalid-only recorded candidates are rejected before replacement; the added regression covers both orders. Finding #1 is a distinct three-observation regression introduced by retaining partial windows without their timestamps."}
+  ],
+  "unproven": [
+    "The Rust regressions and reported workspace checks were not rerun in this read-only consultation.",
+    "Three distinct observation timestamps with a valid partial newest observation are absent from the inspected regression coverage.",
+    "The broader wave a7f2626..e76518e, historical handoffs, upstream oracle sources, and unrelated prior findings were not re-audited.",
+    "The 13 changed .collab artifacts were skipped as directed by the brief."
+  ],
+  "first_run_checklist": []
+}
