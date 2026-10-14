@@ -11342,7 +11342,7 @@
                      },
                      {
                          "id":  "F52-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -11405,6 +11405,15 @@
                                              "evidence":  "",
                                              "base_commit":  "981b7abc1c00f4a1a7a648049defb86235dc00c3",
                                              "tree_sha256":  "26cca7a8dc1584538d1b472fcb822aefb0e812e7b3ef49cc0f6aaf76b7f0ae77"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T08:36:54+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 8e (e76518e): one comparison instant per evaluation (_at entry points); finite_percent + total_cmp",
+                                             "evidence":  "",
+                                             "base_commit":  "e76518e79b124869ea636f47a2f0526111ea7a87",
+                                             "tree_sha256":  "367e69933a14e02f5d1ebe6714dc55a79480039b09dbd524ce8248db79569c10"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -11413,7 +11422,7 @@
                      },
                      {
                          "id":  "F52-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -11467,6 +11476,15 @@
                                              "evidence":  "",
                                              "base_commit":  "981b7abc1c00f4a1a7a648049defb86235dc00c3",
                                              "tree_sha256":  "26cca7a8dc1584538d1b472fcb822aefb0e812e7b3ef49cc0f6aaf76b7f0ae77"
+                                         },
+                                         {
+                                             "when":  "2026-10-14T08:36:57+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave 8e (e76518e): one comparison instant per evaluation (_at entry points); finite_percent + total_cmp",
+                                             "evidence":  "",
+                                             "base_commit":  "e76518e79b124869ea636f47a2f0526111ea7a87",
+                                             "tree_sha256":  "367e69933a14e02f5d1ebe6714dc55a79480039b09dbd524ce8248db79569c10"
                                          }
                                      ],
                          "reviewer_checks":  [
