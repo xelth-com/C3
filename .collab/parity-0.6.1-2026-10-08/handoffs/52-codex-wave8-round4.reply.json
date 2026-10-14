@@ -1,0 +1,364 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "F50-1 is fixed for finite percentages at a fixed comparison time, but repeated wall-clock sampling can still make aggregation order-dependent and discard a blocking window.",
+  "reply_markdown": "1. **Q1:** The original F50-1 case is fixed. Two gaps remain:\n\n   - **Finding #1:** Each comparison samples `Utc::now()` separately. With tied observations A=100% resetting soon, B=99% resetting later, and C=30% resetting later, merging A/B before A resets discards B; merging C afterward selects 30%. Processing B/C first and A afterward retains 99%. The permutation tests never cross a reset boundary.\n   - **Finding #2:** Accepted string percentages include `\"NaN\"`. With identical future resets, NaN versus 99% compares equal and retains the first input, potentially suppressing the block.\n\n2. **Q2: HOLD** on finding #1; defer tagging v0.2.1. Finding #2 is additional input-validation hardening.\n\nRead all source/document diff hunks and targeted surrounding code. Skipped `.collab/` changes as instructed, earlier-wave implementations, and the external plugin oracle. Reported Cargo results were not independently rerun. Read-only Python models reproduced both selection failures; these were not executions of the Rust implementation. Reviewed source files match `83ca5dd` despite HEAD having advanced.\n\n## Requested checks\n\n- **RC1:** In `C:\\Users\\Dmytro\\C3`, with workspace-write permission, add an injected-clock regression for finding #1: compare A/B before A’s reset and the winner/C afterward, then reverse the schedule as described; require identical blocking results. Budget: one focused Rust test, 20 minutes.\n- **RC2:** In the same directory, with workspace-write permission, test `endpoint_window` with tied `\"NaN\"`/99% observations sharing a future reset in both orders; require the valid 99% block. Budget: one focused Rust test, 10 minutes.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 667
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1098
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1010
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1990
+        }
+      ],
+      "claim": "The new ranking is order-independent only at a fixed comparison time, but aggregation samples the clock separately for each comparison. Crossing a reset boundary during the fold can discard an observation that still blocks and produce an available endpoint, with a different result for another input order.",
+      "trigger": "Three observations have the same observed_at and primary windows A=(100%, reset R), B=(99%, reset S), C=(30%, reset S), where S is later than R. A/B are merged before R, retaining A and discarding B; the winner is merged with C after R but before S, selecting C. Processing B/C before R and then A after R instead retains B. Rollout aggregation performs file reads between merges, providing a natural opportunity to cross R.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:627-640, 657-675, 1091-1104",
+          "observation": "Reset rank depends on now, while merge_observation and select_window each obtain a fresh Utc::now() during individual comparisons and retain only the winner."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:999-1010, 1988-2053",
+          "observation": "Account aggregation reads individual rollout files between merges. The permutation test uses resets minutes or days away and does not exercise a clock transition."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "Read-only inline Python reproduction of cmp_window_rank and winner selection",
+          "observation": "Using comparison times 100 and 120, R=110 and S=200, A/B then C produced (30,200), while B/C then A produced (99,200). This modeled the source algorithm; it did not execute Rust."
+        }
+      ],
+      "verification": "Run RC1 with a controlled clock and all three finite observations, asserting that input order cannot suppress B's still-active block.",
+      "remedy": "Use one explicit evaluation instant throughout an aggregation and its quota-state evaluation. If evaluation advances across a reset boundary, recompute from the source observations rather than continuing a fold whose discarded candidates were ranked under an earlier clock.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 639
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 1057
+        },
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 862
+        }
+      ],
+      "claim": "The advertised total order is not total over accepted percentage inputs: string \"NaN\" is accepted as f64, and partial_cmp failure is converted to equality. With matching future resets, whichever of NaN and a valid blocking percentage appears first survives, so malformed recorded quota can hide a valid block.",
+      "trigger": "Two recorded observations for the same endpoint and observed_at have identical future resets and used_percent values \"NaN\" and 99. Processing the NaN observation first retains it; its comparison against the blocking threshold is false.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:639, 1051-1059, 856-886",
+          "observation": "String percentages are parsed without an is_finite check. The comparator maps unordered floating-point comparison to Equal, and block evaluation directly compares the resulting float with the threshold."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "Read-only inline Python reproduction of comparator and block predicate",
+          "observation": "NaN-first retained NaN and did not block; 99-first retained 99 and blocked. This was a model reproduction, not an execution of Rust."
+        }
+      ],
+      "verification": "Run RC2 through endpoint_window using JSON string \"NaN\" and numeric 99 in both orders.",
+      "remedy": "Reject non-finite percentages consistently at parsing and selection boundaries, ensuring invalid windows cannot displace valid candidates. Add the malformed-string regression.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Telemetry spool concurrency is outside this delta."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Deletion retry behavior is outside this delta."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Harness implementation coverage was not re-audited."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating transaction ordering was not inspected."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Prompt anchors are outside this delta."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Cross-engine plan identity was not inspected."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "No native Messages benchmark evidence was reviewed."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Process-name Unicode handling is outside this delta."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Windows local-zone transition behavior was not checked."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light panel metadata was not inspected."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Historical Samoa offset normalization was not checked."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Context configuration Unicode handling was not inspected."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Flush versus pending deletion locking is outside this delta."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Recoverable deletion cleanup was not inspected."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Spool reread failure handling was not inspected."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Legacy telemetry sanitization was not inspected."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Rating actor model inference was not inspected."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Health journal I/O recovery was not inspected."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required-reviewer launcher propagation was not inspected."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Required-reviewer shared-plan scope was not inspected."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "PowerShell hook execution was not checked."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "AGY tool stall allowances were not inspected."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Local-only deletion transaction persistence was not inspected."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Complaint submission synchronization was not inspected."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Unreadable-salt cleanup behavior was not inspected."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Duplicate-key telemetry sanitization was not inspected."
+    },
+    {
+      "id": "F22-1",
+      "status": "not-checked",
+      "note": "Journal replay deduplication durability was not inspected."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "Process metadata lookup failures were not inspected."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Unknown creation-time recovery scans were not inspected."
+    },
+    {
+      "id": "F23-3",
+      "status": "not-checked",
+      "note": "Kill-time evidence persistence was not inspected."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "Recovery test strength was not re-audited."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Production Windows Samoa behavior was not checked."
+    },
+    {
+      "id": "F24-1",
+      "status": "not-checked",
+      "note": "Not-spooled lock-busy accounting was not inspected."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated not-spooled suffix handling was not inspected."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Concurrent not-spooled cleanup was not inspected."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Not-spooled status timestamp selection was not inspected."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Plugin-home markers and shared lock domains were not checked."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Fold-record second rewrite failures were not inspected."
+    },
+    {
+      "id": "F25-2",
+      "status": "not-checked",
+      "note": "Endpoint transcript-location guards were not inspected."
+    },
+    {
+      "id": "F25-3",
+      "status": "not-checked",
+      "note": "Claude model case normalization was not inspected."
+    },
+    {
+      "id": "F25-4",
+      "status": "not-checked",
+      "note": "Child environment debug redaction was not inspected."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Unknown-tree helper recovery was not inspected."
+    },
+    {
+      "id": "F30-2",
+      "status": "not-checked",
+      "note": "Pre-kill persistence and write failures were not inspected."
+    },
+    {
+      "id": "F30-3",
+      "status": "not-checked",
+      "note": "Continuation and repair kill-site coverage was not inspected."
+    },
+    {
+      "id": "F31-1",
+      "status": "not-checked",
+      "note": "Live-producer accounting across folds was not inspected."
+    },
+    {
+      "id": "F36-1",
+      "status": "not-checked",
+      "note": "Transcript guard Unicode slicing was not inspected."
+    },
+    {
+      "id": "F36-2",
+      "status": "not-checked",
+      "note": "Transcript path NFC normalization was not inspected."
+    },
+    {
+      "id": "F38-1",
+      "status": "not-checked",
+      "note": "Recovery after multiple persistence failures was not inspected."
+    },
+    {
+      "id": "F40-1",
+      "status": "not-checked",
+      "note": "Kill-copy directory enumeration failures were not inspected."
+    },
+    {
+      "id": "F40-2",
+      "status": "not-checked",
+      "note": "Kick acknowledgement on persistence failure was not inspected."
+    },
+    {
+      "id": "F42-1",
+      "status": "not-checked",
+      "note": "Recovery-copy metadata failures were not inspected."
+    },
+    {
+      "id": "F46-1",
+      "status": "fixed",
+      "note": "For the reported finite, future-reset observations, recorded and live equal-time selection now retains the blocking usage instead of the first entry; assessed by code inspection."
+    },
+    {
+      "id": "F48-1",
+      "status": "fixed",
+      "note": "Primary and secondary windows merge independently, preserving the reported 99% secondary window in recorded, live, and aggregation paths; assessed by code inspection."
+    },
+    {
+      "id": "F50-1",
+      "status": "fixed",
+      "note": "The shared comparator ranks a valid future reset above a missing or past reset for the reported tied finite shares. The new findings concern clock changes and non-finite inputs."
+    }
+  ],
+  "unproven": [
+    "The reported 820-test workspace result, Clippy result, and formatting result were not independently rerun.",
+    "The two counterexamples were reproduced in a read-only Python model; native Rust regressions remain requested.",
+    "The .collab changes were excluded as directed; earlier-wave code and external plugin oracle files were not reviewed.",
+    "The full wave a7f2626..83ca5dd and unrelated prior findings were not revalidated."
+  ],
+  "first_run_checklist": []
+}
