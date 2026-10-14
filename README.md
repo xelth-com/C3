@@ -275,7 +275,7 @@ cargo test && cargo clippy --all-targets -- -D warnings
 - **Indexed bundle.** `cargo install --path crates/c3-cli --features index-surreal` adds the
   embedded SurrealDB code index (~26 min more to build, ~180 MiB store per project). Build it
   for the `http` engine's reviewer packs and the planned browser engine, where the pack's
-  periphery comes from the index. `--features index-surreal,embeddings` adds the vector option.
+  periphery comes from the index.
 - **Invariant:** the index is never required for a consultation. (Flipped 2026-10-14: the
   index is opt-in.) CI builds the default on Linux and Windows and the indexed bundle on Linux.
 
