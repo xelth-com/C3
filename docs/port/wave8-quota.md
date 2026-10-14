@@ -80,3 +80,21 @@ and a 0.6.1 entry and newest-wins, the machine record class `""` round trip), `l
 and tri-states), `summary` (the `-Budget` and the new-thread hint), `telemetry::classes` (a budget stop
 is class quota), `pending_liveness::the_budget_watch_stops_the_turn_at_the_quota_budget` (the real
 spawn/kill path, a 200 ms poll).
+
+## 8b - the equal-time tie (reviewer finding F46-1)
+
+`endpoint_window` took a candidate only when its `observed_at` was STRICTLY newer, so at an equal
+timestamp (the ledger writes `observed_at` without fractional seconds, ties are likely) the first
+entry stayed: a 30 % observation could hide a 99 % one and the reviewer stayed available. The
+recorded-observation selection and the live-rollout replacement now share ONE comparison
+(`quota::window_obs_wins`): newer `observed_at` wins; at an equal instant the higher primary
+`used_percent` wins, then the higher secondary (the rule `newer_wins` already applied to rollouts).
+Tests: `endpoint_window_at_an_equal_time_keeps_the_fuller_window_in_both_orders` and
+`the_live_window_replaces_a_lower_recorded_one_at_an_equal_time` (both failed before the fix).
+`observed_at` comparison sites: `quota.rs` recorded selection (fixed), live replacement (fixed),
+`newer_wins` (already correct); `health.rs` only consumes `endpoint_window` (n.a.); the machine-wide
+record merge has no `observed_at` comparison (n.a.).
+
+Plugin parity: `codex-consult-common.ps1` `Get-EndpointWindow` (lines ~6985 and ~6989) uses
+`-gt $best.ObservedAt` for both the recorded and the live selection - the SAME tie. A plugin
+TECH_DEBT candidate (not edited here).

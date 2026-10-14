@@ -972,6 +972,31 @@ pub fn live_codex_home() -> Option<String> {
     live_home().lock().ok().and_then(|l| l.clone())
 }
 
+/// The used share of a recorded `quota` member (`primary` / `secondary`), 0 when absent.
+fn quota_used(q: &Value, key: &str) -> f64 {
+    match &q[key]["used_percent"] {
+        Value::Number(n) => n.as_f64().unwrap_or(0.0),
+        Value::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
+        _ => 0.0,
+    }
+}
+
+/// The ONE comparison of the endpoint window selection (recorded and live): a candidate at `at`
+/// with `quota` replaces `best` when it is strictly newer; at an equal `observed_at` (the ledger
+/// serialises without fractions, so ties happen) the higher primary share wins, then the higher
+/// secondary - the same fuller-wins tie rule as [`newer_wins`].
+fn window_obs_wins(at: DateTime<FixedOffset>, quota: &Value, best: &EndpointWindow) -> bool {
+    if at != best.observed_at {
+        return at > best.observed_at;
+    }
+    let cand = (quota_used(quota, "primary"), quota_used(quota, "secondary"));
+    let cur = (
+        quota_used(&best.quota, "primary"),
+        quota_used(&best.quota, "secondary"),
+    );
+    cand > cur
+}
+
 /// `Get-EndpointWindow`: every consultation (ledger entry or machine-wide record) of `fp_set` that
 /// carries a `quota` naming a window (its `observed_at`, else the entry's `finished_at`, else its
 /// `when`, orders them) and - when the live source is on and the set holds the built-in openai
@@ -1006,7 +1031,11 @@ pub fn endpoint_window(
             Some(a) => a,
             None => continue,
         };
-        if best.as_ref().map(|b| at > b.observed_at).unwrap_or(true) {
+        if best
+            .as_ref()
+            .map(|b| window_obs_wins(at, q, b))
+            .unwrap_or(true)
+        {
             best = Some(EndpointWindow {
                 quota: q.clone(),
                 observed_at: at,
@@ -1020,7 +1049,7 @@ pub fn endpoint_window(
             if let Some(live) = account_window(&home) {
                 if best
                     .as_ref()
-                    .map(|b| live.observed_at > b.observed_at)
+                    .map(|b| window_obs_wins(live.observed_at, &live.quota, b))
                     .unwrap_or(true)
                 {
                     best = Some(EndpointWindow {
@@ -1591,6 +1620,66 @@ mod tests {
         assert_eq!(b.name, "5-hour window");
         assert!(blocking_window(&q99, past).is_none());
         assert!(format_low_warning(&q99, past).is_empty());
+    }
+
+    fn tie_consult(used: f64, at: &str, reset: DateTime<Utc>) -> Value {
+        json!({
+            "finished_at": at,
+            "quota": {
+                "primary": {"used_percent": used, "window_minutes": 300, "resets_at": reset.to_rfc3339()},
+                "secondary": null,
+                "observed_at": at
+            }
+        })
+    }
+
+    // UNIT (F46-1): equal observed_at - the fuller primary window wins, in either order.
+    #[test]
+    fn endpoint_window_at_an_equal_time_keeps_the_fuller_window_in_both_orders() {
+        let reset = Utc::now() + Duration::minutes(120);
+        let at = "2026-10-13T11:35:49+00:00";
+        let lo = tie_consult(30.0, at, reset);
+        let hi = tie_consult(99.0, at, reset);
+        for order in [vec![lo.clone(), hi.clone()], vec![hi, lo]] {
+            let w = endpoint_window(&order, &["fp"], "fp").unwrap();
+            assert_eq!(w.source, "recorded");
+            assert_eq!(w.quota["primary"]["used_percent"], 99.0);
+            let b = blocking_window(&w.quota, Utc::now()).unwrap();
+            assert_eq!(b.name, "5-hour window");
+        }
+    }
+
+    // UNIT (F46-1): the live rollout at the very instant of a lower recorded observation wins.
+    #[test]
+    fn the_live_window_replaces_a_lower_recorded_one_at_an_equal_time() {
+        let home = scratch("tie-live");
+        let h = home.to_string_lossy().to_string();
+        let now = Utc::now();
+        let at = DateTime::<Utc>::from_timestamp(now.timestamp(), 0).unwrap();
+        let reset = now + Duration::minutes(120);
+        let id = v7(at, 7);
+        let lines = vec![
+            meta_line(at, &id, ""),
+            token_line(
+                at,
+                10,
+                0,
+                1,
+                10,
+                &win(99.0, reset, 300),
+                &win(10.0, reset + Duration::days(5), 10080),
+                "codex",
+            ),
+        ];
+        write_rollout(&home, &id, &lines, at);
+        let rec = tie_consult(30.0, &at.to_rfc3339(), reset);
+        set_live_codex_home(Some(h));
+        let w = endpoint_window(&[rec], &["fp"], "fp");
+        set_live_codex_home(None);
+        let _ = std::fs::remove_dir_all(&home);
+        let w = w.unwrap();
+        assert_eq!(w.source, "rollout");
+        assert_eq!(w.quota["primary"]["used_percent"], 99.0);
     }
 
     #[test]

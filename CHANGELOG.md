@@ -9,6 +9,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Wave 8b - quota tie (F46-1)**: the endpoint window selection (recorded and live) picks the newer `observed_at`, and at an equal instant the fuller primary (then secondary) window, so a 30 % observation can no longer hide a 99 % one (`docs/port/wave8-quota.md`).
+
 ### Added
 
 - **Wave 8 - quota windows** (`docs/port/wave8-quota.md`; the plugin's wave 30 / TECH_DEBT T15 of
