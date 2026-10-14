@@ -127,3 +127,21 @@ still replaces both windows. Tests: `equal_shares_rank_by_the_reset_in_every_ord
 `a_past_reset_never_hides_a_future_one_whatever_the_share`,
 `the_tie_selection_is_the_same_for_every_permutation` (4 observations, all 24 orders).
 The plugin's T17 fix must use this full ordering (future > past > null, then share, then later reset).
+
+## 8e - one comparison instant, finite percentages (reviewer findings F52-1, F52-2)
+
+The 8d rank depends on `now`, and each comparison sampled the clock on its own, so a reset crossing
+from future to past DURING one aggregation (the rollout reads happen between merges) made the pick
+order-dependent (A=(100 %, R), B=(99 %, S), C=(30 %, S), R < S). `now` is now sampled ONCE at the
+top of each public entry point - `endpoint_window` (-> `endpoint_window_at`), `account_window`
+(-> `account_window_at`), `codex_run_quota` - and passed as a parameter to `select_window`,
+`merge_observation` and `cmp_window_rank` (no clock read inside the comparator); the health
+evaluation hands the same `now_utc` to `endpoint_window_at` and to the "reset in the past" verdict.
+F52-2: `finite_percent` treats a non-finite or out-of-range (outside 0..=100) share - a "NaN" /
+"inf" text included - as an ABSENT window, in the window states (the block evaluation), the
+selection and the rollout parser; the comparator uses `f64::total_cmp`. Tests:
+`one_comparison_instant_makes_the_aggregation_order_independent` (A/B/C, all 6 orders, an instant
+before R keeps A, one between R and S keeps B, both block),
+`a_non_finite_percent_never_hides_a_valid_block`,
+`the_tie_selection_is_the_same_for_every_order_of_six` (720 orders, a past reset and a NaN included).
+The plugin's T17 fix needs the same single instant and the finite check.

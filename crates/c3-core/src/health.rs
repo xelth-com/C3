@@ -1148,7 +1148,7 @@ pub fn endpoint_health_set(
     // ahead keeps the endpoint out until that reset - a quota record with a known reset, like a
     // usage limit that named its reset time (every caller: the walk, -Require, the panel, the
     // listing, -Short)
-    h.window = crate::quota::endpoint_window(consults, &fp_set, &builtin);
+    h.window = crate::quota::endpoint_window_at(consults, &fp_set, &builtin, now_utc);
     if let Some(w) = h.window.clone() {
         h.window_text = crate::quota::format_windows(&w.quota, now_utc);
         h.window_low = crate::quota::format_low_warning(&w.quota, now_utc);

@@ -121,7 +121,7 @@ impl Window {
 fn window_of(v: &Value) -> Option<Window> {
     let o = v.as_object()?;
     let used = match o.get("used_percent")? {
-        Value::Number(n) => n.as_f64()?,
+        v @ Value::Number(_) => finite_percent(v)?,
         _ => return None,
     };
     let window_minutes = o.get("window_minutes").and_then(|m| {
@@ -619,6 +619,17 @@ pub fn newer_wins(a: Option<&Observation>, b: Option<&Observation>) -> bool {
     bw.fullest() > aw.fullest()
 }
 
+/// A used share as the quota records it (a number or a numeric text): `None` - the window is ABSENT
+/// - for a non-finite (`NaN`, `inf`) or out-of-range (outside 0..=100) value.
+pub fn finite_percent(v: &Value) -> Option<f64> {
+    let f = match v {
+        Value::Number(n) => n.as_f64()?,
+        Value::String(s) => s.trim().parse::<f64>().ok()?,
+        _ => return None,
+    };
+    (f.is_finite() && (0.0..=100.0).contains(&f)).then_some(f)
+}
+
 /// The TOTAL, order-independent ranking of two observations of the SAME window at an equal
 /// instant, evaluated at `now`: (1) a known future reset beats a known past reset beats a missing
 /// one (a past reset means the window is reset, whatever its share); (2) the higher
@@ -636,7 +647,7 @@ fn cmp_window_rank(
     };
     rank(a.1)
         .cmp(&rank(b.1))
-        .then(a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .then(a.0.clamp(0.0, 100.0).total_cmp(&b.0.clamp(0.0, 100.0)))
         .then(a.1.cmp(&b.1))
 }
 
@@ -644,7 +655,11 @@ fn cmp_window_rank(
 /// newer instant); at an EQUAL instant each window is merged on its own - the higher primary
 /// `used_percent` (with its reset) and, independently, the higher secondary - so a fuller weekly
 /// window is never hidden behind a fuller 5-hour one.
-pub fn merge_observation(a: Option<Observation>, b: Option<&Observation>) -> Option<Observation> {
+pub fn merge_observation(
+    a: Option<Observation>,
+    b: Option<&Observation>,
+    now: DateTime<Utc>,
+) -> Option<Observation> {
     let (Some(av), Some(bv)) = (a.as_ref(), b) else {
         return if newer_wins(a.as_ref(), b) {
             b.cloned()
@@ -664,7 +679,6 @@ pub fn merge_observation(a: Option<Observation>, b: Option<&Observation>) -> Opt
                                 .and_then(|r| DateTime::parse_from_rfc3339(r).ok()),
                         )
                     };
-                    let now = Utc::now();
                     Some(
                         if cmp_window_rank(key(q), key(p), now) == std::cmp::Ordering::Greater {
                             q
@@ -715,6 +729,8 @@ pub fn codex_run_quota(
     baseline_thread: &str,
     codex_home: &str,
 ) -> RunQuota {
+    // ONE comparison instant for the whole aggregation (the rollout reads happen between merges)
+    let now = Utc::now();
     let mut r = RunQuota {
         quota: null_quota(),
         tokens: None,
@@ -749,7 +765,7 @@ pub fn codex_run_quota(
         if let Some(i) = su.total.and_then(|t| t.input) {
             sub_input += i;
         }
-        win = merge_observation(win, su.window.as_ref());
+        win = merge_observation(win, su.window.as_ref(), now);
     }
     if let Some(w) = &win {
         r.quota = w.to_quota();
@@ -853,16 +869,9 @@ pub fn window_states(quota: &Value, now: DateTime<Utc>) -> Vec<WindowState> {
         if !w.is_object() {
             continue;
         }
-        let used = match &w["used_percent"] {
-            Value::Number(n) => match n.as_f64() {
-                Some(f) => f,
-                None => continue,
-            },
-            Value::String(s) => match s.trim().parse::<f64>() {
-                Ok(f) => f,
-                Err(_) => continue,
-            },
-            _ => continue,
+        let used = match finite_percent(&w["used_percent"]) {
+            Some(f) => f,
+            None => continue,
         };
         let minutes = w["window_minutes"].as_i64().or_else(|| {
             w["window_minutes"]
@@ -976,6 +985,11 @@ fn account_cache() -> &'static AccountCache {
 /// the newest OBSERVATION decides ([`newer_wins`]), not the file. Cached per process and codex home
 /// for 60 s.
 pub fn account_window(codex_home: &str) -> Option<AccountWindow> {
+    account_window_at(codex_home, Utc::now())
+}
+
+/// [`account_window`] judged at the one comparison instant `now`.
+pub fn account_window_at(codex_home: &str, now: DateTime<Utc>) -> Option<AccountWindow> {
     if codex_home.is_empty() {
         return None;
     }
@@ -1007,7 +1021,7 @@ pub fn account_window(codex_home: &str) -> Option<AccountWindow> {
             }
             let u = rollout_usage(&p, None, ROLLOUT_TAIL_BYTES);
             let before = best.clone();
-            best = merge_observation(best, u.window.as_ref());
+            best = merge_observation(best, u.window.as_ref(), now);
             if best != before {
                 best_path = p;
             }
@@ -1052,11 +1066,7 @@ fn quota_used(q: &Value, key: &str) -> Option<f64> {
     if !q[key].is_object() {
         return None;
     }
-    match &q[key]["used_percent"] {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse::<f64>().ok(),
-        _ => None,
-    }
+    finite_percent(&q[key]["used_percent"])
 }
 
 /// The ONE selection of the endpoint window (recorded and live): a candidate strictly newer than
@@ -1070,6 +1080,7 @@ fn select_window(
     quota: &Value,
     source: &'static str,
     fingerprint: String,
+    now: DateTime<Utc>,
 ) -> Option<EndpointWindow> {
     let cand = EndpointWindow {
         quota: quota.clone(),
@@ -1095,7 +1106,7 @@ fn select_window(
                 None => true,
                 Some(bu) => {
                     let reset = |q: &Value| when_offset(&q[key]["resets_at"]);
-                    cmp_window_rank((cu, reset(quota)), (bu, reset(&cur.quota)), Utc::now())
+                    cmp_window_rank((cu, reset(quota)), (bu, reset(&cur.quota)), now)
                         == std::cmp::Ordering::Greater
                 }
             };
@@ -1120,6 +1131,17 @@ pub fn endpoint_window(
     consults: &[Value],
     fp_set: &[&str],
     builtin_fingerprint: &str,
+) -> Option<EndpointWindow> {
+    endpoint_window_at(consults, fp_set, builtin_fingerprint, Utc::now())
+}
+
+/// [`endpoint_window`] at ONE comparison instant `now` - the instant of every comparison of the
+/// selection and (the caller's) "reset in the past" verdict.
+pub fn endpoint_window_at(
+    consults: &[Value],
+    fp_set: &[&str],
+    builtin_fingerprint: &str,
+    now: DateTime<Utc>,
 ) -> Option<EndpointWindow> {
     let mut best: Option<EndpointWindow> = None;
     for c in consults {
@@ -1146,17 +1168,18 @@ pub fn endpoint_window(
             Some(a) => a,
             None => continue,
         };
-        best = select_window(best, at, q, "recorded", fp);
+        best = select_window(best, at, q, "recorded", fp, now);
     }
     if fp_set.contains(&builtin_fingerprint) {
         if let Some(home) = live_codex_home() {
-            if let Some(live) = account_window(&home) {
+            if let Some(live) = account_window_at(&home, now) {
                 best = select_window(
                     best,
                     live.observed_at,
                     &live.quota,
                     "rollout",
                     builtin_fingerprint.to_string(),
+                    now,
                 );
             }
         }
@@ -1861,8 +1884,9 @@ mod tests {
     fn obs_of(c: &Value, at: DateTime<FixedOffset>) -> Observation {
         let win = |k: &str| {
             let w = &c["quota"][k];
-            w.is_object().then(|| Window {
-                used_percent: w["used_percent"].as_f64().unwrap(),
+            let used = finite_percent(&w["used_percent"])?;
+            Some(Window {
+                used_percent: used,
                 window_minutes: w["window_minutes"].as_i64(),
                 resets_at: w["resets_at"].as_str().map(|x| x.to_string()),
             })
@@ -1909,6 +1933,7 @@ mod tests {
                     let m = merge_observation(
                         Some(obs_of(&order[0], atd)),
                         Some(&obs_of(&order[1], atd)),
+                        Utc::now(),
                     )
                     .unwrap();
                     let mw = if on_primary { m.primary } else { m.secondary }.unwrap();
@@ -2032,7 +2057,7 @@ mod tests {
             let n = norm(&w.quota);
             let mut m = None;
             for c in &list {
-                m = merge_observation(m, Some(&obs_of(c, atd)));
+                m = merge_observation(m, Some(&obs_of(c, atd)), Utc::now());
             }
             let m = m.unwrap();
             let mk = |w: Option<Window>| {
@@ -2047,6 +2072,144 @@ mod tests {
             }
         }
         // the winners: the primary is the future-reset 99, the secondary the future-reset 98
+        let f = first.unwrap();
+        assert_eq!(f.0 .0, Some(99.0));
+        assert_eq!(f.1 .0, Some(98.0));
+    }
+
+    fn perms_of(n: usize) -> Vec<Vec<usize>> {
+        fn go(cur: &mut Vec<usize>, used: &mut Vec<bool>, out: &mut Vec<Vec<usize>>) {
+            if cur.len() == used.len() {
+                out.push(cur.clone());
+                return;
+            }
+            for i in 0..used.len() {
+                if !used[i] {
+                    used[i] = true;
+                    cur.push(i);
+                    go(cur, used, out);
+                    cur.pop();
+                    used[i] = false;
+                }
+            }
+        }
+        let mut out = vec![];
+        go(&mut vec![], &mut vec![false; n], &mut out);
+        out
+    }
+
+    // UNIT (F52-1, RC1): ONE injected comparison instant - the reviewer's A=(100, R), B=(99, S),
+    // C=(30, S) schedule gives the same result for every order; an instant before R keeps A, one
+    // between R and S keeps B, and both block.
+    #[test]
+    fn one_comparison_instant_makes_the_aggregation_order_independent() {
+        let base = Utc::now();
+        let (r, s_) = (base + Duration::minutes(10), base + Duration::minutes(60));
+        let at = "2026-10-13T11:35:49+00:00";
+        let atd: DateTime<FixedOffset> = at.parse().unwrap();
+        let obs = [
+            rq(Some((100.0, Some(r))), None, at),
+            rq(Some((99.0, Some(s_))), None, at),
+            rq(Some((30.0, Some(s_))), None, at),
+        ];
+        for (now, want) in [(base, 100.0), (base + Duration::minutes(30), 99.0)] {
+            for perm in perms_of(3) {
+                let list: Vec<Value> = perm.iter().map(|i| obs[*i].clone()).collect();
+                let w = endpoint_window_at(&list, &["fp"], "fp", now).unwrap();
+                assert_eq!(w.quota["primary"]["used_percent"], want, "{perm:?}");
+                assert!(blocking_window(&w.quota, now).is_some());
+                let mut m = None;
+                for c in &list {
+                    m = merge_observation(m, Some(&obs_of(c, atd)), now);
+                }
+                assert_eq!(m.unwrap().primary.unwrap().used_percent, want, "{perm:?}");
+            }
+        }
+    }
+
+    fn nan_quota(used: Value, reset: DateTime<Utc>, at: &str) -> Value {
+        json!({"finished_at": at, "quota": {
+            "primary": {"used_percent": used, "window_minutes": 300, "resets_at": reset.to_rfc3339()},
+            "secondary": null, "observed_at": at}})
+    }
+
+    // UNIT (F52-2, RC2): a non-finite share is an ABSENT window and never hides a 99 % block.
+    #[test]
+    fn a_non_finite_percent_never_hides_a_valid_block() {
+        let reset = Utc::now() + Duration::minutes(90);
+        let at = "2026-10-13T11:35:49+00:00";
+        for bad in [json!("NaN"), json!("inf"), json!("-inf"), json!(150.0)] {
+            let a = nan_quota(bad, reset, at);
+            let b = nan_quota(json!(99), reset, at);
+            for order in [vec![a.clone(), b.clone()], vec![b, a]] {
+                let w = endpoint_window(&order, &["fp"], "fp").unwrap();
+                assert_eq!(w.quota["primary"]["used_percent"], 99);
+                assert!(blocking_window(&w.quota, Utc::now()).is_some());
+            }
+        }
+        assert!(finite_percent(&json!("NaN")).is_none());
+        assert!(finite_percent(&json!("99.5")).is_some());
+    }
+
+    // UNIT (F52-1/2): 720 orders of six tied observations - one past reset, one NaN included.
+    #[test]
+    fn the_tie_selection_is_the_same_for_every_order_of_six() {
+        let now = Utc::now();
+        let at = "2026-10-13T11:35:49+00:00";
+        let atd: DateTime<FixedOffset> = at.parse().unwrap();
+        let mut obs = vec![
+            rq(
+                Some((99.0, None)),
+                Some((20.0, Some(now + Duration::days(2)))),
+                at,
+            ),
+            rq(
+                Some((99.5, Some(now - Duration::minutes(3)))),
+                Some((98.0, None)),
+                at,
+            ),
+            rq(
+                Some((99.0, Some(now + Duration::minutes(30)))),
+                Some((98.0, Some(now - Duration::hours(1)))),
+                at,
+            ),
+            rq(
+                Some((60.0, Some(now + Duration::minutes(80)))),
+                Some((98.0, Some(now + Duration::days(3)))),
+                at,
+            ),
+            rq(Some((100.0, Some(now - Duration::days(1)))), None, at),
+        ];
+        obs.push(nan_quota(json!("NaN"), now + Duration::minutes(500), at));
+        let norm = |q: &Value| {
+            let f = |k: &str| {
+                (
+                    q[k]["used_percent"].as_f64(),
+                    ts_of(q[k]["resets_at"].as_str()),
+                )
+            };
+            (f("primary"), f("secondary"))
+        };
+        let mut first = None;
+        let perms = perms_of(6);
+        assert_eq!(perms.len(), 720);
+        for perm in &perms {
+            let list: Vec<Value> = perm.iter().map(|i| obs[*i].clone()).collect();
+            let w = endpoint_window_at(&list, &["fp"], "fp", now).unwrap();
+            let n = norm(&w.quota);
+            let mut m = None;
+            for c in &list {
+                m = merge_observation(m, Some(&obs_of(c, atd)), now);
+            }
+            let m = m.unwrap();
+            if let (Some(p), Some(q)) = (m.primary.as_ref(), n.0 .0) {
+                assert_eq!(p.used_percent, q);
+            }
+            match &first {
+                None => first = Some(n),
+                Some(f) => assert_eq!(&n, f, "{perm:?}"),
+            }
+        }
         let f = first.unwrap();
         assert_eq!(f.0 .0, Some(99.0));
         assert_eq!(f.1 .0, Some(98.0));
@@ -2074,7 +2237,7 @@ mod tests {
             (mk(30.0, 99.0), mk(31.0, 10.0)),
             (mk(31.0, 10.0), mk(30.0, 99.0)),
         ] {
-            let m = merge_observation(Some(a), Some(&b)).unwrap();
+            let m = merge_observation(Some(a), Some(&b), Utc::now()).unwrap();
             assert_eq!(m.primary.unwrap().used_percent, 31.0);
             assert_eq!(m.secondary.unwrap().used_percent, 99.0);
         }
@@ -2082,7 +2245,7 @@ mod tests {
             at: Some(at + Duration::seconds(1)),
             ..mk(1.0, 2.0)
         };
-        let m = merge_observation(Some(mk(30.0, 99.0)), Some(&newer)).unwrap();
+        let m = merge_observation(Some(mk(30.0, 99.0)), Some(&newer), Utc::now()).unwrap();
         assert_eq!(m.secondary.unwrap().used_percent, 2.0);
     }
 
