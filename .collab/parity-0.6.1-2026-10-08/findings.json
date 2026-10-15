@@ -368,6 +368,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -846,6 +854,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -1225,6 +1241,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Harness coverage map not inspected.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -1595,6 +1619,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -1970,6 +2002,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -2349,6 +2389,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -2711,6 +2759,14 @@
                                                      "note":  "Benchmark evidence not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Benchmark evidence not inspected.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -3087,6 +3143,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -3467,6 +3531,14 @@
                                                      "note":  "Windows transition behavior not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Windows transition behavior not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -3852,6 +3924,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -4221,6 +4301,14 @@
                                                      "note":  "Samoa behavior not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Samoa behavior not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -4572,6 +4660,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -4923,6 +5019,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -5274,6 +5378,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -5620,6 +5732,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -5971,6 +6091,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -6326,6 +6454,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -6682,6 +6818,14 @@
                                                      "note":  "Read-error handling inspected incidentally; full failure schedules not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Journal failure handling not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -7034,6 +7178,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -7382,6 +7534,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -7729,6 +7889,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -8077,6 +8245,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -8426,6 +8602,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -8824,6 +9008,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -9159,6 +9351,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -9486,6 +9686,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -9822,6 +10030,14 @@
                                                      "note":  "Journal marks inspected only partially; failure schedules not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Durable journal replay protection not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -10141,6 +10357,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -10460,6 +10684,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -10785,6 +11017,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -11104,6 +11344,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Recovery fixtures not inspected.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -11414,6 +11662,14 @@
                                                      "note":  "Production Samoa checks not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Production Samoa behavior not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -11721,6 +11977,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -12019,6 +12283,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -12317,6 +12589,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -12610,6 +12890,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -12917,6 +13205,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Oracle adapter and shared-lock behavior not inspected.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -13206,6 +13502,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -13611,6 +13915,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -13901,6 +14213,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -14182,6 +14502,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -14585,6 +14913,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -14881,6 +15217,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -15155,6 +15499,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Recovery fixtures not inspected.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -15430,6 +15782,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -15878,6 +16238,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -16142,6 +16510,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -16412,6 +16788,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -16660,6 +17044,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -16907,6 +17299,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -17142,6 +17542,14 @@
                                                      "note":  "Outside this delta; not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside this delta; not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -17371,6 +17779,14 @@
                                                      "note":  "Quota aggregation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota aggregation not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -17600,6 +18016,14 @@
                                                      "note":  "Quota aggregation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota aggregation not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -17817,6 +18241,14 @@
                                                      "note":  "Quota aggregation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota aggregation not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -18016,6 +18448,14 @@
                                                      "note":  "Quota aggregation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota aggregation not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -18206,6 +18646,14 @@
                                                      "note":  "Quota aggregation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota input validation not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -18402,6 +18850,14 @@
                                                      "note":  "Quota cache not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota cache behavior not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -18598,6 +19054,14 @@
                                                      "note":  "Quota aggregation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota input validation not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -18795,6 +19259,14 @@
                                                      "note":  "Quota aggregation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Per-window timestamp handling not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -18984,6 +19456,14 @@
                                                      "note":  "Quota persistence not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota persistence not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -19160,6 +19640,14 @@
                                                      "note":  "Quota timestamp persistence not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Quota timestamp precision not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -19307,6 +19795,14 @@
                                                      "note":  "Detached admission not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Detached admission not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -19454,6 +19950,14 @@
                                                      "note":  "Detached reservation not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Detached reservation durability not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -19610,6 +20114,14 @@
                                                      "note":  "Identity deduplication read, but production ledger/machine conversion not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Identity filtering was inspected, but production ledger/machine conversion was not fully traced.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -19753,6 +20265,14 @@
                                                      "note":  "Reset-hint parser not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reset-hint validation not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -19903,6 +20423,14 @@
                                                      "note":  "Shim environment restoration not reviewed.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "PowerShell environment restoration not rechecked.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20045,6 +20573,14 @@
                                                      "note":  "Documented policy read; controlled-clock scenarios not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Documented policy was read; its release-policy scenarios were not rerun.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20184,6 +20720,14 @@
                                                      "note":  "Current identity filter read; complete production scenarios not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected filtering excludes unidentified rows from cap pairs and deduplicates identified rows by consult_id, not timestamp; execution not repeated.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20314,6 +20858,14 @@
                                                      "note":  "Portable process fixture not inspected.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Cross-platform recovery fixture not inspected.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20436,6 +20988,14 @@
                                                      "note":  "The inspected endpoint_health filter excludes no-ID rows from cap-pair evidence, eliminating this legacy matching ambiguity.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected endpoint_health excludes no-ID rows from cap-pair evidence, removing legacy mirror ambiguity from this detector.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20572,6 +21132,14 @@
                                                      "note":  "The inspected reader excludes legacy no-ID rows from the pair regardless of persisted age.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "No-ID machine rows are excluded from cap-pair evidence at read time, regardless of file pruning.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20704,6 +21272,14 @@
                                                      "note":  "Cap-pair selection excludes no-ID rows and deduplicates identified rows by consult_id rather than truncated message text.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Cap-pair deduplication uses nonempty consult_id; truncated failure text no longer identifies legacy pair evidence.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20801,6 +21377,14 @@
                                                      "note":  "Confirmed as intentional policy: all attempts sharing one consult_id count once; the wave note explicitly accepts ordinary burst handling for this case.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "still-open",
+                                                     "note":  "One consultation still contributes at most one hit. Documentation explicitly adopts this policy; it is not treated as a new blocker.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -20899,6 +21483,14 @@
                                                      "note":  "Documentation says roster validation prevents the trigger; validator not inspected.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Documentation claims invalid hints are rejected, but the roster-validation path was not inspected.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -21015,6 +21607,14 @@
                                                      "note":  "The 35-day reader bound was inspected; downstream hinted-period evaluation not revalidated.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected health retains identified hits for 35 days and plan_cap_verdict filters hinted hits by their declared reset rather than a universal 24-hour limit.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -21110,6 +21710,14 @@
                                                      "note":  "Newest qualifying-pair selection in plan_cap_verdict not inspected.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected plan_cap_verdict scans for any qualifying pair; an isolated newest failure no longer hides an earlier pair.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -21209,6 +21817,14 @@
                                                      "note":  "Inspected retention explicitly preserves identified quota/burst evidence for 35 days independently of expired burst until; record-cap loss remains an acknowledged policy limit.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected retention keeps identified cap evidence for 35 days and cap eviction removes ordinary rows before evidence; execution not repeated.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -21304,6 +21920,14 @@
                                                      "note":  "For evidence already merged with its clearing success, the inspected supersede step durably removes the older pair before retention and capping.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected update removes evidence at or before the clearing anchor before retention and eviction.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -21396,6 +22020,14 @@
                                                      "note":  "The original evidence-filler fixture is addressed; finding #1 supersedes the claim with a tied-anchor eviction and delayed-replay schedule.",
                                                      "base_commit":  "3b636f8d51ac74db89f69ad3ed4d0225e80d0ced",
                                                      "tree_sha256":  "b951a66c4254b631e0420ca332e612ccb7947b682b4a656dd7bdad8f45746732"
+                                                 },
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected logic retains clearing anchors for 35 days and evicts them after evidence; the tied-anchor loophole is addressed by this delta.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
                                                  }
                                              ]
                      },
@@ -21472,7 +22104,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  49,
+                                                     "when":  "2026-10-15T13:14:24+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "anchor_of selects a deterministic timestamp/key pair and is_anchor requires both. The inspected regression setup uses the specified held-journal schedule; its final assertions and execution were not independently verified.",
+                                                     "base_commit":  "b8d75c893ff5d1fc04260daff5b458e57a66896e",
+                                                     "tree_sha256":  "b0772960d625130289e49964c64adf1c96cfe036437d05cbd1734834c966c342"
+                                                 }
                                              ]
                      }
                  ],
@@ -22419,6 +23058,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1792057009
+                    },
+                    {
+                        "n":  49,
+                        "consult_id":  "797fc2d6-095a-46a6-892b-08cb8e6730dc",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "acceptance",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-15T13:10:29+02:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-10-15T13:14:42+02:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "claude-fable-5-1",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1792062882
                     }
                 ]
 }
