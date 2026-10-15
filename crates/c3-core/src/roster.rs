@@ -1274,6 +1274,25 @@ mod tests {
             r#"{"roster_version":1,"reviewers":[{"provider":"alibaba","model":"m","ext":{"c3":{"reset_hint":"soon"}}}]}"#
         )
         .contains("ext.c3.reset_hint must be"));
+        // UNIT (F66-4): non-ASCII and other malformed hints are a validation error, never a panic
+        for bad in [
+            "daily:00:00日abcd",
+            "monthly:27T00:00日+08:00",
+            "weekly:日T00:00+00:00",
+            "monthly:é27T00:00+08:00",
+            "daily:",
+            "daily:0:0+0:0",
+            "daily:00:00+",
+            "monthly:T00:00+08:00",
+            "weekly:FunT00:00+00:00",
+            ":",
+            "",
+        ] {
+            let json = format!(
+                r#"{{"roster_version":1,"reviewers":[{{"provider":"alibaba","model":"m","ext":{{"c3":{{"reset_hint":"{bad}"}}}}}}]}}"#
+            );
+            assert!(why(&json).contains("ext.c3.reset_hint must be"), "{bad}");
+        }
     }
 
     fn why(json: &str) -> String {

@@ -66,6 +66,9 @@ pub struct PendingCheck {
     pub message: String,
     #[allow(dead_code)]
     pub check: String,
+    /// (wave 9b, F66-1) The verdict is the live-writer rule: the bridge that wrote the record
+    /// (pid + start time) is running on this host. False for every other reason a record is active.
+    pub writer_alive: bool,
 }
 
 /// Every recovery record of a task, read and judged.
@@ -905,6 +908,7 @@ pub fn test_pending_active_with(
         } else {
             format!("{c}; {original_note}")
         },
+        writer_alive: false,
     };
     let active = |m: String, c: String| PendingCheck {
         active: true,
@@ -914,6 +918,7 @@ pub fn test_pending_active_with(
             format!("{}; {}.", m.trim_end_matches('.'), original_note)
         },
         check: c,
+        writer_alive: false,
     };
 
     // D1: the bridge that wrote the record, while it runs — by pid + start time, never this
@@ -925,13 +930,15 @@ pub fn test_pending_active_with(
         if other_host {
             // cannot be checked from here; the rules below decide.
         } else if proc::pid_alive(writer_pid as u32, &writer_start) {
-            return active(
+            let mut c = active(
                 format!(
                     "a consultation of this task is still running: its bridge (pid {writer_pid}) wrote {} ({what}). Wait for it to finish; the record is removed when it commits.",
                     path.display()
                 ),
                 format!("writer pid {writer_pid} alive (pid + start time)"),
             );
+            c.writer_alive = true;
+            return c;
         } else {
             writer_gone = format!("writer pid {writer_pid} gone");
         }

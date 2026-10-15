@@ -141,6 +141,21 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# (wave 9, D1/D2; 9b F66-5) c3's own lines name `c3 ...` and its panels default to new threads; the
+# plugin's harness oracle pins the .ps1 spellings and the fork default, so c3 is told by
+# C3_PLUGIN_COMPAT=1 - for THIS child only: the previous value is restored on every exit path, so a
+# native c3 run later in the same PowerShell session is unaffected.
+function Invoke-C3Compat {
+    param([string]$Exe, [object[]]$ArgList)
+    $prevCompat = $env:C3_PLUGIN_COMPAT
+    $env:C3_PLUGIN_COMPAT = '1'
+    try { & $Exe @ArgList }
+    finally {
+        if ($null -eq $prevCompat) { Remove-Item Env:\C3_PLUGIN_COMPAT -ErrorAction SilentlyContinue }
+        else { $env:C3_PLUGIN_COMPAT = $prevCompat }
+    }
+}
+
 function Resolve-C3Exe {
     if ($env:C3_EXE -and (Test-Path -LiteralPath $env:C3_EXE)) {
         return (Resolve-Path -LiteralPath $env:C3_EXE).Path
@@ -206,8 +221,6 @@ $env:CODEX_CONSULT_TEST_BRIDGE_PID = "$PID"
 # templates/ (role files) and skills/ (-Explain). The plugin derives it from $PSScriptRoot, never
 # from the environment, so the shim sets it whatever the caller had.
 $env:CLAUDE_PLUGIN_ROOT = Split-Path -Parent $PSScriptRoot
-# (wave 9, D2) c3's own lines name `c3 ...`; the plugin's harness oracle texts name the .ps1 scripts and its panels fork by default (wave 9, D1)
-$env:C3_PLUGIN_COMPAT = '1'
 # (wave 2b) the plugin's schema file beside its scripts: c3 names it in the engine's argv
 # (--output-schema / --json-schema) when it holds exactly the embedded schema.
 $schemaFile = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'schemas\consult-reply.schema.json'))
@@ -224,7 +237,7 @@ if ($PSBoundParameters.ContainsKey('Explain')) {
         else { $x.Add($flag); $x.Add((@($kv.Value) -join ',')) }
     }
     $x = Get-NativeArgs $x
-    & $c3 @x
+    Invoke-C3Compat $c3 $x
     exit $LASTEXITCODE
 }
 
@@ -247,7 +260,7 @@ if ($Kick -or $PSBoundParameters.ContainsKey('Member')) {
     if ($PSBoundParameters.ContainsKey('Member')) { $k.Add('--member'); $k.Add($Member) }
     if ($PSBoundParameters.ContainsKey('Id')) { $k.Add('--id'); $k.Add($Id) }
     $k = Get-NativeArgs $k
-    & $c3 @k
+    Invoke-C3Compat $c3 $k
     exit $LASTEXITCODE
 }
 
@@ -276,7 +289,7 @@ if ($Status -or $Wait) {
     if ($Panel) { $q.Add('--panel') }
     if ($PanelAll) { $q.Add('--panel-all') }
     $q = Get-NativeArgs $q
-    & $c3 @q
+    Invoke-C3Compat $c3 $q
     exit $LASTEXITCODE
 }
 
@@ -364,5 +377,5 @@ if ($Prune) { $c3Args.Add('--prune') }
 # Forward stdout/stderr unchanged so a harness's captured 2>&1 text is exactly what c3
 # printed - no Write-Host wrapping, no re-encoding.
 $c3Args = Get-NativeArgs $c3Args
-& $c3 @c3Args
+Invoke-C3Compat $c3 $c3Args
 exit $LASTEXITCODE

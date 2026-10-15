@@ -4440,10 +4440,18 @@ fn run_live(mut ctx: Context) -> i32 {
         }
     };
     if concurrent {
-        // the numbers are taken under the lock, past every ledger entry and reservation
-        if let Ok(nn_n) = store.next_numbers(&ctx.task) {
-            ctx.nn = nn_n.nn;
-            ctx.consult_n = nn_n.n;
+        // the numbers are taken under the lock, past every ledger entry and reservation; a store
+        // that cannot give them refuses the run (the lock is still held - nothing was reserved)
+        match store.next_numbers(&ctx.task) {
+            Ok(nn_n) => {
+                ctx.nn = nn_n.nn;
+                ctx.consult_n = nn_n.n;
+            }
+            Err(e) => {
+                return refuse(&format!(
+                    "could not allocate this run's numbers under the task lock ({e}); nothing was started."
+                ))
+            }
         }
         reply_rel = ctx.hf("md");
         pending = PendingRef::member(ctx.task.clone(), ctx.nn);
@@ -4504,7 +4512,17 @@ fn run_live(mut ctx: Context) -> i32 {
         // Reserve the recovery record (`New-PendingRecord -State reserved`): this bridge's pid and
         // start time (the writer-pid liveness rule), the host and this run's numbers/reply.
         let rec = new_pending_record(PendingState::Reserved, &ctx, &reply_rel);
-        let _ = store.write_pending(&pending, &rec);
+        if concurrent {
+            // (wave 9b, F66-2) the lock is released only after the reservation is durable and read
+            // back; a failure refuses here, with the lock still held and nothing reserved
+            let flag = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_RESERVE_FAIL_ONCE")
+                .map(PathBuf::from);
+            if let Err(e) = persist_reservation(&store, &pending, &rec, flag) {
+                return refuse(&format!("{e}; nothing was started."));
+            }
+        } else {
+            let _ = store.write_pending(&pending, &rec);
+        }
         // A detached single run: its one member is running now (its numbers are assigned).
         if super::detach::is_active() {
             let n = ctx.consult_n;
@@ -5326,6 +5344,51 @@ fn make_live_request(ctx: &Context) -> Request {
         new_thread: None,
         add_dirs: Vec::new(),
     }
+}
+
+/// (wave 9b, F66-2) Write a run's reservation (the recovery record that carries its numbers)
+/// durably - the store's atomic write syncs the file before the rename - and READ IT BACK; on any
+/// failure the file is removed and the error returned, so the caller still holds the task lock and
+/// refuses cleanly. Test hook `CODEX_CONSULT_TEST_RESERVE_FAIL_ONCE=<flag file>`: when the file
+/// exists it is deleted and this call fails once.
+pub(crate) fn persist_reservation(
+    store: &FilesStore,
+    pending: &PendingRef,
+    rec: &PendingRecord,
+    fail_once_flag: Option<PathBuf>,
+) -> Result<(), String> {
+    let path = store_pending_path(store, pending);
+    if let Some(flag) = fail_once_flag {
+        if flag.is_file() && std::fs::remove_file(&flag).is_ok() {
+            return Err("could not write this run's reservation (test hook)".to_string());
+        }
+    }
+    if path.exists() {
+        return Err(format!(
+            "the reservation file {} already exists (another run holds these numbers)",
+            path.display()
+        ));
+    }
+    store.write_pending(pending, rec).map_err(|e| {
+        format!(
+            "could not write this run's reservation {} ({e})",
+            path.display()
+        )
+    })?;
+    let back = crate::liveness::pending::read_pending_file(&path);
+    let ok = back.error.is_none()
+        && back.record.as_ref().is_some_and(|r| {
+            r.get("n").and_then(|v| v.as_i64()) == Some(rec.n)
+                && r.get("nn").and_then(|v| v.as_str()) == Some(rec.nn.as_str())
+        });
+    if !ok {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!(
+            "this run's reservation {} could not be read back as written",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn store_pending_path(store: &FilesStore, pending: &PendingRef) -> PathBuf {
@@ -6643,6 +6706,11 @@ fn finish(
             mark.as_ref(),
             sec.run_quota.as_ref().map(|q| &q.quota),
         )
+        .map(|mut r| {
+            // (wave 9b, F66-3) the record names its consultation
+            r.consult_id = ctx.consult_id.clone();
+            r
+        })
     });
     let health_alive = |pid: u32, st: &str| crate::liveness::proc::pid_alive(pid, st);
     let mut health_retry_cause: Option<String> = None;
@@ -11314,5 +11382,80 @@ mod identity_display_tests {
             identity_display(&h),
             "endpoint https://api.example.test/v1, wire_api: responses"
         );
+    }
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+    use c3_core::store::{FilesStore, PendingRecord, PendingRef, PendingState};
+
+    fn scratch() -> (PathBuf, FilesStore, c3_core::task_slug::TaskSlug) {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-reserve-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4().simple()
+        ));
+        let task = c3_core::task_slug::TaskSlug::new("t").unwrap();
+        std::fs::create_dir_all(dir.join("t")).unwrap();
+        (dir.clone(), FilesStore::new(dir), task)
+    }
+
+    fn record_for(nn: u32, n: i64) -> PendingRecord {
+        PendingRecord {
+            state: PendingState::Reserved,
+            n,
+            nn: format!("{nn:02}"),
+            ..Default::default()
+        }
+    }
+
+    // UNIT (F66-2): the lock is released only after a verified reservation. A one-shot write
+    // failure refuses the first run (nothing reserved); the second run takes fresh numbers under
+    // the lock, reserves durably, and a third run gets the next numbers - no duplicate n, no
+    // overwritten pending file.
+    #[test]
+    fn a_failed_reservation_refuses_and_the_next_run_gets_distinct_numbers() {
+        let (root, store, task) = scratch();
+        let flag = root.join("fail-once.flag");
+        std::fs::write(&flag, "x").unwrap();
+        // run 1: numbers under the lock, then the reservation write fails once
+        let lock1 = store
+            .take_task_lock(&task, &c3_core::store::LockRecord::now(&task, None))
+            .unwrap();
+        let a = store.next_numbers(&task).unwrap();
+        let p1 = PendingRef::member(task.clone(), a.nn);
+        let r1 = persist_reservation(&store, &p1, &record_for(a.nn, a.n), Some(flag.clone()));
+        assert!(r1.is_err());
+        assert!(
+            !store_pending_path(&store, &p1).exists(),
+            "nothing reserved"
+        );
+        drop(lock1);
+        // run 2: the lock is free again, the numbers are the same (nothing was taken), and its
+        // reservation is durable
+        let lock2 = store
+            .take_task_lock(&task, &c3_core::store::LockRecord::now(&task, None))
+            .unwrap();
+        let b = store.next_numbers(&task).unwrap();
+        assert_eq!((b.n, b.nn), (a.n, a.nn));
+        let p2 = PendingRef::member(task.clone(), b.nn);
+        persist_reservation(&store, &p2, &record_for(b.nn, b.n), Some(flag.clone())).unwrap();
+        drop(lock2);
+        // run 3 sees run 2's reservation: strictly newer numbers
+        let c = store.next_numbers(&task).unwrap();
+        assert!(
+            c.n > b.n && c.nn > b.nn,
+            "{:?} {:?}",
+            (b.n, b.nn),
+            (c.n, c.nn)
+        );
+        // a second write to the same reservation file is refused, never an overwrite
+        let again = persist_reservation(&store, &p2, &record_for(b.nn, b.n + 5), None);
+        assert!(again.unwrap_err().contains("already exists"));
+        let kept = std::fs::read_to_string(store_pending_path(&store, &p2)).unwrap();
+        let kept: serde_json::Value = serde_json::from_str(&kept).unwrap();
+        assert_eq!(kept["n"], b.n);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

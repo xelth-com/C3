@@ -878,6 +878,9 @@ pub struct Record {
     pub failure_kind: String,
     /// (wave 9, D4) Seconds the run took (`finished_at - when`, else the recorded wall seconds).
     pub wall_secs: f64,
+    /// (wave 9b, F66-3) The consultation's id, and whether the row is a machine-wide synthetic one.
+    pub consult_id: String,
+    pub machine: bool,
     // sort keys
     order: DateTime<FixedOffset>,
     n: i64,
@@ -1041,6 +1044,8 @@ pub fn endpoint_health_set(
                 .map(|o| (o - at).num_milliseconds() as f64 / 1000.0)
                 .unwrap_or(0.0)
                 .max(0.0),
+            consult_id: c["consult_id"].as_str().unwrap_or("").to_string(),
+            machine: c["machine"].as_bool().unwrap_or(false),
             order: order.unwrap(),
             n,
             ok,
@@ -1119,7 +1124,7 @@ pub fn endpoint_health_set(
 
     {
         let newest_ok = records.iter().find(|r| r.ok).map(|r| r.order);
-        h.instant_429s = records
+        let cands: Vec<&Record> = records
             .iter()
             .filter(|r| {
                 !r.ok
@@ -1128,8 +1133,36 @@ pub fn endpoint_health_set(
                     && r.wall_secs < INSTANT_429_SECS
                     && newest_ok.is_none_or(|o| r.order > o)
             })
-            .map(|r| r.hit)
             .collect();
+        // (wave 9b, F66-3) count CONSULTATIONS, not rows: a machine-wide row is dropped when it
+        // names a consultation that a ledger row already names, or - for a record written before
+        // it carried the id - when a ledger row of the same endpoint failed within 5 s of it; two
+        // rows at the same instant are one hit
+        let ledger: Vec<&&Record> = cands.iter().filter(|r| !r.machine).collect();
+        let mut hits: Vec<DateTime<FixedOffset>> = Vec::new();
+        let mut machine_ids: Vec<&str> = Vec::new();
+        for r in &cands {
+            if r.machine {
+                let dup_id = !r.consult_id.is_empty()
+                    && (ledger.iter().any(|l| l.consult_id == r.consult_id)
+                        || machine_ids.contains(&r.consult_id.as_str()));
+                let dup_row = r.consult_id.is_empty()
+                    && ledger.iter().any(|l| {
+                        l.fingerprint == r.fingerprint
+                            && (l.order - r.order).num_seconds().abs() <= 5
+                    });
+                if dup_id || dup_row {
+                    continue;
+                }
+                if !r.consult_id.is_empty() {
+                    machine_ids.push(r.consult_id.as_str());
+                }
+            }
+            if hits.last().is_none_or(|last| *last != r.hit) {
+                hits.push(r.hit);
+            }
+        }
+        h.instant_429s = hits;
     }
     let auth = records.iter().find(|r| r.ok || r.class == "auth").cloned();
     if let Some(a) = auth {
@@ -1229,6 +1262,8 @@ pub fn quota_window_record(
         until: resets,
         failure_kind: "window".into(),
         wall_secs: 0.0,
+        consult_id: String::new(),
+        machine: false,
         order: obs,
         n: 0,
         ok: false,
@@ -1281,6 +1316,11 @@ pub struct MachineEndpoint {
     /// them (a reader before wave 30 skips a record without a class).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota: Option<Value>,
+    /// (wave 9b, F66-3) The consultation this record stands for (the ledger entry's `consult_id`),
+    /// so a run that is in the repository ledger AND on the machine file counts once; empty for a
+    /// record written before 9b.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub consult_id: String,
 }
 
 /// One running-member row in the machine-wide health file.
@@ -1533,6 +1573,7 @@ pub fn new_machine_health_record_quota(
             message: String::new(),
             quota_mark: None,
             quota: None,
+            consult_id: String::new(),
         });
         r.quota = Some(q);
     }
@@ -1583,6 +1624,7 @@ fn new_machine_health_record_base(
             message: String::new(),
             quota_mark: mark,
             quota: None,
+            consult_id: String::new(),
         });
     }
     let f = failure?;
@@ -1629,6 +1671,7 @@ fn new_machine_health_record_base(
         message,
         quota_mark: None,
         quota: None,
+        consult_id: String::new(),
     })
 }
 
@@ -2522,7 +2565,13 @@ fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Valu
                 "n": 0,
                 "finished_at": e.when,
                 "reviewer": { "provider_fingerprint": e.endpoint },
+                // (wave 9b, F66-3) a synthetic consultation: marked, and carrying the consult id
+                // when the record has one
+                "machine": true,
             });
+            if !e.consult_id.is_empty() {
+                v["consult_id"] = Value::String(e.consult_id.clone());
+            }
             if e.class.is_empty() {
                 // (wave 8 = plugin wave 30) a record of class '' carries only the quota windows of
                 // a run: no outcome (a record without a class and without them is skipped)
@@ -3667,6 +3716,7 @@ mod machine_health_tests {
             message: String::new(),
             quota_mark: None,
             quota: None,
+            consult_id: String::new(),
         };
         let still_out = MachineEndpoint {
             endpoint: "fp-still-out".into(),
@@ -3679,6 +3729,7 @@ mod machine_health_tests {
             message: String::new(),
             quota_mark: None,
             quota: None,
+            consult_id: String::new(),
         };
         let running_row = MachineRunning {
             endpoint: "fp-run".into(),

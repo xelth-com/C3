@@ -52,6 +52,21 @@ if (-not $env:CODEX_CONSULT_TEST_MODE) { $env:CODEX_CONSULT_TEST_MODE = "1" }
 
 $ErrorActionPreference = 'Stop'
 
+# (wave 9, D1/D2; 9b F66-5) c3's own lines name `c3 ...` and its panels default to new threads; the
+# plugin's harness oracle pins the .ps1 spellings and the fork default, so c3 is told by
+# C3_PLUGIN_COMPAT=1 - for THIS child only: the previous value is restored on every exit path, so a
+# native c3 run later in the same PowerShell session is unaffected.
+function Invoke-C3Compat {
+    param([string]$Exe, [object[]]$ArgList)
+    $prevCompat = $env:C3_PLUGIN_COMPAT
+    $env:C3_PLUGIN_COMPAT = '1'
+    try { & $Exe @ArgList }
+    finally {
+        if ($null -eq $prevCompat) { Remove-Item Env:\C3_PLUGIN_COMPAT -ErrorAction SilentlyContinue }
+        else { $env:C3_PLUGIN_COMPAT = $prevCompat }
+    }
+}
+
 function Resolve-C3Exe {
     if ($env:C3_EXE -and (Test-Path -LiteralPath $env:C3_EXE)) {
         return (Resolve-Path -LiteralPath $env:C3_EXE).Path
@@ -100,7 +115,5 @@ if ($Useful) { $c3Args.Add('--useful'); $c3Args.Add($Useful) }
 if ($Telemetry) { $c3Args.Add('--telemetry'); $c3Args.Add($Telemetry) }
 if ($Json) { $c3Args.Add('--json') }
 
-# (wave 9, D2) c3's own lines name `c3 ...`; the plugin's harness oracle texts name the .ps1 scripts and its panels fork by default (wave 9, D1)
-$env:C3_PLUGIN_COMPAT = '1'
-& $c3 @c3Args
+Invoke-C3Compat $c3 $c3Args
 exit $LASTEXITCODE

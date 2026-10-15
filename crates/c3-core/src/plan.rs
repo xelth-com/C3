@@ -244,10 +244,14 @@ pub fn format_machine_wait(
 /// when the hint does not parse.
 pub fn next_cap_reset(hint: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
     use chrono::{Datelike, Duration, FixedOffset, NaiveDate, NaiveTime, TimeZone, Weekday};
+    // the grammar is ASCII; anything else is malformed (and never reaches a byte-offset split)
+    if !hint.is_ascii() {
+        return None;
+    }
     let (kind, rest) = hint.split_once(':')?;
     // the clock and the offset: "HH:MM+08:00" (the last 6 characters are the offset)
     let split_clock = |s: &str| -> Option<(NaiveTime, FixedOffset)> {
-        if s.len() < 11 {
+        if !s.is_ascii() || s.len() < 11 {
             return None;
         }
         let (clock, off) = s.split_at(s.len() - 6);
@@ -423,6 +427,148 @@ mod tests {
             None
         );
         assert_eq!(next_cap_reset("hourly:1", at("2026-10-14T05:00:00Z")), None);
+    }
+
+    // UNIT (F66-3): the pair counts CONSULTATIONS - one 429 in the ledger and mirrored in the
+    // machine-wide file is one hit; two distinct ones are two.
+    #[test]
+    fn a_429_mirrored_in_machine_health_counts_once() {
+        use crate::health::endpoint_health;
+        use crate::roster::RosterEntry;
+        let now = Utc.with_ymd_and_hms(2026, 10, 14, 20, 10, 0).unwrap();
+        let row = |id: &str, n: i64, when: &str, fin: &str, machine: bool| {
+            let mut v = json!({"n": n, "when": when, "finished_at": fin,
+                "bridge_outcome": "failed: 429 Too Many Requests",
+                "reviewer": {"provider_fingerprint": FP_A},
+                "provider_failure": {"class": "quota", "code": "429",
+                    "message": "429 Too Many Requests", "when": when, "retry_after": null}});
+            if !id.is_empty() {
+                v["consult_id"] = json!(id);
+            }
+            if machine {
+                v["machine"] = json!(true);
+            }
+            v
+        };
+        let capped = RosterEntry {
+            provider: "ali".into(),
+            plan_caps: vec!["monthly".into()],
+            reset_hint: "monthly:27T00:00+08:00".into(),
+            ..Default::default()
+        };
+        let verdict = |rows: &[serde_json::Value]| {
+            let h = endpoint_health(rows, FP_A, now);
+            (
+                h.instant_429s.len(),
+                plan_cap_verdict(PreflightVerdict::available(), &capped, Some(&h), now).state,
+            )
+        };
+        let ledger = row(
+            "c-1",
+            1,
+            "2026-10-14T20:06:00+00:00",
+            "2026-10-14T20:06:01+00:00",
+            false,
+        );
+        // the same attempt on the machine file, with its consult id
+        let mirrored = row(
+            "c-1",
+            0,
+            "2026-10-14T20:06:02+00:00",
+            "2026-10-14T20:06:02+00:00",
+            true,
+        );
+        assert_eq!(
+            verdict(&[ledger.clone(), mirrored]),
+            (1, "available".to_string())
+        );
+        // a record written before 9b (no id): the same endpoint within 5 s of the ledger row
+        let legacy = row(
+            "",
+            0,
+            "2026-10-14T20:06:03+00:00",
+            "2026-10-14T20:06:03+00:00",
+            true,
+        );
+        assert_eq!(
+            verdict(&[ledger.clone(), legacy]),
+            (1, "available".to_string())
+        );
+        // two rows at the SAME instant are one hit
+        let twin = row(
+            "c-2",
+            2,
+            "2026-10-14T20:06:00+00:00",
+            "2026-10-14T20:06:01+00:00",
+            false,
+        );
+        assert_eq!(verdict(&[ledger.clone(), twin]).0, 1);
+        // two distinct consultations: the plan verdict
+        let other = row(
+            "c-3",
+            0,
+            "2026-10-14T19:40:00+00:00",
+            "2026-10-14T19:40:00+00:00",
+            true,
+        );
+        assert_eq!(verdict(&[ledger, other]), (2, "unavailable".to_string()));
+    }
+
+    // UNIT (F66-6): the chosen policy, pinned with a controlled clock. The pair is INFERRED
+    // exhaustion, not evidence: (a) a transient pair on a capped plan costs the time to the
+    // declared reset (the operator clears it with a successful explicit run or by editing the
+    // hint); (b) without a hint the entry is out for 24 h and then PROBED - eligible again, which
+    // is not evidence that capacity returned (a new instant 429 marks it out again).
+    #[test]
+    fn the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe() {
+        use crate::health::endpoint_health;
+        use crate::roster::RosterEntry;
+        let hit = |n: i64, when: &str| {
+            json!({"n": n, "when": when, "finished_at": when,
+                "bridge_outcome": "failed: 429 Too Many Requests",
+                "reviewer": {"provider_fingerprint": FP_A},
+                "provider_failure": {"class": "quota", "code": "429",
+                    "message": "429 Too Many Requests", "when": when, "retry_after": null}})
+        };
+        let rows = [
+            hit(1, "2026-10-14T20:00:00+00:00"),
+            hit(2, "2026-10-14T20:20:00+00:00"),
+        ];
+        let hinted = RosterEntry {
+            provider: "ali".into(),
+            plan_caps: vec!["monthly".into()],
+            reset_hint: "monthly:27T00:00+08:00".into(),
+            ..Default::default()
+        };
+        let unhinted = RosterEntry {
+            reset_hint: String::new(),
+            ..hinted.clone()
+        };
+        let state = |e: &RosterEntry, now: DateTime<Utc>| {
+            let h = endpoint_health(&rows, FP_A, now);
+            plan_cap_verdict(PreflightVerdict::available(), e, Some(&h), now).state
+        };
+        // (a) a transient pair, the endpoint recovers an hour later - the hint still holds it out
+        let soon = Utc.with_ymd_and_hms(2026, 10, 14, 21, 30, 0).unwrap();
+        assert_eq!(state(&hinted, soon), "unavailable");
+        let at_reset = Utc.with_ymd_and_hms(2026, 10, 26, 16, 0, 1).unwrap();
+        assert_eq!(state(&hinted, at_reset), "available");
+        // (b) no hint: out for 24 h after the second hit, then a probe
+        let day = Utc.with_ymd_and_hms(2026, 10, 15, 20, 19, 0).unwrap();
+        assert_eq!(state(&unhinted, day), "unavailable");
+        let probe = Utc.with_ymd_and_hms(2026, 10, 15, 20, 21, 0).unwrap();
+        assert_eq!(state(&unhinted, probe), "available");
+        // a successful explicit run after the pair clears it (the operator's override)
+        let ok = json!({"n": 3, "when": "2026-10-14T21:00:00+00:00",
+            "finished_at": "2026-10-14T21:00:10+00:00", "bridge_outcome": "usable reply",
+            "reviewer": {"provider_fingerprint": FP_A}});
+        let mut with_ok = rows.to_vec();
+        with_ok.push(ok);
+        let h = endpoint_health(&with_ok, FP_A, soon);
+        assert_eq!(
+            plan_cap_verdict(PreflightVerdict::available(), &hinted, Some(&h), soon).state,
+            "available"
+        );
     }
 
     #[test]

@@ -64,3 +64,42 @@ Tests: `plan::two_instant_429s_inside_an_hour_mark_a_capped_entry_out_until_the_
 `plan::the_cap_reset_hint_names_the_next_reset`,
 `roster::an_entry_declares_its_plan_cap_under_ext_c3`,
 `providers::two_instant_429s_on_a_capped_plan_mark_the_entry_out_until_the_reset`.
+
+## 9b - the review of wave 9 (handoff 66: F66-1 .. F66-6)
+
+**F66-1 (D3 admission).** A record of another detached run is skipped ONLY when its owning bridge
+is proven alive: `Recovery.concurrent` now needs the live-writer verdict of `test_pending_active`
+(`PendingCheck.writer_alive`: the bridge's pid + start time run on this host), an ordinary
+lifecycle state (`reserved|launching|running|committing`), no `survivors`, no `unverified`, no
+`kill_unconfirmed`, a member-style name and no `parent_pid`. Every other active record (a dead
+bridge with a live survivor, unverified descendants, an unconfirmed kill) blocks a detached run
+exactly as before wave 9. Test: `recovery::a_detached_run_admits_only_records_of_a_live_owning_bridge`.
+
+**F66-2 (reservation).** Under the task lock a concurrent detached run allocates its numbers
+(`next_numbers` errors now refuse) and writes its reservation with `persist_reservation`: the atomic
+write (file synced, then renamed), a refusal to overwrite an existing reservation file, and a
+read-back of `n`/`nn`; any failure removes the file and refuses with the lock still held ("nothing
+was started"). Only a verified reservation lets the lock go. Test hook
+`CODEX_CONSULT_TEST_RESERVE_FAIL_ONCE=<flag file>`. Test:
+`reservation_tests::a_failed_reservation_refuses_and_the_next_run_gets_distinct_numbers`.
+
+**F66-3 (hits are consultations).** The machine-wide record carries the run's `consult_id`
+(`MachineEndpoint.consult_id`, optional, omitted when empty) and its synthetic consultation is
+marked `machine`. `instant_429s` drops a machine row that names a ledger row's consultation, or - a
+record written before 9b - a machine row of the same endpoint within 5 s of a ledger row's finish,
+and counts two rows at the same instant once. Test: `plan::a_429_mirrored_in_machine_health_counts_once`.
+
+**F66-4 (Unicode hint).** `next_cap_reset` / `split_clock` accept ASCII only, so a hint such as
+`daily:00:00` + a CJK character + `abcd` is a normal validation error ("ext.c3.reset_hint must be
+...") instead of a panic at a byte offset. Test: `roster::an_entry_declares_its_plan_cap_under_ext_c3`
+(eleven malformed hints).
+
+**F66-5 (compat switch).** The shims no longer set `C3_PLUGIN_COMPAT` on their process: a function
+`Invoke-C3Compat` sets it for the one `c3` child and restores the previous value in a `finally` on
+every exit path. Test: `wave9_consilium::a_shim_run_leaves_no_compat_switch_in_the_session`.
+
+**F66-6 (policy, documented).** The cap verdict is INFERRED exhaustion: the declared `reset_hint`
+is the operator's statement about the plan; a transient pair on a capped plan costs the time to the
+reset (cleared by a successful explicit run, or by editing the hint); without a hint the entry is out
+for 24 h and then probed - eligible again, not evidence that capacity returned. Pinned (README roster
+section too) by `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe`.

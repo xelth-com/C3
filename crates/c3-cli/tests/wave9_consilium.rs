@@ -334,3 +334,55 @@ fn detached_single_runs_of_one_task_run_side_by_side_and_speak_c3() {
     }
     let _ = std::fs::remove_dir_all(&e.work);
 }
+
+// F66-5: a shim invoked from a persistent PowerShell session leaves no compat switch behind - a
+// native `c3 consult --panel --dry-run` afterwards defaults to new threads and speaks c3.
+#[test]
+fn a_shim_run_leaves_no_compat_switch_in_the_session() {
+    let e = setup("f665");
+    let shim = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("tests")
+        .join("shim")
+        .join("codex-providers.ps1");
+    let script = e.work.join("session.ps1");
+    std::fs::write(
+        &script,
+        format!(
+            r#"$ErrorActionPreference = 'Continue'
+$env:C3_EXE = '{c3}'
+Remove-Item Env:\C3_PLUGIN_COMPAT -ErrorAction SilentlyContinue
+$null = & '{shim}' -Short -NoNetwork
+"COMPAT=[$env:C3_PLUGIN_COMPAT]"
+& '{c3}' consult --task t --panel --dry-run --prompt x --purpose checkpoint --codex-exe '{fake}'
+"#,
+            c3 = c3_bin().display(),
+            shim = shim.display(),
+            fake = e.fake.display()
+        ),
+    )
+    .unwrap();
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(&script)
+        .current_dir(&e.repo)
+        .env("CODEX_HOME", &e.home)
+        .env("CODEX_CONSULT_EXE", &e.fake)
+        .env("CODEX_CONSULT_ROSTER", &e.roster)
+        .env("CODEX_CONSULT_TELEMETRY", "off")
+        .env("C3_PRIORS", "off");
+    for (k, _) in std::env::vars() {
+        if k == "C3_PLUGIN_COMPAT" {
+            cmd.env_remove(&k);
+        }
+    }
+    let o = cmd.output().expect("powershell");
+    let t = text(&o);
+    assert!(t.contains("COMPAT=[]"), "{t}");
+    assert!(
+        t.contains("mode: new - every member starts a new thread"),
+        "{t}"
+    );
+    let _ = std::fs::remove_dir_all(&e.work);
+}

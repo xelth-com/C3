@@ -43,6 +43,21 @@ $ErrorActionPreference = 'Stop'
 $line = ''
 $pointer = ''
 
+# (wave 9, D1/D2; 9b F66-5) c3's own lines name `c3 ...` and its panels default to new threads; the
+# plugin's harness oracle pins the .ps1 spellings and the fork default, so c3 is told by
+# C3_PLUGIN_COMPAT=1 - for THIS child only: the previous value is restored on every exit path, so a
+# native c3 run later in the same PowerShell session is unaffected.
+function Invoke-C3Compat {
+    param([string]$Exe, [object[]]$ArgList)
+    $prevCompat = $env:C3_PLUGIN_COMPAT
+    $env:C3_PLUGIN_COMPAT = '1'
+    try { & $Exe @ArgList }
+    finally {
+        if ($null -eq $prevCompat) { Remove-Item Env:\C3_PLUGIN_COMPAT -ErrorAction SilentlyContinue }
+        else { $env:C3_PLUGIN_COMPAT = $prevCompat }
+    }
+}
+
 function Resolve-C3Exe {
     if ($env:C3_EXE -and (Test-Path -LiteralPath $env:C3_EXE)) {
         return (Resolve-Path -LiteralPath $env:C3_EXE).Path
@@ -98,9 +113,7 @@ try {
         $explainScript = Join-Path $PSScriptRoot 'codex-consult.ps1'
         $explainCmd = $(if ($null -eq $IsWindows -or $IsWindows) { "powershell -NoProfile -ExecutionPolicy Bypass -File ""$explainScript"" -Explain coordinate" } else { "pwsh -NoProfile -File ""$explainScript"" -Explain coordinate" })
         $hookArgs = Get-NativeArgs @('hook', '--collab-dir', $CollabDir, '--explain-command', $explainCmd)
-        # (wave 9, D2) c3's own lines name `c3 ...`; the plugin's harness oracle texts name the .ps1 scripts and its panels fork by default (wave 9, D1)
-        $env:C3_PLUGIN_COMPAT = '1'
-        $raw = @(& $c3 @hookArgs 2>&1 | ForEach-Object { "$_" })
+        $raw = @(Invoke-C3Compat $c3 $hookArgs 2>&1 | ForEach-Object { "$_" })
         $code = $LASTEXITCODE
         $ErrorActionPreference = $previous
         $first = (@($raw | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
