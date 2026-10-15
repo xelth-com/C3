@@ -1,0 +1,162 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The supersede drop handles evidence already merged with a success, but a skipped journal can introduce older cap evidence after that success has been evicted.",
+  "reply_markdown": "1. **F80-1 is only partially closed.** Equal timestamps and a success merged alongside the pair are handled correctly. Applied journal records receive replay protection. However, an unread busy journal receives no marks: the success can be evicted before its older pair is subsequently applied, restoring the obsolete refusal (finding #1).\n\n2. **HOLD** for finding #1. Workspace and harness reruns also remain release gates. No tests ran. Read: source/document diffs and targeted health context. Skipped: other `.collab` changes and earlier-wave implementations. Context reads used working HEAD `c56e656`, ahead of `2bbd27e`; exact-target reproduction remains required.\n\n## Requested checks\n\n- **RC1:** Repository root, workspace-write, 30 minutes: at `2bbd27e`, seed 500 evidence rows and a journal-only older pair; hold the journal through a success update, release, replay. Require zero old hits and availability.\n- **RC2:** Repository root, workspace-write, 60 minutes: run `cargo test -j 2 --no-fail-fast --workspace`, then pinned `harness-roster`; require zero failures.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2288
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2390
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2456
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2476
+        },
+        {
+          "path": "docs/port/wave9-consilium-defects.md",
+          "line": 207
+        }
+      ],
+      "claim": "The supersede drop does not prevent an obsolete cap refusal when older evidence remains in a skipped journal until after the clearing success is evicted. Journal replay protection covers records actually read, not unread records in a busy journal, and no durable success watermark remains to reject their later application.",
+      "trigger": "The machine file contains 500 fresh cap-evidence rows for other endpoints. Its journal contains two distinct identified instant-429 records for the target endpoint, followed in event time by a successful consultation. Hold the journal exclusively beyond the update's open retries while adding that success. The update proceeds without reading the pair, and the record cap removes the non-evidence success. Release the journal and apply it: the older pair is appended, survives the cap, and can restore the monthly refusal despite the intervening success.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "git diff 51dfc13..2bbd27e -- crates/c3-core/src/health.rs",
+          "observation": "The added supersede block derives its newest-success map solely from the currently merged endpoints and drops matching older evidence before retention and capping. It persists no clearing watermark."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:2287-2358,2194-2208,2476-2502",
+          "observation": "Working-tree context permits the update to continue when all journal opens fail; cap_machine_endpoints removes non-evidence rows first; applying marks are written only when a journal handle was acquired."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:3268-3378",
+          "observation": "The new regression seeds the pair and success together in the health file. It does not exercise evidence arriving from a journal skipped during the clearing update."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Skipped-journal schedule combining the supersede block, record cap, and later journal application",
+          "observation": "Once the success has been evicted, the later merge has neither a success to suppress the pair nor applied marks for those previously unread records. The appended pair survives removal of earlier evidence rows."
+        },
+        {
+          "kind": "ran-command",
+          "reference": "git rev-parse HEAD",
+          "observation": "Working HEAD was c56e656904535e07c86aa7cb5b8ee2b0d8c65af7, ahead of the requested target. The added logic was read from the exact range diff; unchanged surrounding context was read from the working tree and was not independently compared with the target."
+        }
+      ],
+      "verification": "Run RC1 on 2bbd27e with the production exclusive journal lock. Assert the clearing update's result, the success's removal under the cap, and the machine-only hit count and cap verdict after releasing and applying the journal; the required result is zero old hits and availability.",
+      "remedy": "Preserve clearing information durably until older evidence can no longer arrive. At minimum, prevent a successful health update from discarding its clearing success when an existing journal could not be inspected; also account for delayed direct retries or later journal appends. Add the skipped-journal regression before claiming durable suppression.",
+      "supersedes": [
+        "F80-1"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F02-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F02-4","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F02-5","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F02-6","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F02-7","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F02-8","status":"not-checked","note":"Benchmark assumption not reassessed."},
+    {"id":"F04-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F04-2","status":"not-checked","note":"Windows timezone behavior not exercised."},
+    {"id":"F04-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F06-1","status":"not-checked","note":"Historical timezone behavior not exercised."},
+    {"id":"F09-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F09-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F09-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F09-4","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F09-5","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F09-6","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F11-1","status":"not-checked","note":"Journal context read, but original fault scenarios not reassessed."},
+    {"id":"F11-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F11-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F11-4","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F11-5","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F14-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F19-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F19-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F19-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F22-1","status":"not-checked","note":"Applied-mark implementation and cap regression read as context; original full scenario not rechecked."},
+    {"id":"F23-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F23-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F23-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F23-4","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa behavior not exercised."},
+    {"id":"F24-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F24-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F24-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F24-4","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F24-5","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F24-6","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F25-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F25-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F25-4","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F30-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F30-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F30-3","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F31-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F36-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F36-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F38-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F40-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F40-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F42-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F46-1","status":"not-checked","note":"Quota aggregation not rechecked."},
+    {"id":"F48-1","status":"not-checked","note":"Quota aggregation not rechecked."},
+    {"id":"F50-1","status":"not-checked","note":"Quota aggregation not rechecked."},
+    {"id":"F52-1","status":"not-checked","note":"Quota aggregation not rechecked."},
+    {"id":"F52-2","status":"not-checked","note":"Quota aggregation not rechecked."},
+    {"id":"F55-1","status":"not-checked","note":"Quota cache behavior not rechecked."},
+    {"id":"F55-2","status":"not-checked","note":"Quota aggregation not rechecked."},
+    {"id":"F58-1","status":"not-checked","note":"Quota aggregation not rechecked."},
+    {"id":"F60-1","status":"not-checked","note":"Quota persistence not rechecked."},
+    {"id":"F62-1","status":"not-checked","note":"Quota timestamp persistence not rechecked."},
+    {"id":"F66-1","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F66-2","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F66-3","status":"not-checked","note":"Identity filtering read as context; production mirror fixture not rechecked."},
+    {"id":"F66-4","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F66-5","status":"not-checked","note":"Outside this delta; not rechecked."},
+    {"id":"F66-6","status":"not-checked","note":"Documented inferred-exhaustion policy read; policy fixtures not rechecked."},
+    {"id":"F68-1","status":"not-checked","note":"Identity filtering read as context; complete earlier scenario not rechecked."},
+    {"id":"F68-2","status":"not-checked","note":"Portable recovery fixture not inspected."},
+    {"id":"F70-1","status":"not-checked","note":"Documented replacement of legacy matching read; original scenarios not rerun."},
+    {"id":"F72-1","status":"not-checked","note":"Read-time filter inspected as context; persisted legacy fixture not rerun."},
+    {"id":"F72-2","status":"not-checked","note":"Documented replacement of legacy matching read; original scenarios not rerun."},
+    {"id":"F74-1","status":"not-checked","note":"Documented consultation-level policy read; multi-attempt fixture not run."},
+    {"id":"F74-2","status":"not-checked","note":"Reset-hint validation and fallback not inspected."},
+    {"id":"F76-1","status":"not-checked","note":"Period-policy documentation read; plan implementation and controlled-clock fixture not rechecked."},
+    {"id":"F78-1","status":"not-checked","note":"Pair-selection documentation read; implementation not rechecked."},
+    {"id":"F78-2","status":"not-checked","note":"Retention and cap context inspected; exact-target production regression not run."},
+    {"id":"F80-1","status":"still-open","note":"Original co-resident pair/success ordering is addressed; finding #1 replaces it with the skipped-journal ordering that can still restore an obsolete refusal."}
+  ],
+  "unproven": [
+    "The skipped-journal reproduction has not been executed, and surrounding working-tree context was not independently compared against 2bbd27e.",
+    "The handoff reports passing library tests, clippy and formatting; those results were not independently reproduced.",
+    "The full workspace suite and pinned plugin harness remain pending according to the handoff.",
+    "Equal-time success/evidence and same-update journal merging were assessed by code inspection, not dedicated executed regressions.",
+    "Delayed direct retries or journal appends after clearing information has disappeared remain untested.",
+    "Other .collab changes, earlier handoffs, earlier-wave implementations, and source ranges outside the targeted health reads were not reviewed."
+  ],
+  "first_run_checklist": [
+    "Record the tested commit and executable revision; confirm the workspace suite and pinned harness report zero failures on the release candidate.",
+    "For RC1, capture the clearing update result, health-file rows before and after capping, journal contents before replay, and machine-only verdict after replay. Require zero superseded hits and availability.",
+    "With a pair and clearing success merged together, observe zero old qualifying hits after both age-based retention and record-cap pressure.",
+    "With no clearing success, observe two qualifying distinct-consultation hits and an unavailable verdict carrying the declared reset.",
+    "For a retained, already-applied journal, observe applying/applied marks and confirm repeated replay does not restore deleted evidence."
+  ]
+}
