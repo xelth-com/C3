@@ -140,7 +140,11 @@ READ TIME count (`CAP_PAIR_MAX_AGE_MINUTES`, applied in `endpoint_health`, so `p
 provider / preflight read apply it themselves, independent of retention). Without a `reset_hint`
 the entry is out until the pair is 24 h old (24 h after its first hit), then probed. Residual: the
 machine rows written before 9b lack the id, so for the 24 h after an upgrade the cap verdict can only
-come from new runs; that ends by itself. Tests: `plan::hits_are_counted_by_consultation_identity_not_by_time`
+come from new runs; that ends by itself. Two consequences GLM noted at round 5 (F74-1, F74-2), both by
+design: every instant 429 of ONE consultation shares its id and counts once, so exhaustion seen only inside a
+single run stays on the 10-minute burst; and the `until` fallback for a hint that `next_cap_reset` cannot
+resolve (second hit + 24 h) is unreachable, because the roster validator accepts a `reset_hint` only when it
+resolves at load. Tests: `plan::hits_are_counted_by_consultation_identity_not_by_time`
 (a no-id legacy mirror -> one hit / the burst, never the cap verdict; two ids at one instant -> the
 plan verdict; two id-carrying hits 10 min apart -> the plan verdict; two hits 25 h old -> none at
 read time), and the 9b/F66-6 policy tests with id-carrying rows.
