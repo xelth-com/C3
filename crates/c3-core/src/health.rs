@@ -1685,7 +1685,8 @@ fn new_machine_health_record_base(
 //
 // (wave 2i, F29-1) THE APPLIED MARKS, inside the journal itself: the endpoint list is not a durable
 // replay ledger - the retention (24 h, or 35 days for id-carrying instant-429 cap evidence, wave 9f
-// F78-2), the supersede drop (wave 9g F80-1: evidence older than a clearing success) and the
+// F78-2, and likewise for each endpoint's clearing anchor, wave 9h F82-1), the supersede drop (wave 9g
+// F80-1: evidence older than a clearing success / anchor) and the
 // 500-record cap remove keys from it, after which a
 // journal line still on disk would apply again as a new record (resurrected, displacing another);
 // and a ledger beside the journal (wave 2h's `<journal>.applied` list, retired) is lost to the
@@ -2188,30 +2189,108 @@ fn is_clearing_success(e: &MachineEndpoint) -> bool {
     e.class == "ok"
 }
 
-/// (wave 9f, F78-2) Enforce the record cap: evict non-evidence rows first (oldest first, from the
-/// front), and only when none are left evict the oldest cap-evidence rows, so a cap pair survives the
-/// 500-record cap while ordinary rows exist to trim.
-fn cap_machine_endpoints(endpoints: &mut Vec<MachineEndpoint>, max: usize) {
+/// A machine row's `when` as UTC, if it parses.
+fn when_utc(e: &MachineEndpoint) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(&e.when)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+}
+
+/// (wave 9h, F82-1) The CLEARING ANCHOR of each endpoint fingerprint: the `when` of its NEWEST
+/// clearing-success row ([`is_clearing_success`]). The anchor is protected like cap evidence - kept
+/// for `CAP_PAIR_RETENTION_MINUTES` and evicted only in the last cap tier - so evidence that arrives
+/// LATE (appended from a busy journal held past the open retries, or a delayed direct retry) is still
+/// superseded on the update that merges it and can never resurrect a refusal the success had cleared.
+/// Only the newest `ok` row per endpoint is an anchor; older `ok` rows stay plain. Computed once and
+/// reused for the supersede step, retention and the cap.
+fn anchor_of(endpoints: &[MachineEndpoint]) -> std::collections::HashMap<String, DateTime<Utc>> {
+    let mut anchors: std::collections::HashMap<String, DateTime<Utc>> =
+        std::collections::HashMap::new();
+    for e in endpoints {
+        if is_clearing_success(e) {
+            if let Some(w) = when_utc(e) {
+                anchors
+                    .entry(e.endpoint.clone())
+                    .and_modify(|s| {
+                        if w > *s {
+                            *s = w;
+                        }
+                    })
+                    .or_insert(w);
+            }
+        }
+    }
+    anchors
+}
+
+/// (wave 9h, F82-1) Is this row the newest clearing success of its endpoint (its anchor)?
+fn is_anchor(
+    e: &MachineEndpoint,
+    anchors: &std::collections::HashMap<String, DateTime<Utc>>,
+) -> bool {
+    is_clearing_success(e) && when_utc(e) == anchors.get(&e.endpoint).copied()
+}
+
+/// Drop up to `drop` of the rows for which `pred` holds, OLDEST by `when` first (an unparseable `when`
+/// sorts first, so it is dropped first). Returns how many still need dropping.
+fn drop_oldest_matching(
+    endpoints: &mut Vec<MachineEndpoint>,
+    drop: usize,
+    pred: impl Fn(&MachineEndpoint) -> bool,
+) -> usize {
+    if drop == 0 {
+        return 0;
+    }
+    let mut cand: Vec<usize> = (0..endpoints.len())
+        .filter(|&i| pred(&endpoints[i]))
+        .collect();
+    cand.sort_by_key(|&i| when_utc(&endpoints[i]));
+    let cut: std::collections::HashSet<usize> = cand.into_iter().take(drop).collect();
+    let removed = cut.len();
+    let mut i = 0usize;
+    endpoints.retain(|_| {
+        let keep = !cut.contains(&i);
+        i += 1;
+        keep
+    });
+    drop - removed
+}
+
+/// (wave 9f, F78-2 / wave 9h, F82-1) Enforce the record cap in three tiers, protecting cap evidence
+/// and the clearing anchors longest. First evict NON-protected rows (from the front, oldest first as
+/// the list is built). If still over, evict cap evidence ([`is_cap_evidence`]) OLDEST FIRST by `when`.
+/// Only if still over, evict the clearing anchors ([`is_anchor`]) oldest first. So an endpoint's older
+/// evidence always goes before its anchor, and a lone old anchor outlives newer filler evidence -
+/// without it, a success evicted here while its pair waits in a busy journal would restore the refusal
+/// (F82-1).
+fn cap_machine_endpoints(
+    endpoints: &mut Vec<MachineEndpoint>,
+    max: usize,
+    anchors: &std::collections::HashMap<String, DateTime<Utc>>,
+) {
     if endpoints.len() <= max {
         return;
     }
     let mut drop = endpoints.len() - max;
+    // tier 1: non-protected rows, in list order (oldest first)
     endpoints.retain(|e| {
-        if drop > 0 && !is_cap_evidence(e) {
+        if drop > 0 && !is_cap_evidence(e) && !is_anchor(e, anchors) {
             drop -= 1;
             false
         } else {
             true
         }
     });
-    if drop > 0 {
-        endpoints.drain(0..drop);
-    }
+    // tier 2: cap evidence, oldest by `when`
+    drop = drop_oldest_matching(endpoints, drop, is_cap_evidence);
+    // tier 3: the clearing anchors, oldest by `when`
+    drop_oldest_matching(endpoints, drop, |e| is_anchor(e, anchors));
 }
 
 /// Read-modify-write the machine health file under the `<path>.lock` exclusive lock: apply the
 /// journal (wave 28b, D13), then `add_endpoint`/`add_running`/`remove_pid`, prune stale endpoints and
-/// dead running rows, cap endpoints to the last 500 (cap evidence evicted last), and write atomically; then move the journal's
+/// dead running rows, cap endpoints to the last 500 (cap evidence and clearing anchors evicted last),
+/// and write atomically; then move the journal's
 /// unreadable lines to `<journal>.bad` and empty the journal by what was applied or moved; (wave 2i,
 /// F29-1) the journal's records are marked `applying` before the write and, when the journal is
 /// kept, `applied` after it, and a record so marked is never applied again. Never panics; a failure
@@ -2372,49 +2451,31 @@ fn update_machine_health(
             running.push(r);
         }
 
+        // (wave 9h, F82-1) the clearing anchors, computed ONCE from the merged rows and reused by the
+        // supersede step, retention and the cap. The anchor (an endpoint's newest clearing success)
+        // survives so that late-arriving evidence is still superseded.
+        let anchors = anchor_of(&endpoints);
+
         // (wave 9g, F80-1) durably eliminate SUPERSEDED cap evidence, after merging and BEFORE
-        // retention and the 500-cap. For each endpoint, a clearing success (`is_clearing_success` -
-        // the usable reply `endpoint_health`'s `newest_ok` uses to suppress older candidates) drops
-        // every id-carrying instant-429 evidence row of that endpoint whose `when` is not newer than
-        // it. Without this, retention is asymmetric - evidence lives 35 days and is evicted last, the
+        // retention and the 500-cap. For each endpoint, the clearing anchor (its newest usable reply,
+        // what `endpoint_health`'s `newest_ok` uses to suppress older candidates) drops every
+        // id-carrying instant-429 evidence row of that endpoint whose `when` is not newer than it.
+        // Without this, retention is asymmetric - evidence lives 35 days and is evicted last, a plain
         // success only 24 h and is evicted first - so a machine-only reader (no ledger of its own)
         // would lose the success and falsely reinstate the refusal. Dropping is durable and matches
         // how the cap/retention already evict rows; the journal's applied marks (written below from
         // `j_records`, not from survivors) still bar any resurrection.
-        {
-            use std::collections::HashMap;
-            let parse_when = |s: &str| {
-                DateTime::parse_from_rfc3339(s)
-                    .ok()
-                    .map(|d| d.with_timezone(&Utc))
-            };
-            let mut newest_success: HashMap<String, DateTime<Utc>> = HashMap::new();
-            for e in &endpoints {
-                if is_clearing_success(e) {
-                    if let Some(w) = parse_when(&e.when) {
-                        newest_success
-                            .entry(e.endpoint.clone())
-                            .and_modify(|s| {
-                                if w > *s {
-                                    *s = w;
-                                }
-                            })
-                            .or_insert(w);
-                    }
-                }
-            }
-            if !newest_success.is_empty() {
-                endpoints.retain(|e| {
-                    if is_cap_evidence(e) {
-                        if let Some(&succ) = newest_success.get(&e.endpoint) {
-                            if parse_when(&e.when).is_some_and(|w| w <= succ) {
-                                return false;
-                            }
+        if !anchors.is_empty() {
+            endpoints.retain(|e| {
+                if is_cap_evidence(e) {
+                    if let Some(&succ) = anchors.get(&e.endpoint) {
+                        if when_utc(e).is_some_and(|w| w <= succ) {
+                            return false;
                         }
                     }
-                    true
-                });
-            }
+                }
+                true
+            });
         }
 
         let now = Utc::now();
@@ -2426,12 +2487,13 @@ fn update_machine_health(
             // cap-pair retention (35 days), even after its burst `until` expired, so a reader in
             // ANOTHER repository (with no ledger copies of its own) still sees the pair until the
             // entry's declared reset. The per-entry period rule still gates the verdict downstream.
-            let evidence_kept = is_cap_evidence(e)
-                && DateTime::parse_from_rfc3339(&e.when)
-                    .map(|w| {
-                        (now - w.with_timezone(&Utc)).num_minutes() <= CAP_PAIR_RETENTION_MINUTES
-                    })
-                    .unwrap_or(false);
+            // (wave 9h, F82-1) the clearing anchor of an endpoint is kept just as long, so late
+            // evidence merged by a later update is still superseded instead of reviving the refusal.
+            let within_retention = when_utc(e)
+                .map(|w| (now - w).num_minutes() <= CAP_PAIR_RETENTION_MINUTES)
+                .unwrap_or(false);
+            let evidence_kept = is_cap_evidence(e) && within_retention;
+            let anchor_kept = is_anchor(e, &anchors) && within_retention;
             // (wave 29b, E15) an ok record stays while its quota mark still blocks
             let until = e
                 .until
@@ -2451,9 +2513,9 @@ fn update_machine_health(
                     .and_then(|w| w.resets_at)
             });
             let still_out = until.map(|u| u.with_timezone(&Utc) > now).unwrap_or(false);
-            recent || still_out || evidence_kept
+            recent || still_out || evidence_kept || anchor_kept
         });
-        cap_machine_endpoints(&mut endpoints, MACHINE_HEALTH_MAX_ENDPOINTS);
+        cap_machine_endpoints(&mut endpoints, MACHINE_HEALTH_MAX_ENDPOINTS, &anchors);
         running.retain(|r| is_alive(r.pid, &r.start_time));
 
         let out = serde_json::json!({
@@ -3170,36 +3232,98 @@ mod machine_health_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // (wave 9f, F78-2) the 500-record cap evicts non-evidence rows first and cap evidence last.
+    // (wave 9f, F78-2) the 500-record cap evicts non-protected rows first and cap evidence last.
     #[test]
     fn the_record_cap_evicts_cap_evidence_last() {
-        let ev = |id: &str| MachineEndpoint {
+        let ev = |id: &str, when: &str| MachineEndpoint {
             endpoint: "fp".into(),
             class: "quota".into(),
             kind: "burst".into(),
-            when: "2026-10-14T20:00:00+00:00".into(),
+            when: when.into(),
             consult_id: id.into(),
             ..Default::default()
         };
+        // a non-success, non-evidence row (not an anchor)
         let plain = |fp: &str| MachineEndpoint {
             endpoint: fp.into(),
-            class: "ok".into(),
+            class: "auth".into(),
             when: "2026-10-14T20:00:00+00:00".into(),
             ..Default::default()
         };
+        let t = "2026-10-14T20:00:00+00:00";
         // enough plain rows to absorb the overflow: the evidence pair survives untouched
-        let mut eps = vec![ev("c-1"), ev("c-2"), plain("a"), plain("b"), plain("c")];
-        cap_machine_endpoints(&mut eps, 2);
+        let mut eps = vec![
+            ev("c-1", t),
+            ev("c-2", t),
+            plain("a"),
+            plain("b"),
+            plain("c"),
+        ];
+        let anchors = anchor_of(&eps);
+        cap_machine_endpoints(&mut eps, 2, &anchors);
         assert_eq!(eps.len(), 2);
         assert!(eps.iter().all(is_cap_evidence));
-        // the overflow outlasts the plain rows: they go first, then the OLDEST evidence (c-1)
-        let mut eps2 = vec![ev("c-1"), ev("c-2"), ev("c-3"), plain("a")];
-        cap_machine_endpoints(&mut eps2, 2);
+        // the overflow outlasts the plain rows: they go first, then the OLDEST evidence by `when`
+        let mut eps2 = vec![
+            ev("c-1", "2026-10-14T19:00:00+00:00"),
+            ev("c-2", "2026-10-14T20:00:00+00:00"),
+            ev("c-3", "2026-10-14T21:00:00+00:00"),
+            plain("a"),
+        ];
+        let anchors2 = anchor_of(&eps2);
+        cap_machine_endpoints(&mut eps2, 2, &anchors2);
         assert_eq!(
             eps2.iter()
                 .map(|e| e.consult_id.clone())
                 .collect::<Vec<_>>(),
             vec!["c-2".to_string(), "c-3".to_string()]
+        );
+    }
+
+    // (wave 9h, F82-1) the cap's protected tier: the clearing anchor is kept, and an endpoint's older
+    // evidence is evicted before its anchor.
+    #[test]
+    fn the_record_cap_keeps_the_anchor_over_older_evidence() {
+        let base = Utc::now() - Duration::hours(48);
+        let iso = |d: DateTime<Utc>| d.to_rfc3339();
+        let ev = |fp: &str, id: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "quota".into(),
+            kind: "burst".into(),
+            when: iso(when),
+            consult_id: id.into(),
+            ..Default::default()
+        };
+        let ok = |fp: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "ok".into(),
+            when: iso(when),
+            ..Default::default()
+        };
+        // 499 recent evidence rows of other endpoints + the X anchor + an OLDER X evidence row: one
+        // overflow, evicted from the protected tier oldest-first
+        let mut rows: Vec<MachineEndpoint> = (0..499)
+            .map(|i| {
+                ev(
+                    &format!("fp-o{i:03}"),
+                    &format!("o-{i}"),
+                    Utc::now() - Duration::minutes(5),
+                )
+            })
+            .collect();
+        rows.push(ok("X", base + Duration::hours(1)));
+        rows.push(ev("X", "x-1", base));
+        let anchors = anchor_of(&rows);
+        cap_machine_endpoints(&mut rows, 500, &anchors);
+        assert_eq!(rows.len(), 500);
+        assert!(
+            rows.iter()
+                .any(|e| e.endpoint == "X" && is_anchor(e, &anchors)),
+            "the anchor must be kept"
+        );
+        assert!(
+            !rows.iter().any(|e| e.endpoint == "X" && is_cap_evidence(e)),
+            "the older X evidence must be evicted"
         );
     }
 
@@ -3307,16 +3431,10 @@ mod machine_health_tests {
                 .state,
             )
         };
-        // 500 recent id-carrying evidence rows of OTHER endpoints, to pressure the 500-record cap
-        let others = |pair: &[MachineEndpoint]| -> Vec<MachineEndpoint> {
+        // 500 id-carrying evidence rows of OTHER endpoints at `fill_when`, to pressure the cap
+        let others = |fill_when: DateTime<Utc>, pair: &[MachineEndpoint]| -> Vec<MachineEndpoint> {
             let mut rows: Vec<MachineEndpoint> = (0..500)
-                .map(|i| {
-                    evid(
-                        &format!("fp-o{i:03}"),
-                        &format!("o-{i}"),
-                        Utc::now() - Duration::minutes(5),
-                    )
-                })
+                .map(|i| evid(&format!("fp-o{i:03}"), &format!("o-{i}"), fill_when))
                 .collect();
             rows.extend_from_slice(pair);
             rows
@@ -3346,11 +3464,14 @@ mod machine_health_tests {
         let hp = dir.join("health.json");
         write_endpoints(
             &hp,
-            &others(&[
-                evid("fp-ev", "c-1", base),
-                evid("fp-ev", "c-2", base + Duration::minutes(20)),
-                success("fp-ev", base + Duration::hours(1)),
-            ]),
+            &others(
+                Utc::now() - Duration::minutes(5),
+                &[
+                    evid("fp-ev", "c-1", base),
+                    evid("fp-ev", "c-2", base + Duration::minutes(20)),
+                    success("fp-ev", base + Duration::hours(1)),
+                ],
+            ),
         );
         assert_eq!(
             add_machine_health_endpoint(&hp, &ok_record("fp-x", "C:\\repo-x"), &alive),
@@ -3360,22 +3481,129 @@ mod machine_health_tests {
         assert_eq!(verdict_for(&hp), (0, "available".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
 
-        // (3) a pair with NO clearing success survives cap pressure (evidence evicted last): the
-        // refusal holds until the declared reset
+        // (3) a pair with NO clearing success survives cap pressure: with the filler evidence older
+        // than the pair, tier 2 evicts the fillers first and the refusal holds until the declared reset
         let dir = journal_scratch("no-success-cap");
         let hp = dir.join("health.json");
         write_endpoints(
             &hp,
-            &others(&[
-                evid("fp-ev", "c-1", base),
-                evid("fp-ev", "c-2", base + Duration::minutes(20)),
-            ]),
+            &others(
+                base - Duration::hours(1),
+                &[
+                    evid("fp-ev", "c-1", base),
+                    evid("fp-ev", "c-2", base + Duration::minutes(20)),
+                ],
+            ),
         );
         assert_eq!(
             add_machine_health_endpoint(&hp, &ok_record("fp-x", "C:\\repo-x"), &alive),
             HealthUpdate::Written
         );
         assert_eq!(verdict_for(&hp), (2, "unavailable".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 9h, F82-1, RC1) through the PRODUCTION path with the real exclusive journal lock: a cap
+    // pair sits in a BUSY journal (held past the update's open retries) while a clearing success is
+    // added directly. The success is the endpoint's anchor - kept 35 days and evicted only after cap
+    // evidence - so it survives the cap, and when the journal is later applied the pair is superseded.
+    // Also: with no success anywhere, applying the journal still holds the refusal.
+    #[test]
+    fn machine_health_anchor_supersedes_evidence_from_a_skipped_journal() {
+        use chrono::Datelike;
+        let _notes = notes_lock();
+        let alive = |_: u32, _: &str| true;
+        let base = Utc::now() - Duration::hours(48);
+        let reset_day = (base + Duration::days(12)).day();
+        let hinted = crate::roster::RosterEntry {
+            provider: "ali".into(),
+            plan_caps: vec!["monthly".into()],
+            reset_hint: format!("monthly:{reset_day}T00:00+00:00"),
+            ..Default::default()
+        };
+        let evid = |fp: &str, id: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "quota".into(),
+            kind: "burst".into(),
+            until: Some((when + Duration::minutes(BURST_OUT_MINUTES)).to_rfc3339()),
+            when: when.to_rfc3339(),
+            message: "429 Too Many Requests".into(),
+            consult_id: id.into(),
+            ..Default::default()
+        };
+        let success = |fp: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "ok".into(),
+            when: when.to_rfc3339(),
+            ..Default::default()
+        };
+        let eval = base + Duration::hours(2);
+        let verdict_for = |hp: &Path| {
+            let consults = machine_endpoint_consults(hp, "fp-ev");
+            let h = endpoint_health(&consults, "fp-ev", Utc::now());
+            (
+                h.instant_429s.len(),
+                crate::plan::plan_cap_verdict(
+                    crate::verdict::PreflightVerdict::available(),
+                    &hinted,
+                    Some(&h),
+                    eval,
+                )
+                .state,
+            )
+        };
+        let fillers = |fill_when: DateTime<Utc>| -> Vec<MachineEndpoint> {
+            (0..500)
+                .map(|i| evid(&format!("fp-o{i:03}"), &format!("o-{i}"), fill_when))
+                .collect()
+        };
+
+        // (1) the success is added while the pair waits in a held journal
+        let dir = journal_scratch("skipped-journal-success");
+        let hp = dir.join("health.json");
+        let jp = machine_health_journal_path(&hp);
+        write_endpoints(&hp, &fillers(Utc::now() - Duration::minutes(5)));
+        add_machine_health_journal(&hp, &evid("fp-ev", "c-1", base)).unwrap();
+        add_machine_health_journal(&hp, &evid("fp-ev", "c-2", base + Duration::minutes(20)))
+            .unwrap();
+        // hold the journal exclusively beyond the update's 20 x 50 ms open retries
+        let held = open_exclusive(&jp, false, false).expect("hold the journal");
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &success("fp-ev", base + Duration::hours(1)), &alive),
+            HealthUpdate::Written
+        );
+        // the file is capped but the success (anchor) is NOT what the cap evicted
+        let eps = read_machine_health(&hp).endpoints;
+        assert!(eps.len() <= MACHINE_HEALTH_MAX_ENDPOINTS);
+        assert!(
+            eps.iter()
+                .any(|e| e.endpoint == "fp-ev" && is_clearing_success(e)),
+            "the clearing success must survive the cap"
+        );
+        // release the journal and apply the pair: the anchor supersedes it -> available, zero hits
+        drop(held);
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(verdict_for(&hp), (0, "available".to_string()));
+        let _ = take_machine_health_journal_notes();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // (2) NO success anywhere: applying the journal pair still holds the refusal (the anchor rule
+        // must not weaken it). The filler evidence is older, so the cap trims it before the pair.
+        let dir = journal_scratch("skipped-journal-nosuccess");
+        let hp = dir.join("health.json");
+        write_endpoints(&hp, &fillers(base - Duration::hours(1)));
+        add_machine_health_journal(&hp, &evid("fp-ev", "c-1", base)).unwrap();
+        add_machine_health_journal(&hp, &evid("fp-ev", "c-2", base + Duration::minutes(20)))
+            .unwrap();
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(verdict_for(&hp), (2, "unavailable".to_string()));
+        let _ = take_machine_health_journal_notes();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

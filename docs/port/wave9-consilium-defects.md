@@ -210,3 +210,25 @@ cap, an endpoint never keeps evidence older than its newest clearing success, wh
 reader is unchanged. Test: the production-path RC1
 `health::machine_health_drops_evidence_superseded_by_a_clearing_success` (success at +48 h, success
 under cap pressure, and the no-success pair still held).
+
+## 9h - the fifth acceptance pass (handoff 82: F82-1)
+
+**F82-1 (blocker):** 9g's supersede only sees evidence already merged. If a cap pair sits in a journal
+held exclusively past the update's 20 x 50 ms open retries, that update continues WITHOUT reading it
+and writes no applied marks; meanwhile the clearing success it adds is non-evidence, so the record cap
+(or the 24 h `recent` window) evicts the success. A later update reads the journal, appends the pair,
+finds no success to supersede it, and the pair survives the cap - an obsolete refusal until the declared
+reset. The same gap covers delayed direct retries and later journal appends of old evidence. Fix (no new
+schema field, the file is shared with the plugin): the NEWEST clearing success of each endpoint is a
+durable CLEARING ANCHOR (`anchor_of` -> `endpoint -> when`, computed once and reused). The anchor is
+protected like cap evidence - retention keeps it for `CAP_PAIR_RETENTION_MINUTES` (35 days) regardless
+of `recent`, and `cap_machine_endpoints` now evicts in three tiers: non-protected first, then cap
+evidence oldest-by-`when`, then the anchors oldest-by-`when` - so an endpoint's older evidence always
+goes before its anchor and a lone old anchor outlives newer filler evidence. The supersede step stays
+where it is (after merge, before retention and cap), so late-arriving evidence is dropped on the update
+that merges it. Residuals (stated, not fixed): the plugin's own writer of the shared file applies its
+own retention (cross-tool parity is out of this range); evidence older than 35 days is ignored by the
+reader anyway. Test: the production-path RC1 with the real exclusive journal lock
+`health::machine_health_anchor_supersedes_evidence_from_a_skipped_journal` (success added while the pair
+waits in a held journal -> available after replay; and no success -> the refusal holds), plus the
+cap-tier unit test `health::the_record_cap_keeps_the_anchor_over_older_evidence`.
