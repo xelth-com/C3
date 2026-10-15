@@ -464,7 +464,7 @@ dependencies = [
 
 [[package]]
 name = "c3"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "base64 0.22.1",
  "c3-core",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "c3-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "c3",
  "c3-core",
@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "c3-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "chrono-tz",
