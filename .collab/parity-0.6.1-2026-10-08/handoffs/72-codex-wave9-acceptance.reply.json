@@ -1,0 +1,199 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The legacy fallback has additional identity loss, and its claimed 24-hour upgrade-risk bound is not enforced on reads.",
+  "reply_markdown": "1. **Q1:** I would not ship on the stated residual-risk justification. Legacy records are pruned during health updates, not reads; providers can therefore keep applying a false cap verdict beyond 24 hours. Also, failure text is truncated to 100 characters before identity comparison, so distinct request IDs after that prefix cannot prevent incorrect merging. These extend F70-1 beyond the described mitigation.\n\n2. **Q2: HOLD**, on findings #1 and #2. F68-1’s explicit-ID correction and F68-2’s portable launcher are fixed by inspection. No tests were executed; the 829-pass result is supplied evidence.\n\nRead all five non-collaboration diffs and selected surrounding code, plus relevant portions of handoffs 65/67/69/71. Skipped collaboration bookkeeping, unrelated prior implementations, and full test logs. HEAD had advanced; inspected source paths had no differences from 891ea63.\n\n## Requested checks\n\n- **RC1:** At repository root, workspace-write, extend the cap fixture with a legacy mirror stamped one second later; evaluate through machine-health conversion after 48 hours without updates. Require no legacy-induced cap block. Budget: 20 minutes.\n- **RC2:** At repository root, workspace-write, extend the identity fixture with same-second messages sharing 100 characters but differing afterward in request ID. Require two hits and cap-unavailable. Budget: 15 minutes.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1127
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2340
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2556
+        },
+        {
+          "path": "crates/c3-core/src/plan.rs",
+          "line": 360
+        },
+        {
+          "path": "crates/c3/src/providers.rs",
+          "line": 2316
+        }
+      ],
+      "claim": "The claimed 24-hour bound on legacy identity ambiguity is not enforced when health is read. An old no-ID machine row and its ledger mirror can continue producing a false declared-cap outage until the configured reset if no successful machine-health update prunes the row.",
+      "trigger": "A pre-9b machine row mirrors one ledger failure but has a timestamp one second later. More than 24 hours pass without a successful health update. A capped entry has a future monthly reset, no newer usable reply, and providers or preflight reads the retained machine file.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "891ea63:crates/c3-core/src/health.rs:2340-2366",
+          "observation": "Age retention runs inside update_machine_health; it is not a read-time expiration rule."
+        },
+        {
+          "kind": "read-code",
+          "reference": "891ea63:crates/c3-core/src/health.rs:2556-2561; crates/c3/src/providers.rs:2316-2328",
+          "observation": "Provider health reads convert machine endpoints directly, filtering fingerprints but not age."
+        },
+        {
+          "kind": "read-code",
+          "reference": "891ea63:crates/c3-core/src/health.rs:1127-1164; crates/c3-core/src/plan.rs:344-363",
+          "observation": "Instant-429 candidates have no age limit. A qualifying pair remains blocking until its reset hint."
+        },
+        {
+          "kind": "inferred",
+          "reference": "The read, candidate-selection, and cap-verdict paths above",
+          "observation": "Without a health update, elapsed time alone does not remove the legacy row; the false pair can outlive the stated upgrade window."
+        }
+      ],
+      "verification": "Run RC1 with a persisted legacy machine row and its ledger twin, comparing health immediately and 48 hours later without rewriting the machine file.",
+      "remedy": "Enforce the intended legacy eligibility bound during cap-evidence reads or selection, independent of successful health writes, and add the controlled-clock regression.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1109
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1153
+        },
+        {
+          "path": "crates/c3-core/src/plan.rs",
+          "line": 477
+        },
+        {
+          "path": "docs/port/wave9-consilium-defects.md",
+          "line": 115
+        }
+      ],
+      "claim": "F70-1's legacy identity residual is broader than missing request IDs: deduplication compares only the first 100 characters of failure text. Independent same-second failures with different request IDs after that prefix are merged, hiding the cap verdict despite distinguishable source messages. The previously identified split of genuine mirrors at different seconds also remains.",
+      "trigger": "A ledger failure and an independent legacy machine failure share an endpoint and completion second. Their messages have an identical first 100 characters and different request IDs afterward. Both are otherwise qualifying instant 429s.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "891ea63:crates/c3-core/src/health.rs:1109-1112",
+          "observation": "Record.message is truncated to 100 characters before candidate deduplication."
+        },
+        {
+          "kind": "read-code",
+          "reference": "891ea63:crates/c3-core/src/health.rs:1153-1161",
+          "observation": "The legacy fallback compares the truncated message, fingerprint, and completion second, then drops the matching machine row."
+        },
+        {
+          "kind": "read-code",
+          "reference": "git diff f2ff103..891ea63 -- crates/c3-core/src/plan.rs",
+          "observation": "The identity tests use short messages whose request IDs survive truncation; the different-second legacy case explicitly expects two hits."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Failure-message truncation followed by legacy equality comparison",
+          "observation": "Different request IDs beyond character 100 become indistinguishable, reducing two genuine failures to one."
+        }
+      ],
+      "verification": "Run RC2 with distinct request IDs beyond the shared 100-character prefix and assert two retained hits and an unavailable cap verdict.",
+      "remedy": "Keep full failure identity separately from display text, or use a full-message digest for matching. Preserve the remaining ambiguity as an explicit legacy policy with bounded eligibility.",
+      "supersedes": [
+        "F70-1"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Outside the reviewed delta; implementation not revalidated."},
+    {"id":"F02-3","status":"not-checked","note":"Outside the reviewed delta; implementation not revalidated."},
+    {"id":"F02-4","status":"not-checked","note":"Harness coverage map not inspected."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction not inspected."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt anchors not inspected."},
+    {"id":"F02-7","status":"not-checked","note":"Cross-engine plan compatibility not revalidated."},
+    {"id":"F02-8","status":"not-checked","note":"No three-route benchmark evidence reviewed."},
+    {"id":"F04-1","status":"not-checked","note":"Process-name classifier not inspected."},
+    {"id":"F04-2","status":"not-checked","note":"Windows DST behavior not tested."},
+    {"id":"F04-3","status":"not-checked","note":"Required-light ledger behavior not inspected."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa behavior not tested."},
+    {"id":"F09-1","status":"not-checked","note":"Context configuration not inspected."},
+    {"id":"F09-2","status":"not-checked","note":"Telemetry deletion synchronization not inspected."},
+    {"id":"F09-3","status":"not-checked","note":"Recoverable deletion cleanup not inspected."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread failure handling not inspected."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy telemetry sanitization not inspected."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor resolution not inspected."},
+    {"id":"F11-1","status":"not-checked","note":"Journal I/O failure handling not revalidated."},
+    {"id":"F11-2","status":"not-checked","note":"Required AGY launcher propagation not inspected; harness shorthand does not establish its status."},
+    {"id":"F11-3","status":"not-checked","note":"Required-reviewer shared-plan evaluation not inspected."},
+    {"id":"F11-4","status":"not-checked","note":"PowerShell hook pointer not executed."},
+    {"id":"F11-5","status":"not-checked","note":"AGY tool stall handling not inspected."},
+    {"id":"F14-1","status":"not-checked","note":"Local-only deletion transaction not inspected."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization not inspected."},
+    {"id":"F19-2","status":"not-checked","note":"Unreadable salt cleanup not inspected."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key sanitization not inspected."},
+    {"id":"F22-1","status":"not-checked","note":"Journal replay durability not revalidated."},
+    {"id":"F23-1","status":"not-checked","note":"Process metadata failure classification not inspected."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown creation-time scans not inspected."},
+    {"id":"F23-3","status":"not-checked","note":"Kill-site persistence not inspected."},
+    {"id":"F23-4","status":"not-checked","note":"Recovery failure-injection coverage not revalidated."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa tests not run."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled lock fallback not inspected."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated suffix accounting not inspected."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent cleanup accounting not inspected."},
+    {"id":"F24-4","status":"not-checked","note":"Unseen-suffix status reporting not inspected."},
+    {"id":"F24-5","status":"not-checked","note":"Plugin-home marker and shared-lock tests not inspected."},
+    {"id":"F24-6","status":"not-checked","note":"Second accounting-record rewrite not inspected."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript-location guard not inspected."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case handling not inspected."},
+    {"id":"F25-4","status":"not-checked","note":"Credential debug representation not inspected."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree helper recovery not inspected."},
+    {"id":"F30-2","status":"not-checked","note":"Pre-kill evidence durability not inspected."},
+    {"id":"F30-3","status":"not-checked","note":"Kill-site integration coverage not inspected."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer accounting provenance not inspected."},
+    {"id":"F36-1","status":"not-checked","note":"Unicode transcript paths not inspected."},
+    {"id":"F36-2","status":"not-checked","note":"NFC transcript derivation not inspected."},
+    {"id":"F38-1","status":"not-checked","note":"All-write-failure recovery not inspected."},
+    {"id":"F40-1","status":"not-checked","note":"Kill-copy directory enumeration failure not inspected."},
+    {"id":"F40-2","status":"not-checked","note":"Kick acknowledgement after persistence failure not inspected."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata failure not inspected."},
+    {"id":"F46-1","status":"not-checked","note":"Equal-time quota aggregation not inspected."},
+    {"id":"F48-1","status":"not-checked","note":"Secondary quota-window aggregation not inspected."},
+    {"id":"F50-1","status":"not-checked","note":"Reset-completeness tie handling not inspected."},
+    {"id":"F52-1","status":"not-checked","note":"Quota comparison-clock consistency not inspected."},
+    {"id":"F52-2","status":"not-checked","note":"Nonfinite quota inputs not inspected."},
+    {"id":"F55-1","status":"not-checked","note":"Quota-cache reset-boundary behavior not inspected."},
+    {"id":"F55-2","status":"not-checked","note":"Malformed newer quota selection not inspected."},
+    {"id":"F58-1","status":"not-checked","note":"Per-window observation ordering not inspected."},
+    {"id":"F60-1","status":"not-checked","note":"Per-window persistence not inspected."},
+    {"id":"F62-1","status":"not-checked","note":"Fractional timestamp persistence not inspected."},
+    {"id":"F66-1","status":"not-checked","note":"Read the updated fixture and remediation description; production admission was not revalidated."},
+    {"id":"F66-2","status":"not-checked","note":"Read the remediation description; reservation implementation and concurrency schedule were not inspected."},
+    {"id":"F66-3","status":"fixed","note":"Inspected same-nonempty-ID deduplication and its mirrored-row regression. Legacy ambiguity remains separately tracked."},
+    {"id":"F66-4","status":"not-checked","note":"Read the remediation description; Unicode validation was not revalidated."},
+    {"id":"F66-5","status":"not-checked","note":"Read the remediation description; persistent PowerShell behavior was not tested."},
+    {"id":"F66-6","status":"still-open","note":"The heuristic tradeoff remains explicitly documented policy; documentation does not make transient 429s distinguishable from exhaustion."},
+    {"id":"F68-1","status":"fixed","note":"Different nonempty IDs are retained at identical timestamps, and the five-second fallback is removed. Additional legacy defects are reported separately."},
+    {"id":"F68-2","status":"fixed","note":"The fixture now uses ping on Windows and sleep elsewhere; PowerShell dependency is removed by inspection. Linux execution remains unverified."},
+    {"id":"F70-1","status":"still-open","note":"Both original legacy ambiguities remain. Finding #2 expands the identity-loss claim to request IDs removed by truncation; finding #1 challenges the claimed temporal bound."}
+  ],
+  "unproven": [
+    "No tests or harnesses were executed during this read-only review; reported pass counts were not independently verified.",
+    "Linux execution of the portable recovery fixture and its process-inspection assumptions.",
+    "Legacy cap behavior after 24 hours without a successful machine-health update.",
+    "Legacy identity matching when distinguishing request IDs occur after the first 100 characters.",
+    "Earlier implementations marked not-checked, collaboration bookkeeping diffs, and complete historical verification logs.",
+    "The supplied detach harness's two failures were described as pre-existing; their underlying logs were not inspected."
+  ],
+  "first_run_checklist": [
+    "Confirm the tested binary corresponds to the accepted revision and reports the intended release version.",
+    "Observe one consultation mirrored under the same nonempty ID produce one cap hit, while two distinct IDs at the same instant produce two hits and the declared reset in provider output.",
+    "With legacy scratch health data, observe that a single mirrored failure does not create a persistent monthly cap outage after the intended legacy eligibility window.",
+    "Observe native panel output select mode new by default and detached follow-up commands use c3 syntax.",
+    "For two detached runs, observe overlapping execution intervals, distinct committed numbers, and both replies present in the ledger.",
+    "With a dead bridge and a live recorded survivor, observe explicit recovery refusal and no new engine-turn marker.",
+    "On Linux, observe the named recovery test pass without PowerShell; inspect test counts and harness failure details rather than relying only on aggregate exit status."
+  ]
+}
