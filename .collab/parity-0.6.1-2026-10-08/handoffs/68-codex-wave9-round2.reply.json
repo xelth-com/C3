@@ -1,0 +1,423 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Time-based deduplication still merges distinct consultations and suppresses the declared-cap verdict; the new recovery test also introduces an unconditional PowerShell dependency.",
+  "reply_markdown": "1. **Q1:** I found no remaining instance of the original F66-1/F66-2 paths in the reviewed control flow: concurrent admission requires a live writer and ordinary recovery state; allocation or reservation failure returns before releasing the task lock. The reservation test exercises the helper sequentially, not two complete detached runs under injected failure.\n\n2. **Q2:** Yes—finding #1. Different consultation IDs with identical hit timestamps collapse into one hit; the new `twin` test explicitly expects this incorrect result. The legacy five-second match also cannot distinguish a mirror from an independent failure in another repository. F66-3’s original double-counting trigger is fixed, but the replacement undercounts distinct failures.\n\n3. **Q3:** **HOLD v0.2.2 for finding #1.** Also fix the portable-test regression in finding #2. F66-4/F66-5 are addressed in code. F66-6 is now an explicit conservative policy, not proof of exhaustion.\n\nRead all non-`.collab` changed hunks, the brief, handoff 65, and targeted surrounding code. Skipped `.collab` state diffs and the store implementation. No tests were run; older findings remain unchecked unless stated otherwise.\n\n## Requested checks\n\n- **RC1:** Repository root; workspace-write; extend the health fixture with distinct IDs at identical timestamps and independent legacy/ledger failures within five seconds. Require two hits and the cap verdict, while genuine mirrors count once. Budget: 30 minutes.\n- **RC2:** Repository root on Linux without `powershell`; workspace-write; run `cargo test -p c3 a_detached_run_admits_only_records_of_a_live_owning_bridge`. Require a passing portable fixture. Budget: 10 minutes after compilation.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1149
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1161
+        },
+        {
+          "path": "crates/c3-core/src/plan.rs",
+          "line": 497
+        }
+      ],
+      "claim": "Time-based deduplication merges distinct consultations and can suppress the declared-cap verdict. Even different nonempty consultation IDs count once when their hit timestamps match. An unidentified legacy machine record is also discarded solely because an endpoint-matching ledger failure finished nearby, although it can represent an independent consultation.",
+      "trigger": "Two fast 429 consultations for the same capped endpoint have different consult_id values but identical hit timestamps; alternatively, an independent legacy machine-health failure from another repository occurs within five seconds of a local ledger failure.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1149-1163",
+          "observation": "The legacy match uses endpoint and elapsed time without consultation identity; the final hit insertion suppresses equal timestamps regardless of distinct IDs."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:497-505",
+          "observation": "The new test constructs c-1 and c-2 as separate ledger consultations with matching timestamps and asserts that they count as one."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:344-353",
+          "observation": "The cap override requires at least two retained hits, so the collapsed pair cannot trigger it."
+        }
+      ],
+      "verification": "Run RC1, asserting two retained hits and a cap-unavailable verdict for distinct consultations, and one hit for a genuine ledger/machine mirror.",
+      "remedy": "Deduplicate known consultations by stable identity and preserve distinct IDs even at identical timestamps. Treat legacy time proximity as uncertain correlation rather than proven identity; use stronger provenance where available and explicitly define the fallback policy.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3/src/consult/recovery.rs",
+          "line": 310
+        },
+        {
+          "path": "crates/c3/src/consult/recovery.rs",
+          "line": 320
+        }
+      ],
+      "claim": "The new recovery unit test unconditionally launches the Windows PowerShell executable, making the c3 unit suite fail on non-Windows systems without an executable named powershell.",
+      "trigger": "Run the c3 unit tests on Linux or macOS without Windows PowerShell's powershell executable.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/recovery.rs:230-231 and new recovery-test diff",
+          "observation": "The test module is guarded only by cfg(test); the new test uses Command::new(\"powershell\") and expect(\"a sleeping child\") without a platform guard or alternative."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/wave9_consilium.rs:10-11",
+          "observation": "The separate PowerShell-dependent integration tests correctly declare cfg(windows); the new recovery unit test does not."
+        }
+      ],
+      "verification": "Run RC2 on a Linux host without powershell and observe whether the fixture can create its sleeping child.",
+      "remedy": "Use a portable sleeping-child fixture or platform-specific launchers; if the fixture is intentionally Windows-only, guard it and retain deterministic cross-platform coverage of admission decisions.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Outside this review range."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Outside this review range."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Harness coverage map not audited."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating transaction not reviewed."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Prompt anchor not reviewed."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Cross-engine plan compatibility not reviewed."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "No route benchmark examined."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Process-name classification not reviewed."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Windows local-zone boundaries not tested."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Panel ledger metadata not reviewed."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Historical Windows offsets not reviewed."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Context-window configuration not reviewed."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Telemetry deletion locking not reviewed."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Deletion cleanup durability not reviewed."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Spool reread failure handling not reviewed."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Legacy telemetry sanitization not reviewed."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Rating actor inference not reviewed."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Journal I/O recovery not reviewed."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required-reviewer launcher propagation not reviewed; handoff harness results are not independent verification."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Required-reviewer shared-plan evaluation not reviewed."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "Production hook pointer execution not checked."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "AGY stall behavior not reviewed."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Local-only deletion transaction not reviewed."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Complaint/deletion concurrency not reviewed."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Unreadable salt cleanup not reviewed."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Duplicate-key sanitization not reviewed."
+    },
+    {
+      "id": "F22-1",
+      "status": "not-checked",
+      "note": "Journal replay retention not reviewed."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "Metadata lookup failure handling not audited."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Unknown creation-time scans not audited."
+    },
+    {
+      "id": "F23-3",
+      "status": "not-checked",
+      "note": "Kill-site persistence not reviewed."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "Earlier recovery fixtures not audited."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Production Samoa behavior not tested."
+    },
+    {
+      "id": "F24-1",
+      "status": "not-checked",
+      "note": "Not-spooled accounting not reviewed."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated fold suffix handling not reviewed."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Cleanup/producer race not reviewed."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Status suffix timestamps not reviewed."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Telemetry oracle adapter paths and locks not audited."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Post-fold record rewrite not reviewed."
+    },
+    {
+      "id": "F25-2",
+      "status": "not-checked",
+      "note": "Claude transcript guard not reviewed."
+    },
+    {
+      "id": "F25-3",
+      "status": "not-checked",
+      "note": "Claude model validation not reviewed."
+    },
+    {
+      "id": "F25-4",
+      "status": "not-checked",
+      "note": "Child environment debug redaction not reviewed."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Unknown helper ancestry not audited."
+    },
+    {
+      "id": "F30-2",
+      "status": "not-checked",
+      "note": "Pre-kill durability not audited."
+    },
+    {
+      "id": "F30-3",
+      "status": "not-checked",
+      "note": "Continuation and repair kill fixtures not reviewed."
+    },
+    {
+      "id": "F31-1",
+      "status": "not-checked",
+      "note": "Live-producer accounting transition not reviewed."
+    },
+    {
+      "id": "F36-1",
+      "status": "not-checked",
+      "note": "Unicode transcript path handling not reviewed."
+    },
+    {
+      "id": "F36-2",
+      "status": "not-checked",
+      "note": "Transcript NFC normalization not reviewed."
+    },
+    {
+      "id": "F38-1",
+      "status": "not-checked",
+      "note": "All-copy kill persistence failure not audited."
+    },
+    {
+      "id": "F40-1",
+      "status": "not-checked",
+      "note": "Recovery propagates listing errors, but discovery implementation and failure injection were not checked."
+    },
+    {
+      "id": "F40-2",
+      "status": "not-checked",
+      "note": "Kick acknowledgement behavior not reviewed."
+    },
+    {
+      "id": "F42-1",
+      "status": "not-checked",
+      "note": "Recovery propagates read errors, but metadata-error handling in read_pending_file was not audited."
+    },
+    {
+      "id": "F46-1",
+      "status": "not-checked",
+      "note": "Quota observation aggregation not reviewed."
+    },
+    {
+      "id": "F48-1",
+      "status": "not-checked",
+      "note": "Secondary quota-window selection not reviewed."
+    },
+    {
+      "id": "F50-1",
+      "status": "not-checked",
+      "note": "Reset-completeness ranking not reviewed."
+    },
+    {
+      "id": "F52-1",
+      "status": "not-checked",
+      "note": "Quota comparison-clock behavior not reviewed."
+    },
+    {
+      "id": "F52-2",
+      "status": "not-checked",
+      "note": "NaN quota handling not reviewed."
+    },
+    {
+      "id": "F55-1",
+      "status": "not-checked",
+      "note": "Quota account-cache behavior not reviewed."
+    },
+    {
+      "id": "F55-2",
+      "status": "not-checked",
+      "note": "Invalid newer quota observations not reviewed."
+    },
+    {
+      "id": "F58-1",
+      "status": "not-checked",
+      "note": "Per-window observation timestamps not reviewed."
+    },
+    {
+      "id": "F60-1",
+      "status": "not-checked",
+      "note": "Quota persistence round-trip not reviewed."
+    },
+    {
+      "id": "F62-1",
+      "status": "not-checked",
+      "note": "Fractional quota timestamps not reviewed."
+    },
+    {
+      "id": "F66-1",
+      "status": "fixed",
+      "note": "Source review confirms concurrent admission requires the live-writer verdict, an ordinary lifecycle state, and no survivor/unverified/kill evidence. No runtime test executed."
+    },
+    {
+      "id": "F66-2",
+      "status": "fixed",
+      "note": "Allocation errors and failed reservation persistence/read-back now refuse before releasing the task lock. Full concurrent fault-injection behavior remains unproven."
+    },
+    {
+      "id": "F66-3",
+      "status": "fixed",
+      "note": "The original mirrored-row double count is addressed by propagated consult_id and legacy matching. Finding #1 describes a separate undercounting defect introduced by time-based deduplication."
+    },
+    {
+      "id": "F66-4",
+      "status": "fixed",
+      "note": "ASCII validation precedes byte slicing; malformed Unicode cases are covered in the added roster fixture."
+    },
+    {
+      "id": "F66-5",
+      "status": "fixed",
+      "note": "All four changed shims restore the previous compatibility variable in finally; the added persistent-session fixture covers the initially absent case."
+    },
+    {
+      "id": "F66-6",
+      "status": "fixed",
+      "note": "The transient-pair hold and no-hint 24-hour eligibility are explicitly documented and pinned as policy. This resolves the policy-disclosure issue, not the heuristic's inherent uncertainty."
+    }
+  ],
+  "unproven": [
+    "No tests, builds, harnesses, or live fault-injection procedures were executed; the handoff's reported results were not independently verified.",
+    "Two complete detached runs with a reservation-write failure and synchronization barrier were not exercised.",
+    "The underlying store allocation and atomic-write implementations were located but not read within the six-call budget.",
+    "The .collab state.md and wave9-STATE.md diffs were skipped as directed; handoff 65 was read as a referenced document rather than audited as a diff.",
+    "Earlier findings outside the changed behavior were not revalidated.",
+    "Restoration of a pre-existing compatibility value and exceptional shim exits were inspected in code but not executed."
+  ],
+  "first_run_checklist": []
+}
