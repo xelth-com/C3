@@ -189,3 +189,24 @@ only when none are left. The replay guard is unaffected (evidence keys merely pe
 the RC1 isolated-hit case in `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe`, and the
 production-path RC2 (`health::machine_health_retention_keeps_cap_evidence_until_the_period_ends`) plus
 the cap-ordering unit test `health::the_record_cap_evicts_cap_evidence_last`.
+
+## 9g - the fourth acceptance pass (handoff 80: F80-1)
+
+**F80-1 (blocker):** 9f retention was asymmetric. A cap-evidence row (id-carrying quota/burst) lives
+35 days and is evicted LAST, but the usable reply that CLEARS it - the one `endpoint_health`'s
+`newest_ok` uses to suppress older cap candidates - got only the 24 h `recent` window and was evicted
+FIRST by `cap_machine_endpoints`. A machine-only reader (another repository, no ledger copies) then saw
+the surviving pair without its clearing success and falsely reinstated the hinted refusal until the
+declared reset. Two triggers: an unrelated update > 25 h after the success pruned the success and kept
+the pair; or 500 evidence rows plus the clearing success, where the cap evicted the success at once.
+Fix (durable, not a watermark): in `update_machine_health`, after merging and BEFORE retention and the
+cap, for every endpoint fingerprint the newest clearing success (`is_clearing_success` - a `class ==
+"ok"` row, which `machine_endpoint_consults` mirrors as the `"usable reply"` outcome `is_usable_outcome`
+accepts) DROPS every evidence row of that endpoint whose `when` is not newer than it. Dropping (rather
+than clearing `consult_id`) is durable and matches how the cap/retention already evict rows; the
+journal's applied marks still bar resurrection (they are written from `j_records`, not from survivors,
+as the cap-eviction replay test already proves). Consequence: with both time retention and the record
+cap, an endpoint never keeps evidence older than its newest clearing success, while the ledger-side
+reader is unchanged. Test: the production-path RC1
+`health::machine_health_drops_evidence_superseded_by_a_clearing_success` (success at +48 h, success
+under cap pressure, and the no-success pair still held).

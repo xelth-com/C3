@@ -1685,7 +1685,8 @@ fn new_machine_health_record_base(
 //
 // (wave 2i, F29-1) THE APPLIED MARKS, inside the journal itself: the endpoint list is not a durable
 // replay ledger - the retention (24 h, or 35 days for id-carrying instant-429 cap evidence, wave 9f
-// F78-2) and the 500-record cap remove keys from it, after which a
+// F78-2), the supersede drop (wave 9g F80-1: evidence older than a clearing success) and the
+// 500-record cap remove keys from it, after which a
 // journal line still on disk would apply again as a new record (resurrected, displacing another);
 // and a ledger beside the journal (wave 2h's `<journal>.applied` list, retired) is lost to the
 // plugin, which shares the journal and neither reads nor keeps such a file. The marks are members
@@ -2178,6 +2179,15 @@ fn is_cap_evidence(e: &MachineEndpoint) -> bool {
     !e.consult_id.is_empty() && e.class == "quota" && e.kind == "burst"
 }
 
+/// (wave 9g, F80-1) Is this machine row what `endpoint_health` treats as a CLEARING SUCCESS - a
+/// usable reply that suppresses older cap candidates (its `newest_ok`)? `machine_endpoint_consults`
+/// mirrors a `class == "ok"` row as the outcome `"usable reply"`, which [`is_usable_outcome`]
+/// accepts (`is_usable_outcome("usable reply")`); no other machine class yields a usable outcome, so
+/// `class == "ok"` is the faithful machine-side form of that predicate.
+fn is_clearing_success(e: &MachineEndpoint) -> bool {
+    e.class == "ok"
+}
+
 /// (wave 9f, F78-2) Enforce the record cap: evict non-evidence rows first (oldest first, from the
 /// front), and only when none are left evict the oldest cap-evidence rows, so a cap pair survives the
 /// 500-record cap while ordinary rows exist to trim.
@@ -2360,6 +2370,51 @@ fn update_machine_health(
         }
         if let Some(r) = add_running {
             running.push(r);
+        }
+
+        // (wave 9f, F80-1) durably eliminate SUPERSEDED cap evidence, after merging and BEFORE
+        // retention and the 500-cap. For each endpoint, a clearing success (`is_clearing_success` -
+        // the usable reply `endpoint_health`'s `newest_ok` uses to suppress older candidates) drops
+        // every id-carrying instant-429 evidence row of that endpoint whose `when` is not newer than
+        // it. Without this, retention is asymmetric - evidence lives 35 days and is evicted last, the
+        // success only 24 h and is evicted first - so a machine-only reader (no ledger of its own)
+        // would lose the success and falsely reinstate the refusal. Dropping is durable and matches
+        // how the cap/retention already evict rows; the journal's applied marks (written below from
+        // `j_records`, not from survivors) still bar any resurrection.
+        {
+            use std::collections::HashMap;
+            let parse_when = |s: &str| {
+                DateTime::parse_from_rfc3339(s)
+                    .ok()
+                    .map(|d| d.with_timezone(&Utc))
+            };
+            let mut newest_success: HashMap<String, DateTime<Utc>> = HashMap::new();
+            for e in &endpoints {
+                if is_clearing_success(e) {
+                    if let Some(w) = parse_when(&e.when) {
+                        newest_success
+                            .entry(e.endpoint.clone())
+                            .and_modify(|s| {
+                                if w > *s {
+                                    *s = w;
+                                }
+                            })
+                            .or_insert(w);
+                    }
+                }
+            }
+            if !newest_success.is_empty() {
+                endpoints.retain(|e| {
+                    if is_cap_evidence(e) {
+                        if let Some(&succ) = newest_success.get(&e.endpoint) {
+                            if parse_when(&e.when).is_some_and(|w| w <= succ) {
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                });
+            }
         }
 
         let now = Utc::now();
@@ -3203,6 +3258,124 @@ mod machine_health_tests {
             eval,
         );
         assert_eq!(v.state, "unavailable");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 9g, F80-1, RC1) through the PRODUCTION path: a machine-only cap pair cleared by a later
+    // usable reply must NOT resurrect the refusal once asymmetric retention/cap would otherwise keep
+    // the pair and drop the success. The supersede drop removes the obsolete evidence durably.
+    #[test]
+    fn machine_health_drops_evidence_superseded_by_a_clearing_success() {
+        use chrono::Datelike;
+        let alive = |_: u32, _: &str| true;
+        let base = Utc::now() - Duration::hours(48);
+        let reset_day = (base + Duration::days(12)).day();
+        let hinted = crate::roster::RosterEntry {
+            provider: "ali".into(),
+            plan_caps: vec!["monthly".into()],
+            reset_hint: format!("monthly:{reset_day}T00:00+00:00"),
+            ..Default::default()
+        };
+        let evid = |fp: &str, id: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "quota".into(),
+            kind: "burst".into(),
+            until: Some((when + Duration::minutes(BURST_OUT_MINUTES)).to_rfc3339()),
+            when: when.to_rfc3339(),
+            message: "429 Too Many Requests".into(),
+            consult_id: id.into(),
+            ..Default::default()
+        };
+        let success = |fp: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "ok".into(),
+            when: when.to_rfc3339(),
+            ..Default::default()
+        };
+        let eval = base + Duration::hours(2);
+        let verdict_for = |hp: &Path| {
+            let consults = machine_endpoint_consults(hp, "fp-ev");
+            let h = endpoint_health(&consults, "fp-ev", Utc::now());
+            (
+                h.instant_429s.len(),
+                crate::plan::plan_cap_verdict(
+                    crate::verdict::PreflightVerdict::available(),
+                    &hinted,
+                    Some(&h),
+                    eval,
+                )
+                .state,
+            )
+        };
+        // 500 recent id-carrying evidence rows of OTHER endpoints, to pressure the 500-record cap
+        let others = |pair: &[MachineEndpoint]| -> Vec<MachineEndpoint> {
+            let mut rows: Vec<MachineEndpoint> = (0..500)
+                .map(|i| {
+                    evid(
+                        &format!("fp-o{i:03}"),
+                        &format!("o-{i}"),
+                        Utc::now() - Duration::minutes(5),
+                    )
+                })
+                .collect();
+            rows.extend_from_slice(pair);
+            rows
+        };
+
+        // (1) the pair + a later success; an unrelated update at +48 h -> zero hits, available
+        let dir = journal_scratch("supersede-time");
+        let hp = dir.join("health.json");
+        write_endpoints(
+            &hp,
+            &[
+                evid("fp-ev", "c-1", base),
+                evid("fp-ev", "c-2", base + Duration::minutes(20)),
+                success("fp-ev", base + Duration::hours(1)),
+            ],
+        );
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &ok_record("fp-x", "C:\\repo-x"), &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(verdict_for(&hp), (0, "available".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // (2) the same pair + success under cap pressure: supersede drops the pair BEFORE the cap, so
+        // even though the cap then evicts the (non-evidence) success, fp-ev reads available
+        let dir = journal_scratch("supersede-cap");
+        let hp = dir.join("health.json");
+        write_endpoints(
+            &hp,
+            &others(&[
+                evid("fp-ev", "c-1", base),
+                evid("fp-ev", "c-2", base + Duration::minutes(20)),
+                success("fp-ev", base + Duration::hours(1)),
+            ]),
+        );
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &ok_record("fp-x", "C:\\repo-x"), &alive),
+            HealthUpdate::Written
+        );
+        assert!(read_machine_health(&hp).endpoints.len() <= MACHINE_HEALTH_MAX_ENDPOINTS);
+        assert_eq!(verdict_for(&hp), (0, "available".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // (3) a pair with NO clearing success survives cap pressure (evidence evicted last): the
+        // refusal holds until the declared reset
+        let dir = journal_scratch("no-success-cap");
+        let hp = dir.join("health.json");
+        write_endpoints(
+            &hp,
+            &others(&[
+                evid("fp-ev", "c-1", base),
+                evid("fp-ev", "c-2", base + Duration::minutes(20)),
+            ]),
+        );
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &ok_record("fp-x", "C:\\repo-x"), &alive),
+            HealthUpdate::Written
+        );
+        assert_eq!(verdict_for(&hp), (2, "unavailable".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
