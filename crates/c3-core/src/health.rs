@@ -1134,33 +1134,32 @@ pub fn endpoint_health_set(
                     && newest_ok.is_none_or(|o| r.order > o)
             })
             .collect();
-        // (wave 9b, F66-3) count CONSULTATIONS, not rows: a machine-wide row is dropped when it
-        // names a consultation that a ledger row already names, or - for a record written before
-        // it carried the id - when a ledger row of the same endpoint failed within 5 s of it; two
-        // rows at the same instant are one hit
+        // (wave 9c, F68-1) count CONSULTATIONS by IDENTITY, never by time: two rows are one hit
+        // iff they carry the same non-empty consult id (a run in the repository ledger and
+        // mirrored on the machine file); rows with different ids are distinct whatever their
+        // instants. A row without an id (a machine record written before 9b) is matched to a
+        // ledger row only when EVERY identifying field it has agrees - the endpoint, the failure
+        // text (which carries a request id when the provider named one) and the instant to the
+        // second - otherwise it is its own hit (fail-closed toward the cap verdict).
         let ledger: Vec<&&Record> = cands.iter().filter(|r| !r.machine).collect();
         let mut hits: Vec<DateTime<FixedOffset>> = Vec::new();
-        let mut machine_ids: Vec<&str> = Vec::new();
+        let mut seen_ids: Vec<&str> = Vec::new();
         for r in &cands {
-            if r.machine {
-                let dup_id = !r.consult_id.is_empty()
-                    && (ledger.iter().any(|l| l.consult_id == r.consult_id)
-                        || machine_ids.contains(&r.consult_id.as_str()));
-                let dup_row = r.consult_id.is_empty()
-                    && ledger.iter().any(|l| {
-                        l.fingerprint == r.fingerprint
-                            && (l.order - r.order).num_seconds().abs() <= 5
-                    });
-                if dup_id || dup_row {
+            if !r.consult_id.is_empty() {
+                if seen_ids.contains(&r.consult_id.as_str()) {
                     continue;
                 }
-                if !r.consult_id.is_empty() {
-                    machine_ids.push(r.consult_id.as_str());
-                }
+                seen_ids.push(r.consult_id.as_str());
+            } else if r.machine
+                && ledger.iter().any(|l| {
+                    l.fingerprint == r.fingerprint
+                        && l.message == r.message
+                        && l.order.timestamp() == r.order.timestamp()
+                })
+            {
+                continue;
             }
-            if hits.last().is_none_or(|last| *last != r.hit) {
-                hits.push(r.hit);
-            }
+            hits.push(r.hit);
         }
         h.instant_429s = hits;
     }

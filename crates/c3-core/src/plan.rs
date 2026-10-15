@@ -429,19 +429,18 @@ mod tests {
         assert_eq!(next_cap_reset("hourly:1", at("2026-10-14T05:00:00Z")), None);
     }
 
-    // UNIT (F66-3): the pair counts CONSULTATIONS - one 429 in the ledger and mirrored in the
-    // machine-wide file is one hit; two distinct ones are two.
+    // UNIT (F66-3, F68-1): the pair counts CONSULTATIONS by identity, never by time.
     #[test]
-    fn a_429_mirrored_in_machine_health_counts_once() {
+    fn hits_are_counted_by_consultation_identity_not_by_time() {
         use crate::health::endpoint_health;
         use crate::roster::RosterEntry;
         let now = Utc.with_ymd_and_hms(2026, 10, 14, 20, 10, 0).unwrap();
-        let row = |id: &str, n: i64, when: &str, fin: &str, machine: bool| {
+        let row = |id: &str, n: i64, msg: &str, when: &str, fin: &str, machine: bool| {
             let mut v = json!({"n": n, "when": when, "finished_at": fin,
-                "bridge_outcome": "failed: 429 Too Many Requests",
+                "bridge_outcome": format!("failed: {msg}"),
                 "reviewer": {"provider_fingerprint": FP_A},
                 "provider_failure": {"class": "quota", "code": "429",
-                    "message": "429 Too Many Requests", "when": when, "retry_after": null}});
+                    "message": msg, "when": when, "retry_after": null}});
             if !id.is_empty() {
                 v["consult_id"] = json!(id);
             }
@@ -463,55 +462,47 @@ mod tests {
                 plan_cap_verdict(PreflightVerdict::available(), &capped, Some(&h), now).state,
             )
         };
-        let ledger = row(
-            "c-1",
-            1,
-            "2026-10-14T20:06:00+00:00",
-            "2026-10-14T20:06:01+00:00",
-            false,
+        const M: &str = "429 Too Many Requests (request id r-1)";
+        let w = "2026-10-14T20:06:00+00:00";
+        let f = "2026-10-14T20:06:01+00:00";
+        let ledger = row("c-1", 1, M, w, f, false);
+        let avail = (1, "available".to_string());
+        let out = (2, "unavailable".to_string());
+        // the same attempt mirrored on the machine file, with its consult id: one hit
+        assert_eq!(
+            verdict(&[ledger.clone(), row("c-1", 0, M, f, f, true)]),
+            avail
         );
-        // the same attempt on the machine file, with its consult id
-        let mirrored = row(
-            "c-1",
-            0,
-            "2026-10-14T20:06:02+00:00",
-            "2026-10-14T20:06:02+00:00",
-            true,
+        // a legacy row (no id) that agrees on endpoint, failure text and the second: one hit
+        assert_eq!(verdict(&[ledger.clone(), row("", 0, M, f, f, true)]), avail);
+        // two DIFFERENT ids at one instant are two consultations -> the plan verdict
+        assert_eq!(
+            verdict(&[ledger.clone(), row("c-2", 2, M, w, f, false)]),
+            out
         );
         assert_eq!(
-            verdict(&[ledger.clone(), mirrored]),
-            (1, "available".to_string())
+            verdict(&[ledger.clone(), row("c-2", 0, M, f, f, true)]),
+            out
         );
-        // a record written before 9b (no id): the same endpoint within 5 s of the ledger row
-        let legacy = row(
-            "",
-            0,
-            "2026-10-14T20:06:03+00:00",
-            "2026-10-14T20:06:03+00:00",
-            true,
-        );
+        // a legacy row 3 s from the ledger failure with a different request id: its own hit
+        let other = "429 Too Many Requests (request id r-9)";
+        let f3 = "2026-10-14T20:06:04+00:00";
         assert_eq!(
-            verdict(&[ledger.clone(), legacy]),
-            (1, "available".to_string())
+            verdict(&[ledger.clone(), row("", 0, other, f3, f3, true)]),
+            out
         );
-        // two rows at the SAME instant are one hit
-        let twin = row(
-            "c-2",
-            2,
-            "2026-10-14T20:06:00+00:00",
-            "2026-10-14T20:06:01+00:00",
-            false,
-        );
-        assert_eq!(verdict(&[ledger.clone(), twin]).0, 1);
-        // two distinct consultations: the plan verdict
-        let other = row(
+        // a legacy row at another second with the same text is not the ledger failure either
+        assert_eq!(verdict(&[ledger.clone(), row("", 0, M, f3, f3, true)]), out);
+        // two distinct consultations
+        let earlier = row(
             "c-3",
             0,
+            M,
             "2026-10-14T19:40:00+00:00",
             "2026-10-14T19:40:00+00:00",
             true,
         );
-        assert_eq!(verdict(&[ledger, other]), (2, "unavailable".to_string()));
+        assert_eq!(verdict(&[ledger, earlier]), out);
     }
 
     // UNIT (F66-6): the chosen policy, pinned with a controlled clock. The pair is INFERRED

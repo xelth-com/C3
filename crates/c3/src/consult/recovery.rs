@@ -312,13 +312,23 @@ mod tests {
         let me = std::process::id();
         let my_start = crate::liveness::proc::process_start_iso(me).unwrap_or_default();
         let host = c3_core::host::machine_name();
-        let me_name = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().to_string()))
+        // the survivor's recorded name is the one the liveness checker itself reads
+        let me_name = crate::liveness::proc::process_info(me)
+            .map(|i| i.name)
             .unwrap_or_default();
-        // a live "bridge": a child process that sleeps
-        let mut child = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 60"])
+        // a live "bridge": a sleeping child process (a cross-platform sleeper, as the liveness
+        // tests use)
+        let mut sleeper = if cfg!(windows) {
+            let mut c = std::process::Command::new("ping");
+            c.args(["127.0.0.1", "-n", "60"]);
+            c
+        } else {
+            let mut c = std::process::Command::new("sleep");
+            c.arg("60");
+            c
+        };
+        let mut child = sleeper
+            .stdout(std::process::Stdio::null())
             .spawn()
             .expect("a sleeping child");
         let cpid = child.id();

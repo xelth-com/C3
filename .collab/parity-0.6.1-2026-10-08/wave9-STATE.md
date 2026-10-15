@@ -18,3 +18,7 @@ Doc: docs/port/wave9-consilium-defects.md. All on main (no tag, no version bump)
 - Done: F66-1 (concurrent = live writer + ordinary state + no survivors/unverified/kill_unconfirmed), F66-2 (persist_reservation: atomic + read-back, lock held on failure), F66-3 (MachineEndpoint.consult_id; hits deduped), F66-4 (ASCII-only hint), F66-5 (Invoke-C3Compat scoped env), F66-6 (policy documented + pinned).
 - Decided: legacy machine rows without an id are matched to a ledger row by endpoint within 5 s; no redesign of the cap heuristic.
 - Next: Astra re-review; the coordinator bumps 0.2.2 at acceptance.
+
+## Wave 9c (round 2, handoff 68)
+- Done: F68-1 hit dedupe by identity only (no time windows; legacy rows need endpoint + failure text + the second to agree), F68-2 portable sleeper in the admission test.
+- Next: Astra round 3; the coordinator bumps 0.2.2 at acceptance.

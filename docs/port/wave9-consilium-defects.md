@@ -103,3 +103,23 @@ is the operator's statement about the plan; a transient pair on a capped plan co
 reset (cleared by a successful explicit run, or by editing the hint); without a hint the entry is out
 for 24 h and then probed - eligible again, not evidence that capacity returned. Pinned (README roster
 section too) by `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe`.
+
+## 9c - the round-2 review (handoff 68: F68-1, F68-2)
+
+**F68-1 (dedupe by identity, fail-closed).** 9b deduplicated the cap pair by time in two places:
+two rows at one instant counted once even with different consult ids, and a legacy machine row (no
+id) was dropped whenever an endpoint-matching ledger failure finished within 5 s. Both can HIDE a
+real cap verdict - two independent consultations (another repository on the same machine file, or
+two runs in one second) look like one - and the 5 s window was wrong because time proves nothing
+about identity. Rule: two rows are one hit iff they carry the same non-empty consult id; rows with
+different ids are distinct whatever their instants; a legacy row without an id is matched to a
+ledger row only when EVERY identifying field it has agrees (the endpoint, the failure text - which
+carries the provider's request id when it named one - and the instant to the second), otherwise it is
+its own hit (a real mirrored legacy record written a second later counts twice; new records carry
+the id). Test: `plan::hits_are_counted_by_consultation_identity_not_by_time`.
+
+**F68-2 (portable fixture).** The unit test of the D3 admission no longer shells out to PowerShell:
+its sleeping "bridge" is `ping 127.0.0.1 -n 60` on Windows and `sleep 60` elsewhere (as the liveness
+tests do), and the recorded survivor's name is read from the liveness checker itself
+(`process_info`), so the suite needs no PowerShell on Linux. Test:
+`recovery::a_detached_run_admits_only_records_of_a_live_owning_bridge`.
