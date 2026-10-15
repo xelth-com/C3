@@ -1,0 +1,155 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Equal-time success rows can exhaust the protected tier, evict a clearing anchor, and subsequently allow delayed evidence to resurrect its cleared refusal.",
+  "reply_markdown": "1. The original F82-1 fixture is addressed, but closure is incomplete: finding #1 describes resurrection after tied anchors cause eviction. Otherwise, repeated skipped updates preserve the anchor; readable journal/direct inputs merge before superseding; at the 35-day boundary, older cleared evidence expires no later than its success. These conclusions are code-derived, not executed.\n\n2. **HOLD** for finding #1, superseding F82-1. Workspace and harness results also remain outstanding. Read the production diff, relevant documentation, and added tests; skipped `.collab/` changes, unrelated prior implementations, and remaining unchanged code. Checkout HEAD was `3b636f8`; the diff explicitly targeted `8ab6cea`.\n\n## Requested checks\n\n- **RC1:** In `C:\\Users\\Dmytro\\C3`, workspace-write, extend the skipped-journal fixture with finding #1’s schedule; require zero old hits and availability. Budget: 30 minutes.\n- **RC2:** Same directory, workspace-write: `cargo test -j 2 --no-fail-fast --workspace` on the candidate revision; require zero failures. Budget: 30 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2231
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2287
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2457
+        },
+        {
+          "path": "docs/port/wave9-consilium-defects.md",
+          "line": 222
+        }
+      ],
+      "claim": "The clearing-anchor protection is not durable under tied-success cap pressure. is_anchor protects every success row sharing an endpoint's newest timestamp, rather than one row. Those duplicates can force eviction of another endpoint's clearing anchor. A later success makes the duplicates unprotected, allowing delayed older evidence for the evicted endpoint to survive and restore a cleared cap refusal.",
+      "trigger": "Keep X's two identified instant-429 records in an exclusively held journal, with a still-future monthly reset. The machine file contains 497 recent success anchors for distinct other endpoints and three distinct success records for Y sharing its newest timestamp. Add X's clearing success, timestamped after its pair but before all filler successes: all 501 rows qualify as anchors, so tier 3 evicts X. While the journal remains held, add a newer Y success: one old Y row is evicted as unprotected, leaving two. Release and apply the journal: the two arriving X failures displace those remaining unprotected Y rows, leaving 498 anchors plus X's obsolete pair. X has no surviving success to suppress its two hits.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "git diff 2bbd27e..8ab6cea -- crates/c3-core/src/health.rs; anchor_of/is_anchor",
+          "observation": "The anchor map stores only each endpoint's maximum timestamp; is_anchor accepts every success row equal to that timestamp and does not select a unique record."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:2266-2287",
+          "observation": "The cap removes unprotected rows first, evidence second, and oldest anchors last, permitting X's eviction when all 501 rows qualify as anchors."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:2457-2478",
+          "observation": "Superseding uses only successes in the currently merged endpoint rows; no retained X watermark remains after X's anchor is evicted."
+        },
+        {
+          "kind": "inferred",
+          "reference": "The stated three-update schedule through cap_machine_endpoints",
+          "observation": "After Y advances, its tied older rows become unprotected and absorb the overflow from X's delayed pair, allowing both failures to remain. This schedule was not executed."
+        }
+      ],
+      "verification": "Extend machine_health_anchor_supersedes_evidence_from_a_skipped_journal with the trigger schedule, using distinct record keys for the three equal-time Y successes and the real exclusive journal lock. Assert the persisted rows after each update, then require machine-only instant_429s.len() == 0 and an available cap verdict after replay.",
+      "remedy": "Select one deterministic clearing-anchor record per endpoint, treating tied redundant successes as ordinary rows, and add this multi-update cap-pressure regression. Ensure eviction cannot discard the sole clearing proof while duplicate proofs consume protected capacity.",
+      "supersedes": [
+        "F82-1"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F02-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F02-4","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F02-5","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F02-6","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F02-7","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F02-8","status":"not-checked","note":"Benchmark evidence not reviewed."},
+    {"id":"F04-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F04-2","status":"not-checked","note":"Windows transition behavior not revalidated."},
+    {"id":"F04-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F06-1","status":"not-checked","note":"Samoa behavior not revalidated."},
+    {"id":"F09-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F09-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F09-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F09-4","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F09-5","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F09-6","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F11-1","status":"not-checked","note":"Read-error handling inspected incidentally; full failure schedules not revalidated."},
+    {"id":"F11-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F11-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F11-4","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F11-5","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F14-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F19-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F19-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F19-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F22-1","status":"not-checked","note":"Journal marks inspected only partially; failure schedules not revalidated."},
+    {"id":"F23-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F23-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F23-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F23-4","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa checks not reviewed."},
+    {"id":"F24-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F24-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F24-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F24-4","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F24-5","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F24-6","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F25-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F25-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F25-4","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F30-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F30-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F30-3","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F31-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F36-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F36-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F38-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F40-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F40-2","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F42-1","status":"not-checked","note":"Outside this delta; not revalidated."},
+    {"id":"F46-1","status":"not-checked","note":"Quota aggregation not reviewed."},
+    {"id":"F48-1","status":"not-checked","note":"Quota aggregation not reviewed."},
+    {"id":"F50-1","status":"not-checked","note":"Quota aggregation not reviewed."},
+    {"id":"F52-1","status":"not-checked","note":"Quota aggregation not reviewed."},
+    {"id":"F52-2","status":"not-checked","note":"Quota aggregation not reviewed."},
+    {"id":"F55-1","status":"not-checked","note":"Quota cache not reviewed."},
+    {"id":"F55-2","status":"not-checked","note":"Quota aggregation not reviewed."},
+    {"id":"F58-1","status":"not-checked","note":"Quota aggregation not reviewed."},
+    {"id":"F60-1","status":"not-checked","note":"Quota persistence not reviewed."},
+    {"id":"F62-1","status":"not-checked","note":"Quota timestamp persistence not reviewed."},
+    {"id":"F66-1","status":"not-checked","note":"Detached admission not reviewed."},
+    {"id":"F66-2","status":"not-checked","note":"Detached reservation not reviewed."},
+    {"id":"F66-3","status":"not-checked","note":"Identity deduplication read, but production ledger/machine conversion not revalidated."},
+    {"id":"F66-4","status":"not-checked","note":"Reset-hint parser not reviewed."},
+    {"id":"F66-5","status":"not-checked","note":"Shim environment restoration not reviewed."},
+    {"id":"F66-6","status":"not-checked","note":"Documented policy read; controlled-clock scenarios not revalidated."},
+    {"id":"F68-1","status":"not-checked","note":"Current identity filter read; complete production scenarios not revalidated."},
+    {"id":"F68-2","status":"not-checked","note":"Portable process fixture not inspected."},
+    {"id":"F70-1","status":"fixed","note":"The inspected endpoint_health filter excludes no-ID rows from cap-pair evidence, eliminating this legacy matching ambiguity."},
+    {"id":"F72-1","status":"fixed","note":"The inspected reader excludes legacy no-ID rows from the pair regardless of persisted age."},
+    {"id":"F72-2","status":"fixed","note":"Cap-pair selection excludes no-ID rows and deduplicates identified rows by consult_id rather than truncated message text."},
+    {"id":"F74-1","status":"still-open","note":"Confirmed as intentional policy: all attempts sharing one consult_id count once; the wave note explicitly accepts ordinary burst handling for this case."},
+    {"id":"F74-2","status":"not-checked","note":"Documentation says roster validation prevents the trigger; validator not inspected."},
+    {"id":"F76-1","status":"not-checked","note":"The 35-day reader bound was inspected; downstream hinted-period evaluation not revalidated."},
+    {"id":"F78-1","status":"not-checked","note":"Newest qualifying-pair selection in plan_cap_verdict not inspected."},
+    {"id":"F78-2","status":"fixed","note":"Inspected retention explicitly preserves identified quota/burst evidence for 35 days independently of expired burst until; record-cap loss remains an acknowledged policy limit."},
+    {"id":"F80-1","status":"fixed","note":"For evidence already merged with its clearing success, the inspected supersede step durably removes the older pair before retention and capping."},
+    {"id":"F82-1","status":"still-open","note":"The original evidence-filler fixture is addressed; finding #1 supersedes the claim with a tied-anchor eviction and delayed-replay schedule."}
+  ],
+  "unproven": [
+    "Finding #1's multi-update schedule is inferred from the reviewed code and has not been executed.",
+    "No tests were run during this read-only consultation; the brief's reported test results were not independently verified.",
+    "Repeated journal skips, journal-delivered success with directly delivered failures, and exact 35-day boundaries lack executed evidence in this review.",
+    "The plugin's independent retention behavior on the shared machine-health file remains outside this delta.",
+    "Final workspace-suite and pinned harness results for the acceptance candidate remain unverified.",
+    "The checkout was at 3b636f8; explicit diff evidence targets 8ab6cea, while supplementary line-range reads used the checkout.",
+    "Changed .collab bookkeeping and unrelated prior implementations were not read."
+  ],
+  "first_run_checklist": [
+    "Record the tested revision and observe the workspace suite finish with zero failed tests; identify any rerun explicitly.",
+    "Observe the pinned roster harness finish with zero failures and confirm its adapter invokes the candidate C3 binary.",
+    "In the held-journal scenario, observe successful health writes, retained clearing evidence through successive updates, and at most 500 persisted endpoint rows.",
+    "After journal release, observe zero obsolete X hits and an available machine-only verdict; the no-success control must retain two qualifying hits and the declared-reset refusal.",
+    "For finding #1's tied-success schedule, inspect persisted rows after every update and confirm X's clearing proof is preserved or its delayed pair is otherwise rejected."
+  ]
+}
