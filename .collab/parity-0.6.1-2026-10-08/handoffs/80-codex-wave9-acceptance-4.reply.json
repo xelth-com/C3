@@ -1,0 +1,154 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The two prior blockers are addressed, but asymmetric retention can discard a later successful reply and resurrect an obsolete cap refusal.",
+  "reply_markdown": "1. **Yes—finding #1 is a blocker.** Machine-health retention preserves failure pairs for 35 days but can discard their later clearing success after roughly 24 hours or under record-cap pressure. Another repository then falsely reports cap exhaustion. F78-1 and F78-2’s original triggers are addressed.\n\n2. **HOLD** for finding #1. Workspace and harness reruns remain required before tagging.\n\nRead both source diffs, both documentation diffs, and targeted surrounding code. Skipped `.collab/` except the brief, unrelated historical implementations, and remaining source. Tests were reported by the brief, not independently executed.\n\n## Requested checks\n\n- **RC1:** Repository root; workspace-write; add/run a production-path regression with a machine-only pair followed by success, then separately 48-hour pruning and 500-row pressure. Both must remain available; budget 30 minutes.\n- **RC2:** Repository root; workspace-write; rerun the full workspace suite and pinned harness on the corrected revision. Require zero failures; budget 60 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2177
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2184
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2367
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 2399
+        },
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1131
+        }
+      ],
+      "claim": "The new retention policy preserves cap-failure evidence longer and with higher eviction priority than the successful reply that clears it. Once that success disappears, machine-only readers reconstruct the old pair and falsely mark a usable endpoint unavailable until its declared reset.",
+      "trigger": "A monthly-capped endpoint has two identified instant 429s followed by a successful explicit run. Another repository has no ledger copies. An unrelated machine-health update more than 25 hours after the success retains the failures for 35 days but removes the success, which has no active quota window or mark. Alternatively, 500 retained cap-evidence rows plus the clearing success cause the new eviction rule to remove the success immediately.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:2177-2201",
+          "observation": "Only identified quota/burst rows receive evidence status; cap_machine_endpoints removes non-evidence rows before any evidence row, including later successful replies."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:2367-2401",
+          "observation": "Retention is recent || still_out || evidence_kept. Failure evidence receives 35 days, while an ordinary success receives only the recent window."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1131-1160",
+          "observation": "Cap candidates are suppressed only by the newest successful reply present in the supplied records; no durable clearing watermark is consulted here."
+        },
+        {
+          "kind": "inferred",
+          "reference": "crates/c3-core/src/health.rs:2579-2617; crates/c3-core/src/plan.rs:353-408",
+          "observation": "After pruning the clearing success, machine-only conversion supplies the surviving pair, and the current-period detector reinstates the hinted refusal. This schedule was traced through code, not executed."
+        }
+      ],
+      "verification": "Run RC1 through production machine-health updates and conversion: assert zero qualifying old hits and an available cap verdict both after aging out the success and after record-cap pressure.",
+      "remedy": "Preserve the latest successful clearing watermark for every endpoint while older cap evidence can survive, or durably eliminate evidence superseded by that success. Make time retention and record-cap eviction preserve this relationship together.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Telemetry implementation outside this review."},
+    {"id":"F02-3","status":"not-checked","note":"Deletion retry implementation outside this review."},
+    {"id":"F02-4","status":"not-checked","note":"Harness coverage map not inspected."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction ordering not inspected."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt anchors not inspected."},
+    {"id":"F02-7","status":"not-checked","note":"Cross-engine plan configuration not inspected."},
+    {"id":"F02-8","status":"not-checked","note":"No route-equivalence benchmark reviewed."},
+    {"id":"F04-1","status":"not-checked","note":"Process-name handling not inspected."},
+    {"id":"F04-2","status":"not-checked","note":"Windows local-zone boundary behavior not tested."},
+    {"id":"F04-3","status":"not-checked","note":"Required-light ledger behavior not inspected."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa behavior not inspected."},
+    {"id":"F09-1","status":"not-checked","note":"Context configuration parsing not inspected."},
+    {"id":"F09-2","status":"not-checked","note":"Flush/deletion locking not inspected."},
+    {"id":"F09-3","status":"not-checked","note":"Deletion cleanup recovery not inspected."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread failure handling not inspected."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy telemetry sanitization not inspected."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor inference not inspected."},
+    {"id":"F11-1","status":"not-checked","note":"Journal failure paths not sufficiently reviewed."},
+    {"id":"F11-2","status":"not-checked","note":"Required-reviewer launcher propagation not inspected."},
+    {"id":"F11-3","status":"not-checked","note":"Required-reviewer shared-plan evaluation not inspected."},
+    {"id":"F11-4","status":"not-checked","note":"PowerShell hook command not inspected."},
+    {"id":"F11-5","status":"not-checked","note":"AGY tool stall handling not inspected."},
+    {"id":"F14-1","status":"not-checked","note":"Local-only cleanup transaction not inspected."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion serialization not inspected."},
+    {"id":"F19-2","status":"not-checked","note":"Unreadable salt cleanup not inspected."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key sanitization not inspected."},
+    {"id":"F22-1","status":"not-checked","note":"Durable journal deduplication not fully reviewed."},
+    {"id":"F23-1","status":"not-checked","note":"Process metadata failure handling not inspected."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown-start recovery handling not inspected."},
+    {"id":"F23-3","status":"not-checked","note":"Kill evidence persistence not inspected."},
+    {"id":"F23-4","status":"not-checked","note":"Recovery test coverage not inspected."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa tests not inspected."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled fallback accounting not inspected."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated suffix accounting not inspected."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent cleanup accounting not inspected."},
+    {"id":"F24-4","status":"not-checked","note":"Unseen-suffix status selection not inspected."},
+    {"id":"F24-5","status":"not-checked","note":"Plugin-home and shared-lock coverage not inspected."},
+    {"id":"F24-6","status":"not-checked","note":"Fold record rewrite recovery not inspected."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript guard not inspected."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case handling not inspected."},
+    {"id":"F25-4","status":"not-checked","note":"Child environment debug redaction not inspected."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree helper recovery not inspected."},
+    {"id":"F30-2","status":"not-checked","note":"Pre-kill durability and error handling not inspected."},
+    {"id":"F30-3","status":"not-checked","note":"Kill-site integration coverage not inspected."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer accounting provenance not inspected."},
+    {"id":"F36-1","status":"not-checked","note":"Unicode transcript-path handling not inspected."},
+    {"id":"F36-2","status":"not-checked","note":"Transcript-path NFC normalization not inspected."},
+    {"id":"F38-1","status":"not-checked","note":"Multiple persistence failure recovery not inspected."},
+    {"id":"F40-1","status":"not-checked","note":"Recovery-copy enumeration failures not inspected."},
+    {"id":"F40-2","status":"not-checked","note":"Kick acknowledgement on persistence failure not inspected."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata failures not inspected."},
+    {"id":"F46-1","status":"not-checked","note":"Equal-time quota aggregation not inspected."},
+    {"id":"F48-1","status":"not-checked","note":"Secondary quota-window aggregation not inspected."},
+    {"id":"F50-1","status":"not-checked","note":"Quota reset completeness ordering not inspected."},
+    {"id":"F52-1","status":"not-checked","note":"Quota comparison-clock consistency not inspected."},
+    {"id":"F52-2","status":"not-checked","note":"Nonfinite quota input handling not inspected."},
+    {"id":"F55-1","status":"not-checked","note":"Account cache reset-boundary behavior not inspected."},
+    {"id":"F55-2","status":"not-checked","note":"Invalid newer quota observation selection not inspected."},
+    {"id":"F58-1","status":"not-checked","note":"Per-window observation timestamps not inspected."},
+    {"id":"F60-1","status":"not-checked","note":"Quota timestamp persistence not inspected."},
+    {"id":"F62-1","status":"not-checked","note":"Fractional quota timestamps not inspected."},
+    {"id":"F66-1","status":"not-checked","note":"Detached recovery admission not inspected."},
+    {"id":"F66-2","status":"not-checked","note":"Detached reservation durability not inspected."},
+    {"id":"F66-3","status":"fixed","note":"Read endpoint_health deduplication by nonempty consult_id; matching ledger/machine IDs count once. Not executed."},
+    {"id":"F66-4","status":"not-checked","note":"Reset-hint Unicode validation not inspected."},
+    {"id":"F66-5","status":"not-checked","note":"Shim environment restoration not inspected."},
+    {"id":"F66-6","status":"still-open","note":"The documented heuristic deliberately retains false-positive transient-pair risk and unhinted probing; these are policy residuals, not new blockers here."},
+    {"id":"F68-1","status":"fixed","note":"Read identity-only deduplication: distinct IDs survive equal timestamps, and no-ID rows do not enter the pair."},
+    {"id":"F68-2","status":"not-checked","note":"Portable fixture change is described in the note; implementation not inspected."},
+    {"id":"F70-1","status":"fixed","note":"No-ID rows are excluded from cap candidates, removing the legacy mirror matching ambiguity from this detector."},
+    {"id":"F72-1","status":"fixed","note":"No-ID rows cannot contribute to the cap pair, regardless of persisted age."},
+    {"id":"F72-2","status":"fixed","note":"Cap deduplication uses consultation identity, not truncated message text."},
+    {"id":"F74-1","status":"still-open","note":"Multiple attempts within one consultation still count once, explicitly documented as intended policy."},
+    {"id":"F74-2","status":"not-checked","note":"The note claims validation makes this unreachable; reset-hint validation was not inspected."},
+    {"id":"F76-1","status":"fixed","note":"Read per-entry current-period filtering; hinted identified evidence is no longer universally limited to 24 hours."},
+    {"id":"F78-1","status":"fixed","note":"The detector sorts and scans for the newest qualifying pair; the isolated-third-hit regression is present. Not executed."},
+    {"id":"F78-2","status":"fixed","note":"Original aging trigger addressed by 35-day machine retention and evidence-prioritized eviction; production-path regression is present. Clearing-success retention is a separate new defect."}
+  ],
+  "unproven": [
+    "No tests were independently executed; reported crate-test, formatting, and clippy results were taken from handoff 79.",
+    "The full workspace suite and pinned plugin harness have not been demonstrated green at the reviewed revision.",
+    "Successful-reply clearing under time pruning and record-cap pressure lacks demonstrated regression coverage.",
+    "The new retention regression evaluates plan_cap_verdict at base plus one hour after pruning at real time roughly 48 hours later; it does not directly assert the verdict at the post-prune instant.",
+    "Historical implementations outside the two changed source files were not re-audited; their not-checked statuses are not acceptance evidence.",
+    "Skipped collaboration artifacts other than the brief, unchanged source outside the targeted ranges, and the broader wave-9 diff."
+  ],
+  "first_run_checklist": [
+    "Record the tested commit and observe zero failures from the full workspace suite and pinned plugin harness on that same revision.",
+    "For the 20:00/20:20/22:00 identified-failure fixture, observe a cap refusal at 22:11 with reset 2026-10-26T16:00Z and no engine-turn marker.",
+    "After a machine-only pair is pruned at plus 48 hours, observe that another repository still reports the declared cap refusal before reset.",
+    "After a later successful reply, observe that both 48-hour pruning and 500-row pressure preserve availability in another repository and do not restore the old cap refusal.",
+    "At the declared reset, observe that the old pair no longer produces a cap refusal; repeated rows with one consultation ID must never produce a two-hit refusal."
+  ]
+}
