@@ -3310,6 +3310,7 @@ wire_api = \"responses\"
         };
         let hit = |n: i64, fp: &str, mins_ago: i64| {
             json!({
+                "consult_id": format!("c-{n}"),
                 "n": n,
                 "when": iso(now - chrono::Duration::minutes(mins_ago)),
                 "finished_at": iso(now - chrono::Duration::minutes(mins_ago) + chrono::Duration::seconds(1)),

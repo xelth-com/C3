@@ -123,3 +123,24 @@ its sleeping "bridge" is `ping 127.0.0.1 -n 60` on Windows and `sleep 60` elsewh
 tests do), and the recorded survivor's name is read from the liveness checker itself
 (`process_info`), so the suite needs no PowerShell on Linux. Test:
 `recovery::a_detached_run_admits_only_records_of_a_live_owning_bridge`.
+
+## 9d - the acceptance review (handoff 72: F72-1, F72-2)
+
+The legacy no-id fallback of 9c is REPLACED, not refined. **F72-2:** matching a no-id machine row to
+a ledger row by endpoint + failure text + second compared `Record.message`, which is truncated to
+100 characters - independent same-second failures whose request ids sit after the prefix merged into
+one hit (hiding the cap) and genuine mirrors at different seconds split. **F72-1:** the 24 h age
+bound on legacy rows ran only inside `update_machine_health` (retention), so an old no-id mirror
+kept producing the cap outage until the configured reset if no successful update pruned it.
+Rule: rows WITHOUT a consult id take no part in the cap pair at all - they keep the plain 10-minute
+burst verdict exactly as before wave 9 - so the pair is built only from id-carrying rows
+(`MachineEndpoint.consult_id`, the ledger's own `consult_id`), the identity rule is exact (same id =
+one hit, different ids = two whatever their instants or texts), and only hits younger than 24 h AT
+READ TIME count (`CAP_PAIR_MAX_AGE_MINUTES`, applied in `endpoint_health`, so `plan_verdict` and every
+provider / preflight read apply it themselves, independent of retention). Without a `reset_hint`
+the entry is out until the pair is 24 h old (24 h after its first hit), then probed. Residual: the
+machine rows written before 9b lack the id, so for the 24 h after an upgrade the cap verdict can only
+come from new runs; that ends by itself. Tests: `plan::hits_are_counted_by_consultation_identity_not_by_time`
+(a no-id legacy mirror -> one hit / the burst, never the cap verdict; two ids at one instant -> the
+plan verdict; two id-carrying hits 10 min apart -> the plan verdict; two hits 25 h old -> none at
+read time), and the 9b/F66-6 policy tests with id-carrying rows.

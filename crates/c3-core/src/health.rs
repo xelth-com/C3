@@ -93,6 +93,8 @@ pub const BURST_OUT_MINUTES: i64 = 10;
 pub const QUOTA_OUT_MINUTES: i64 = 60;
 /// (wave 9, D4) A 429 that came back in less than this many seconds is an INSTANT 429.
 pub const INSTANT_429_SECS: f64 = 2.0;
+/// (wave 9d) A cap-pair hit older than this many minutes (24 h) is not counted at read time.
+pub const CAP_PAIR_MAX_AGE_MINUTES: i64 = 24 * 60;
 
 fn burst_text_re() -> Regex {
     Regex::new(r"(?i)\b429\b|too many requests|concurren").unwrap()
@@ -1124,6 +1126,12 @@ pub fn endpoint_health_set(
 
     {
         let newest_ok = records.iter().find(|r| r.ok).map(|r| r.order);
+        // (wave 9d, F72-1/2) the pair is built from rows that carry a consult id ONLY, and only
+        // from hits younger than 24 h at READ time (the machine file's retention prunes on write,
+        // never on read). A row without an id (a ledger entry or machine record from before 9b)
+        // takes no part: it keeps the plain 10-minute burst. Identity is exact: the same non-empty
+        // consult id is one hit (a run in the ledger AND mirrored on the machine file), different
+        // ids are two, whatever their instants or texts.
         let cands: Vec<&Record> = records
             .iter()
             .filter(|r| {
@@ -1131,34 +1139,18 @@ pub fn endpoint_health_set(
                     && r.class == "quota"
                     && r.kind == "burst"
                     && r.wall_secs < INSTANT_429_SECS
+                    && !r.consult_id.is_empty()
+                    && r.age_minutes <= CAP_PAIR_MAX_AGE_MINUTES
                     && newest_ok.is_none_or(|o| r.order > o)
             })
             .collect();
-        // (wave 9c, F68-1) count CONSULTATIONS by IDENTITY, never by time: two rows are one hit
-        // iff they carry the same non-empty consult id (a run in the repository ledger and
-        // mirrored on the machine file); rows with different ids are distinct whatever their
-        // instants. A row without an id (a machine record written before 9b) is matched to a
-        // ledger row only when EVERY identifying field it has agrees - the endpoint, the failure
-        // text (which carries a request id when the provider named one) and the instant to the
-        // second - otherwise it is its own hit (fail-closed toward the cap verdict).
-        let ledger: Vec<&&Record> = cands.iter().filter(|r| !r.machine).collect();
         let mut hits: Vec<DateTime<FixedOffset>> = Vec::new();
         let mut seen_ids: Vec<&str> = Vec::new();
         for r in &cands {
-            if !r.consult_id.is_empty() {
-                if seen_ids.contains(&r.consult_id.as_str()) {
-                    continue;
-                }
-                seen_ids.push(r.consult_id.as_str());
-            } else if r.machine
-                && ledger.iter().any(|l| {
-                    l.fingerprint == r.fingerprint
-                        && l.message == r.message
-                        && l.order.timestamp() == r.order.timestamp()
-                })
-            {
+            if seen_ids.contains(&r.consult_id.as_str()) {
                 continue;
             }
+            seen_ids.push(r.consult_id.as_str());
             hits.push(r.hit);
         }
         h.instant_429s = hits;

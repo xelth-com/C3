@@ -22,3 +22,7 @@ Doc: docs/port/wave9-consilium-defects.md. All on main (no tag, no version bump)
 ## Wave 9c (round 2, handoff 68)
 - Done: F68-1 hit dedupe by identity only (no time windows; legacy rows need endpoint + failure text + the second to agree), F68-2 portable sleeper in the admission test.
 - Next: Astra round 3; the coordinator bumps 0.2.2 at acceptance.
+
+## Wave 9d (acceptance, handoff 72)
+- Done: F72-1 (24 h read-time bound, CAP_PAIR_MAX_AGE_MINUTES), F72-2 (no-id rows take no part in the pair; the message comparison is gone). No-hint outage = until the pair is 24 h old.
+- Next: Astra re-acceptance; the coordinator bumps 0.2.2.

@@ -327,7 +327,7 @@ pub fn next_cap_reset(hint: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>>
 /// instant 429 with no window text - `n >= 2` of them within 60 minutes of each other, newer than
 /// the endpoint's newest usable reply - marks the entry `unavailable (plan quota: 429 twice in <n>
 /// min, no window text; retry after <next reset>)` until the cap's next reset (the entry's
-/// `reset_hint`, else 24 hours after the second hit), instead of the 10-minute burst. An entry
+/// `reset_hint`, else 24 hours after the first hit of the pair), instead of the 10-minute burst. An entry
 /// without a declared cap keeps `verdict` as it is.
 pub fn plan_cap_verdict(
     verdict: PreflightVerdict,
@@ -355,7 +355,8 @@ pub fn plan_cap_verdict(
     let gap_min = ((second - *first).num_seconds() as f64 / 60.0).ceil() as i64;
     let second_utc = second.with_timezone(&Utc);
     let until_utc = if entry.reset_hint.is_empty() {
-        second_utc + Duration::hours(24)
+        // the pair ages out of the read-time 24 h bound with its first hit
+        first.with_timezone(&Utc) + Duration::hours(24)
     } else {
         next_cap_reset(&entry.reset_hint, second_utc).unwrap_or(second_utc + Duration::hours(24))
     };
@@ -429,7 +430,8 @@ mod tests {
         assert_eq!(next_cap_reset("hourly:1", at("2026-10-14T05:00:00Z")), None);
     }
 
-    // UNIT (F66-3, F68-1): the pair counts CONSULTATIONS by identity, never by time.
+    // UNIT (F66-3, F68-1, F72-1/2): the pair is built from id-carrying rows only, counted by exact
+    // consult id, and only from hits younger than 24 h at read time.
     #[test]
     fn hits_are_counted_by_consultation_identity_not_by_time() {
         use crate::health::endpoint_health;
@@ -455,11 +457,11 @@ mod tests {
             reset_hint: "monthly:27T00:00+08:00".into(),
             ..Default::default()
         };
-        let verdict = |rows: &[serde_json::Value]| {
-            let h = endpoint_health(rows, FP_A, now);
+        let verdict = |rows: &[serde_json::Value], at: DateTime<Utc>| {
+            let h = endpoint_health(rows, FP_A, at);
             (
                 h.instant_429s.len(),
-                plan_cap_verdict(PreflightVerdict::available(), &capped, Some(&h), now).state,
+                plan_cap_verdict(PreflightVerdict::available(), &capped, Some(&h), at).state,
             )
         };
         const M: &str = "429 Too Many Requests (request id r-1)";
@@ -470,39 +472,68 @@ mod tests {
         let out = (2, "unavailable".to_string());
         // the same attempt mirrored on the machine file, with its consult id: one hit
         assert_eq!(
-            verdict(&[ledger.clone(), row("c-1", 0, M, f, f, true)]),
+            verdict(&[ledger.clone(), row("c-1", 0, M, f, f, true)], now),
             avail
         );
-        // a legacy row (no id) that agrees on endpoint, failure text and the second: one hit
-        assert_eq!(verdict(&[ledger.clone(), row("", 0, M, f, f, true)]), avail);
-        // two DIFFERENT ids at one instant are two consultations -> the plan verdict
+        // a legacy mirror WITHOUT an id takes no part: the ledger failure alone, one hit
         assert_eq!(
-            verdict(&[ledger.clone(), row("c-2", 2, M, w, f, false)]),
-            out
+            verdict(&[ledger.clone(), row("", 0, M, f, f, true)], now),
+            avail
         );
-        assert_eq!(
-            verdict(&[ledger.clone(), row("c-2", 0, M, f, f, true)]),
-            out
-        );
-        // a legacy row 3 s from the ledger failure with a different request id: its own hit
+        // ... and a legacy row never completes a pair, whatever it says
         let other = "429 Too Many Requests (request id r-9)";
         let f3 = "2026-10-14T20:06:04+00:00";
         assert_eq!(
-            verdict(&[ledger.clone(), row("", 0, other, f3, f3, true)]),
+            verdict(&[ledger.clone(), row("", 0, other, f3, f3, true)], now),
+            avail
+        );
+        assert_eq!(
+            verdict(
+                &[row("", 1, M, w, f, false), row("", 2, M, f3, f3, true)],
+                now
+            )
+            .0,
+            0
+        );
+        // two DIFFERENT ids at one instant, identical texts: two consultations -> the plan verdict
+        assert_eq!(
+            verdict(&[ledger.clone(), row("c-2", 2, M, w, f, false)], now),
             out
         );
-        // a legacy row at another second with the same text is not the ledger failure either
-        assert_eq!(verdict(&[ledger.clone(), row("", 0, M, f3, f3, true)]), out);
-        // two distinct consultations
+        assert_eq!(
+            verdict(&[ledger.clone(), row("c-2", 0, M, f, f, true)], now),
+            out
+        );
+        // two id-carrying hits 10 min apart: the plan verdict
         let earlier = row(
             "c-3",
             0,
             M,
-            "2026-10-14T19:40:00+00:00",
-            "2026-10-14T19:40:00+00:00",
+            "2026-10-14T19:56:00+00:00",
+            "2026-10-14T19:56:00+00:00",
             true,
         );
-        assert_eq!(verdict(&[ledger, earlier]), out);
+        assert_eq!(verdict(&[ledger.clone(), earlier], now), out);
+        // two id-carrying hits 25 h old are not counted at READ time, whatever retention did
+        let old = Utc.with_ymd_and_hms(2026, 10, 15, 21, 0, 0).unwrap();
+        assert_eq!(
+            verdict(
+                &[
+                    ledger,
+                    row(
+                        "c-3",
+                        0,
+                        M,
+                        "2026-10-14T19:56:00+00:00",
+                        "2026-10-14T19:56:00+00:00",
+                        true
+                    )
+                ],
+                old
+            )
+            .0,
+            0
+        );
     }
 
     // UNIT (F66-6): the chosen policy, pinned with a controlled clock. The pair is INFERRED
@@ -515,7 +546,7 @@ mod tests {
         use crate::health::endpoint_health;
         use crate::roster::RosterEntry;
         let hit = |n: i64, when: &str| {
-            json!({"n": n, "when": when, "finished_at": when,
+            json!({"consult_id": format!("c-{n}"), "n": n, "when": when, "finished_at": when,
                 "bridge_outcome": "failed: 429 Too Many Requests",
                 "reviewer": {"provider_fingerprint": FP_A},
                 "provider_failure": {"class": "quota", "code": "429",
@@ -544,10 +575,10 @@ mod tests {
         assert_eq!(state(&hinted, soon), "unavailable");
         let at_reset = Utc.with_ymd_and_hms(2026, 10, 26, 16, 0, 1).unwrap();
         assert_eq!(state(&hinted, at_reset), "available");
-        // (b) no hint: out for 24 h after the second hit, then a probe
-        let day = Utc.with_ymd_and_hms(2026, 10, 15, 20, 19, 0).unwrap();
+        // (b) no hint: out until the pair ages out at READ time (24 h after its first hit), then a probe
+        let day = Utc.with_ymd_and_hms(2026, 10, 15, 19, 59, 0).unwrap();
         assert_eq!(state(&unhinted, day), "unavailable");
-        let probe = Utc.with_ymd_and_hms(2026, 10, 15, 20, 21, 0).unwrap();
+        let probe = Utc.with_ymd_and_hms(2026, 10, 15, 20, 1, 0).unwrap();
         assert_eq!(state(&unhinted, probe), "available");
         // a successful explicit run after the pair clears it (the operator's override)
         let ok = json!({"n": 3, "when": "2026-10-14T21:00:00+00:00",
@@ -568,7 +599,7 @@ mod tests {
         use crate::roster::RosterEntry;
         let now = Utc.with_ymd_and_hms(2026, 10, 14, 20, 10, 0).unwrap();
         let hit = |n: i64, when: &str, fin: &str| {
-            json!({"n": n, "when": when, "finished_at": fin,
+            json!({"consult_id": format!("c-{n}"), "n": n, "when": when, "finished_at": fin,
                 "bridge_outcome": "failed: 429 Too Many Requests",
                 "reviewer": {"provider_fingerprint": FP_A},
                 "provider_failure": {"class": "quota", "code": "429",
@@ -610,7 +641,7 @@ mod tests {
             plan_cap_verdict(avail(), &plain, Some(&h), now).state,
             "available"
         );
-        // the capped entry without a hint: +24 h after the second hit
+        // the capped entry without a hint: +24 h after the first hit (the pair ages out)
         let no_hint = RosterEntry {
             reset_hint: String::new(),
             ..capped.clone()
@@ -618,7 +649,7 @@ mod tests {
         let v24 = plan_cap_verdict(avail(), &no_hint, Some(&h), now);
         assert_eq!(
             v24.until.map(|u| u.with_timezone(&Utc)),
-            Some(Utc.with_ymd_and_hms(2026, 10, 15, 20, 6, 0).unwrap())
+            Some(Utc.with_ymd_and_hms(2026, 10, 15, 19, 29, 0).unwrap())
         );
         // more than an hour apart: no cap verdict
         let far = hit(0, "2026-10-14T18:00:00+00:00", "2026-10-14T18:00:01+00:00");

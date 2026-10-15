@@ -165,7 +165,7 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   window text within an hour (distinct consultations, newer than the last usable reply) then mark the
   entry `unavailable (plan quota: 429 twice in <n> min, no window text; retry after <iso>)` until the
   hint's next reset instead of the 10-minute burst. That is INFERRED exhaustion, not evidence: the
-  hint is the operator's statement about the plan; without one the entry is out for 24 h and then
+  hint is the operator's statement about the plan; without one the entry is out until the pair is 24 h old and then
   probed (eligible again - not proof that capacity returned; another instant 429 marks it out
   again); a transient pair on a capped plan costs the time to the reset - clear it with a
   successful explicit run (`--skip-preflight`: the verdict is advisory for a direct run) or by
