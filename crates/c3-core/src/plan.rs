@@ -341,9 +341,30 @@ pub fn plan_cap_verdict(
     {
         return verdict;
     }
-    let Some(hits) = health.map(|h| &h.instant_429s).filter(|h| h.len() >= 2) else {
+    let Some(all_hits) = health.map(|h| &h.instant_429s) else {
         return verdict;
     };
+    // (wave 9e, F76-1) a hit is pair evidence only while it lies inside the entry's CURRENT cap
+    // period: for a hinted entry iff the reset that follows the hit has not passed yet
+    // (`next_cap_reset(hint, hit) > now`), for an unhinted entry iff it is younger than 24 h at read
+    // time. `endpoint_health` retains id-carrying hits far longer (35 days), so this per-entry bound
+    // is applied here, where the hint is known, and every reader gets the same verdict regardless of
+    // retention. A pair lying entirely before the last reset is no evidence.
+    let hits: Vec<DateTime<chrono::FixedOffset>> = all_hits
+        .iter()
+        .copied()
+        .filter(|hit| {
+            let hit_utc = hit.with_timezone(&Utc);
+            if entry.reset_hint.is_empty() {
+                now - hit_utc <= Duration::hours(24)
+            } else {
+                next_cap_reset(&entry.reset_hint, hit_utc).is_none_or(|r| r > now)
+            }
+        })
+        .collect();
+    if hits.len() < 2 {
+        return verdict;
+    }
     // the newest hit and the newest earlier one within the hour
     let second = hits[0];
     let Some(first) = hits[1..]
@@ -514,26 +535,31 @@ mod tests {
             true,
         );
         assert_eq!(verdict(&[ledger.clone(), earlier], now), out);
-        // two id-carrying hits 25 h old are not counted at READ time, whatever retention did
+        // two id-carrying hits 25 h old, read a day later. The per-entry cap-period rule (wave 9e)
+        // decides: the UNHINTED entry no longer counts them (24 h bound) -> no cap verdict; the
+        // HINTED entry, whose declared reset is still ahead, still gets the plan verdict.
         let old = Utc.with_ymd_and_hms(2026, 10, 15, 21, 0, 0).unwrap();
-        assert_eq!(
-            verdict(
-                &[
-                    ledger,
-                    row(
-                        "c-3",
-                        0,
-                        M,
-                        "2026-10-14T19:56:00+00:00",
-                        "2026-10-14T19:56:00+00:00",
-                        true
-                    )
-                ],
-                old
-            )
-            .0,
-            0
-        );
+        let aged = [
+            ledger,
+            row(
+                "c-3",
+                0,
+                M,
+                "2026-10-14T19:56:00+00:00",
+                "2026-10-14T19:56:00+00:00",
+                true,
+            ),
+        ];
+        let state = |rows: &[serde_json::Value], e: &RosterEntry, at: DateTime<Utc>| {
+            let h = endpoint_health(rows, FP_A, at);
+            plan_cap_verdict(PreflightVerdict::available(), e, Some(&h), at).state
+        };
+        let unhinted = RosterEntry {
+            reset_hint: String::new(),
+            ..capped.clone()
+        };
+        assert_eq!(state(&aged, &unhinted, old), "available");
+        assert_eq!(state(&aged, &capped, old), "unavailable");
     }
 
     // UNIT (F66-6): the chosen policy, pinned with a controlled clock. The pair is INFERRED
@@ -573,8 +599,16 @@ mod tests {
         // (a) a transient pair, the endpoint recovers an hour later - the hint still holds it out
         let soon = Utc.with_ymd_and_hms(2026, 10, 14, 21, 30, 0).unwrap();
         assert_eq!(state(&hinted, soon), "unavailable");
+        // (F76-1, RC1) two days later - well past 24 h - the hinted entry is STILL out: its declared
+        // reset (the 26th, 16:00 UTC) has not arrived, so the 24 h read-time bound must not free it.
+        let rc1 = Utc.with_ymd_and_hms(2026, 10, 16, 20, 30, 0).unwrap();
+        assert_eq!(state(&hinted, rc1), "unavailable");
         let at_reset = Utc.with_ymd_and_hms(2026, 10, 26, 16, 0, 1).unwrap();
         assert_eq!(state(&hinted, at_reset), "available");
+        // (F76-1) a hinted pair lying entirely BEFORE the last reset is no evidence once that reset
+        // has passed: read the following day, the entry is available again.
+        let after_reset = Utc.with_ymd_and_hms(2026, 10, 27, 0, 0, 0).unwrap();
+        assert_eq!(state(&hinted, after_reset), "available");
         // (b) no hint: out until the pair ages out at READ time (24 h after its first hit), then a probe
         let day = Utc.with_ymd_and_hms(2026, 10, 15, 19, 59, 0).unwrap();
         assert_eq!(state(&unhinted, day), "unavailable");

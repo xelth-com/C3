@@ -93,8 +93,11 @@ pub const BURST_OUT_MINUTES: i64 = 10;
 pub const QUOTA_OUT_MINUTES: i64 = 60;
 /// (wave 9, D4) A 429 that came back in less than this many seconds is an INSTANT 429.
 pub const INSTANT_429_SECS: f64 = 2.0;
-/// (wave 9d) A cap-pair hit older than this many minutes (24 h) is not counted at read time.
-pub const CAP_PAIR_MAX_AGE_MINUTES: i64 = 24 * 60;
+/// (wave 9e, F76-1) Id-carrying cap-pair hits are retained up to this bound (35 days, the longest
+/// monthly cap period). The per-entry period rule - a hinted entry's hit counts until its declared
+/// reset, an unhinted entry's only while it is younger than 24 h - is applied at read time in
+/// `plan_cap_verdict`, where the roster entry (hence the hint) is known.
+pub const CAP_PAIR_RETENTION_MINUTES: i64 = 35 * 24 * 60;
 
 fn burst_text_re() -> Regex {
     Regex::new(r"(?i)\b429\b|too many requests|concurren").unwrap()
@@ -1126,12 +1129,13 @@ pub fn endpoint_health_set(
 
     {
         let newest_ok = records.iter().find(|r| r.ok).map(|r| r.order);
-        // (wave 9d, F72-1/2) the pair is built from rows that carry a consult id ONLY, and only
-        // from hits younger than 24 h at READ time (the machine file's retention prunes on write,
-        // never on read). A row without an id (a ledger entry or machine record from before 9b)
-        // takes no part: it keeps the plain 10-minute burst. Identity is exact: the same non-empty
-        // consult id is one hit (a run in the ledger AND mirrored on the machine file), different
-        // ids are two, whatever their instants or texts.
+        // (wave 9d, F72-1/2) the pair is built from rows that carry a consult id ONLY (the machine
+        // file's retention prunes on write, never on read). A row without an id (a ledger entry or
+        // machine record from before 9b) takes no part: it keeps the plain 10-minute burst. Identity
+        // is exact: the same non-empty consult id is one hit (a run in the ledger AND mirrored on the
+        // machine file), different ids are two, whatever their instants or texts.
+        // (wave 9e, F76-1) hits are retained up to a generous fixed bound (35 days); the per-entry
+        // cap-period rule is applied downstream in `plan_cap_verdict`, which knows the roster entry.
         let cands: Vec<&Record> = records
             .iter()
             .filter(|r| {
@@ -1140,7 +1144,7 @@ pub fn endpoint_health_set(
                     && r.kind == "burst"
                     && r.wall_secs < INSTANT_429_SECS
                     && !r.consult_id.is_empty()
-                    && r.age_minutes <= CAP_PAIR_MAX_AGE_MINUTES
+                    && r.age_minutes <= CAP_PAIR_RETENTION_MINUTES
                     && newest_ok.is_none_or(|o| r.order > o)
             })
             .collect();

@@ -135,9 +135,11 @@ kept producing the cap outage until the configured reset if no successful update
 Rule: rows WITHOUT a consult id take no part in the cap pair at all - they keep the plain 10-minute
 burst verdict exactly as before wave 9 - so the pair is built only from id-carrying rows
 (`MachineEndpoint.consult_id`, the ledger's own `consult_id`), the identity rule is exact (same id =
-one hit, different ids = two whatever their instants or texts), and only hits younger than 24 h AT
-READ TIME count (`CAP_PAIR_MAX_AGE_MINUTES`, applied in `endpoint_health`, so `plan_verdict` and every
-provider / preflight read apply it themselves, independent of retention). Without a `reset_hint`
+one hit, different ids = two whatever their instants or texts). Wave 9d bounded the pair at read time
+with an unconditional 24 h age filter in `endpoint_health` (`CAP_PAIR_MAX_AGE_MINUTES`); that bound was
+wrong for a hinted entry whose declared reset is further out, and wave 9e (below) replaces it with the
+per-entry cap-period rule - the read-time bound is still applied by every reader independent of
+retention, but it is now the entry's current cap period, not a flat 24 h. Without a `reset_hint`
 the entry is out until the pair is 24 h old (24 h after its first hit), then probed. Residual: the
 machine rows written before 9b lack the id, so for the 24 h after an upgrade the cap verdict can only
 come from new runs; that ends by itself. Two consequences GLM noted at round 5 (F74-1, F74-2), both by
@@ -146,5 +148,24 @@ single run stays on the 10-minute burst; and the `until` fallback for a hint tha
 resolve (second hit + 24 h) is unreachable, because the roster validator accepts a `reset_hint` only when it
 resolves at load. Tests: `plan::hits_are_counted_by_consultation_identity_not_by_time`
 (a no-id legacy mirror -> one hit / the burst, never the cap verdict; two ids at one instant -> the
-plan verdict; two id-carrying hits 10 min apart -> the plan verdict; two hits 25 h old -> none at
-read time), and the 9b/F66-6 policy tests with id-carrying rows.
+plan verdict; two id-carrying hits 10 min apart -> the plan verdict; two hits 25 h old -> none for an
+unhinted entry, the cap verdict for a hinted entry whose reset is still ahead), and the 9b/F66-6
+policy tests with id-carrying rows.
+
+## 9e - the second acceptance pass (handoff 76: F76-1)
+
+**F76-1 (blocker):** the 9d read-time bound was an unconditional 24 h age filter applied in
+`endpoint_health` (`CAP_PAIR_MAX_AGE_MINUTES`). A hinted entry exhausted on 2026-10-14 and declaring a
+reset of 2026-10-26 was wrongly reported "available" again two days later, because both hits aged out
+of the 24 h window although the declared cap period had not reset. Rule: a hit is pair evidence only
+while it lies inside the entry's CURRENT cap period - a hinted entry's hit counts iff the reset that
+follows it has not passed (`next_cap_reset(hint, hit) > now`), an unhinted entry's hit counts iff it is
+younger than 24 h at read time (the 9d rule, unchanged). `until` is unchanged (hinted ->
+`next_cap_reset(hint, second)`, unhinted -> first hit + 24 h), and rows without a `consult_id` still
+take no part. `endpoint_health` now retains id-carrying hits up to a generous fixed bound
+(`CAP_PAIR_RETENTION_MINUTES`, 35 days - the longest monthly period) and `plan_cap_verdict` applies the
+per-entry period rule, which keeps the verdict identical across every reader (providers table,
+preflight, `plan_verdict`) independent of retention. A pair lying entirely before the last reset is no
+evidence. Tests: the RC1 case (hinted stays out at 2026-10-16, available after 2026-10-26 16:00) and
+the hinted/unhinted split of the 25 h-old pair in `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe`
+and `plan::hits_are_counted_by_consultation_identity_not_by_time`.
