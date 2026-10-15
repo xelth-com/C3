@@ -1,0 +1,256 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "D3 bypasses recovery protection for surviving processes, and reservation, quota-counting, and reset-hint parsing defects also need correction before release.",
+  "reply_markdown": "1. **Q1:** Yes. Detached admission ignores active orphan/survivor records merely because their filename is non-single and `parent_pid` is absent (finding #1). Failed reservation writes also allow number reuse after releasing the task lock (#2). The write lock and duplicate-number rejection protect ledger commits, but cannot make the reservation safe.\n\n2. **Q2:** The counter can mistake one consultation represented in both local and machine health for two failures (#3). Even with accurate counting, transient 429 pairs cause long false outages, while a genuinely exhausted monthly plan without a hint reopens after 24 hours (#6). Malformed Unicode hints can panic during roster validation (#4).\n\n3. **Q3:** Yes. Shims set a process environment variable without restoring it; subsequent native C3 invocations in that PowerShell session inherit compatibility behavior (#5).\n\n4. **Q4: HOLD.** Finding #1 is a blocker; #2–#4 also require fixes. All non-`.collab` diff hunks were read. `.collab` changes and unrelated prior-finding implementations were not reviewed. Tests were inspected, not executed; surrounding implementation was read selectively.\n\n## Requested checks\n\n- **RC1:** Repository root; workspace-write; extend the detached fixture with a dead bridge and live helper in a member-style survivor record, then request another detached run. Require refusal before engine spawn (#1). Budget: one fixture, 5 minutes.\n- **RC2:** Repository root; workspace-write; fail the first reservation write, pause before later writes, and start a second detached run. Require the first to abort without number reuse (#2). Budget: one fixture, 5 minutes.\n- **RC3:** Repository root; workspace-write; feed one failure through local and machine-health inputs, then evaluate cap verdicts. Require one counted attempt (#3). Budget: one fixture, 5 minutes.\n- **RC4:** Repository root; workspace-write; validate `reset_hint=\"daily:00:00日abcd\"`. Require a validation error without panic (#4). Budget: one test.\n- **RC5:** Repository root; read-only; invoke a shim with `&` in PowerShell, then inspect `C3_PLUGIN_COMPAT`. Require restoration of its original value (#5). Budget: 1 minute.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {"path": "crates/c3/src/consult/recovery.rs", "line": 129},
+        {"path": "crates/c3/src/consult/recovery.rs", "line": 62},
+        {"path": "crates/c3/src/consult/orchestrate.rs", "line": 4482}
+      ],
+      "claim": "Detached admission treats active recovery records as harmless concurrency without establishing that their owning bridge is still alive. Records retained because an interrupted run left surviving or unverified processes are therefore bypassed, allowing a new engine turn while recovery still considers the previous tree active.",
+      "trigger": "A detached single run leaves .consult.pending-<NN>.json with no parent_pid; its bridge exits, but a recorded survivor remains alive. Another detached single run targets the same task.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/recovery.rs:62-67,105-141",
+          "observation": "The concurrency flag depends only on filename and absence/nullness of parent_pid. active_message_for_detached_single excludes every active record with that flag, regardless of the reason it is active."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/liveness/pending.rs:919-936,1037-1066",
+          "observation": "The liveness checker distinguishes a live writer from surviving and unverified processes after interruption; both conditions produce active records."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:4472-4483",
+          "observation": "Detached runs use the filtered admission result and skip processing active concurrent records."
+        }
+      ],
+      "verification": "Run RC1 with a dead owning bridge and a live recorded helper; assert that a new detached request refuses before writing an engine-turn marker.",
+      "remedy": "Permit concurrency only for an explicitly identified detached run with a positively verified live owning bridge and an appropriate active lifecycle state. Keep orphan, survivor, unverified, kill-unconfirmed, and uncertain recovery states blocking.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/consult/orchestrate.rs", "line": 4444},
+        {"path": "crates/c3/src/consult/orchestrate.rs", "line": 4507},
+        {"path": "crates/c3/src/consult/orchestrate.rs", "line": 4522}
+      ],
+      "claim": "Detached runs release the task lock without requiring successful number allocation and durable reservation. A failed reservation write can leave the allocated n invisible to the next run, allowing duplicate allocation and eventual commit failure; matching pending filenames can also overwrite each other's recovery evidence.",
+      "trigger": "The first detached run's reservation write fails transiently. It releases the task lock and pauses before any later successful pending write or commit. A second detached run allocates its numbers during that interval.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/consult/orchestrate.rs:4444-4449,4504-4523",
+          "observation": "next_numbers errors retain the earlier context numbers, write_pending's result is discarded, and task_lock is then dropped."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/store.rs:830-890",
+          "observation": "Number allocation derives n from persisted sessions, findings, and recovery reservations; there is no independent allocation counter."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/ledger.rs:1029-1047",
+          "observation": "Commit rejects duplicate n rather than renumbering it, so serialization of commits does not repair duplicate allocation."
+        }
+      ],
+      "verification": "Run RC2 with a one-shot reservation-write failure and a barrier after lock release; verify that no second run can receive the first run's allocated n.",
+      "remedy": "Propagate next_numbers and reservation-write failures. Release the task lock only after the reservation has been successfully persisted.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3-core/src/health.rs", "line": 1122},
+        {"path": "crates/c3-core/src/plan.rs", "line": 340},
+        {"path": "crates/c3/src/providers.rs", "line": 172},
+        {"path": "crates/c3/src/providers.rs", "line": 2327}
+      ],
+      "claim": "The two-hit cap detector counts health rows rather than distinct consultations. A single instant 429 represented in both the repository ledger and machine health can satisfy the two-failure threshold and incorrectly disable the endpoint until its declared reset.",
+      "trigger": "One fast 429 is committed locally and recorded in machine health for a capped endpoint. Providers or consultation preflight combines both sources without a newer usable reply.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/providers.rs:165-172,2313-2328",
+          "observation": "Both availability and consultation health inputs append machine-health synthetic consultations to repository consultations."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:983-1108,1120-1134",
+          "observation": "Each qualifying input row contributes a hit; the collection does not deduplicate consultation identity."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:340-350",
+          "observation": "Any two hits within the hour qualify, including two hits at the same instant."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Combined local-ledger and machine-health input path",
+          "observation": "Two representations of one actual failed attempt can therefore become the required pair. The new unit tests use distinct synthetic consultations and do not exercise this production input combination."
+        }
+      ],
+      "verification": "Run RC3 through production health conversion with exactly one committed fast failure and its machine-health record; assert that the endpoint retains ordinary burst handling.",
+      "remedy": "Carry a stable consultation identity through machine health and deduplicate before counting attempts. Do not use timestamp equality alone as attempt identity.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3-core/src/plan.rs", "line": 253},
+        {"path": "crates/c3-core/src/roster.rs", "line": 606}
+      ],
+      "claim": "Reset-hint validation can panic on malformed Unicode instead of rejecting the roster because split_clock splits a UTF-8 string at an unchecked byte offset.",
+      "trigger": "A roster supplies ext.c3.reset_hint=\"daily:00:00日abcd\". The clock suffix has 12 bytes, and splitting at byte 6 cuts inside 日.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:249-254",
+          "observation": "The parser checks only byte length before calling s.split_at(s.len() - 6)."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/roster.rs:603-612",
+          "observation": "Roster validation directly invokes next_cap_reset on the supplied string."
+        },
+        {
+          "kind": "inferred",
+          "reference": "UTF-8 layout of 00:00日abcd",
+          "observation": "The computed split offset is not a character boundary, so Rust's string split panics before normal validation can return None."
+        }
+      ],
+      "verification": "Run RC4 through validate_roster and require a normal validation error rather than process termination.",
+      "remedy": "Validate the ASCII grammar before slicing, or use checked string ranges and return None for invalid boundaries.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "tests/shim/codex-consult.ps1", "line": 210},
+        {"path": "tests/shim/codex-providers.ps1", "line": 136},
+        {"path": "tests/shim/codex-findings.ps1", "line": 104},
+        {"path": "tests/shim/codex-consult-hook.ps1", "line": 102},
+        {"path": "crates/c3-core/src/spelling.rs", "line": 9}
+      ],
+      "claim": "The compatibility switch can escape a shim invocation into subsequent native C3 runs in the same PowerShell process, restoring fork-by-default behavior and PowerShell command spellings unexpectedly.",
+      "trigger": "Invoke a shim with PowerShell's call operator in a persistent session, then run native c3 from that session.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "Changed tests/shim/codex-*.ps1 hunks and search for C3_PLUGIN_COMPAT/finally",
+          "observation": "The four shims assign the process environment variable without restoring its previous value."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/spelling.rs:8-12; crates/c3/src/consult/orchestrate.rs:1789-1793",
+          "observation": "Native behavior trusts the inherited variable directly; panel default mode remains automatic when it equals 1."
+        }
+      ],
+      "verification": "Run RC5 from a persistent PowerShell session with the variable initially absent, then confirm a native panel dry run still defaults to new.",
+      "remedy": "Set the compatibility variable only in the launched child's environment, or save and restore it with guaranteed cleanup around every shim exit path.",
+      "supersedes": []
+    },
+    {
+      "severity": "note",
+      "locations": [
+        {"path": "crates/c3-core/src/plan.rs", "line": 340},
+        {"path": "crates/c3-core/src/plan.rs", "line": 353},
+        {"path": "docs/port/wave9-consilium-defects.md", "line": 51}
+      ],
+      "claim": "The declared-cap heuristic cannot distinguish cap exhaustion from ordinary transient rate limiting: two genuine fast transient 429s can disable a usable endpoint until a distant monthly reset. Conversely, a truly exhausted monthly plan with no reset hint becomes eligible after 24 hours even if its cap remains exhausted.",
+      "trigger": "A monthly-capped endpoint emits two transient fast 429s within an hour and then recovers; alternatively, its monthly quota remains exhausted more than 24 hours after the second failure and reset_hint is absent.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:330-380",
+          "observation": "The decision uses declared cap presence and the failure pair, then applies the hint or a fixed 24-hour fallback. It has no independent exhaustion confirmation."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:429-505",
+          "observation": "Tests establish the chosen policy, including the 24-hour fallback, but do not establish that a fast 429 pair identifies actual cap exhaustion."
+        }
+      ],
+      "verification": "With a controlled clock, evaluate a transient pair before a distant monthly reset and an exhausted no-hint pair after 24 hours; explicitly assess whether both resulting availability decisions are acceptable release policy.",
+      "remedy": "Label this as inferred exhaustion and define a bounded probe or override policy. Prefer authoritative quota/reset evidence when available, and document the no-hint retry as a probe rather than evidence that capacity returned.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Telemetry spool fix is outside this diff review."},
+    {"id":"F02-3","status":"not-checked","note":"Deletion retry behavior was not reviewed."},
+    {"id":"F02-4","status":"not-checked","note":"Full harness coverage map was not reviewed."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction ordering was not reviewed."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt anchors were not reviewed."},
+    {"id":"F02-7","status":"not-checked","note":"Cross-engine plan identity was not revalidated."},
+    {"id":"F02-8","status":"not-checked","note":"Native Messages benchmark evidence was not reviewed."},
+    {"id":"F04-1","status":"not-checked","note":"Process-name Unicode handling was not reviewed."},
+    {"id":"F04-2","status":"not-checked","note":"Windows DST production behavior was not tested."},
+    {"id":"F04-3","status":"not-checked","note":"Required-light ledger metadata was not reviewed."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa handling was not reviewed."},
+    {"id":"F09-1","status":"not-checked","note":"Context configuration parsing was not reviewed."},
+    {"id":"F09-2","status":"not-checked","note":"Flush/deletion locking was not reviewed."},
+    {"id":"F09-3","status":"not-checked","note":"Recoverable deletion cleanup was not reviewed."},
+    {"id":"F09-4","status":"not-checked","note":"Spool reread failure handling was not reviewed."},
+    {"id":"F09-5","status":"not-checked","note":"Legacy telemetry sanitization was not reviewed."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor inference was not reviewed."},
+    {"id":"F11-1","status":"not-checked","note":"Journal helpers were encountered, but full failure propagation was not revalidated."},
+    {"id":"F11-2","status":"not-checked","note":"Required AGY launcher selection was not reviewed."},
+    {"id":"F11-3","status":"not-checked","note":"Required-reviewer shared-plan evaluation was not revalidated."},
+    {"id":"F11-4","status":"not-checked","note":"Production hook pointer execution was not tested."},
+    {"id":"F11-5","status":"not-checked","note":"AGY tool stall allowance was not reviewed."},
+    {"id":"F14-1","status":"not-checked","note":"Local-only deletion persistence was not reviewed."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization was not reviewed."},
+    {"id":"F19-2","status":"not-checked","note":"Unreadable salt cleanup was not reviewed."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key telemetry sanitization was not reviewed."},
+    {"id":"F22-1","status":"not-checked","note":"Journal replay durability was not revalidated."},
+    {"id":"F23-1","status":"not-checked","note":"Process metadata failure classification was not reviewed."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown creation-time scan handling was not reviewed."},
+    {"id":"F23-3","status":"not-checked","note":"Kill-site persistence ordering was not revalidated."},
+    {"id":"F23-4","status":"not-checked","note":"Earlier recovery test coverage was not audited."},
+    {"id":"F23-5","status":"not-checked","note":"Production Samoa boundary behavior was not tested."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled fallback accounting was not reviewed."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated suffix accounting was not reviewed."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent not-spooled cleanup was not reviewed."},
+    {"id":"F24-4","status":"not-checked","note":"Not-spooled status timestamp selection was not reviewed."},
+    {"id":"F24-5","status":"not-checked","note":"Telemetry oracle path and lock-domain coverage was not reviewed."},
+    {"id":"F24-6","status":"not-checked","note":"Fold record rewrite failures were not reviewed."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript safety was not revalidated."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case normalization was not reviewed."},
+    {"id":"F25-4","status":"not-checked","note":"Credential Debug redaction was not reviewed."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree helper classification was not revalidated."},
+    {"id":"F30-2","status":"not-checked","note":"Kill evidence write failure handling was not revalidated."},
+    {"id":"F30-3","status":"not-checked","note":"Continuation and repair kill durability tests were not reviewed."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer fallback accounting was not reviewed."},
+    {"id":"F36-1","status":"not-checked","note":"Transcript path Unicode handling was not reviewed."},
+    {"id":"F36-2","status":"not-checked","note":"Transcript path NFC normalization was not reviewed."},
+    {"id":"F38-1","status":"not-checked","note":"Multi-write failure recovery durability was not revalidated."},
+    {"id":"F40-1","status":"not-checked","note":"Kill-copy enumeration failures were not revalidated."},
+    {"id":"F40-2","status":"not-checked","note":"Kick acknowledgement on persistence failure was not reviewed."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata error handling was not revalidated."},
+    {"id":"F46-1","status":"not-checked","note":"Equal-time quota aggregation was not reviewed."},
+    {"id":"F48-1","status":"not-checked","note":"Secondary-window quota ordering was not reviewed."},
+    {"id":"F50-1","status":"not-checked","note":"Quota reset-completeness ties were not reviewed."},
+    {"id":"F52-1","status":"not-checked","note":"Quota aggregation clock consistency was not reviewed."},
+    {"id":"F52-2","status":"not-checked","note":"Nonfinite quota percentage handling was not reviewed."},
+    {"id":"F55-1","status":"not-checked","note":"Account cache reset-boundary behavior was not reviewed."},
+    {"id":"F55-2","status":"not-checked","note":"Invalid newer quota observation selection was not reviewed."},
+    {"id":"F58-1","status":"not-checked","note":"Per-window observation timestamp aggregation was not reviewed."},
+    {"id":"F60-1","status":"not-checked","note":"Per-window timestamp persistence was not reviewed."},
+    {"id":"F62-1","status":"not-checked","note":"Fractional timestamp persistence was not reviewed."}
+  ],
+  "unproven": [
+    "No tests or runtime reproductions were executed; the findings are based on source inspection and stated deductions.",
+    "The reported workspace, clippy, formatting, and plugin harness results were not independently reproduced.",
+    "The changed .collab/wave9-STATE.md was skipped as requested; unrelated prior-finding implementations and most unchanged code were not read.",
+    "The full machine-health conversion implementation, cross-repository cap retention, and shared-plan propagation of inferred cap outages were not completely traced.",
+    "The new detached test demonstrates successful overlap and distinct numbers under normal I/O, not reservation failure, abandoned-tree recovery, or adversarial commit schedules."
+  ],
+  "first_run_checklist": []
+}
