@@ -232,3 +232,22 @@ reader anyway. Test: the production-path RC1 with the real exclusive journal loc
 `health::machine_health_anchor_supersedes_evidence_from_a_skipped_journal` (success added while the pair
 waits in a held journal -> available after replay; and no success -> the refusal holds), plus the
 cap-tier unit test `health::the_record_cap_keeps_the_anchor_over_older_evidence`.
+
+## 9i - the sixth acceptance pass (handoff 84: F84-1)
+
+**F84-1 (blocker):** 9h's `is_anchor` protected EVERY success row sharing the endpoint's newest `when`,
+not one row. Schedule: X's pair sits in a held journal; the file holds 497 recent anchors of distinct
+endpoints plus three distinct Y success rows all at the same newest `when`. X's success is added (after
+its pair, before the fillers) -> 501 rows, all of them anchors (the three tied Y rows each counted) ->
+tier 3 evicts the oldest anchor, which is X's success. A newer Y success then arrives (journal still
+held), the tied Y rows become plain, the journal is applied, X's two failures displace them, and with no
+X success left the refusal resurrects. Fix: exactly ONE anchor per endpoint. `anchor_of` now returns
+`endpoint -> (when, machine_record_key)` - the newest `when`, ties broken by the greater record key
+(lexicographic, deterministic across writers) - and `is_anchor` matches both fields, so redundant
+equal-`when` successes are ordinary tier-1 rows and cannot consume the protected tier. The supersede step
+still uses the anchor `when` only. Residual (stated, not fixable inside a 500-row file): more than 500
+endpoints each holding a distinct live anchor still evict the oldest anchors, after which the reader has
+no success to supersede a late pair for that endpoint; the 500-record cap is the plugin-shared format
+limit, and this needs more than 500 distinct endpoint fingerprints with live clearing successes on one
+machine. Test: the production-path RC1 with the real exclusive journal lock and three tied Y successes
+`health::redundant_equal_time_successes_do_not_evict_another_endpoints_anchor`.

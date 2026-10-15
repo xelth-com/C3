@@ -2196,39 +2196,49 @@ fn when_utc(e: &MachineEndpoint) -> Option<DateTime<Utc>> {
         .map(|d| d.with_timezone(&Utc))
 }
 
-/// (wave 9h, F82-1) The CLEARING ANCHOR of each endpoint fingerprint: the `when` of its NEWEST
-/// clearing-success row ([`is_clearing_success`]). The anchor is protected like cap evidence - kept
-/// for `CAP_PAIR_RETENTION_MINUTES` and evicted only in the last cap tier - so evidence that arrives
-/// LATE (appended from a busy journal held past the open retries, or a delayed direct retry) is still
-/// superseded on the update that merges it and can never resurrect a refusal the success had cleared.
-/// Only the newest `ok` row per endpoint is an anchor; older `ok` rows stay plain. Computed once and
-/// reused for the supersede step, retention and the cap.
-fn anchor_of(endpoints: &[MachineEndpoint]) -> std::collections::HashMap<String, DateTime<Utc>> {
-    let mut anchors: std::collections::HashMap<String, DateTime<Utc>> =
+/// (wave 9h, F82-1 / wave 9i, F84-1) The CLEARING ANCHOR of each endpoint fingerprint: the identity
+/// `(when, machine_record_key)` of EXACTLY ONE clearing-success row ([`is_clearing_success`]) - the
+/// newest `when`, ties broken by the greater record key (lexicographic, so the choice is deterministic
+/// across writers). The anchor is protected like cap evidence - kept for `CAP_PAIR_RETENTION_MINUTES`
+/// and evicted only in the last cap tier - so evidence that arrives LATE (appended from a busy journal
+/// held past the open retries, or a delayed direct retry) is still superseded on the update that merges
+/// it and can never resurrect a refusal the success had cleared. Older `ok` rows AND redundant rows tied
+/// on the newest `when` stay plain (tier 1), so they cannot consume the protected tier and crowd out
+/// another endpoint's only clearing proof (F84-1). Computed once and reused for the supersede step,
+/// retention and the cap.
+fn anchor_of(
+    endpoints: &[MachineEndpoint],
+) -> std::collections::HashMap<String, (DateTime<Utc>, String)> {
+    let mut anchors: std::collections::HashMap<String, (DateTime<Utc>, String)> =
         std::collections::HashMap::new();
     for e in endpoints {
         if is_clearing_success(e) {
             if let Some(w) = when_utc(e) {
+                let key = machine_record_key(e);
                 anchors
                     .entry(e.endpoint.clone())
-                    .and_modify(|s| {
-                        if w > *s {
-                            *s = w;
+                    .and_modify(|cur| {
+                        if w > cur.0 || (w == cur.0 && key > cur.1) {
+                            *cur = (w, key.clone());
                         }
                     })
-                    .or_insert(w);
+                    .or_insert_with(|| (w, key.clone()));
             }
         }
     }
     anchors
 }
 
-/// (wave 9h, F82-1) Is this row the newest clearing success of its endpoint (its anchor)?
+/// (wave 9h, F82-1 / wave 9i, F84-1) Is this row the single chosen clearing anchor of its endpoint?
+/// Both the `when` and the record key must match, so at most one row per endpoint is an anchor.
 fn is_anchor(
     e: &MachineEndpoint,
-    anchors: &std::collections::HashMap<String, DateTime<Utc>>,
+    anchors: &std::collections::HashMap<String, (DateTime<Utc>, String)>,
 ) -> bool {
-    is_clearing_success(e) && when_utc(e) == anchors.get(&e.endpoint).copied()
+    is_clearing_success(e)
+        && anchors
+            .get(&e.endpoint)
+            .is_some_and(|(w, key)| when_utc(e) == Some(*w) && machine_record_key(e) == *key)
 }
 
 /// Drop up to `drop` of the rows for which `pred` holds, OLDEST by `when` first (an unparseable `when`
@@ -2262,11 +2272,12 @@ fn drop_oldest_matching(
 /// Only if still over, evict the clearing anchors ([`is_anchor`]) oldest first. So an endpoint's older
 /// evidence always goes before its anchor, and a lone old anchor outlives newer filler evidence -
 /// without it, a success evicted here while its pair waits in a busy journal would restore the refusal
-/// (F82-1).
+/// (F82-1). At most one row per endpoint is an anchor (wave 9i, F84-1), so redundant equal-time
+/// successes are plain tier-1 rows and cannot crowd this protected tier.
 fn cap_machine_endpoints(
     endpoints: &mut Vec<MachineEndpoint>,
     max: usize,
-    anchors: &std::collections::HashMap<String, DateTime<Utc>>,
+    anchors: &std::collections::HashMap<String, (DateTime<Utc>, String)>,
 ) {
     if endpoints.len() <= max {
         return;
@@ -2468,8 +2479,8 @@ fn update_machine_health(
         if !anchors.is_empty() {
             endpoints.retain(|e| {
                 if is_cap_evidence(e) {
-                    if let Some(&succ) = anchors.get(&e.endpoint) {
-                        if when_utc(e).is_some_and(|w| w <= succ) {
+                    if let Some((succ, _)) = anchors.get(&e.endpoint) {
+                        if when_utc(e).is_some_and(|w| w <= *succ) {
                             return false;
                         }
                     }
@@ -3603,6 +3614,115 @@ mod machine_health_tests {
             HealthUpdate::Written
         );
         assert_eq!(verdict_for(&hp), (2, "unavailable".to_string()));
+        let _ = take_machine_health_journal_notes();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 9i, F84-1, RC1) through the PRODUCTION path with the real exclusive journal lock: redundant
+    // equal-`when` successes of one endpoint must NOT each count as an anchor and crowd the protected
+    // tier, evicting another endpoint's only clearing proof. Exactly one row per endpoint is the anchor
+    // (newest `when`, ties broken by record key); the rest are plain and go in tier 1.
+    #[test]
+    fn redundant_equal_time_successes_do_not_evict_another_endpoints_anchor() {
+        use chrono::Datelike;
+        let _notes = notes_lock();
+        let alive = |_: u32, _: &str| true;
+        let base = Utc::now() - Duration::hours(48);
+        let reset_day = (base + Duration::days(12)).day();
+        let hinted = crate::roster::RosterEntry {
+            provider: "ali".into(),
+            plan_caps: vec!["monthly".into()],
+            reset_hint: format!("monthly:{reset_day}T00:00+00:00"),
+            ..Default::default()
+        };
+        let evid = |fp: &str, id: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "quota".into(),
+            kind: "burst".into(),
+            until: Some((when + Duration::minutes(BURST_OUT_MINUTES)).to_rfc3339()),
+            when: when.to_rfc3339(),
+            message: "429 Too Many Requests".into(),
+            consult_id: id.into(),
+            ..Default::default()
+        };
+        let success = |fp: &str, when: DateTime<Utc>, repo: &str| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "ok".into(),
+            when: when.to_rfc3339(),
+            repo: repo.into(),
+            ..Default::default()
+        };
+        let verdict_for = |hp: &Path| {
+            let consults = machine_endpoint_consults(hp, "fp-x");
+            let h = endpoint_health(&consults, "fp-x", Utc::now());
+            (
+                h.instant_429s.len(),
+                crate::plan::plan_cap_verdict(
+                    crate::verdict::PreflightVerdict::available(),
+                    &hinted,
+                    Some(&h),
+                    base + Duration::hours(2),
+                )
+                .state,
+            )
+        };
+        let x_has_success = |hp: &Path| {
+            read_machine_health(hp)
+                .endpoints
+                .iter()
+                .any(|e| e.endpoint == "fp-x" && is_clearing_success(e))
+        };
+
+        let dir = journal_scratch("tied-anchors");
+        let hp = dir.join("health.json");
+        let jp = machine_health_journal_path(&hp);
+        // 497 distinct-endpoint recent anchors + three equal-`when` fp-y successes (distinct keys) = 500
+        let recent = Utc::now() - Duration::minutes(5);
+        let tied = recent - Duration::minutes(1);
+        let mut rows: Vec<MachineEndpoint> = (0..497)
+            .map(|i| success(&format!("fp-o{i:03}"), recent, &format!("repo-{i:03}")))
+            .collect();
+        rows.push(success("fp-y", tied, "r-1"));
+        rows.push(success("fp-y", tied, "r-2"));
+        rows.push(success("fp-y", tied, "r-3"));
+        write_endpoints(&hp, &rows);
+        // fp-x's pair into the held journal
+        add_machine_health_journal(&hp, &evid("fp-x", "c-1", base)).unwrap();
+        add_machine_health_journal(&hp, &evid("fp-x", "c-2", base + Duration::minutes(20)))
+            .unwrap();
+        let held = open_exclusive(&jp, false, false).expect("hold the journal");
+        // add fp-x's success (after its pair, before the fillers) while the journal is held
+        assert_eq!(
+            add_machine_health_endpoint(
+                &hp,
+                &success("fp-x", base + Duration::hours(1), "rx"),
+                &alive
+            ),
+            HealthUpdate::Written
+        );
+        assert!(read_machine_health(&hp).endpoints.len() <= MACHINE_HEALTH_MAX_ENDPOINTS);
+        assert!(
+            x_has_success(&hp),
+            "fp-x success must survive the first update"
+        );
+        // a newer fp-y success arrives (journal still held): the tied rows become plain
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &success("fp-y", Utc::now(), "r-new"), &alive),
+            HealthUpdate::Written
+        );
+        assert!(read_machine_health(&hp).endpoints.len() <= MACHINE_HEALTH_MAX_ENDPOINTS);
+        assert!(
+            x_has_success(&hp),
+            "fp-x success must still survive the second update"
+        );
+        // release and apply: fp-x's anchor supersedes its journal pair -> available, zero hits
+        drop(held);
+        assert_eq!(
+            apply_machine_health_journal(&hp, &alive),
+            HealthUpdate::Written
+        );
+        assert!(read_machine_health(&hp).endpoints.len() <= MACHINE_HEALTH_MAX_ENDPOINTS);
+        assert_eq!(verdict_for(&hp), (0, "available".to_string()));
         let _ = take_machine_health_journal_notes();
         let _ = std::fs::remove_dir_all(&dir);
     }
