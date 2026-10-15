@@ -2372,7 +2372,7 @@ fn update_machine_health(
             running.push(r);
         }
 
-        // (wave 9f, F80-1) durably eliminate SUPERSEDED cap evidence, after merging and BEFORE
+        // (wave 9g, F80-1) durably eliminate SUPERSEDED cap evidence, after merging and BEFORE
         // retention and the 500-cap. For each endpoint, a clearing success (`is_clearing_success` -
         // the usable reply `endpoint_health`'s `newest_ok` uses to suppress older candidates) drops
         // every id-carrying instant-429 evidence row of that endpoint whose `when` is not newer than
