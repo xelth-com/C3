@@ -12,7 +12,7 @@ read `project-c3-parity.md` and `reference-roster-0.6-claude-first.md`) - a sess
   conversion - always run that harness with powershell 5.1). Details: state.md entries 11:50-14:05.
 - Binary 0.2.1 still at ~/.cargo/bin/c3 (a 298ed07 debug copy at %TEMP%\c3-rc2\c3-298ed07.exe); `cargo install --path crates/c3-cli`
   (release, -j 2, machine otherwise idle) brings 0.2.2 when wanted. Plugin c3@c3 updated to 0.2.2 (restart applies it).
-- xelth.com /C3/ page strings -> 0.2.2 (nine locales) committed by a worker; deploy pending the operator's go.
+- xelth.com /C3/ page strings -> 0.2.2 (nine locales, commit 7d1ad5d) deployed 2026-10-15 14:09 (deploy.sh, health ok).
 - Carry for 0.2.3: harness-detach F11-2 (fails on base); fake-claude binaries need a serialized single-threaded gate
   (they starve each other under parallel spawn - not a product bug); the 500-anchor capacity limit of the shared health file.
 - Next waves (plugin repo ROADMAP R25-R29, week of 2026-10-19): R25 telemetry prerequisites, R26 worker telemetry, R27 the
