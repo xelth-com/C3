@@ -1,0 +1,450 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "The unconditional 24-hour filter releases hinted capped endpoints before their advertised reset, contradicting the documented monthly-cap behavior.",
+  "reply_markdown": "1. F72-1/F72-2 are fixed in the reviewed code: unidentified rows cannot complete a pair, and text no longer determines identity. However, finding #1 is a new regression: the age bound also expires identified pairs with valid monthly hints. An exhausted endpoint becomes eligible after roughly 24 hours despite a later advertised reset. F74-1 remains documented policy; F74-2’s malformed-hint trigger is rejected by validation.\n\n2. **HOLD** on finding #1; do not tag v0.2.2 yet. Reviewed all three source diffs, three documentation diffs, and targeted surrounding code. Skipped `.collab/` except brief 75, unrelated source, and older finding implementations. Reported test/harness results were not independently rerun.\n\n## Requested checks\n\n- **RC1:** Repository root; workspace-write; extend `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe` to assert the hinted entry remains unavailable at `2026-10-16T20:30:00Z`, then run that test. Expected: unavailable until October 26 at 16:00Z. Budget: 10 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/health.rs",
+          "line": 1143
+        },
+        {
+          "path": "crates/c3-core/src/plan.rs",
+          "line": 344
+        },
+        {
+          "path": "crates/c3-core/src/plan.rs",
+          "line": 361
+        },
+        {
+          "path": "crates/c3-core/src/plan.rs",
+          "line": 575
+        },
+        {
+          "path": "docs/port/wave9-consilium-defects.md",
+          "line": 101
+        }
+      ],
+      "claim": "The new read-time age limit discards identified cap-pair evidence after approximately 24 hours even when a valid reset_hint declares a later weekly or monthly reset. plan_cap_verdict then returns the underlying verdict without enforcing that reset. This makes an exhausted endpoint eligible before the retry time previously displayed and contradicts the documented policy that hinted entries remain unavailable until their reset.",
+      "trigger": "Use the existing policy fixture: two distinct identified instant 429s at 2026-10-14T20:00:00Z and 20:20:00Z, plan_caps=['monthly'], and reset_hint='monthly:27T00:00+08:00'. Read health at 2026-10-16T20:30:00Z with no later success or independent blocking evidence. Both hits are discarded although the declared reset is 2026-10-26T16:00:00Z.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/health.rs:1135-1156",
+          "observation": "Candidate selection unconditionally requires age_minutes <= CAP_PAIR_MAX_AGE_MINUTES before constructing instant_429s; it has no distinction for hinted plans."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:339-364",
+          "observation": "Fewer than two retained hits returns the supplied verdict immediately, before next_cap_reset is consulted."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/plan.rs:545-582",
+          "observation": "The policy test supplies the stated monthly hint but checks hinted availability only shortly after the failures and after the reset. Its intermediate 24-hour checks cover only the unhinted entry."
+        },
+        {
+          "kind": "read-code",
+          "reference": "docs/port/wave9-consilium-defects.md:101-105; README.md reviewed diff context",
+          "observation": "The documented policy distinguishes waiting until a declared reset from the 24-hour probe used without a hint."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Composition of endpoint_health and plan_cap_verdict in plan.rs:569-571",
+          "observation": "At the stated intermediate instant, the fixture produces no qualifying hits and therefore returns available despite the future monthly reset. This was established by source inspection, not an executed regression test."
+        }
+      ],
+      "verification": "Run RC1, requiring the identified hinted pair to remain unavailable after 48 hours and to become eligible at its declared reset.",
+      "remedy": "Keep legacy no-ID rows excluded, but apply the expiration policy where the roster entry's hint is available: preserve identified pair evidence through a valid declared reset and use first-hit plus 24 hours for unhinted entries. Add an intermediate-time assertion for hinted plans.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "not-checked",
+      "note": "Telemetry spool implementation is outside this scoped review."
+    },
+    {
+      "id": "F02-3",
+      "status": "not-checked",
+      "note": "Deletion retry implementation was not inspected."
+    },
+    {
+      "id": "F02-4",
+      "status": "not-checked",
+      "note": "Harness implementation coverage map was not inspected."
+    },
+    {
+      "id": "F02-5",
+      "status": "not-checked",
+      "note": "Rating transaction ordering was not inspected."
+    },
+    {
+      "id": "F02-6",
+      "status": "not-checked",
+      "note": "Prompt anchor implementation was not inspected."
+    },
+    {
+      "id": "F02-7",
+      "status": "not-checked",
+      "note": "Cross-engine shared-plan behavior was not reviewed."
+    },
+    {
+      "id": "F02-8",
+      "status": "not-checked",
+      "note": "No comparative route benchmark was reviewed."
+    },
+    {
+      "id": "F04-1",
+      "status": "not-checked",
+      "note": "Process-name classification was not inspected."
+    },
+    {
+      "id": "F04-2",
+      "status": "not-checked",
+      "note": "Windows local-zone transition behavior was not tested."
+    },
+    {
+      "id": "F04-3",
+      "status": "not-checked",
+      "note": "Required-light panel metadata was not inspected."
+    },
+    {
+      "id": "F06-1",
+      "status": "not-checked",
+      "note": "Historical Samoa offset handling was not inspected."
+    },
+    {
+      "id": "F09-1",
+      "status": "not-checked",
+      "note": "Context configuration Unicode handling was not inspected."
+    },
+    {
+      "id": "F09-2",
+      "status": "not-checked",
+      "note": "Flush/deletion lock ordering was not inspected."
+    },
+    {
+      "id": "F09-3",
+      "status": "not-checked",
+      "note": "Recoverable deletion cleanup was not inspected."
+    },
+    {
+      "id": "F09-4",
+      "status": "not-checked",
+      "note": "Spool reread failure behavior was not inspected."
+    },
+    {
+      "id": "F09-5",
+      "status": "not-checked",
+      "note": "Legacy telemetry sanitization was not inspected."
+    },
+    {
+      "id": "F09-6",
+      "status": "not-checked",
+      "note": "Rating actor inference was not inspected."
+    },
+    {
+      "id": "F11-1",
+      "status": "not-checked",
+      "note": "Health journal I/O handling was not inspected."
+    },
+    {
+      "id": "F11-2",
+      "status": "not-checked",
+      "note": "Required-reviewer executable propagation was not inspected."
+    },
+    {
+      "id": "F11-3",
+      "status": "not-checked",
+      "note": "Required-reviewer shared-plan roster context was not inspected."
+    },
+    {
+      "id": "F11-4",
+      "status": "not-checked",
+      "note": "PowerShell hook command execution was not checked."
+    },
+    {
+      "id": "F11-5",
+      "status": "not-checked",
+      "note": "AGY tool stall allowance was not inspected."
+    },
+    {
+      "id": "F14-1",
+      "status": "not-checked",
+      "note": "Local-only deletion transaction persistence was not inspected."
+    },
+    {
+      "id": "F19-1",
+      "status": "not-checked",
+      "note": "Complaint/deletion synchronization was not inspected."
+    },
+    {
+      "id": "F19-2",
+      "status": "not-checked",
+      "note": "Unreadable-salt cleanup behavior was not inspected."
+    },
+    {
+      "id": "F19-3",
+      "status": "not-checked",
+      "note": "Duplicate-key telemetry sanitization was not inspected."
+    },
+    {
+      "id": "F22-1",
+      "status": "not-checked",
+      "note": "Journal replay deduplication durability was not inspected."
+    },
+    {
+      "id": "F23-1",
+      "status": "not-checked",
+      "note": "Process metadata failure classification was not inspected."
+    },
+    {
+      "id": "F23-2",
+      "status": "not-checked",
+      "note": "Unknown creation-time recovery behavior was not inspected."
+    },
+    {
+      "id": "F23-3",
+      "status": "not-checked",
+      "note": "Kill evidence persistence was not inspected."
+    },
+    {
+      "id": "F23-4",
+      "status": "not-checked",
+      "note": "Recovery fixture strength was not reviewed."
+    },
+    {
+      "id": "F23-5",
+      "status": "not-checked",
+      "note": "Production Windows Samoa behavior was not tested."
+    },
+    {
+      "id": "F24-1",
+      "status": "not-checked",
+      "note": "Not-spooled fallback accounting was not inspected."
+    },
+    {
+      "id": "F24-2",
+      "status": "not-checked",
+      "note": "Unterminated suffix folding was not inspected."
+    },
+    {
+      "id": "F24-3",
+      "status": "not-checked",
+      "note": "Not-spooled creation during cleanup was not inspected."
+    },
+    {
+      "id": "F24-4",
+      "status": "not-checked",
+      "note": "Unseen-suffix status reporting was not inspected."
+    },
+    {
+      "id": "F24-5",
+      "status": "not-checked",
+      "note": "Plugin-home marker and shared lock coverage was not reviewed."
+    },
+    {
+      "id": "F24-6",
+      "status": "not-checked",
+      "note": "Post-fold record rewrite failures were not inspected."
+    },
+    {
+      "id": "F25-2",
+      "status": "not-checked",
+      "note": "Endpoint transcript-location checks were not inspected."
+    },
+    {
+      "id": "F25-3",
+      "status": "not-checked",
+      "note": "Claude model case handling was not inspected."
+    },
+    {
+      "id": "F25-4",
+      "status": "not-checked",
+      "note": "Child environment debug redaction was not inspected."
+    },
+    {
+      "id": "F30-1",
+      "status": "not-checked",
+      "note": "Generic-helper unknown-tree recovery was not inspected."
+    },
+    {
+      "id": "F30-2",
+      "status": "not-checked",
+      "note": "Pre-kill persistence and write-failure handling were not inspected."
+    },
+    {
+      "id": "F30-3",
+      "status": "not-checked",
+      "note": "Continuation and repair kill fixtures were not reviewed."
+    },
+    {
+      "id": "F31-1",
+      "status": "not-checked",
+      "note": "Live-producer fallback accounting was not inspected."
+    },
+    {
+      "id": "F36-1",
+      "status": "not-checked",
+      "note": "Transcript guard Unicode slicing was not inspected."
+    },
+    {
+      "id": "F36-2",
+      "status": "not-checked",
+      "note": "Transcript path NFC normalization was not inspected."
+    },
+    {
+      "id": "F38-1",
+      "status": "not-checked",
+      "note": "Recovery after multiple persistence failures was not inspected."
+    },
+    {
+      "id": "F40-1",
+      "status": "not-checked",
+      "note": "Kill-copy enumeration error handling was not inspected."
+    },
+    {
+      "id": "F40-2",
+      "status": "not-checked",
+      "note": "Kick acknowledgement under persistence failure was not inspected."
+    },
+    {
+      "id": "F42-1",
+      "status": "not-checked",
+      "note": "Recovery-copy metadata failure handling was not inspected."
+    },
+    {
+      "id": "F46-1",
+      "status": "not-checked",
+      "note": "Equal-time quota aggregation was not inspected."
+    },
+    {
+      "id": "F48-1",
+      "status": "not-checked",
+      "note": "Secondary-window quota selection was not inspected."
+    },
+    {
+      "id": "F50-1",
+      "status": "not-checked",
+      "note": "Quota reset-completeness tie breaking was not inspected."
+    },
+    {
+      "id": "F52-1",
+      "status": "not-checked",
+      "note": "Quota aggregation comparison-clock behavior was not inspected."
+    },
+    {
+      "id": "F52-2",
+      "status": "not-checked",
+      "note": "NaN quota comparison handling was not inspected."
+    },
+    {
+      "id": "F55-1",
+      "status": "not-checked",
+      "note": "Account quota cache behavior across resets was not inspected."
+    },
+    {
+      "id": "F55-2",
+      "status": "not-checked",
+      "note": "Invalid newer quota observation selection was not inspected."
+    },
+    {
+      "id": "F58-1",
+      "status": "not-checked",
+      "note": "Per-window observation timestamp aggregation was not inspected."
+    },
+    {
+      "id": "F60-1",
+      "status": "not-checked",
+      "note": "Quota timestamp persistence was not inspected."
+    },
+    {
+      "id": "F62-1",
+      "status": "not-checked",
+      "note": "Fractional-second quota timestamp persistence was not inspected."
+    },
+    {
+      "id": "F66-1",
+      "status": "not-checked",
+      "note": "Documented admission fix was read, but recovery implementation was not checked."
+    },
+    {
+      "id": "F66-2",
+      "status": "not-checked",
+      "note": "Documented reservation fix was read, but persistence implementation was not checked."
+    },
+    {
+      "id": "F66-3",
+      "status": "fixed",
+      "note": "Reviewed candidate selection counts matching nonempty consultation IDs once and excludes unidentified rows; production ID propagation was not rerun."
+    },
+    {
+      "id": "F66-4",
+      "status": "fixed",
+      "note": "Reviewed split_clock rejects non-ASCII input before byte slicing, and roster validation rejects unresolved hints."
+    },
+    {
+      "id": "F66-5",
+      "status": "not-checked",
+      "note": "Documented shim restoration was read, but shim implementations were not inspected."
+    },
+    {
+      "id": "F66-6",
+      "status": "still-open",
+      "note": "Inference from transient pairs and eligibility without proof of restored capacity remain documented policy limitations. Finding #1 identifies a separate regression affecting valid hints."
+    },
+    {
+      "id": "F68-1",
+      "status": "fixed",
+      "note": "Reviewed deduplication uses exact nonempty consultation IDs; different IDs survive equal timestamps, and legacy rows cannot complete a pair."
+    },
+    {
+      "id": "F68-2",
+      "status": "not-checked",
+      "note": "Portable test replacement is documented, but its implementation and non-Windows execution were not checked."
+    },
+    {
+      "id": "F70-1",
+      "status": "fixed",
+      "note": "Removing unidentified rows from cap-pair construction eliminates the legacy text/time merge and split mechanism."
+    },
+    {
+      "id": "F72-1",
+      "status": "fixed",
+      "note": "Legacy rows cannot enter the pair, and the read-time candidate filter excludes aged identified rows. Its broader hinted-plan consequence is finding #1."
+    },
+    {
+      "id": "F72-2",
+      "status": "fixed",
+      "note": "Cap-pair deduplication no longer compares failure text; nonempty consultation ID is the identity."
+    },
+    {
+      "id": "F74-1",
+      "status": "still-open",
+      "note": "Same-ID attempts intentionally count once; single-consultation exhaustion remains on ordinary burst handling, as documented."
+    },
+    {
+      "id": "F74-2",
+      "status": "fixed",
+      "note": "The proposed monthly:99 trigger is rejected: next_cap_reset accepts days 1–31, and roster loading requires successful resolution."
+    }
+  ],
+  "unproven": [
+    "The hinted-plan intermediate-time regression is source-proven but was not executed; RC1 supplies the missing regression check.",
+    "The brief's reported 828 passing tests, clean clippy/fmt, and 125/0 shim harness result were not independently verified.",
+    "The remaining .collab files, earlier wave implementations, and source outside the specified diffs and targeted surrounding ranges were not read.",
+    "Live provider behavior, detached concurrency, shim environment restoration, and cross-platform recovery were not exercised in this consultation."
+  ],
+  "first_run_checklist": [
+    "On a task with previous panel threads, native output must show mode: new, and resulting member records must identify newly created threads unless fork was explicitly requested.",
+    "Two detached runs of one task must show overlapping execution intervals, distinct reserved and committed numbers, intact records, and native c3 status/wait commands.",
+    "A genuine ledger/machine mirror must produce one qualifying consultation; two distinct identified instant failures within an hour must produce a plan-quota refusal, even at identical timestamps.",
+    "After fixing finding #1, controlled-time output must retain the hinted plan-quota refusal beyond 24 hours, show the declared reset time, and become eligible at that reset; the unhinted case must become eligible at first-hit plus 24 hours.",
+    "Legacy no-ID rows must not complete a cap pair, and a later usable reply must clear the inferred cap refusal."
+  ]
+}
