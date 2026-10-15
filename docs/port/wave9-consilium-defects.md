@@ -169,3 +169,23 @@ preflight, `plan_verdict`) independent of retention. A pair lying entirely befor
 evidence. Tests: the RC1 case (hinted stays out at 2026-10-16, available after 2026-10-26 16:00) and
 the hinted/unhinted split of the 25 h-old pair in `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe`
 and `plan::hits_are_counted_by_consultation_identity_not_by_time`.
+
+## 9f - the third acceptance pass (handoff 78: F78-1, F78-2)
+
+**F78-1 (blocker):** the detector fixed `second = hits[0]` (the newest in-period hit) and looked for a
+partner within 60 min of IT only, so a later ISOLATED instant 429 (a third distinct consultation at
+22:00Z after a 20:00/20:20Z pair, read at 22:11Z) hid the established pair and the exhausted entry read
+available before its declared reset. Fix: `plan_cap_verdict` now scans all retained distinct-id
+in-period hits newest-first and takes the newest QUALIFYING pair (any two within 60 min) for
+`second`/`first`/`until`/`gap_min`. **F78-2 (blocker):** `update_machine_health` retention kept a row
+only while `recent` (<= 24 h) or `still_out`, so id-carrying instant-429 evidence was pruned once its
+ordinary burst `until` expired - a reader in ANOTHER repository (no ledger copies of its own) then lost
+the pair before the declared reset, and the 35-day `CAP_PAIR_RETENTION_MINUTES` only filtered rows
+already loaded. Fix: retention now keeps an id-carrying instant-429 row (`consult_id` non-empty, class
+`quota`, kind `burst` - exactly what `endpoint_health` counts, since `machine_endpoint_consults` mirrors
+it with `finished_at == when`) for `CAP_PAIR_RETENTION_MINUTES` regardless of `until`, and the
+500-record cap (`cap_machine_endpoints`) evicts non-evidence rows first and the oldest evidence rows
+only when none are left. The replay guard is unaffected (evidence keys merely persist longer). Tests:
+the RC1 isolated-hit case in `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe`, and the
+production-path RC2 (`health::machine_health_retention_keeps_cap_evidence_until_the_period_ends`) plus
+the cap-ordering unit test `health::the_record_cap_evicts_cap_evidence_last`.

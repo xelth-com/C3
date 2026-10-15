@@ -365,15 +365,27 @@ pub fn plan_cap_verdict(
     if hits.len() < 2 {
         return verdict;
     }
-    // the newest hit and the newest earlier one within the hour
-    let second = hits[0];
-    let Some(first) = hits[1..]
-        .iter()
-        .find(|h| second - **h <= Duration::minutes(60))
-    else {
+    // (wave 9f, F78-1) the newest QUALIFYING pair: ANY two distinct-id hits inside the period within
+    // 60 min of each other. Fixing `second = hits[0]` (the single newest hit) and pairing only with
+    // it let a later isolated instant 429 hide an established earlier pair, so the exhausted entry
+    // read available before its declared reset. We scan newest-first and take the first `second` that
+    // has a partner (the newest older hit) within the hour.
+    let mut sorted = hits;
+    sorted.sort_by(|a, b| b.cmp(a));
+    let mut found = None;
+    for (i, &second) in sorted.iter().enumerate() {
+        if let Some(&first) = sorted[i + 1..]
+            .iter()
+            .find(|h| second - **h <= Duration::minutes(60))
+        {
+            found = Some((second, first));
+            break;
+        }
+    }
+    let Some((second, first)) = found else {
         return verdict;
     };
-    let gap_min = ((second - *first).num_seconds() as f64 / 60.0).ceil() as i64;
+    let gap_min = ((second - first).num_seconds() as f64 / 60.0).ceil() as i64;
     let second_utc = second.with_timezone(&Utc);
     let until_utc = if entry.reset_hint.is_empty() {
         // the pair ages out of the read-time 24 h bound with its first hit
@@ -609,6 +621,22 @@ mod tests {
         // has passed: read the following day, the entry is available again.
         let after_reset = Utc.with_ymd_and_hms(2026, 10, 27, 0, 0, 0).unwrap();
         assert_eq!(state(&hinted, after_reset), "available");
+        // (F78-1, RC1) a later ISOLATED instant 429 (a third distinct consultation at 22:00Z, no
+        // partner within the hour) must not hide the established 20:00/20:20 pair: read at 22:11Z the
+        // monthly refusal remains, until the declared reset (the 26th, 16:00 UTC).
+        let rows3 = [
+            hit(1, "2026-10-14T20:00:00+00:00"),
+            hit(2, "2026-10-14T20:20:00+00:00"),
+            hit(3, "2026-10-14T22:00:00+00:00"),
+        ];
+        let at3 = Utc.with_ymd_and_hms(2026, 10, 14, 22, 11, 0).unwrap();
+        let h3 = endpoint_health(&rows3, FP_A, at3);
+        let v3 = plan_cap_verdict(PreflightVerdict::available(), &hinted, Some(&h3), at3);
+        assert_eq!(v3.state, "unavailable");
+        assert_eq!(
+            v3.until.map(|u| u.with_timezone(&Utc)),
+            Some(Utc.with_ymd_and_hms(2026, 10, 26, 16, 0, 0).unwrap())
+        );
         // (b) no hint: out until the pair ages out at READ time (24 h after its first hit), then a probe
         let day = Utc.with_ymd_and_hms(2026, 10, 15, 19, 59, 0).unwrap();
         assert_eq!(state(&unhinted, day), "unavailable");

@@ -1684,7 +1684,8 @@ fn new_machine_health_record_base(
 // was applied or moved. The plugin and C3 share the health file and its journal.
 //
 // (wave 2i, F29-1) THE APPLIED MARKS, inside the journal itself: the endpoint list is not a durable
-// replay ledger - the 24-hour retention and the 500-record cap remove keys from it, after which a
+// replay ledger - the retention (24 h, or 35 days for id-carrying instant-429 cap evidence, wave 9f
+// F78-2) and the 500-record cap remove keys from it, after which a
 // journal line still on disk would apply again as a new record (resurrected, displacing another);
 // and a ledger beside the journal (wave 2h's `<journal>.applied` list, retired) is lost to the
 // plugin, which shares the journal and neither reads nor keeps such a file. The marks are members
@@ -2169,9 +2170,38 @@ fn acquire_machine_lock(lock_path: &Path, budget: LockBudget) -> Option<std::fs:
 static HEALTH_FAIL_FIRST_DONE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// (wave 9f, F78-2) Is this an id-carrying instant-429 cap-evidence row? `machine_endpoint_consults`
+/// mirrors a machine record with `finished_at == when` (wall 0 < `INSTANT_429_SECS`), so a
+/// burst-class quota record that carries a consult id is exactly the instant 429 the cap-pair
+/// detector counts. Such a row is retained for `CAP_PAIR_RETENTION_MINUTES` and evicted last.
+fn is_cap_evidence(e: &MachineEndpoint) -> bool {
+    !e.consult_id.is_empty() && e.class == "quota" && e.kind == "burst"
+}
+
+/// (wave 9f, F78-2) Enforce the record cap: evict non-evidence rows first (oldest first, from the
+/// front), and only when none are left evict the oldest cap-evidence rows, so a cap pair survives the
+/// 500-record cap while ordinary rows exist to trim.
+fn cap_machine_endpoints(endpoints: &mut Vec<MachineEndpoint>, max: usize) {
+    if endpoints.len() <= max {
+        return;
+    }
+    let mut drop = endpoints.len() - max;
+    endpoints.retain(|e| {
+        if drop > 0 && !is_cap_evidence(e) {
+            drop -= 1;
+            false
+        } else {
+            true
+        }
+    });
+    if drop > 0 {
+        endpoints.drain(0..drop);
+    }
+}
+
 /// Read-modify-write the machine health file under the `<path>.lock` exclusive lock: apply the
 /// journal (wave 28b, D13), then `add_endpoint`/`add_running`/`remove_pid`, prune stale endpoints and
-/// dead running rows, cap endpoints to the last 500, and write atomically; then move the journal's
+/// dead running rows, cap endpoints to the last 500 (cap evidence evicted last), and write atomically; then move the journal's
 /// unreadable lines to `<journal>.bad` and empty the journal by what was applied or moved; (wave 2i,
 /// F29-1) the journal's records are marked `applying` before the write and, when the journal is
 /// kept, `applied` after it, and a record so marked is never applied again. Never panics; a failure
@@ -2337,6 +2367,16 @@ fn update_machine_health(
             let recent = DateTime::parse_from_rfc3339(&e.when)
                 .map(|w| (now - w.with_timezone(&Utc)).num_hours() <= 24)
                 .unwrap_or(false);
+            // (wave 9f, F78-2) an id-carrying instant-429 cap-evidence row is kept for the full
+            // cap-pair retention (35 days), even after its burst `until` expired, so a reader in
+            // ANOTHER repository (with no ledger copies of its own) still sees the pair until the
+            // entry's declared reset. The per-entry period rule still gates the verdict downstream.
+            let evidence_kept = is_cap_evidence(e)
+                && DateTime::parse_from_rfc3339(&e.when)
+                    .map(|w| {
+                        (now - w.with_timezone(&Utc)).num_minutes() <= CAP_PAIR_RETENTION_MINUTES
+                    })
+                    .unwrap_or(false);
             // (wave 29b, E15) an ok record stays while its quota mark still blocks
             let until = e
                 .until
@@ -2356,12 +2396,9 @@ fn update_machine_health(
                     .and_then(|w| w.resets_at)
             });
             let still_out = until.map(|u| u.with_timezone(&Utc) > now).unwrap_or(false);
-            recent || still_out
+            recent || still_out || evidence_kept
         });
-        if endpoints.len() > MACHINE_HEALTH_MAX_ENDPOINTS {
-            let drop = endpoints.len() - MACHINE_HEALTH_MAX_ENDPOINTS;
-            endpoints.drain(0..drop);
-        }
+        cap_machine_endpoints(&mut endpoints, MACHINE_HEALTH_MAX_ENDPOINTS);
         running.retain(|r| is_alive(r.pid, &r.start_time));
 
         let out = serde_json::json!({
@@ -3075,6 +3112,97 @@ mod machine_health_tests {
         assert_eq!(endpoints_of(&hp, "fp-old"), 0);
         assert_eq!(read_machine_health(&hp).endpoints.len(), 500);
         let _ = take_machine_health_journal_notes();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (wave 9f, F78-2) the 500-record cap evicts non-evidence rows first and cap evidence last.
+    #[test]
+    fn the_record_cap_evicts_cap_evidence_last() {
+        let ev = |id: &str| MachineEndpoint {
+            endpoint: "fp".into(),
+            class: "quota".into(),
+            kind: "burst".into(),
+            when: "2026-10-14T20:00:00+00:00".into(),
+            consult_id: id.into(),
+            ..Default::default()
+        };
+        let plain = |fp: &str| MachineEndpoint {
+            endpoint: fp.into(),
+            class: "ok".into(),
+            when: "2026-10-14T20:00:00+00:00".into(),
+            ..Default::default()
+        };
+        // enough plain rows to absorb the overflow: the evidence pair survives untouched
+        let mut eps = vec![ev("c-1"), ev("c-2"), plain("a"), plain("b"), plain("c")];
+        cap_machine_endpoints(&mut eps, 2);
+        assert_eq!(eps.len(), 2);
+        assert!(eps.iter().all(is_cap_evidence));
+        // the overflow outlasts the plain rows: they go first, then the OLDEST evidence (c-1)
+        let mut eps2 = vec![ev("c-1"), ev("c-2"), ev("c-3"), plain("a")];
+        cap_machine_endpoints(&mut eps2, 2);
+        assert_eq!(
+            eps2.iter()
+                .map(|e| e.consult_id.clone())
+                .collect::<Vec<_>>(),
+            vec!["c-2".to_string(), "c-3".to_string()]
+        );
+    }
+
+    // (wave 9f, F78-2, RC2) through the PRODUCTION path: a cap pair seeded ONLY in the machine file
+    // (two identified instant 429s, their burst `until` long expired, no quota window) survives an
+    // unrelated `update_machine_health` 48 h later, so a reader in another repository (no ledger of
+    // its own) still reads the hinted entry out until its declared reset.
+    #[test]
+    fn machine_health_retention_keeps_cap_evidence_until_the_period_ends() {
+        use chrono::Datelike;
+        let alive = |_: u32, _: &str| true;
+        let dir = journal_scratch("cap-evidence");
+        let hp = dir.join("health.json");
+        let base = Utc::now() - Duration::hours(48);
+        let evid = |id: &str, when: DateTime<Utc>| MachineEndpoint {
+            endpoint: "fp-ev".into(),
+            class: "quota".into(),
+            kind: "burst".into(),
+            until: Some((when + Duration::minutes(BURST_OUT_MINUTES)).to_rfc3339()),
+            when: when.to_rfc3339(),
+            message: "429 Too Many Requests".into(),
+            consult_id: id.into(),
+            ..Default::default()
+        };
+        write_endpoints(
+            &hp,
+            &[evid("c-1", base), evid("c-2", base + Duration::minutes(20))],
+        );
+        // an unrelated recent record for a different endpoint triggers the prune (at real `now`)
+        assert_eq!(
+            add_machine_health_endpoint(&hp, &ok_record("fp-other", "C:\\repo-x"), &alive),
+            HealthUpdate::Written
+        );
+        // the 48 h-old evidence survives (the old 24 h bound would have dropped it)
+        assert_eq!(endpoints_of(&hp, "fp-ev"), 2);
+        let consults = machine_endpoint_consults(&hp, "fp-ev");
+        let h = endpoint_health(&consults, "fp-ev", Utc::now());
+        assert_eq!(
+            h.instant_429s.len(),
+            2,
+            "cap evidence must survive retention"
+        );
+        // evaluated just after the pair, before any monthly reset: the hinted entry stays out
+        let reset_day = (base + Duration::days(12)).day();
+        let hinted = crate::roster::RosterEntry {
+            provider: "ali".into(),
+            plan_caps: vec!["monthly".into()],
+            reset_hint: format!("monthly:{reset_day}T00:00+00:00"),
+            ..Default::default()
+        };
+        let eval = base + Duration::hours(1);
+        let v = crate::plan::plan_cap_verdict(
+            crate::verdict::PreflightVerdict::available(),
+            &hinted,
+            Some(&h),
+            eval,
+        );
+        assert_eq!(v.state, "unavailable");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
