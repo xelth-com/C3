@@ -82,7 +82,12 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   `--schema-transport output-schema` are refused. Files `handoffs/<NN>-agy-<slug>.*`.
   `--denial-retry 0|1` (default 1): one more turn when a tool was auto-denied and the turn
   produced nothing.
-- **`muse`** — Meta's Muse Code CLI (Muse Code subscription; `--model muse-spark-1.3`). Effort
+- **`muse`** — Meta's Muse Code CLI (Muse Code subscription). Three models, in priority order:
+  `muse-spark-1.3-contributor` is the default - coding work and keeping a line of thought,
+  everyday reviews where a second opinion is all that is needed; `muse-spark-1.3` only when the
+  contributor model is down or refused; `muse-wonder-1.0` ONLY for hard reviews and consilia
+  (a weighty roster seat, or an explicit `--provider meta --model muse-wonder-1.0`) - the Muse
+  allowance is shared, and the contributor's turns must survive. Effort
   goes as the reasoning effort, default mode `new`, files `handoffs/<NN>-muse-<slug>.*`,
   `--max-model-steps <n>` caps its model steps. Refused while `META_API_KEY`/`MODEL_API_KEY`
   is set (would bill per token) and while no oauth sign-in is established — the user signs in

@@ -73,7 +73,11 @@ const ALIBABA_MODELS: &[&str] = &[
     "glm-5.3",
     "glm-5.2",
 ];
-const MUSE_MODELS: &[&str] = &["muse-spark-1.3", "muse-spark-1.3-contributor"];
+const MUSE_MODELS: &[&str] = &[
+    "muse-spark-1.3",
+    "muse-spark-1.3-contributor",
+    "muse-wonder-1.0",
+];
 
 /// The declared caps-v1 host keys (excluding `engine:*`), ordinal-sorted — for the "no effort
 /// vocabulary declared for <host>" refusal (`codex-consult-common.ps1:2718`). Kept in sorted

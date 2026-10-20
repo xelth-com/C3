@@ -168,7 +168,11 @@ pub(crate) static VENDORS: [Vendor; 10] = [
         hosts: &[],
         engine: "muse",
         builtin: "",
-        models: &["muse-spark-1.3", "muse-spark-1.3-contributor"],
+        models: &[
+            "muse-spark-1.3",
+            "muse-spark-1.3-contributor",
+            "muse-wonder-1.0",
+        ],
     },
     Vendor {
         class: "anthropic",
