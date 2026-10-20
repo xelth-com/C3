@@ -13,3 +13,4 @@ pub mod router;
 pub mod scoreboard;
 pub mod snapshot;
 pub mod telemetry;
+pub mod work;

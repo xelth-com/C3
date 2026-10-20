@@ -41,3 +41,5 @@ pub mod pack;
 pub mod telemetry;
 
 pub mod mcp;
+
+pub mod work;

@@ -702,6 +702,77 @@ pub fn claude_args(t: &ClaudeArgs) -> Vec<String> {
     a
 }
 
+// ------------------------------------------------------------------------- the work argv (work mode, design v1)
+
+/// (work mode, `docs/work-mode.md`) The tools a WORKER child runs with: the reviewer's read
+/// tools plus the write tools and Bash - a worker edits the repository; a reviewer never does.
+pub const WORK_TOOLS_ARG: &str = "Read,Edit,Write,Grep,Glob,Bash";
+/// (work mode) A worker runs under `acceptEdits`: its edits land, every other action follows
+/// the allow list.
+pub const WORK_PERMISSION_MODE: &str = "acceptEdits";
+/// (work mode) The default `--allowedTools` of a work run (`--allow` replaces the list; a
+/// pattern naming git is refused on the command line - a worker never commits).
+pub const WORK_DEFAULT_ALLOWS: &[&str] = &[
+    "Bash(cargo test:*)",
+    "Bash(cargo check:*)",
+    "Bash(cargo clippy:*)",
+    "Bash(cargo fmt:*)",
+];
+/// (work mode) `--max-turns` of a work run (the CLI's default).
+pub const WORK_MAX_TURNS_DEFAULT: u32 = 80;
+/// (work mode) The fixed preamble of every work run's prompt - a contract with the worker,
+/// tested verbatim.
+pub const WORK_PREAMBLE: &str = "You are a coding worker inside this repository. Do only what the brief asks, touch only the files it names or clearly implies, never run git, never leave the repository, and never commit. Finish with a final report: what you changed (file list), the exact test commands you ran and their result counts, any deviation from the brief and why, and what you could not do.";
+
+/// The options of one worker run (the work-mode counterpart of [`ClaudeArgs`]).
+#[derive(Debug, Clone, Default)]
+pub struct ClaudeWorkArgs {
+    /// The model id (the roster entry's, or the `--model` override).
+    pub model: String,
+    /// The effort to send (`--effort`), when one is sent.
+    pub effort: Option<String>,
+    /// `--max-turns`.
+    pub max_turns: u32,
+    /// The `--allowedTools` patterns, joined by ','.
+    pub allowed_tools: Vec<String>,
+    /// The minted session id (`--session-id`).
+    pub session_id: String,
+}
+
+/// The argv of one worker run after the launcher: the review argv WITHOUT `--restricted` (it
+/// would remove the write tools), with [`WORK_PERMISSION_MODE`], the worker tool set and the
+/// allow list. The prompt travels on stdin.
+pub fn work_args(t: &ClaudeWorkArgs) -> Vec<String> {
+    let mut a: Vec<String> = [
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--permission-mode",
+        WORK_PERMISSION_MODE,
+        "--tools",
+        WORK_TOOLS_ARG,
+        "--allowedTools",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    a.push(t.allowed_tools.join(","));
+    a.push("--model".into());
+    a.push(t.model.clone());
+    if let Some(e) = t.effort.as_ref().filter(|e| !e.trim().is_empty()) {
+        a.push("--effort".into());
+        a.push(e.clone());
+    }
+    a.push("--max-turns".into());
+    a.push(t.max_turns.to_string());
+    a.push("--session-id".into());
+    a.push(t.session_id.clone());
+    a
+}
+
 /// `ConvertTo-ClaudeToken`: a short identifier as the CLI reported it (authMethod, apiProvider,
 /// apiKeySource, a permission mode), `""` when absent, `unrecognized` for anything else.
 pub fn token(value: Option<&Value>) -> String {
@@ -1116,5 +1187,46 @@ mod tests {
         assert_eq!(crt_arg("{\"a\":\"b\"}"), "\"{\\\"a\\\":\\\"b\\\"}\"");
         assert_eq!(schema_text("{\n  \"a\": \"x y\"\n}"), "{\"a\":\"x y\"}");
         assert_eq!(format_argv(&["a".into(), "b c".into()]), "a \"b c\"");
+    }
+
+    /// (work mode, design v1) The worker argv: the review flags minus `--restricted`, with
+    /// `acceptEdits`, the worker tool set, the allow list joined by ',', the effort when sent
+    /// and the default max turns of 80 - and the preamble verbatim (a contract with the worker).
+    #[test]
+    fn the_work_argv_and_the_preamble() {
+        let allows: Vec<String> = WORK_DEFAULT_ALLOWS.iter().map(|s| s.to_string()).collect();
+        let a = work_args(&ClaudeWorkArgs {
+            model: "glm-5.3".into(),
+            effort: Some("high".into()),
+            max_turns: WORK_MAX_TURNS_DEFAULT,
+            allowed_tools: allows,
+            session_id: "u".into(),
+        });
+        assert_eq!(
+            a.join(" "),
+            "-p --output-format stream-json --verbose --strict-mcp-config --disable-slash-commands --permission-mode acceptEdits --tools Read,Edit,Write,Grep,Glob,Bash --allowedTools Bash(cargo test:*),Bash(cargo check:*),Bash(cargo clippy:*),Bash(cargo fmt:*) --model glm-5.3 --effort high --max-turns 80 --session-id u"
+        );
+        // no effort sent -> no --effort; a custom allow list and max turns pass as given
+        let b = work_args(&ClaudeWorkArgs {
+            model: "m".into(),
+            effort: None,
+            max_turns: 12,
+            allowed_tools: vec!["Bash(cargo test:*)".into()],
+            session_id: "v".into(),
+        });
+        assert_eq!(
+            b.join(" "),
+            "-p --output-format stream-json --verbose --strict-mcp-config --disable-slash-commands --permission-mode acceptEdits --tools Read,Edit,Write,Grep,Glob,Bash --allowedTools Bash(cargo test:*) --model m --max-turns 12 --session-id v"
+        );
+        // `--restricted` (which would remove the write tools) is never on a worker's argv
+        assert!(!a.iter().any(|x| x == "--restricted"));
+        assert!(!b.iter().any(|x| x == "--restricted"));
+        // the preamble is a contract: it is tested verbatim
+        assert_eq!(
+            WORK_PREAMBLE,
+            "You are a coding worker inside this repository. Do only what the brief asks, touch only the files it names or clearly implies, never run git, never leave the repository, and never commit. Finish with a final report: what you changed (file list), the exact test commands you ran and their result counts, any deviation from the brief and why, and what you could not do."
+        );
+        assert_eq!(WORK_MAX_TURNS_DEFAULT, 80);
+        assert_eq!(WORK_DEFAULT_ALLOWS.len(), 4);
     }
 }

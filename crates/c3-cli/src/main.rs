@@ -64,6 +64,8 @@ enum Commands {
     Router(c3::cli::router::RouterArgs),
     /// Run the stdio MCP server (milestone 10).
     Mcp,
+    /// Run a roster model as an ordinary coding worker (docs/work-mode.md).
+    Work(c3::cli::work::WorkArgs),
 }
 
 #[derive(Parser)]
@@ -125,6 +127,7 @@ fn main() {
         Some(Commands::Index(a)) => c3::cli::index::run(a),
         Some(Commands::Router(a)) => c3::cli::router::run(a),
         Some(Commands::Mcp) => c3::cli::mcp::run(),
+        Some(Commands::Work(a)) => c3::cli::work::run(a),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).
             use clap::CommandFactory;

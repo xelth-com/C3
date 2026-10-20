@@ -95,6 +95,14 @@ skill's `reference.md`.
 Park a detached run in the task's `state.md` (the detach id, the brief path, the come-back
 command); a later session finds it there and in the SessionStart line.
 
+**Worker runs (`c3 work`).** `c3 work --detach ...` starts a roster model as an ordinary coding
+worker (a brief file, an allow list, a record under `<collab>/<task>/work/`); `c3 work --task
+<task> --status [--id <id>]` and `--wait [--id <id>]` read it with the same exit codes as
+consult (0 done, 1 died, 2 running). A worker run counts as *running work* for the wait rule —
+poll its `--status`, keep the wakeup armed until it reports. The live-member rule does NOT
+apply to it: a worker is expected to change the tree, so you may write under the collab
+directory (and hold your writing workers) while one runs.
+
 **Quota windows (wave 8).** Before a wave of reviews on a subscription plan, read the QUOTA column of
 `c3 providers` (`5h 96% until 18:32; wk 15% until Oct 20`): a quota window at 98 % or more makes
 the reviewer out until its reset, like a usage limit - ask the operator whether to wait or to go on

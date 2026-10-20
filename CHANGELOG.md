@@ -7,7 +7,29 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
-## [Unreleased]
+## [Unreleased / 0.2.3-dev]
+
+### Added
+
+- **`c3 work` — worker runs** (`docs/work-mode.md`): a roster model (engine claude, role
+  `"worker"`) as an ordinary coding worker for low-stakes or test work — it edits the tree and
+  reports; not a consultation (no evidence check, no findings, no rating, no ledger entry). The
+  prompt is a fixed preamble (never git, never commit, a final report) + the brief + `--prompt`;
+  the child runs with the write tools under an allow list (`Bash(cargo test|check|clippy|fmt:*)`
+  by default, `--allow` to replace, git refused); the record is
+  `<collab>/<task>/work/<NN>-<provider>-<model>/` with `brief.md`, `events.jsonl`, `report.md`,
+  `diff.txt` (git status/diff computed by c3, never by the worker) and `run.json` (status, turns,
+  tool calls, files changed, usage — no secret values anywhere). One live run per task;
+  `--detach`/`--status`/`--wait` as the consult flags (status exit 0 done / 1 died / 2 running).
+
+### Fixed
+
+- **muse-wonder-1.0 refused before reaching Meta**: the caps-v1 muse catalog (`c3-core` effort
+  table, telemetry classes) declared only the two spark ids, so every `--model muse-wonder-1.0`
+  run (and the weighty roster seat) failed with "no effort vocabulary declared for model" while
+  the muse CLI itself answered. The id is declared now. The consult reference documents the Muse
+  priority: spark-contributor by default, spark-1.3 only when the contributor is down, wonder only
+  for hard reviews and consilia.
 
 ## [0.2.2] - 2026-10-15
 

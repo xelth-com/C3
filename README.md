@@ -139,6 +139,42 @@ MiMo (credits 0.17x, wall 1.16x - no faster than codex on that plan, structured 
 marks 5.0 vs 3.08).**" (plugin README, "Engines (wave 29)", "Endpoint mode"). Ported in
 `docs/port/wave4-claude.md`; setup text in `plugin/skills/setup-providers/SKILL.md` section 4c.
 
+## Worker runs (`c3 work`, design `docs/work-mode.md`)
+
+A worker run is a roster model as an ordinary CODING WORKER for low-stakes or test work: it
+reads and edits the repository, runs the test commands it is allowed, and reports. It is NOT
+a consultation — no evidence check, no findings, no rating prompt, no review-ledger entry
+(`c3 consult --status` never lists it). First workers (the operator's roster): GLM-5.3 and
+GLM-5.3-flash (z.ai endpoint), DeepSeek-4.1-flash (byteplus endpoint) — all through the
+`claude` engine, which already drives them for reviews. A roster entry opts in with
+`"roles": ["worker"]` (the existing `roles` key).
+
+```
+c3 work --task <slug> --brief <file> --provider <roster label> [--model <id>]
+        [--prompt <text>] [--effort low|medium|high|xhigh] [--max-turns <n>=80]
+        [--timeout-sec <s>=3600] [--allow "Bash(cargo test:*)"]...
+        [--detach] [--status [--id <id>]] [--wait [--id <id>]]
+```
+
+The prompt is a fixed worker preamble (never run git, never leave the repository, never
+commit; finish with a final report) plus the brief file plus `--prompt`; the child runs with
+the write tools (`Read,Edit,Write,Grep,Glob,Bash`, `--permission-mode acceptEdits`) under the
+allow list (defaults: `Bash(cargo test|check|clippy|fmt:*)`). The record lands in
+`<collab>/<task>/work/<NN>-<provider>-<model>/`: `brief.md` (the prompt as sent),
+`events.jsonl` (the child's stream verbatim), `report.md` (the final assistant text),
+`diff.txt` (git status before/after plus `git diff --stat`, computed by c3 — the worker
+never runs git) and `run.json` (status `done|died|timeout|refused`, turns, tool calls,
+files changed, usage; the argv and scrubbed env NAMES, never a secret value).
+
+Refused before anything starts: a missing/unreadable brief, a prompt above the engine's
+1 MiB cap, a label that is not a worker (the message lists the workers) or not engine
+claude, the entry's `env_key` variable unset, a missing launcher, `--allow` naming git
+(a worker never commits), and a second run on a task that already has a live one
+(`--status` exit codes: 0 all done, 1 one died/timed out, 2 one running).
+
+The live-member rule does NOT apply to a worker run: a worker is expected to change the
+tree, so you may keep working (and writing under the collab directory) while one runs.
+
 ## Quota windows and the reading budget (plugin wave 30; C3 wave 8)
 
 A subscription's quota is spent in windows - on a ChatGPT plan a 5-hour window and a weekly one -
