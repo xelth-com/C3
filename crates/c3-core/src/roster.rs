@@ -105,6 +105,10 @@ pub struct RosterEntry {
     /// is unknown (seconds, >= 60); `0` when the entry names none (the run takes `--quota-window-sec`,
     /// else 18000 = 5 h). The plugin validates `ext` as an object only, so the key is invisible to it.
     pub quota_window_sec: i64,
+    /// (0.2.4, work-mode F89-4) `ext.unrestricted` - the operator's opt-in to run a work worker
+    /// without the `--allow` grammar and (for muse) with `--disable-sandbox`. `false` when the
+    /// entry names none. Invisible to the plugin (ext is an object).
+    pub unrestricted: bool,
     /// (0.6.0, wave 29b E1) The claude entry's endpoint (auth `endpoint` only; its `plan` is the
     /// entry's).
     pub endpoint: Option<crate::claude::ClaudeEndpoint>,
@@ -577,6 +581,7 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             let mut plan_caps: Vec<String> = Vec::new();
             let mut reset_hint = String::new();
             let mut quota_window_sec: i64 = 0;
+            let mut unrestricted = false;
             if let Some(xv) = iobj.get("ext") {
                 if !xv.is_object() {
                     why = format!("{at}: ext must be an object (the extension point of other implementations; got {})", compact(xv));
@@ -589,6 +594,20 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                         Some(n) if n >= 60 => quota_window_sec = n,
                         _ => {
                             why = format!("{at}: ext.quota_window_sec must be an integer of at least 60 seconds (the work-run resume window when the reset time is unknown; got {})", compact(qw));
+                            break;
+                        }
+                    }
+                }
+                // (0.2.4, work-mode F89-4) ext.unrestricted: the operator's opt-in to run a work
+                // worker without the --allow grammar (and muse's --disable-sandbox). A boolean.
+                if let Some(uv) = xv.get("unrestricted") {
+                    match uv.as_bool() {
+                        Some(b) => unrestricted = b,
+                        None => {
+                            why = format!(
+                                "{at}: ext.unrestricted must be a boolean (the work-run opt-in to run a worker without the --allow grammar; got {})",
+                                compact(uv)
+                            );
                             break;
                         }
                     }
@@ -896,6 +915,7 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 plan_caps,
                 reset_hint,
                 quota_window_sec,
+                unrestricted,
                 endpoint: entry_endpoint,
             });
         }

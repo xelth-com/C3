@@ -1,0 +1,180 @@
+# Handoff 89 - Codex: codex-0.2.3-acceptance-1
+
+Date: 2026-10-22 08:04 local. Author: Codex (model gpt-6-astra, effort high), Codex CLI 0.155.1.
+Reviewer: openai :: gpt-6-astra (provider from roster, model from roster; endpoint (default), wire_api: (default); provider fingerprint 56d97b6ece36; harness codex-cli 0.155.1).
+Preflight: ok: Logged in using ChatGPT.
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - position 1 of 13.
+Effort: high sent (requested high, mapping openai, by caps-v1: builtin:openai, any model; not confirmed by the provider). Consultation id: 05022e08-b324-4dc5-95e6-abda997c775d.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only, purpose: acceptance). Argv: `codex exec --sandbox read-only --color never --json -m gpt-6-astra -c features.multi_agent=false -c model_reasoning_effort="high" -c model_provider="openai" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-0513e4c53d944cf3907ad3e2cbf24191.md --output-schema C:\Users\Dmytro\.codex\c3\schemas\consult-reply.v1.json -` (prompt on stdin).
+Parent thread: (none - new thread). Result thread: `01a16231-6b1e-73f0-9950-0a39a0b469e1` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/88-claude-0.2.3-acceptance-1.md` (sha256 9bf021ce7e7f). Reviewed: 59ea25a, base 59ea25a767d4e19c113ad473bc0a824fcf2390ac, tree sha256 f7b51f6d7000, 0 changed files.
+Bridge outcome: usable reply. Wall time: 280 s. Tokens: in 325098 (cached 247424), out 8757, reasoning 1450.
+Quota (rollout): 5h 9% until 12:59; wk 28% until Oct 27; this run 325098 input tokens (247424 cached) in 6 calls, max 76922 per call of 258400; sub-agents 0; sub-agents off (features.multi_agent=false); budget 90 % of the 5-hour window.
+Timeout: 3600 s (the default of purpose acceptance); continuation after a timeout kill: up to 900 s.
+Verdict: HOLD - Worker liveness, resume exclusion, and artifact durability have concrete defects that prevent acceptance of v0.2.3. Findings: 3 blocker, 4 major, 1 minor, 0 note (F89-1..F89-8, tracked in `findings.json`). Structured reply: `handoffs/89-codex-codex-0.2.3-acceptance-1.reply.json`.
+Raw event stream: `handoffs/89-codex-codex-0.2.3-acceptance-1.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+1. **Q1:** The claimed guarantees do not hold. Broad Claude `--allow` patterns pass validation; Codex/Muse lack command restrictions. Brief text does not directly alter argv. Arbitrary usage objects enter `run.json`; `diff.txt` contains filenames/statistics, not patch contents. See findings #4–5.
+
+2. **Q2:** Same-session arguments are constructed, but lifecycle correctness fails: foreground liveness expires, resumes can overlap, reports can disappear, and custom caps are forgotten. See #1–3 and #6. Exit-zero classification also lacks terminal-success validation (#8).
+
+3. **Q3:** Require explicit opt-in for Muse’s unrestricted execution. Repository write access alone does not justify disabling shell containment.
+
+4. **Q4: HOLD.** Blockers: #1–3. Resolve the remaining findings before release. Five tool calls used; no tests run. Earlier findings were not rechecked. Unread coverage is listed below.
+
+## Requested checks
+
+- **RC1:** Repository root; workspace-write; extend worker fake-launcher tests with a >120-second foreground run and concurrent resumes; require one child and running status throughout. Budget: 5 minutes.
+- **RC2:** Repository root; workspace-write; inject append/report-write failures and exit-zero error streams; require nonzero status and retained attempt evidence. Budget: 5 minutes.
+- **RC3:** Repository root; workspace-write; test broad allows, sentinel usage data, custom resume caps, and pre-dirty files against findings #4–7. Budget: 10 minutes.
+
+---
+
+### Findings
+
+- **F89-1** [blocker] `crates/c3/src/work/mod.rs:730`, `crates/c3/src/work/record.rs:101`, `crates/c3/src/work/record.rs:134` - A foreground worker is treated as dead after 120 seconds because its running record never receives an owning PID. Reading status or admitting another run can then rewrite the still-active run as died and allow another worker on the same task. Trigger: A foreground work run lasts longer than START_GRACE_SEC, and another process queries its status or starts work on the same task. Evidence: read-code: The initial RunRecord defaults pid to None; run_prepared does not populate it, and its SpawnRequest has on_running: None.; read-code: A pending record without a PID is live only for 120 seconds; read_record converts it to died afterward.; read-code: Only the detached background path explicitly records the current process PID. Verify: Run RC1 with a foreground fake worker sleeping beyond 120 seconds; query status and attempt a second run while the original child remains alive. Remedy: Persist foreground ownership before launch, validate process identity, and retain the task admission lock or equivalent exclusive lease for the entire worker lifecycle.
+- **F89-2** [blocker] `crates/c3/src/work/mod.rs:698`, `crates/c3/src/work/mod.rs:926`, `crates/c3/src/work/mod.rs:1114`, `crates/c3/src/work/mod.rs:1154` - Resume admission is not exclusive: it neither checks the task's other live runs nor atomically claims the selected run and marks it running before spawning. Two resume commands can execute the same session concurrently and overwrite the same temporary event files; a fresh worker can also start while a foreground resume still has status quota. Trigger: Invoke two --resume commands for one quota record concurrently, or start a fresh worker while that record is being resumed. Evidence: read-code: Resume/kick dispatch precedes the initial-run live_run check.; read-code: The resume path checks a previously read status, spawns without a lock or running-state write, and uses fixed .events-resume.jsonl and .stderr-resume paths. Verify: Run RC1 with barriers holding the first resumed child alive; issue a second resume and a fresh task run, requiring both to refuse before launch. Remedy: Use one task-level admission mechanism across starts, resumes, and detached alarms; re-read under the lock and durably claim ownership before launching.
+- **F89-3** [blocker] `crates/c3/src/work/mod.rs:676`, `crates/c3/src/work/mod.rs:895`, `crates/c3/src/work/mod.rs:960` - Artifact failures can silently destroy a resumed report while C3 records done and returns success. append_resume ignores open/write errors, after which resume_once deletes the attempt files; refresh_artifacts also ignores report.md and diff.txt write failures. Trigger: The resumed child succeeds, but opening/appending events.jsonl or writing report.md/diff.txt fails while run.json remains writable. Evidence: read-code: append_resume returns no Result and discards every append error.; read-code: Attempt files are removed immediately after append_resume, regardless of whether their contents were retained.; read-code: Artifact reads default to empty and report/diff writes ignore their results. Verify: Run RC2 with a denied events.jsonl append and a successful resumed child; require preserved attempt files and a nonzero result rather than done. Remedy: Propagate artifact errors, preserve attempt files until durable incorporation succeeds, and publish done only after all required artifacts are safely written.
+- **F89-4** [major] `crates/c3/src/work/mod.rs:300`, `crates/c3-core/src/claude.rs:749`, `crates/c3/src/work/engines.rs:114`, `docs/work-mode.md:168` - The worker permission contract is weaker than the claimed no-git/allow-list boundary. Claude accepts broad patterns such as Bash(*) or Bash(python:*), because validation only rejects strings containing git. Muse always disables its sandbox, and Codex/Muse do not apply the allow list. These paths permit commands outside the stated restricted command set. Trigger: Supply a broad non-git-naming --allow pattern to Claude, or select a Muse worker expecting repository-contained execution. Evidence: read-code: Custom patterns are copied verbatim and rejected only when their lowercase text contains git.; read-code: The accepted strings are joined directly into --allowedTools.; read-code: Muse unconditionally receives --approval-mode never, --trust-workspace, and --disable-sandbox.; read-code: Documentation explicitly acknowledges that Codex/Muse enforce no-git only through the prompt. Verify: In an isolated scratch repository, run RC3 using Bash(*) and a harmless out-of-policy command, and verify whether Muse can write a sibling sentinel outside its workspace. Remedy: Make unrestricted execution an explicit operator opt-in and state its scope accurately; enforce the advertised restricted mode with a real execution boundary rather than substring checks or prompts.
+- **F89-5** [major] `crates/c3/src/work/record.rs:380`, `crates/c3/src/work/mod.rs:692`, `crates/c3/src/work/mod.rs:465`, `docs/work-mode.md:59` - The claim that records contain no secret values is not enforced. An arbitrary Claude result usage object is cloned into run.json without field filtering, custom allow strings are stored in argv, and the event stream is retained verbatim. Secret-bearing content in those inputs therefore survives in records. Trigger: A result event contains usage.secret='sentinel-secret', an allowed-tool pattern contains a literal credential, or a worker tool result emits a credential into its stream. Evidence: read-code: The entire object-valued usage field is cloned rather than reconstructed from numeric counters.; read-code: The built argv is persisted verbatim and rec.usage is assigned from the summary.; read-code: The record contract explicitly retains the prompt and child stream verbatim. Verify: Run RC3 with a fake Claude result carrying a sentinel in an extra usage field and inspect run.json and retained events for that sentinel. Remedy: Allow-list usage counters, redact known credential values in retained output, and replace the absolute no-secrets claim with a precise contract for any intentionally raw artifacts.
+- **F89-6** [major] `crates/c3/src/work/record.rs:35`, `crates/c3/src/work/mod.rs:616`, `crates/c3/src/work/mod.rs:834`, `crates/c3/src/work/mod.rs:885` - A foreground run's configured resume cap and fallback quota window are not persisted for later manual resumes. resume_env reconstructs them from the new invocation and current roster, so the printed plain resume command silently replaces an original custom cap with the default three. Trigger: Start a foreground quota run with --max-resumes 1, then follow the printed --resume command without repeating --max-resumes; make the resumed attempt hit quota again. Evidence: read-code: The record stores timeout and quota outcome but no original max_resumes or effective quota-window setting; args is only the detached startup wire.; read-code: resume_env uses eff_max_resumes(o) and eff_window(o, entry.quota_window_sec) from the resume invocation. Verify: Run RC3 with initial --max-resumes 1 followed by a plain --resume; require exhausted=true after that first quota-hit resume. Remedy: Persist the effective cap and fallback window in every run record and reuse them unless the operator explicitly overrides them.
+- **F89-7** [minor] `crates/c3/src/work/record.rs:280`, `crates/c3/src/work/mod.rs:691` - files_changed omits every file already dirty before the worker starts, even when the worker modifies it further. The run summary can therefore claim no changed files for a worker that edited existing work. Trigger: Start with a modified tracked file and have the worker make an additional edit to that same file. Evidence: read-code: The implementation excludes any after-status path present in the baseline, without comparing file contents or deltas. Verify: Run RC3 on a pre-dirty tracked file and require that its additional worker edit appears in files_changed. Remedy: Compare before/after content identities or snapshots; otherwise rename the field to describe newly dirty paths and avoid presenting it as the worker's complete changed-file list.
+- **F89-8** [major] `crates/c3/src/work/mod.rs:627`, `crates/c3/src/work/record.rs:310` - Worker success is decided solely by process exit zero, without requiring a successful terminal stream event. An exit-zero stream containing an explicit error or rejecting quota event is classified done; an empty stream can likewise produce done with no report. Trigger: A launcher exits zero after emitting an error result/rejecting rate-limit event, or exits zero without emitting a terminal result. Evidence: read-code: classify_attempt sets base=done for exit_code Some(0) and only applies quota evidence when base is not done.; read-code: has_result and is_error are parsed, but classify_attempt does not consult them. Verify: Run RC2 with separate fake launchers emitting an explicit error result and no result, both exiting zero; require failure rather than done. Remedy: Require each engine's successful terminal event in addition to exit zero, give explicit failure/quota events precedence, and fail closed on missing completion evidence.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside this scoped read; not revalidated.
+- F02-3 - not-checked - Outside this scoped read; not revalidated.
+- F02-4 - not-checked - Harness coverage was not revalidated.
+- F02-5 - not-checked - Outside this scoped read; not revalidated.
+- F02-6 - not-checked - Outside this scoped read; not revalidated.
+- F02-7 - not-checked - Outside this scoped read; not revalidated.
+- F02-8 - not-checked - No three-route benchmark reviewed or run.
+- F04-1 - not-checked - Outside this scoped read; not revalidated.
+- F04-2 - not-checked - No production Windows timezone tests run.
+- F04-3 - not-checked - Outside this scoped read; not revalidated.
+- F06-1 - not-checked - No Samoa fixtures reviewed or run.
+- F09-1 - not-checked - Outside this scoped read; not revalidated.
+- F09-2 - not-checked - Outside this scoped read; not revalidated.
+- F09-3 - not-checked - Outside this scoped read; not revalidated.
+- F09-4 - not-checked - Outside this scoped read; not revalidated.
+- F09-5 - not-checked - Outside this scoped read; not revalidated.
+- F09-6 - not-checked - Outside this scoped read; not revalidated.
+- F11-1 - not-checked - Outside this scoped read; not revalidated.
+- F11-2 - not-checked - Outside this scoped read; not revalidated.
+- F11-3 - not-checked - Outside this scoped read; not revalidated.
+- F11-4 - not-checked - Production hook execution was not tested.
+- F11-5 - not-checked - Outside this scoped read; not revalidated.
+- F14-1 - not-checked - Outside this scoped read; not revalidated.
+- F19-1 - not-checked - Outside this scoped read; not revalidated.
+- F19-2 - not-checked - Outside this scoped read; not revalidated.
+- F19-3 - not-checked - Outside this scoped read; not revalidated.
+- F22-1 - not-checked - Outside this scoped read; not revalidated.
+- F23-1 - not-checked - Outside this scoped read; not revalidated.
+- F23-2 - not-checked - Outside this scoped read; not revalidated.
+- F23-3 - not-checked - Outside this scoped read; not revalidated.
+- F23-4 - not-checked - Recovery fixtures were not reviewed.
+- F23-5 - not-checked - No production Samoa tests run.
+- F24-1 - not-checked - Outside this scoped read; not revalidated.
+- F24-2 - not-checked - Outside this scoped read; not revalidated.
+- F24-3 - not-checked - Outside this scoped read; not revalidated.
+- F24-4 - not-checked - Outside this scoped read; not revalidated.
+- F24-5 - not-checked - Plugin/C3 shared-home fixtures were not reviewed.
+- F24-6 - not-checked - Outside this scoped read; not revalidated.
+- F25-2 - not-checked - Claude authentication guards were not reviewed.
+- F25-3 - not-checked - Read the worker-argv diff only, not model validation.
+- F25-4 - not-checked - ChildEnv debug formatting was not reviewed.
+- F30-1 - not-checked - Outside this scoped read; not revalidated.
+- F30-2 - not-checked - Outside this scoped read; not revalidated.
+- F30-3 - not-checked - Kill durability fixtures were not reviewed.
+- F31-1 - not-checked - Outside this scoped read; not revalidated.
+- F36-1 - not-checked - Claude path guards were not reviewed.
+- F36-2 - not-checked - Claude path normalization was not reviewed.
+- F38-1 - not-checked - Outside this scoped read; not revalidated.
+- F40-1 - not-checked - Outside this scoped read; not revalidated.
+- F40-2 - not-checked - Consult kick handling was not reviewed.
+- F42-1 - not-checked - Consult recovery-copy inspection was not reviewed.
+- F46-1 - not-checked - Endpoint quota aggregation was not reviewed.
+- F48-1 - not-checked - Endpoint quota aggregation was not reviewed.
+- F50-1 - not-checked - Endpoint quota aggregation was not reviewed.
+- F52-1 - not-checked - Endpoint quota comparison clocks were not reviewed.
+- F52-2 - not-checked - Quota percentage validation was not reviewed.
+- F55-1 - not-checked - Account quota caching was not reviewed.
+- F55-2 - not-checked - Recorded quota selection was not reviewed.
+- F58-1 - not-checked - Per-window observation merging was not reviewed.
+- F60-1 - not-checked - Quota persistence was not reviewed.
+- F62-1 - not-checked - Quota timestamp precision was not reviewed.
+- F66-1 - not-checked - Detached consultation admission was not reviewed.
+- F66-2 - not-checked - Detached consultation reservation was not reviewed.
+- F66-3 - not-checked - Health identity deduplication was not reviewed.
+- F66-4 - not-checked - Reset-hint parsing was not reviewed.
+- F66-5 - not-checked - Compatibility shim environment handling was not reviewed.
+- F66-6 - not-checked - Declared-cap policy was not reassessed.
+- F68-1 - not-checked - Health identity deduplication was not reviewed.
+- F68-2 - not-checked - Cross-platform recovery tests were not run.
+- F70-1 - not-checked - Legacy health identity behavior was not reviewed.
+- F72-1 - not-checked - Health read-time aging was not reviewed.
+- F72-2 - not-checked - Legacy failure-text deduplication was not reviewed.
+- F74-1 - not-checked - Declared-cap attempt identity policy was not reviewed.
+- F74-2 - not-checked - Reset-hint validation and displayed refusal time were not reviewed.
+- F76-1 - not-checked - Hinted cap-pair retention was not reviewed.
+- F78-1 - not-checked - Cap-pair selection was not reviewed.
+- F78-2 - not-checked - Machine-health pruning was not reviewed.
+- F80-1 - not-checked - Clearing-success retention was not reviewed.
+- F82-1 - not-checked - Delayed journal replay was not reviewed.
+- F84-1 - not-checked - Tied-success anchor eviction was not reviewed.
+
+## Verdict: HOLD
+
+Worker liveness, resume exclusion, and artifact durability have concrete defects that prevent acceptance of v0.2.3.
+
+### Blockers
+
+- **F89-1** `crates/c3/src/work/mod.rs:730`, `crates/c3/src/work/record.rs:101`, `crates/c3/src/work/record.rs:134` - A foreground worker is treated as dead after 120 seconds because its running record never receives an owning PID. Reading status or admitting another run can then rewrite the still-active run as died and allow another worker on the same task. Verify: Run RC1 with a foreground fake worker sleeping beyond 120 seconds; query status and attempt a second run while the original child remains alive. Remedy: Persist foreground ownership before launch, validate process identity, and retain the task admission lock or equivalent exclusive lease for the entire worker lifecycle.
+- **F89-2** `crates/c3/src/work/mod.rs:698`, `crates/c3/src/work/mod.rs:926`, `crates/c3/src/work/mod.rs:1114`, `crates/c3/src/work/mod.rs:1154` - Resume admission is not exclusive: it neither checks the task's other live runs nor atomically claims the selected run and marks it running before spawning. Two resume commands can execute the same session concurrently and overwrite the same temporary event files; a fresh worker can also start while a foreground resume still has status quota. Verify: Run RC1 with barriers holding the first resumed child alive; issue a second resume and a fresh task run, requiring both to refuse before launch. Remedy: Use one task-level admission mechanism across starts, resumes, and detached alarms; re-read under the lock and durably claim ownership before launching.
+- **F89-3** `crates/c3/src/work/mod.rs:676`, `crates/c3/src/work/mod.rs:895`, `crates/c3/src/work/mod.rs:960` - Artifact failures can silently destroy a resumed report while C3 records done and returns success. append_resume ignores open/write errors, after which resume_once deletes the attempt files; refresh_artifacts also ignores report.md and diff.txt write failures. Verify: Run RC2 with a denied events.jsonl append and a successful resumed child; require preserved attempt files and a nonzero result rather than done. Remedy: Propagate artifact errors, preserve attempt files until durable incorporation succeeds, and publish done only after all required artifacts are safely written.
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending').
+- **F22-1** (prior, not-checked) `crates/c3-core/src/health.rs:1563` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs.
+- **F23-3** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:5105` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree.
+- **F24-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:640` - The spool-lock fallback marks all non-legacy not-spooled lines as seen without folding or retaining per-file provenance; a later fold counts the same gone-producer files again, so the accounting can double-count and temporarily hide the count.
+- **F25-2** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:357` - Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process.
+- **F30-2** (prior, not-checked) `crates/c3/src/engines/subprocess.rs:536` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues.
+- **F31-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:668` - The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history.
+- **F36-1** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:425` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary.
+- **F38-1** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:687` - The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge.
+- **F40-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:170` - Recovery silently treats failure to enumerate the Codex-home kill-copy directory, or errors while iterating it, as absence of recovery copies. A durable copy naming a live helper can therefore be omitted and the task released.
+- **F42-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:306` - A metadata inspection error on an enumerated recovery copy is treated as absence. read_pending_file uses Path::exists(), which converts metadata errors to false, and returns exists=false with no error. Recovery and findings checks then skip the copy, potentially releasing a task while a helper named only in that durable copy remains alive.
+- **F66-1** (prior, not-checked) `crates/c3/src/consult/recovery.rs:129` - Detached admission treats active recovery records as harmless concurrency without establishing that their owning bridge is still alive. Records retained because an interrupted run left surviving or unverified processes are therefore bypassed, allowing a new engine turn while recovery still considers the previous tree active.
+- **F76-1** (prior, not-checked) `crates/c3-core/src/health.rs:1143` - The new read-time age limit discards identified cap-pair evidence after approximately 24 hours even when a valid reset_hint declares a later weekly or monthly reset. plan_cap_verdict then returns the underlying verdict without enforcing that reset. This makes an exhausted endpoint eligible before the retry time previously displayed and contradicts the documented policy that hinted entries remain unavailable until their reset.
+- **F78-1** (prior, not-checked) `crates/c3-core/src/plan.rs:368` - The cap detector considers only pairs containing the newest qualifying hit. A later isolated instant 429 therefore suppresses an already established cap pair, allowing an exhausted endpoint to become eligible before its declared reset without any successful reply.
+- **F78-2** (prior, not-checked) `crates/c3-core/src/health.rs:100` - The 35-day cap-pair retention applies only to rows supplied to endpoint_health; machine-health writes still prune old rows unless their stored outage or quota window remains active. Consequently, cap evidence originating in another repository can disappear after roughly 24 hours, releasing a hinted exhausted endpoint before its declared reset.
+- **F80-1** (prior, not-checked) `crates/c3-core/src/health.rs:2177` - The new retention policy preserves cap-failure evidence longer and with higher eviction priority than the successful reply that clears it. Once that success disappears, machine-only readers reconstruct the old pair and falsely mark a usable endpoint unavailable until its declared reset.
+- **F82-1** (prior, not-checked) `crates/c3-core/src/health.rs:2288` - The supersede drop does not prevent an obsolete cap refusal when older evidence remains in a skipped journal until after the clearing success is evicted. Journal replay protection covers records actually read, not unread records in a busy journal, and no durable success watermark remains to reject their later application.
+- **F84-1** (prior, not-checked) `crates/c3-core/src/health.rs:2231` - The clearing-anchor protection is not durable under tied-success cap pressure. is_anchor protects every success row sharing an endpoint's newest timestamp, rather than one row. Those duplicates can force eviction of another endpoint's clearing anchor. A later success makes the duplicates unprotected, allowing delayed older evidence for the evicted endpoint to survive and restore a cleared cap refusal.
+
+### Unproven scenarios
+
+- No builds, tests, real worker launches, or failure-injection procedures were executed. The handoff's passing-test and live-run claims were not independently reproduced.
+- Actual Claude, Codex, and Muse session continuity across quota resumes, provider error exit conventions, and installed-version permission enforcement remain unverified.
+- Detached alarm behavior across crashes, PID reuse, failed waiting-state writes, stale kick files, and surviving child processes was not fully traced.
+- Earlier findings were not revalidated; not-checked does not mean fixed or still-open.
+- Reading was limited to the brief, selected CHANGELOG/work-mode documentation, selected work module hunks, Claude worker-argv additions, the consultation detach hint, and worker-test searches. Some search output in the third call was truncated.
+- Unread code includes most worker test bodies, worker engine parsers after the initial argv section, parts of preparation/allocation/detached query logic, subprocess execution internals, authentication guards, hook changes, CLI wiring, roster changes, and the remaining changed paths.
+- README, harness-results, phase2-switch, plugin skill changes, prior acceptance handoff 87, and historical gate documents were not read; pinned plugin harnesses were not run.
+
+### First-run checklist (observable)
+
+- [ ] After launch, observe the intended engine, provider, model, session identity, and a live owning PID in the record. For a foreground run exceeding 120 seconds, --status must remain running and a second same-task launch must refuse before spawning.
+- [ ] Observe a successful terminal engine event and a nonempty final report consistent with it; a process exit code of zero alone must not establish success.
+- [ ] Verify report.md, events.jsonl, diff.txt, and run.json are readable and mutually consistent. Compare actual before/after edits, including pre-dirty files, with the reported changed-file list.
+- [ ] On quota, observe quota evidence, reset_at/resume_at, and waiting_quota or foreground exit 3. On resume, observe exactly one new attempt using the original session identity and preserving earlier events.
+- [ ] Observe the originally configured resume cap being honored without repeating flags; exhausted runs must stop. A kick must correspond to one observed resumed attempt, not merely creation of a kick file.
+- [ ] Inspect launch arguments for the intended permission boundary and explicit authorization of any unrestricted Muse mode; verify a harmless out-of-policy operation is refused in restricted mode.
+- [ ] Use a nonsecret sentinel to verify sensitive-shaped output is handled according to the stated record policy, including usage fields, argv, raw events, and reports.
+- [ ] For detached completion, verify terminal --status and committed artifacts; the initial detached-launch exit zero confirms launch only.

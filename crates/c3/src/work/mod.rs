@@ -100,6 +100,9 @@ pub struct Options {
     pub quota_window_sec: i64,
     /// `--max-resumes`: the resume cap of one run (`0` = 3).
     pub max_resumes: i64,
+    /// `--unrestricted`: lift the allow-list grammar (accept every `--allow` pattern), permit the
+    /// muse worker's `--disable-sandbox`. Recorded in `run.json` as `unrestricted: true`.
+    pub unrestricted: bool,
 }
 
 /// A work run with every guard passed: the resolved paths, the roster entry, the built
@@ -125,6 +128,11 @@ pub struct Prepared {
     pub launcher: String,
     /// The prompt as sent (preamble + brief + `--prompt`).
     pub prompt: String,
+    /// (0.2.4, F89-4) Whether the run was admitted `--unrestricted` (flag or roster
+    /// `ext.unrestricted`): the allow-list grammar is lifted and the muse worker is permitted.
+    pub unrestricted: bool,
+    /// (0.2.4, F89-4) A one-line description of the effective permission boundary for `run.json`.
+    pub permission: String,
 }
 
 /// The repo root, the collab root and the task directory of `o` (a relative `--collab-dir`
@@ -280,6 +288,19 @@ fn prepare(o: &mut Options) -> Result<Prepared, String> {
         o.model.trim().to_string()
     };
 
+    // (0.2.4, F89-4) Unrestricted execution is an explicit operator opt-in: the `--unrestricted`
+    // flag, or the roster entry's `ext.unrestricted: true`.
+    let unrestricted = o.unrestricted || entry.unrestricted;
+
+    // (0.2.4, F89-4) The muse worker disables its shell sandbox (`--disable-sandbox`): there is no
+    // real containment, so it is refused unless the operator opted in.
+    if engine == WorkerEngine::Muse && !unrestricted {
+        return Err(
+            "the muse worker runs with --disable-sandbox (no shell containment); pass --unrestricted (or set \"ext\": {\"unrestricted\": true} on its roster entry) to allow it"
+                .into(),
+        );
+    }
+
     // The engine's credentials must be usable NOW: a guard of the design's "before anything
     // starts" list, so it is checked here too — `run_prepared` re-checks it, but by then a
     // record directory would already exist. claude: the endpoint's token variable; muse: the
@@ -287,7 +308,7 @@ fn prepare(o: &mut Options) -> Result<Prepared, String> {
     engine_launch_guard(engine, &entry)?;
 
     // The allow list: the defaults when empty; a pattern naming git is refused — a
-    // worker never commits.
+    // worker never commits (unless --unrestricted lifts the whole grammar).
     let allow = if o.allow.is_empty() {
         claude::WORK_DEFAULT_ALLOWS
             .iter()
@@ -296,11 +317,42 @@ fn prepare(o: &mut Options) -> Result<Prepared, String> {
     } else {
         o.allow.clone()
     };
-    if let Some(p) = allow.iter().find(|p| p.to_lowercase().contains("git")) {
-        return Err(format!(
-            "--allow '{p}' names git: a worker never runs git (the preamble forbids it; the allow list must not invite it)"
-        ));
+    if !unrestricted {
+        // The pattern is never echoed (it could carry a credential): the position is named.
+        if let Some(i) = allow.iter().position(|p| p.to_lowercase().contains("git")) {
+            return Err(format!(
+                "--allow pattern #{} names git: a worker never runs git (the preamble forbids it; the allow list must not invite it)",
+                i + 1
+            ));
+        }
+        // (0.2.4, F89-4) A real allow-list grammar for operator-supplied patterns (the trusted
+        // defaults are exempt): each must be <Tool>, <Tool>(<exe>) or <Tool>(<exe>:*) with <exe>
+        // a plain executable name. The refusal names the POSITION only — never the pattern, which
+        // could carry a credential.
+        for (i, p) in o.allow.iter().enumerate() {
+            if let Err(why) = validate_allow_pattern(p) {
+                return Err(format!(
+                    "--allow pattern #{} is not a valid restricted tool pattern: {why}; pass --unrestricted to lift the allow-list grammar",
+                    i + 1
+                ));
+            }
+        }
     }
+
+    // (0.2.4, F89-4) The effective permission boundary, recorded in run.json.
+    let permission = match engine {
+        WorkerEngine::Claude if unrestricted => {
+            "claude, unrestricted (allow-list grammar lifted)".to_string()
+        }
+        WorkerEngine::Claude => "claude --allowedTools allow list".to_string(),
+        WorkerEngine::Codex => {
+            "codex --sandbox workspace-write (the allow list does not apply to codex)".to_string()
+        }
+        WorkerEngine::Muse => {
+            "muse --disable-sandbox, unrestricted (the allow list does not apply to muse)"
+                .to_string()
+        }
+    };
 
     // The defaults a wire must carry explicitly.
     if o.max_turns <= 0 {
@@ -326,7 +378,38 @@ fn prepare(o: &mut Options) -> Result<Prepared, String> {
         allow,
         launcher,
         prompt,
+        unrestricted,
+        permission,
     })
+}
+
+/// (0.2.4, F89-4) Validate one operator `--allow` pattern against the restricted grammar:
+/// `<Tool>`, `<Tool>(<exe>)` or `<Tool>(<exe>:*)` where `<exe>` is a plain executable name
+/// (`[A-Za-z0-9_.+-]+`, optionally followed by plain subcommand words such as `cargo test` — no
+/// wildcards, quotes or shell operators) and is not a shell or git. Returns
+/// why it is invalid (never echoing the pattern, which could carry a credential; the forbidden
+/// shell/git keyword is safe to name).
+fn validate_allow_pattern(p: &str) -> Result<(), String> {
+    const FORBIDDEN: &[&str] = &["git", "sh", "bash", "zsh", "pwsh", "powershell", "cmd"];
+    // `<exe>` is a plain executable name, optionally followed by plain subcommand words
+    // (`cargo test`, `npm run lint`): single spaces only, a word never starts with `-` (flags such
+    // as `python -c` / `node -e` are where shell escapes hide), no wildcards, no shell operators.
+    let re = regex::Regex::new(
+        r"^([A-Za-z][A-Za-z0-9_]*)(?:\(([A-Za-z0-9_.+-]+)((?: [A-Za-z0-9][A-Za-z0-9_.+-]*)*)(?::\*)?\))?$",
+    )
+    .expect("valid regex");
+    let caps = re.captures(p.trim()).ok_or_else(|| {
+        "expected <Tool>, <Tool>(<exe>) or <Tool>(<exe>:*) with <exe> a plain executable name (letters, digits, '.', '_', '+', '-') optionally followed by plain subcommand words (never flags); no wildcards, quotes or shell operators".to_string()
+    })?;
+    if let Some(exe) = caps.get(2) {
+        if FORBIDDEN.contains(&exe.as_str().to_lowercase().as_str()) {
+            return Err(format!(
+                "the '{}' executable is a shell or git, which a worker may not be granted",
+                exe.as_str()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The "before anything starts" credential guard of a worker engine: claude re-uses the review
@@ -462,12 +545,14 @@ pub fn run_prepared(o: &Options, rec_dir: &Path, _id: &str, _seq: i64, detached:
         ),
     };
     let before = status_short(&pre.repo_root);
+    let before_hashes = record::baseline_hashes(&pre.repo_root, &before);
     if let Ok(Some(mut rec)) = read_record(rec_dir) {
         rec.argv = argv.clone();
         rec.child_env_scrubbed = scrubbed;
         rec.timeout_sec = o.timeout_sec;
         rec.session_id = session_id.clone();
         rec.baseline = before.clone();
+        rec.baseline_hashes = before_hashes.clone();
         if let Err(e) = write_record(rec_dir, &rec) {
             return refuse(&format!(
                 "the work run could not report to {} ({e}); nothing was started.",
@@ -522,7 +607,7 @@ pub fn run_prepared(o: &Options, rec_dir: &Path, _id: &str, _seq: i64, detached:
 
     // Classify THIS attempt from its own stream/stderr, then refresh the record artifacts over
     // the whole stream and make the record final (quota included).
-    let (status, quota_text, reset_at) = classify_attempt(
+    let (status, quota_text, reset_at, reason) = classify_attempt(
         pre.engine,
         &events_text,
         &std::fs::read_to_string(&stderr_path).unwrap_or_default(),
@@ -530,12 +615,18 @@ pub fn run_prepared(o: &Options, rec_dir: &Path, _id: &str, _seq: i64, detached:
         result.exit_code,
     );
     let window = eff_window(&o, pre.entry.quota_window_sec);
-    let mut rec = refresh_artifacts(pre.engine, rec_dir, &pre.repo_root, &before);
+    // (0.2.4, F89-3) An artifact write failure makes the run `artifact_error`, never `done`.
+    let mut rec = match refresh_artifacts(pre.engine, rec_dir, &pre.repo_root, &before, &before_hashes)
+    {
+        Ok(r) => r,
+        Err(e) => return finish_artifact_error(rec_dir, result.exit_code, &e),
+    };
     rec.session_id = session_id.clone();
     rec.exit_code = result.exit_code.map(|c| c as i64);
     rec.timeout_sec = o.timeout_sec;
     rec.status = status.clone();
     rec.ended = Some(iso_now());
+    rec.error = if status == "died" { reason } else { String::new() };
     if status == "quota" {
         rec.quota = Some(build_quota(&quota_text, reset_at, window, 0, false));
     }
@@ -621,6 +712,79 @@ fn eff_max_resumes(o: &Options) -> i64 {
     }
 }
 
+/// (0.2.4, F89-6) The effective resume cap of a RESUME: the explicit `--max-resumes`, else the cap
+/// persisted in the record at the first run, else the default. So a plain `--resume` honours the
+/// original cap.
+fn eff_max_resumes_rec(o: &Options, rec: &RunRecord) -> i64 {
+    if o.max_resumes > 0 {
+        o.max_resumes
+    } else if rec.max_resumes > 0 {
+        rec.max_resumes
+    } else {
+        MAX_RESUMES_DEFAULT
+    }
+}
+
+/// (0.2.4, F89-6) The effective quota window of a RESUME: the explicit `--quota-window-sec`, else
+/// the window persisted in the record, else the roster entry's, else the default.
+fn eff_window_rec(o: &Options, rec: &RunRecord, entry_window: i64) -> i64 {
+    if o.quota_window_sec > 0 {
+        o.quota_window_sec
+    } else if rec.quota_window_sec > 0 {
+        rec.quota_window_sec
+    } else if entry_window > 0 {
+        entry_window
+    } else {
+        QUOTA_WINDOW_DEFAULT_SEC
+    }
+}
+
+/// (0.2.4, F89-2) Claim `rec_dir` for a spawn under the task admission lock: refuse if any OTHER
+/// run of the task is live, or if THIS record is already live under a different process (a
+/// concurrent resume). Then write it `running` with this process's pid + start time and `attempt`,
+/// durably, BEFORE the caller spawns. The lock is released on return (the live owning record is
+/// the exclusion for the run's duration).
+fn claim_for_spawn(work_root: &Path, rec_dir: &Path, attempt: i64) -> Result<RunRecord, String> {
+    let _lock = record::admission_lock(work_root)?;
+    if let Some(other) = record::other_live_run(work_root, rec_dir) {
+        return Err(format!("task already has a live work run ({other})"));
+    }
+    let mut rec = read_record(rec_dir)?
+        .ok_or_else(|| "the work record vanished before it could be claimed".to_string())?;
+    let (pid, start) = record::self_owner();
+    if record::is_pending(&rec.status) && record::is_live(&rec) && rec.pid != Some(pid) {
+        return Err(format!(
+            "work run {} is already live under pid {}; refusing a second launch",
+            rec.id,
+            rec.pid.unwrap_or(0)
+        ));
+    }
+    rec.status = "running".into();
+    rec.pid = Some(pid);
+    rec.pid_start = start;
+    rec.attempt = attempt;
+    rec.ended = None;
+    rec.error = String::new();
+    rec.args = None;
+    write_record(rec_dir, &rec)?;
+    Ok(rec)
+}
+
+/// (0.2.4, F89-3) Make the record terminal `artifact_error` (an artifact write failed): the error
+/// text in `run.json`, a non-zero exit. The child's exit code is still recorded for forensics.
+fn finish_artifact_error(rec_dir: &Path, exit_code: Option<i32>, err: &str) -> i32 {
+    if let Ok(Some(mut rec)) = read_record(rec_dir) {
+        rec.status = "artifact_error".into();
+        rec.error = err.to_string();
+        rec.ended = Some(iso_now());
+        rec.exit_code = exit_code.map(|c| c as i64);
+        let _ = write_record(rec_dir, &rec);
+        print_run_line(&rec);
+    }
+    eprintln!("{TOOL}: the work run could not durably write its artifacts: {err}");
+    1
+}
+
 /// Classify one work attempt from ITS OWN stream and stderr (never a prior attempt's): the base
 /// status (`timeout` | `done` | `died`), turned into `quota` when the attempt did not succeed and
 /// the engine found a usage limit. Returns `(status, quota_text, reset_at)`.
@@ -630,21 +794,32 @@ fn classify_attempt(
     stderr_text: &str,
     timed_out: bool,
     exit_code: Option<i32>,
-) -> (String, String, Option<DateTime<Utc>>) {
+) -> (String, String, Option<DateTime<Utc>>, String) {
     let (quota_text, reset_at) = engines::quota_evidence(engine, events_text, stderr_text);
-    let base = if timed_out {
-        "timeout"
-    } else if exit_code == Some(0) {
-        "done"
-    } else {
-        "died"
+    let outcome = engines::terminal_outcome(engine, events_text);
+    // (0.2.4, F89-8) A rejecting rate-limit / quota wording takes precedence over exit 0 (so a run
+    // resumes), UNLESS the engine also emitted a clean successful terminal. Otherwise success
+    // requires BOTH exit 0 AND the engine's successful terminal event; an error terminal or an
+    // empty stream fails closed (`died`), never `done`.
+    if !quota_text.is_empty() && outcome != engines::Terminal::Success {
+        return ("quota".to_string(), quota_text, reset_at, String::new());
+    }
+    if timed_out {
+        return ("timeout".to_string(), quota_text, reset_at, String::new());
+    }
+    let (status, reason) = match outcome {
+        engines::Terminal::Success if exit_code == Some(0) => ("done", String::new()),
+        engines::Terminal::Success => (
+            "died",
+            format!(
+                "the engine reported success but the process exited {}",
+                exit_code.map(|c| c.to_string()).unwrap_or_else(|| "(none)".into())
+            ),
+        ),
+        engines::Terminal::Error => ("died", "the engine reported an error result".to_string()),
+        engines::Terminal::None => ("died", "no terminal event".to_string()),
     };
-    let status = if base != "done" && !quota_text.is_empty() {
-        "quota".to_string()
-    } else {
-        base.to_string()
-    };
-    (status, quota_text, reset_at)
+    (status.to_string(), quota_text, reset_at, reason)
 }
 
 /// A fresh [`Quota`] block: `resume_at` = `reset_at` + 60 s when the provider gave a reset time,
@@ -678,19 +853,24 @@ fn refresh_artifacts(
     rec_dir: &Path,
     repo_root: &Path,
     before: &[String],
-) -> RunRecord {
+    before_hashes: &std::collections::BTreeMap<String, String>,
+) -> Result<RunRecord, String> {
     let events_text = std::fs::read_to_string(rec_dir.join("events.jsonl")).unwrap_or_default();
     let sum = engines::summarize(engine, &events_text);
-    let _ = std::fs::write(rec_dir.join("report.md"), &sum.report);
+    // (0.2.4, F89-3) report.md and diff.txt write failures are propagated, never swallowed: the
+    // caller makes the run `artifact_error`, so a lost report can never be reported `done`.
+    std::fs::write(rec_dir.join("report.md"), &sum.report)
+        .map_err(|e| format!("could not write report.md ({e})"))?;
     let after = status_short(repo_root);
     let stat = diff_stat(repo_root);
-    let _ = std::fs::write(rec_dir.join("diff.txt"), diff_text(before, &after, &stat));
+    std::fs::write(rec_dir.join("diff.txt"), diff_text(before, &after, &stat))
+        .map_err(|e| format!("could not write diff.txt ({e})"))?;
     let mut rec = read_record(rec_dir).ok().flatten().unwrap_or_default();
     rec.turns = sum.turns;
     rec.tool_calls = sum.tool_calls;
-    rec.files_changed = files_changed(before, &after);
+    rec.files_changed = files_changed(before_hashes, &after, repo_root);
     rec.usage = sum.usage;
-    rec
+    Ok(rec)
 }
 
 /// The entry point: `--status`/`--wait` read the records only; `--detach-id` is the
@@ -712,7 +892,15 @@ pub fn run(mut o: Options) -> i32 {
         Ok(p) => p,
         Err(why) => return refuse(&why),
     };
-    // One live work run per task.
+    // (0.2.4, F89-1/F89-2) One task-level admission for starts: hold the admission lock across the
+    // live-run check, the allocation and the initial claim, so two starts cannot both pass. A
+    // foreground run writes its OWN pid + start time BEFORE the child is spawned (the owner that
+    // keeps the record `running` past the start grace); a detached run leaves the pid to its
+    // background (claimed within its first second).
+    let lock = match record::admission_lock(&pre.work_root) {
+        Ok(l) => l,
+        Err(e) => return refuse(&e),
+    };
     if let Some(id) = record::live_run(&pre.work_root) {
         return refuse(&format!(
             "task '{}' already has a live work run ({id}); c3 work --task {}{} --wait waits for it",
@@ -729,6 +917,12 @@ pub fn run(mut o: Options) -> i32 {
         Ok(x) => x,
         Err(e) => return refuse(&e),
     };
+    let (pid, pid_start) = if o.detach {
+        (None, String::new())
+    } else {
+        let (p, s) = record::self_owner();
+        (Some(p), s)
+    };
     let rec = RunRecord {
         id: id.clone(),
         task: o.task.clone(),
@@ -740,6 +934,12 @@ pub fn run(mut o: Options) -> i32 {
         started: iso_now(),
         status: "running".into(),
         timeout_sec: o.timeout_sec,
+        pid,
+        pid_start,
+        max_resumes: eff_max_resumes(&o),
+        quota_window_sec: eff_window(&o, pre.entry.quota_window_sec),
+        unrestricted: pre.unrestricted,
+        permission: pre.permission.clone(),
         args: o.detach.then(|| detach::wire_of(&o, &pre.collab_root)),
         ..Default::default()
     };
@@ -749,6 +949,7 @@ pub fn run(mut o: Options) -> i32 {
             rec_dir.join("run.json").display()
         ));
     }
+    drop(lock);
     if o.detach {
         return detach::start_detached(&o, &pre, &id, &rec_dir);
     }
@@ -885,39 +1086,49 @@ fn resume_env(o: &Options, rec: &RunRecord, rec_dir: &Path) -> Result<ResumeEnv,
         } else {
             3600
         },
-        max_resumes: eff_max_resumes(o),
-        window_sec: eff_window(o, entry.quota_window_sec),
+        max_resumes: eff_max_resumes_rec(o, rec),
+        window_sec: eff_window_rec(o, rec, entry.quota_window_sec),
     })
 }
 
 /// Append the resume separator line and this attempt's stream to `events.jsonl` (verbatim, the
 /// whole record kept in order).
-fn append_resume(rec_dir: &Path, n: i64, attempt_events: &str) {
+fn append_resume(rec_dir: &Path, n: i64, attempt_events: &str) -> Result<(), String> {
     use std::io::Write;
     let path = rec_dir.join("events.jsonl");
     let needs_nl = std::fs::read(&path)
         .ok()
         .map(|b| !b.is_empty() && b.last() != Some(&b'\n'))
         .unwrap_or(false);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
+    // (0.2.4, F89-3) Every open/write/flush error is propagated — the caller keeps the attempt
+    // files and makes the run `artifact_error` rather than deleting them and reporting `done`.
+    let mut f = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-    {
-        if needs_nl {
-            let _ = f.write_all(b"\n");
-        }
-        let sep = format!(
-            "{{\"type\":\"c3\",\"subtype\":\"resume\",\"n\":{n},\"at\":\"{}\"}}\n",
-            Utc::now().to_rfc3339()
-        );
-        let _ = f.write_all(sep.as_bytes());
-        let trimmed = attempt_events.trim_end_matches(['\n', '\r']);
-        if !trimmed.is_empty() {
-            let _ = f.write_all(trimmed.as_bytes());
-            let _ = f.write_all(b"\n");
-        }
+        .map_err(|e| format!("could not open events.jsonl to append the resume ({e})"))?;
+    let mut write = |bytes: &[u8]| -> Result<(), String> {
+        f.write_all(bytes)
+            .map_err(|e| format!("could not append to events.jsonl ({e})"))
+    };
+    if needs_nl {
+        write(b"\n")?;
     }
+    let sep = format!(
+        "{{\"type\":\"c3\",\"subtype\":\"resume\",\"n\":{n},\"at\":\"{}\"}}\n",
+        Utc::now().to_rfc3339()
+    );
+    write(sep.as_bytes())?;
+    let trimmed = attempt_events.trim_end_matches(['\n', '\r']);
+    if !trimmed.is_empty() {
+        write(trimmed.as_bytes())?;
+        write(b"\n")?;
+    }
+    f.flush()
+        .map_err(|e| format!("could not flush events.jsonl ({e})"))?;
+    f.sync_all()
+        .map_err(|e| format!("could not sync events.jsonl ({e})"))?;
+    Ok(())
 }
 
 /// Resume the child once: relaunch with `--resume`, append the attempt to `events.jsonl`,
@@ -929,12 +1140,17 @@ fn resume_once(renv: &ResumeEnv, rec_dir: &Path) -> Result<String, String> {
         .flatten()
         .ok_or_else(|| "the work record vanished".to_string())?;
     let n = rec.quota.as_ref().map(|q| q.resumes).unwrap_or(0) + 1;
+    // (0.2.4, F89-2) Claim the record under the task admission lock BEFORE spawning: two concurrent
+    // resumes of one record, or a fresh start racing a resume, find it already live and refuse.
+    let work_root = rec_dir.parent().unwrap_or(rec_dir).to_path_buf();
+    let rec = claim_for_spawn(&work_root, rec_dir, n)?;
     println!(
         "{TOOL}: resuming work run {} ({} :: {}) - resume {}/{}",
         rec.id, rec.provider, rec.model, n, renv.max_resumes
     );
-    let tmp_events = rec_dir.join(".events-resume.jsonl");
-    let tmp_stderr = rec_dir.join(".stderr-resume");
+    // (0.2.4, F89-2) Per-attempt file names (never a fixed path two resumes could overwrite).
+    let tmp_events = rec_dir.join(format!(".events-resume-{n}.jsonl"));
+    let tmp_stderr = rec_dir.join(format!(".stderr-resume-{n}"));
     let _ = std::fs::remove_file(&tmp_events);
     let _ = std::fs::remove_file(&tmp_stderr);
     let spawn = SpawnRequest {
@@ -958,22 +1174,38 @@ fn resume_once(renv: &ResumeEnv, rec_dir: &Path) -> Result<String, String> {
     let result = run_turn(&spawn);
     let attempt_events = std::fs::read_to_string(&tmp_events).unwrap_or_default();
     let attempt_stderr = std::fs::read_to_string(&tmp_stderr).unwrap_or_default();
-    append_resume(rec_dir, n, &attempt_events);
-    let _ = std::fs::remove_file(&tmp_events);
-    let _ = std::fs::remove_file(&tmp_stderr);
 
-    let (status, quota_text, reset_at) = classify_attempt(
+    let (status, quota_text, reset_at, reason) = classify_attempt(
         renv.engine,
         &attempt_events,
         &attempt_stderr,
         result.stop == crate::engines::subprocess::TurnStop::Timeout,
         result.exit_code,
     );
+    // (0.2.4, F89-3) Append the attempt to events.jsonl durably FIRST; the per-attempt files are
+    // deleted only after the append succeeded and was flushed. A failed append keeps them and
+    // makes the run `artifact_error` (never `done`, never a deleted-then-lost report).
+    if let Err(e) = append_resume(rec_dir, n, &attempt_events) {
+        let _ = finish_artifact_error(rec_dir, result.exit_code, &e);
+        return Ok("artifact_error".to_string());
+    }
+    let _ = std::fs::remove_file(&tmp_events);
+    let _ = std::fs::remove_file(&tmp_stderr);
+
     let before = rec.baseline.clone();
-    let mut nrec = refresh_artifacts(renv.engine, rec_dir, &renv.repo_root, &before);
+    let before_hashes = rec.baseline_hashes.clone();
+    let mut nrec =
+        match refresh_artifacts(renv.engine, rec_dir, &renv.repo_root, &before, &before_hashes) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = finish_artifact_error(rec_dir, result.exit_code, &e);
+                return Ok("artifact_error".to_string());
+            }
+        };
     nrec.exit_code = result.exit_code.map(|c| c as i64);
     nrec.ended = Some(iso_now());
     nrec.status = status.clone();
+    nrec.error = if status == "died" { reason } else { String::new() };
     if status == "quota" {
         let exhausted = n >= renv.max_resumes;
         nrec.quota = Some(build_quota(
@@ -1011,7 +1243,7 @@ fn foreground_quota(o: &Options, rec_dir: &Path, rec: &RunRecord) -> i32 {
         eprintln!(
             "{TOOL}: work run {} hit its usage limit and spent the resume cap ({}): {}. It needs a human; the record is at {}.",
             rec.id,
-            eff_max_resumes(o),
+            eff_max_resumes_rec(o, rec),
             q.text,
             rec_dir.display()
         );
@@ -1162,7 +1394,7 @@ fn do_resume_foreground(o: &Options, rec_dir: &Path, rec: &RunRecord) -> i32 {
         return refuse(&format!(
             "work run {} has spent its resume cap ({}); it needs a human.",
             rec.id,
-            eff_max_resumes(o)
+            eff_max_resumes_rec(o, rec)
         ));
     }
     let renv = match resume_env(o, rec, rec_dir) {

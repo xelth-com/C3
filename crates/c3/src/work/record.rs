@@ -73,9 +73,40 @@ pub struct RunRecord {
     /// The run's own timeout (the `--wait` default of a detached run).
     #[serde(default)]
     pub timeout_sec: i64,
-    /// The background's pid (a detached run, while it lives).
+    /// The OWNING process's pid (the c3 process that spawned the child: a foreground run's own
+    /// pid, written before the child starts; a detached run's background pid). While a run is
+    /// `running`/`waiting_quota` this pid with [`RunRecord::pid_start`] is the liveness owner.
     #[serde(default)]
     pub pid: Option<i64>,
+    /// (0.2.4, F89-1) The owning process's start time (the liveness anchor against pid reuse;
+    /// `""` when it could not be read). `pid` + `pid_start` together prove the owner is still
+    /// alive; [`START_GRACE_SEC`] only covers the window before any pid is written.
+    #[serde(default)]
+    pub pid_start: String,
+    /// (0.2.4, F89-2) The attempt number of the current claim: `0` the first launch, `n` the
+    /// n-th resume. Written under the task admission lock when the record is claimed `running`.
+    #[serde(default)]
+    pub attempt: i64,
+    /// (0.2.4, F89-6) The effective resume cap persisted at the first run, reused by a later plain
+    /// `--resume` (an explicit `--max-resumes` still overrides). `0` = the default (3).
+    #[serde(default)]
+    pub max_resumes: i64,
+    /// (0.2.4, F89-6) The effective quota window (seconds) persisted at the first run, reused by a
+    /// later plain `--resume`. `0` = the default (18000 = 5 h).
+    #[serde(default)]
+    pub quota_window_sec: i64,
+    /// (0.2.4, F89-4) Whether the run was admitted `--unrestricted` (allow-list grammar lifted;
+    /// muse's `--disable-sandbox` permitted).
+    #[serde(default)]
+    pub unrestricted: bool,
+    /// (0.2.4, F89-4) A one-line description of the effective permission boundary (the allow list
+    /// applies only to claude; codex is `workspace-write`; muse is `--disable-sandbox`).
+    #[serde(default)]
+    pub permission: String,
+    /// (0.2.4, F89-3/F89-8) The terminal error text when the run ended `died`/`artifact_error`
+    /// (the artifact write failure, or `no terminal event`); `""` otherwise.
+    #[serde(default)]
+    pub error: String,
     /// The background's options wire (a detached run's `running` record only).
     #[serde(default)]
     pub args: Option<String>,
@@ -83,6 +114,11 @@ pub struct RunRecord {
     /// the whole run against it, so `diff.txt` and `files_changed` stay stable across resumes.
     #[serde(default)]
     pub baseline: Vec<String>,
+    /// (0.2.4, F89-7) The content hash (`git hash-object`) of every path dirty at the baseline,
+    /// captured before the FIRST launch: `files_changed` lists a path whose content now differs
+    /// from its baseline hash, so a pre-dirty file the worker edited further is reported.
+    #[serde(default)]
+    pub baseline_hashes: BTreeMap<String, String>,
 }
 
 impl RunRecord {
@@ -136,7 +172,7 @@ pub fn is_live(rec: &RunRecord) -> bool {
         return false;
     }
     match rec.pid {
-        Some(pid) if pid > 0 => crate::liveness::proc::pid_alive(pid as u32, ""),
+        Some(pid) if pid > 0 => crate::liveness::proc::pid_alive(pid as u32, &rec.pid_start),
         _ => match chrono::DateTime::parse_from_rfc3339(&rec.started) {
             Ok(t) => {
                 (chrono::Utc::now() - t.with_timezone(&chrono::Utc)).num_seconds() < START_GRACE_SEC
@@ -180,6 +216,73 @@ pub fn live_run(work_root: &Path) -> Option<String> {
             .filter(|r| is_pending(&r.status))
             .map(|r| r.id)
     })
+}
+
+/// (0.2.4, F89-2) The id of any LIVE run of the task other than the one at `exclude`, or `None`.
+/// Used under the admission lock so a start/resume/alarm refuses while another run is alive.
+pub fn other_live_run(work_root: &Path, exclude: &Path) -> Option<String> {
+    run_dirs(work_root).into_iter().find_map(|(_, dir)| {
+        if dir == exclude {
+            return None;
+        }
+        read_record(&dir)
+            .ok()
+            .flatten()
+            .filter(|r| is_pending(&r.status) && is_live(r))
+            .map(|r| r.id)
+    })
+}
+
+/// (0.2.4, F89-1/F89-2) This c3 process's own pid and start time: the owner written into a
+/// record when it is claimed `running` before the child is spawned.
+pub fn self_owner() -> (i64, String) {
+    let pid = std::process::id();
+    (
+        pid as i64,
+        crate::liveness::proc::process_start_iso(pid).unwrap_or_default(),
+    )
+}
+
+/// (0.2.4, F89-2) The task-level admission lock file (held only across the claim's
+/// check-and-write, released on drop or when the process dies).
+pub const ADMISSION_LOCK: &str = ".admission.lock";
+
+/// (0.2.4, F89-2) An exclusive OS lock on the task's admission-lock file, released when dropped
+/// (or when the process dies). The same advisory-lock mechanism the telemetry spool uses.
+pub struct AdmissionLock {
+    _file: std::fs::File,
+}
+
+/// (0.2.4, F89-2) Take the task's admission lock (one claim at a time across starts, resumes and
+/// the detached alarm), waiting at most 10 s. The guard releases the lock when dropped.
+pub fn admission_lock(work_root: &Path) -> Result<AdmissionLock, String> {
+    let _ = std::fs::create_dir_all(work_root);
+    let path = work_root.join(ADMISSION_LOCK);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|e| format!("could not open the task admission lock ({e})"))?;
+    let started = std::time::Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(AdmissionLock { _file: file }),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if started.elapsed() >= std::time::Duration::from_secs(10) {
+                    return Err(
+                        "the task's admission lock stayed busy (another c3 work is admitting a run)"
+                            .into(),
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(std::fs::TryLockError::Error(e)) => {
+                return Err(format!("could not take the task admission lock ({e})"))
+            }
+        }
+    }
 }
 
 /// A directory-name-safe form of a provider label or model id: everything outside
@@ -275,14 +378,52 @@ fn path_of_status_line(line: &str) -> String {
     }
 }
 
-/// The files the run changed: the paths `git status --short` names after the run that the
-/// baseline before it did not name, in the after-order, deduplicated.
-pub fn files_changed(before: &[String], after: &[String]) -> Vec<String> {
-    let base: Vec<String> = before.iter().map(|l| path_of_status_line(l)).collect();
+/// (0.2.4, F89-7) The content hash of a working-tree path (`git hash-object`), `"<absent>"` when
+/// the file does not exist (a deletion), `""` when git cannot hash it.
+pub fn hash_of(repo: &Path, path: &str) -> String {
+    if !repo.join(path).exists() {
+        return "<absent>".to_string();
+    }
+    git_lines(repo, &["hash-object", "--", path])
+        .into_iter()
+        .next()
+        .unwrap_or_default()
+}
+
+/// (0.2.4, F89-7) The content hash of every path dirty at the baseline (`git status --short`
+/// before the run). `files_changed` compares against this so a path already dirty but edited
+/// further by the worker is reported, and one left untouched is not.
+pub fn baseline_hashes(repo: &Path, before: &[String]) -> BTreeMap<String, String> {
+    let mut m = BTreeMap::new();
+    for line in before {
+        let p = path_of_status_line(line);
+        if !p.is_empty() {
+            let h = hash_of(repo, &p);
+            m.insert(p, h);
+        }
+    }
+    m
+}
+
+/// (0.2.4, F89-7) The files the run changed, by CONTENT IDENTITY: every path dirty after the run
+/// whose current content hash differs from its baseline hash (a new/untracked path has no baseline
+/// hash, so it is listed; a pre-dirty path the worker edited further differs, so it is listed; a
+/// pre-dirty path left untouched matches, so it is not). After-order, deduplicated.
+pub fn files_changed(
+    baseline_hashes: &BTreeMap<String, String>,
+    after: &[String],
+    repo: &Path,
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for p in after.iter().map(|l| path_of_status_line(l)) {
-        if !p.is_empty() && !base.contains(&p) && !out.contains(&p) {
-            out.push(p);
+    for line in after {
+        let p = path_of_status_line(line);
+        if p.is_empty() || out.contains(&p) {
+            continue;
+        }
+        let now = hash_of(repo, &p);
+        match baseline_hashes.get(&p) {
+            Some(b) if *b == now => {} // dirty before and still the same content: not the worker's
+            _ => out.push(p),
         }
     }
     out
@@ -323,6 +464,41 @@ pub struct EventSummary {
     pub tool_calls: BTreeMap<String, i64>,
     /// The result's `usage` merged with its `total_cost_usd` when present.
     pub usage: Option<Value>,
+}
+
+/// (0.2.4, F89-5) The usage of a claude `result` event, rebuilt from an ALLOW LIST of numeric
+/// counters — the token columns from the `usage` object plus `total_cost_usd`, `duration_ms` and
+/// `num_turns` from the result. Any other field (a sentinel, a secret) is dropped. `None` when no
+/// counter is present.
+fn claude_usage(result_obj: &Value) -> Option<Value> {
+    let mut map = serde_json::Map::new();
+    if let Some(u) = result_obj.get("usage").filter(|v| v.is_object()) {
+        for k in [
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        ] {
+            if let Some(n) = u.get(k).and_then(|v| v.as_i64()) {
+                map.insert(k.into(), Value::from(n));
+            }
+        }
+    }
+    for k in ["num_turns", "duration_ms"] {
+        if let Some(n) = result_obj
+            .get(k)
+            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|x| x.parse().ok())))
+        {
+            map.insert(k.into(), Value::from(n));
+        }
+    }
+    if let Some(c) = result_obj.get("total_cost_usd").and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|x| x.parse().ok()))
+    }) {
+        map.insert("total_cost_usd".into(), Value::from(c));
+    }
+    (!map.is_empty()).then(|| Value::Object(map))
 }
 
 /// Parse the event stream into an [`EventSummary`] (tolerant: a line that is not a JSON
@@ -377,17 +553,9 @@ pub fn summarize_events(text: &str) -> EventSummary {
                 v.as_i64()
                     .or_else(|| v.as_str().and_then(|x| x.parse().ok()))
             });
-            let mut usage = obj.get("usage").filter(|v| v.is_object()).cloned();
-            if let Some(cost) = obj.get("total_cost_usd").and_then(|v| {
-                v.as_f64()
-                    .or_else(|| v.as_str().and_then(|x| x.parse().ok()))
-            }) {
-                usage
-                    .get_or_insert_with(|| Value::Object(Default::default()))
-                    .as_object_mut()
-                    .map(|o| o.insert("total_cost_usd".into(), Value::from(cost)));
-            }
-            s.usage = usage.filter(|v| v.is_object() && !v.as_object().unwrap().is_empty());
+            // (0.2.4, F89-5) Rebuild usage from an ALLOW LIST of numeric counters — never clone the
+            // whole usage object (a sentinel/secret in an extra field must not reach run.json).
+            s.usage = claude_usage(&obj);
         }
     }
     s
@@ -439,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn files_changed_subtracts_the_baseline() {
+    fn path_of_status_line_and_diff_text() {
         let before = vec!["?? .collab/".to_string(), " M src/lib.rs".to_string()];
         let after = vec![
             "?? .collab/".to_string(),
@@ -447,8 +615,6 @@ mod tests {
             "?? done.txt".to_string(),
             "R  old.rs -> new.rs".to_string(),
         ];
-        assert_eq!(files_changed(&before, &after), vec!["done.txt", "new.rs"]);
-        assert_eq!(files_changed(&before, &before), Vec::<String>::new());
         assert_eq!(path_of_status_line("?? a.txt"), "a.txt");
         assert_eq!(path_of_status_line("R  old -> new"), "new");
         let d = diff_text(
@@ -459,6 +625,70 @@ mod tests {
         assert!(d.contains("git status --short (before the run):"));
         assert!(d.contains("git status --short (after the run):"));
         assert!(d.contains("git diff --stat (after the run):"));
+    }
+
+    /// (0.2.4, F89-7) `files_changed` compares CONTENT IDENTITY: a file already dirty before the
+    /// run that the worker edits further is listed; one left at its baseline content is not; a new
+    /// untracked file is listed.
+    #[test]
+    fn files_changed_uses_content_identity() {
+        let repo = scratch("fc");
+        let git = |a: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(a)
+                .output()
+                .expect("git on PATH");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@e.com"]);
+        git(&["config", "user.name", "T"]);
+        std::fs::write(repo.join("tracked.txt"), "one\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "init"]);
+        // pre-dirty the tracked file BEFORE the run (this is the baseline)
+        std::fs::write(repo.join("tracked.txt"), "two\n").unwrap();
+        let before = status_short(&repo);
+        let base_h = baseline_hashes(&repo, &before);
+        // the worker edits the pre-dirty file FURTHER and creates a new one
+        std::fs::write(repo.join("tracked.txt"), "three\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "x\n").unwrap();
+        let after = status_short(&repo);
+        let changed = files_changed(&base_h, &after, &repo);
+        assert!(changed.contains(&"tracked.txt".to_string()), "{changed:?}");
+        assert!(changed.contains(&"new.txt".to_string()), "{changed:?}");
+        // revert the pre-dirty file to its baseline-dirty content: it is no longer the worker's
+        std::fs::write(repo.join("tracked.txt"), "two\n").unwrap();
+        let after2 = status_short(&repo);
+        let changed2 = files_changed(&base_h, &after2, &repo);
+        assert!(!changed2.contains(&"tracked.txt".to_string()), "{changed2:?}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// (0.2.4, F89-5) `summarize_events` rebuilds usage from an allow list of numeric counters:
+    /// a sentinel in an extra usage field never reaches the summary.
+    #[test]
+    fn usage_is_rebuilt_from_an_allow_list() {
+        let text = concat!(
+            "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2,",
+            "\"result\":\"ok\",\"total_cost_usd\":0.01,\"duration_ms\":1234,",
+            "\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"cache_read_input_tokens\":3,",
+            "\"secret\":\"sentinel-do-not-leak\"}}\n"
+        );
+        let s = summarize_events(text);
+        let usage = s.usage.expect("usage present");
+        assert_eq!(usage["input_tokens"], 10);
+        assert_eq!(usage["output_tokens"], 5);
+        assert_eq!(usage["cache_read_input_tokens"], 3);
+        assert_eq!(usage["total_cost_usd"], 0.01);
+        assert_eq!(usage["num_turns"], 2);
+        assert_eq!(usage["duration_ms"], 1234);
+        assert!(usage.get("secret").is_none(), "{usage}");
+        assert!(
+            !serde_json::to_string(&usage).unwrap().contains("sentinel"),
+            "{usage}"
+        );
     }
 
     #[test]

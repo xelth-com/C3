@@ -70,6 +70,8 @@ struct WorkWire {
     quota_window_sec: i64,
     #[serde(default)]
     max_resumes: i64,
+    #[serde(default)]
+    unrestricted: bool,
 }
 
 fn eighty() -> i64 {
@@ -95,6 +97,7 @@ impl WorkWire {
             collab_dir: collab_abs.to_string(),
             quota_window_sec: o.quota_window_sec,
             max_resumes: o.max_resumes,
+            unrestricted: o.unrestricted,
         }
     }
 
@@ -112,6 +115,7 @@ impl WorkWire {
             collab_dir: self.collab_dir,
             quota_window_sec: self.quota_window_sec,
             max_resumes: self.max_resumes,
+            unrestricted: self.unrestricted,
             ..Default::default()
         }
     }
@@ -265,13 +269,15 @@ pub fn background(o: &Options) -> i32 {
             ));
         }
     };
-    rec.pid = Some(std::process::id() as i64);
-    rec.args = None;
-    if let Err(e) = write_record(&rec_dir, &rec) {
-        return refuse(&format!(
-            "the work run could not report to {} ({e}); nothing was started.",
-            rec_dir.join("run.json").display()
-        ));
+    // (0.2.4, F89-1/F89-2) Claim the record under the task admission lock: write this background's
+    // pid + start time (the liveness owner) and refuse if another run of the task went live in the
+    // meantime, all BEFORE the child is spawned.
+    let work_root = rec_dir.parent().map(Path::to_path_buf).unwrap_or_default();
+    if let Err(e) = super::claim_for_spawn(&work_root, &rec_dir, 0) {
+        rec.status = "refused".into();
+        rec.ended = Some(iso_now());
+        let _ = write_record(&rec_dir, &rec);
+        return refuse(&format!("the detached work run could not be claimed: {e}"));
     }
     println!(
         "{TOOL}: work run {} ({} :: {}) - pid {} on {}, started {}",
@@ -472,8 +478,11 @@ pub fn query(o: &Options) -> i32 {
         }
         if let Some(q) = &rec.quota {
             if rec.status == "waiting_quota" {
+                // (0.2.4, F89-6) The persisted cap, unless the operator overrode it on this call.
                 let max = if o.max_resumes > 0 {
                     o.max_resumes
+                } else if rec.max_resumes > 0 {
+                    rec.max_resumes
                 } else {
                     super::MAX_RESUMES_DEFAULT
                 };
@@ -621,6 +630,7 @@ mod tests {
             collab_dir: "C:/r/.collab".into(),
             quota_window_sec: 900,
             max_resumes: 2,
+            unrestricted: true,
         };
         let text = serde_json::to_string(&w).unwrap();
         let back: WorkWire = serde_json::from_str(&text).unwrap();
@@ -631,6 +641,7 @@ mod tests {
         assert_eq!(o.timeout_sec, 120);
         assert_eq!(o.quota_window_sec, 900);
         assert_eq!(o.max_resumes, 2);
+        assert!(o.unrestricted);
         assert_eq!(o.allow, vec!["Bash(cargo test:*)".to_string()]);
         assert!(!o.detach && !o.status && !o.wait && o.detach_id.is_empty());
         // the defaults of the wire are the CLI's defaults

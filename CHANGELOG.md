@@ -7,6 +7,41 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
+## [Unreleased / 0.2.4-dev]
+
+### Fixed
+
+- **`c3 work` wave 10a — Astra acceptance pass (handoff 89, F89-1..F89-8)** (`docs/port/wave10a-work-acceptance.md`):
+  - **F89-1 (blocker)** worker liveness: every `running`/`waiting_quota` record now carries the
+    OWNING process's pid + start time (a foreground run writes its own pid BEFORE spawning the
+    child); liveness is that pid-with-start-time being alive, and the 120 s start grace only covers
+    the window before any pid is written. A foreground run past 120 s stays `running` and still
+    makes a second same-task launch refuse.
+  - **F89-2 (blocker)** admission: one task-level admission lock covers starts, resumes and the
+    detached alarm — re-read under the lock, refuse if another run is live, durably claim the
+    record (`running`, new pid/start, attempt number) before spawning; per-attempt event/stderr
+    file names (`.events-resume-<n>.jsonl`). Two concurrent `--resume` of one record: exactly one
+    spawns.
+  - **F89-3 (blocker)** artifact durability: `append_resume`/`refresh_artifacts` return `Result`;
+    the resume's attempt files are deleted only after the append succeeded and was flushed; a
+    `report.md`/`diff.txt`/`events.jsonl` write failure makes the run `artifact_error` (exit
+    non-zero) with the error in `run.json`, never `done`.
+  - **F89-4 (major)** a real allow-list grammar (`<Tool>`, `<Tool>(<exe>)`, `<Tool>(<exe>:*)`, no
+    shells/git) replaces the substring check; the new `--unrestricted` opt-in (flag or roster
+    `ext.unrestricted`) lifts it and is required for the muse worker's `--disable-sandbox`; codex
+    keeps `--sandbox workspace-write`; `run.json` records `unrestricted` and `permission`; the doc
+    states the boundary precisely.
+  - **F89-5 (major)** `run.json` `usage` is rebuilt from an allow list of numeric counters (never a
+    cloned object); the record contract in the doc is made precise (events.jsonl is the raw stream
+    retained verbatim; run.json/report.md/diff.txt carry no secret values).
+  - **F89-6 (major)** the effective `max_resumes` and `quota_window_sec` are persisted at the first
+    run and reused by a later plain `--resume` unless the operator passes the flag.
+  - **F89-7 (minor)** `files_changed` compares content identity (`git hash-object`) before/after,
+    so a pre-dirty file the worker edited further is listed.
+  - **F89-8 (major)** success requires the engine's successful terminal event in addition to exit
+    0; an error terminal or rejecting rate-limit takes precedence over exit 0; an empty stream with
+    exit 0 is `died` with reason `no terminal event`.
+
 ## [0.2.3] - 2026-10-22
 
 ### Added

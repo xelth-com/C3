@@ -13,6 +13,7 @@ c3 work --task <slug> --brief <file> --provider <roster label> [--model <id>]
         [--prompt <text>] [--effort low|medium|high|xhigh] [--max-turns <n>=80]
         [--timeout-sec <s>=3600] [--allow <tool pattern>]... [--collab-dir <dir>=.collab]
         [--detach] [--status [--id <id>]] [--wait [--id <id>] [--wait-timeout-sec <s>]]
+        [--max-resumes <n>=3] [--quota-window-sec <s>] [--unrestricted]
 ```
 
 - `--provider` names a roster entry with `"engine": "claude"` and `"roles"` containing
@@ -56,14 +57,56 @@ in `engines/claude_auth.rs` rather than writing a second one. The prompt travels
 `<collab-dir>/<task>/work/<NN>-<provider>-<model>/` (NN = 2-digit sequence per task):
 
 - `brief.md` — the prompt as sent (preamble + brief + `--prompt`).
-- `events.jsonl` — the child's stream-json verbatim.
+- `events.jsonl` — the child's stream-json **retained verbatim**, exactly like a consult's events
+  file. It is the one record artifact that is NOT filtered: if the child's own output emits a
+  credential, it is here (as it is in any raw tool stream). `run.json`, `report.md` and `diff.txt`
+  carry no secret values.
 - `report.md` — the final assistant text (the `result` event's text; the last assistant text if
   the run died).
 - `diff.txt` — `git status --short` before the run (the baseline) and after, plus
   `git diff --stat` after; computed by c3, not by the worker.
-- `run.json` — `{task, seq, provider, model, engine:"claude", argv (no secrets), child_env_scrubbed,
-  started, ended, exit_code, status: done|died|timeout|refused, turns, tool_calls: {Read, Edit,
-  Write, Bash, ...}, files_changed: [...], usage: <the result event's usage/cost when present>}`.
+- `run.json` — `{task, seq, provider, model, engine:"claude", argv (no secrets — every `--allow`
+  value is validated by the grammar below, so no free text travels there), child_env_scrubbed,
+  started, ended, exit_code, status, pid + pid_start (the owning process — see Liveness), attempt,
+  max_resumes, quota_window_sec, unrestricted, permission, turns, tool_calls: {Read, Edit, Write,
+  Bash, ...}, files_changed: [...], usage, error}`. `status` is one of `done | died | timeout |
+  refused | quota | running | waiting_quota | artifact_error`. `usage` is **rebuilt from an allow
+  list of numeric counters** (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`,
+  `cache_read_input_tokens`, `total_cost_usd`, `duration_ms`, `num_turns`, and the codex/muse token
+  equivalents) — never a cloned usage object, so a sentinel or secret in an extra field never
+  reaches the record. `error` carries the terminal error text when the run ended `died` (e.g.
+  `no terminal event`) or `artifact_error`.
+
+### Liveness (0.2.4, F89-1)
+
+Every `running`/`waiting_quota` record carries the OWNING process's `pid` and `pid_start` (its
+start time, the anchor against pid reuse): a foreground run writes its OWN pid before it spawns the
+child; a detached run's background writes its pid. A run is live only while that pid with that
+start time is alive. The start grace (120 s) applies ONLY to a record that has no pid yet. So a
+foreground run that lasts longer than the grace stays `running` for `--status` and still makes a
+second same-task launch refuse.
+
+### Success (0.2.4, F89-8)
+
+`done` requires BOTH process exit 0 AND the engine's successful terminal event (claude `result`
+with `is_error:false`; codex a `turn.completed`/`agent_message`; muse a `completed` terminal). An
+error terminal or a rejecting rate-limit takes precedence over exit 0 (→ `died`/`quota`); an empty
+stream with exit 0 is `died` with reason `no terminal event`. Exit 0 alone never establishes
+success.
+
+### Artifact durability (0.2.4, F89-3)
+
+`report.md`/`diff.txt`/`events.jsonl` write failures are never swallowed: the run becomes
+`artifact_error` (exit non-zero) with the error text in `run.json`, never `done`. On a resume the
+attempt's per-run temp files (`.events-resume-<n>.jsonl`, never a fixed name) are deleted only
+after the attempt stream was durably appended to `events.jsonl` and flushed.
+
+### Admission (0.2.4, F89-2)
+
+One task-level admission lock covers starts, resumes and the detached alarm: the claimer re-reads
+under the lock, refuses if any other run of the task is live, and durably claims the record
+(`running`, new pid/start, attempt number) BEFORE spawning. Two concurrent `--resume` of one
+record: exactly one spawns.
 
 No evidence check, no findings, no rating prompt: a work run is not a consultation. It does not
 touch the review ledger; `c3 consult --status` does not list it.
@@ -99,7 +142,10 @@ again."
   The attempt is appended to `events.jsonl` after a `{"type":"c3","subtype":"resume","n":<k>,
   "at":<utc>}` separator; `report.md`/`diff.txt`/`run.json` are recomputed over the whole record;
   `quota.resumes` increments. Resumes are capped by `--max-resumes` (default 3); past the cap the
-  status stays `quota` with `exhausted: true`.
+  status stays `quota` with `exhausted: true`. The effective `max_resumes` and `quota_window_sec`
+  are persisted in `run.json` at the first run and reused by a later plain `--resume` (an explicit
+  flag still overrides), so following the printed `--resume` line never silently resets a custom
+  cap (0.2.4, F89-6).
 - **The alarm (detached runs).** The background does NOT exit on quota. It writes status
   `waiting_quota` with `quota.resume_at`, sleeps in 30 s slices until then (checking a kick file
   `<record dir>/.kick` each slice), then resumes in-process; it repeats on a further quota hit up
@@ -165,12 +211,27 @@ line shows a `[codex]`/`[muse]` suffix like the review lineage.
 | `codex` | `codex exec --sandbox workspace-write --color never --json -C <repo> -m <model> [-c model_reasoning_effort="<e>"] -` | stdin (`-`) | `codex exec … resume <thread> -` (the thread parsed from the first run's stream) | the `workspace-write` sandbox — `--allow` does not apply |
 | `muse` | `muse exec --json --prompt-file <brief.md> --model <id> [--reasoning-effort <e>] --workspace <repo> --approval-mode never --trust-workspace --disable-sandbox --session-id <uuid>` | `--prompt-file` | `muse exec … --session-id <uuid> --prompt-file <resume-prompt>` (same minted session) | writes + shell ON; the workspace is the write mode — `--allow` does not apply |
 
-**`--allow` applies to claude only** (it maps to Claude Code `--allowedTools`). For codex and muse
-the write mode IS the sandbox / workspace flag above; there is no per-tool allow list. The
-`git`-naming refusal on `--allow` still holds on all three, and the preamble still says never run
-git — but for codex/muse nothing beyond the preamble enforces it (codex's `workspace-write` and
-muse's disabled sandbox both permit `git`). Treat a codex/muse worker's tree as the worker's to
-change and review its `diff.txt` as always.
+**`--allow` applies to claude only** (it maps to Claude Code `--allowedTools`); `run.json`'s
+`permission` field states this. For codex the boundary is the real `--sandbox workspace-write`; for
+muse it is the (unrestricted) `--disable-sandbox` workspace. The allow list does not apply to
+codex or muse.
+
+**The allow-list grammar (0.2.4, F89-4).** Without `--unrestricted`, every operator `--allow`
+pattern must match `<Tool>`, `<Tool>(<exe>)` or `<Tool>(<exe>:*)` where `<exe>` is a plain
+executable name `[A-Za-z0-9_.+-]+`, optionally followed by plain subcommand words of the same
+alphabet separated by single spaces (`Bash(cargo test:*)`, `Bash(npm run lint:*)`; a word never
+starts with `-`, so `Bash(python -c:*)` is refused; no `*`, no quotes, no shell operators), and the
+executable is not one of
+`git`, `sh`, `bash`, `zsh`, `pwsh`, `powershell`, `cmd`. `Bash(*)`, `*`, `Bash(python -c:*)` and
+the like are refused, naming the position (never echoing the pattern, which could carry a
+credential). The built-in default allow list is trusted and exempt from the grammar.
+
+**`--unrestricted` (0.2.4, F89-4)** is the explicit operator opt-in (flag, or roster
+`ext.unrestricted: true`): it lifts the allow-list grammar (every pattern accepted, git included)
+and is **required** for the muse worker, whose `--disable-sandbox` has no shell containment. With
+it, `run.json` records `unrestricted: true`. codex always keeps `--sandbox workspace-write` (a real
+boundary) regardless. Treat a codex/muse/unrestricted worker's tree as the worker's to change and
+review its `diff.txt` as always.
 
 **Credentials / launch guard.** claude reuses the endpoint route (`env_key` token, host markers
 scrubbed, `env: None` becomes the endpoint env). codex and muse inherit the parent environment

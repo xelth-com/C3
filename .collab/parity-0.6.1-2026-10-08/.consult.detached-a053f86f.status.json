@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "a053f86f-9e54-4a34-8111-ae71a30ecc41",
+    "id8":  "a053f86f",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-22T07:59:23+02:00",
+    "updated":  "2026-10-22T08:04:06+02:00",
+    "finished":  "2026-10-22T08:04:06+02:00",
+    "wall_seconds":  283,
+    "pid":  18388,
+    "start_time":  "2026-10-22T05:59:23.9013143Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  5100,
+    "purpose":  "acceptance",
+    "reply_name":  "codex-0.2.3-acceptance-1",
+    "brief":  "C:\\Users\\Dmytro\\c3\\.collab/parity-0.6.1-2026-10-08/handoffs/88-claude-0.2.3-acceptance-1.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  280,
+                        "n":  50,
+                        "handoff":  "89",
+                        "reply":  "handoffs/89-codex-codex-0.2.3-acceptance-1.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a16231-6b1e-73f0-9950-0a39a0b469e1 (source: events), wall 280 s\u000aquota      : 5h 9% until 12:59; wk 28% until Oct 27; this run 325098 input tokens (247424 cached) in 6 calls, max 76922 per call of 258400; sub-agents 0\u000averdict    : HOLD - Worker liveness, resume exclusion, and artifact durability have concrete defects that prevent acceptance of v0.2.3.\u000afindings   : 3 blocker, 4 major, 1 minor, 0 note -\u003e F89-1..F89-8 in findings.json\u000aprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 not-checked, F66-2 not-checked, F66-3 not-checked, F66-4 not-checked, F66-5 not-checked, F66-6 not-checked, F68-1 not-checked, F68-2 not-checked, F70-1 not-checked, F72-1 not-checked, F72-2 not-checked, F74-1 not-checked, F74-2 not-checked, F76-1 not-checked, F78-1 not-checked, F78-2 not-checked, F80-1 not-checked, F82-1 not-checked, F84-1 not-checked\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\89-codex-codex-0.2.3-acceptance-1.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\89-codex-codex-0.2.3-acceptance-1.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\89-codex-codex-0.2.3-acceptance-1.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-a053f86f.log",
+    "args":  null
+}

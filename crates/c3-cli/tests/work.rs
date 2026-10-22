@@ -244,6 +244,202 @@ fn write_fake_muse(work: &Path) -> PathBuf {
     p
 }
 
+/// (0.2.4, F89-1/F89-2) A blocking launcher: it waits for `release.txt` to appear in the cwd
+/// (the repo root), up to a bounded number of slices, then emits a successful result and exits 0.
+/// While it blocks, the owning c3 process stays alive, so the record stays `running`.
+#[cfg(windows)]
+fn write_blocking_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-blocking-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "setlocal enabledelayedexpansion\r\n",
+            "set /a n=0\r\n",
+            ":wait\r\n",
+            "if exist \"release.txt\" goto go\r\n",
+            "if !n! geq 120 goto go\r\n",
+            "ping -n 2 127.0.0.1 >nul\r\n",
+            "set /a n+=1\r\n",
+            "goto wait\r\n",
+            ":go\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"44444444-4444-4444-4444-444444444444\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"assistant\",\"message\":{\"model\":\"glm-5.3\",\"content\":[{\"type\":\"text\",\"text\":\"blocked then done\"}]}}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"blocking worker done.\"}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_blocking_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-blocking-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "n=0\n",
+            "while [ ! -f release.txt ] && [ $n -lt 120 ]; do sleep 0.5; n=$((n+1)); done\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"44444444-4444-4444-4444-444444444444\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"assistant\",\"message\":{\"model\":\"glm-5.3\",\"content\":[{\"type\":\"text\",\"text\":\"blocked then done\"}]}}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"blocking worker done.\"}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// (0.2.4, F89-5) A launcher whose result carries a sentinel in an EXTRA usage field; the
+/// allow-list rebuild must keep the numeric counters and drop the sentinel from run.json.
+#[cfg(windows)]
+fn write_sentinel_usage_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-sentinel-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "echo touched>worker-touched.txt\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"55555555-5555-5555-5555-555555555555\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2,\"result\":\"done.\",\"total_cost_usd\":0.03,\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"secret\":\"sentinel-usage-do-not-leak\"}}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_sentinel_usage_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-sentinel-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo touched >worker-touched.txt\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"55555555-5555-5555-5555-555555555555\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2,\"result\":\"done.\",\"total_cost_usd\":0.03,\"usage\":{\"input_tokens\":11,\"output_tokens\":7,\"secret\":\"sentinel-usage-do-not-leak\"}}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// (0.2.4, F89-8) A launcher that emits an is_error result and exits 0: exit 0 alone must NOT be
+/// treated as success.
+#[cfg(windows)]
+fn write_error_result_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-errres-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"66666666-6666-6666-6666-666666666666\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"error\",\"is_error\":true,\"num_turns\":1,\"result\":\"the model refused the task\"}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_error_result_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-errres-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"66666666-6666-6666-6666-666666666666\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"error\",\"is_error\":true,\"num_turns\":1,\"result\":\"the model refused the task\"}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// (0.2.4, F89-8) A launcher that emits only an init line (no terminal result) and exits 0:
+/// an empty stream with exit 0 must fail with reason `no terminal event`.
+#[cfg(windows)]
+fn write_empty_stream_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-empty-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"77777777-7777-7777-7777-777777777777\",\"model\":\"glm-5.3\"}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_empty_stream_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-empty-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"77777777-7777-7777-7777-777777777777\",\"model\":\"glm-5.3\"}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// (0.2.4, F89-7) A launcher that further edits the already-tracked `app.txt` (which the test
+/// dirties before the run), to prove a pre-dirty file the worker edits is listed in files_changed.
+#[cfg(windows)]
+fn write_edit_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-edit-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "echo worker-edit>app.txt\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"88888888-8888-8888-8888-888888888888\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"edited app.txt\"}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_edit_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-edit-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo worker-edit >app.txt\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"88888888-8888-8888-8888-888888888888\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"edited app.txt\"}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
 #[cfg(unix)]
 fn set_executable(p: &Path) {
     use std::os::unix::fs::PermissionsExt;
@@ -538,6 +734,15 @@ fn a_work_run_against_the_fake_launcher_lands_its_whole_record() {
     assert_eq!(run["engine"], "claude");
     assert_eq!(run["turns"], 3);
     assert_eq!(run["usage"]["input_tokens"], 10);
+    // (0.2.4, F89-1) the owning pid + start time were written (the liveness owner)
+    assert!(run["pid"].as_i64().unwrap_or(0) > 0, "{run}");
+    assert!(run["pid_start"].is_string(), "{run}");
+    // (0.2.4, F89-4) the permission boundary is recorded; this run was restricted
+    assert_eq!(run["unrestricted"], false, "{run}");
+    assert!(
+        run["permission"].as_str().unwrap_or("").contains("allow list"),
+        "{run}"
+    );
     assert_eq!(
         run["files_changed"]
             .as_array()
@@ -599,7 +804,7 @@ fn the_guards_refuse_before_any_record_exists() {
     let out = e.work("ZAI-claude", &["--allow", "Bash(git:*)"], &[]);
     let t = text(&out);
     assert_eq!(out.status.code(), Some(1), "{t}");
-    assert!(t.contains("--allow 'Bash(git:*)' names git"), "{t}");
+    assert!(t.contains("--allow pattern #1 names git"), "{t}");
     assert!(!e.work_root().exists(), "no record directory may exist");
 
     // a label that is not a worker: the message lists the roster's worker entries
@@ -953,7 +1158,8 @@ fn a_muse_work_run_lands_its_record() {
         ("META_API_KEY", ""),
         ("MODEL_API_KEY", ""),
     ];
-    let out = e.work("meta", &[], &env);
+    // (0.2.4, F89-4) the muse worker disables its shell sandbox: it needs the explicit opt-in.
+    let out = e.work("meta", &["--unrestricted"], &env);
     let t = text(&out);
     assert_eq!(out.status.code(), Some(0), "{t}");
     assert!(e.repo.join("worker-muse.txt").is_file(), "{t}");
@@ -971,6 +1177,7 @@ fn a_muse_work_run_lands_its_record() {
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
     assert_eq!(run["status"], "done", "{run}");
     assert_eq!(run["engine"], "muse");
+    assert_eq!(run["unrestricted"], true, "{run}");
     // the minted session id is a uuid (muse mints it up front, so a resume continues it)
     let sid = run["session_id"].as_str().unwrap();
     assert_eq!(sid.len(), 36, "minted uuid: {sid}");
@@ -1000,4 +1207,257 @@ fn a_muse_work_run_lands_its_record() {
     assert!(argv.contains("--approval-mode never"), "{argv}");
     assert!(argv.contains("--disable-sandbox"), "{argv}");
     assert!(argv.contains(&format!("--session-id {sid}")), "{argv}");
+}
+
+// ------------------------------------------------------------------ WAVE 10a (F89-1..F89-8)
+
+/// (F89-4) The allow-list grammar refuses broad patterns (naming the position, not the pattern),
+/// and the muse worker needs the explicit --unrestricted opt-in. Each refuses before any record.
+#[test]
+fn the_allow_grammar_and_muse_opt_in_refuse_before_any_record() {
+    let e = setup("grammar");
+
+    for pat in [
+        "Bash(*)",
+        "*",
+        "Bash(python -c:*)",
+        "Bash(sh:*)",
+        "Bash(cargo test && git push:*)",
+        "Bash(cargo  test:*)",
+        "Bash(npm run \"lint\":*)",
+    ] {
+        let out = e.work("ZAI-claude", &["--allow", pat], &[]);
+        let t = text(&out);
+        assert_eq!(out.status.code(), Some(1), "{pat}: {t}");
+        assert!(
+            t.contains("not a valid restricted tool pattern")
+                || t.contains("shell or git")
+                || t.contains("names git"),
+            "{pat}: {t}"
+        );
+        if pat.len() > 3 {
+            assert!(!t.contains(pat), "{pat}: the refusal must never echo the pattern: {t}");
+        }
+        assert!(!e.work_root().exists(), "{pat}: no record may exist");
+    }
+
+    // a valid specific pattern is accepted (the run lands); subcommand words are plain words
+    let out = e.work("ZAI-claude", &["--allow", "Bash(cargo)"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let e1 = setup("grammar1");
+    let out = e1.work("ZAI-claude", &["--allow", "Bash(npm run lint:*)"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+
+    // --unrestricted lifts the grammar entirely (even a bare wildcard), recorded in run.json
+    let e2 = setup("grammar2");
+    let out = e2.work("ZAI-claude", &["--allow", "Bash(*)", "--unrestricted"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let rec = e2.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["unrestricted"], true, "{run}");
+
+    // the muse worker is refused without the opt-in (before any record exists)
+    let e3 = setup("muse-refuse");
+    let auth = e3
+        .work
+        .join("userhome")
+        .join(".config")
+        .join("muse")
+        .join("auth.json");
+    std::fs::create_dir_all(auth.parent().unwrap()).unwrap();
+    std::fs::write(&auth, r#"{"providers":{"meta":{"mechanism":"oauth"}}}"#).unwrap();
+    let out = e3.work(
+        "meta",
+        &[],
+        &[
+            ("TBH_CREDENTIAL_BACKEND", "file"),
+            ("META_API_KEY", ""),
+            ("MODEL_API_KEY", ""),
+        ],
+    );
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("--disable-sandbox"), "{t}");
+    assert!(!e3.work_root().exists(), "no record may exist");
+}
+
+/// (F89-5) usage in run.json is rebuilt from an allow list of numeric counters: a sentinel in an
+/// extra usage field never reaches the record, anywhere.
+#[test]
+fn usage_in_run_json_is_an_allow_list() {
+    let e = setup("usage");
+    let fake = write_sentinel_usage_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["usage"]["input_tokens"], 11, "{run}");
+    assert_eq!(run["usage"]["output_tokens"], 7, "{run}");
+    assert_eq!(run["usage"]["total_cost_usd"], 0.03, "{run}");
+    assert!(run["usage"].get("secret").is_none(), "{run}");
+    // run.json, report.md and diff.txt carry no secret VALUES. events.jsonl is exempt: it is the
+    // child's raw stream retained verbatim (F89-5 record contract), like a consult's events file.
+    for f in ["run.json", "report.md", "diff.txt"] {
+        assert!(
+            !read(&rec.join(f)).contains("sentinel-usage"),
+            "{f} leaks the sentinel"
+        );
+    }
+}
+
+/// (F89-6) A persisted --max-resumes is reused by a plain --resume (no flag): a cap of 1 exhausts
+/// after the first quota-hitting resume.
+#[test]
+fn a_persisted_max_resumes_is_reused_without_the_flag() {
+    let e = setup("persist-cap");
+    let fake = write_always_quota_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let qenv: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    let out = e.work("ZAI-claude", &["--max-resumes", "1"], &qenv);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["max_resumes"], 1, "{run}");
+
+    // a PLAIN --resume (no --max-resumes): the stored cap of 1 is honoured -> exhausted
+    let out = e.c3(&["work", "--task", "t", "--resume", "01"], &qenv);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["quota"]["resumes"], 1, "{run}");
+    assert_eq!(run["quota"]["exhausted"], true, "{run}");
+}
+
+/// (F89-7) files_changed compares content identity: a file already dirty before the run that the
+/// worker edits further is listed.
+#[test]
+fn files_changed_lists_a_pre_dirty_file_the_worker_edited() {
+    let e = setup("predirty");
+    std::fs::write(e.repo.join("app.txt"), "pre-dirty\n").unwrap();
+    let fake = write_edit_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    let changed: Vec<&str> = run["files_changed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert!(changed.contains(&"app.txt"), "pre-dirty edited file listed: {run}");
+}
+
+/// (F89-8) exit 0 alone is not success: an is_error result -> died; an empty stream -> died with
+/// reason `no terminal event`. Both exit non-zero.
+#[test]
+fn exit_zero_without_a_success_terminal_is_not_done() {
+    let e = setup("errres");
+    let fake = write_error_result_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "died", "error result -> died: {run}");
+    assert_eq!(run["exit_code"], 0, "{run}");
+
+    let e2 = setup("empty");
+    let fake = write_empty_stream_launcher(&e2.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e2.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let rec = e2.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "died", "empty stream -> died: {run}");
+    assert_eq!(run["error"], "no terminal event", "{run}");
+}
+
+/// (F89-3) An artifact write failure makes a resumed run `artifact_error`, never `done`: with
+/// report.md replaced by a directory the write fails; the attempt stream is still appended first.
+#[test]
+fn an_artifact_write_failure_is_not_done() {
+    let e = setup("artifact");
+    let fake = write_quota_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let qenv: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    let out = e.work("ZAI-claude", &[], &qenv);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let report = rec.join("report.md");
+    let _ = std::fs::remove_file(&report);
+    std::fs::create_dir(&report).unwrap();
+
+    let out = e.c3(&["work", "--task", "t", "--resume", "01"], &qenv);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "artifact_error", "{run}");
+    assert!(
+        run["error"].as_str().unwrap_or("").contains("report.md"),
+        "{run}"
+    );
+    let events = read(&rec.join("events.jsonl"));
+    assert!(events.contains("\"subtype\":\"resume\",\"n\":1"), "{events}");
+}
+
+/// (F89-1/F89-2) A foreground run stays `running` with a live owning pid while its child blocks,
+/// and a second start on the same task is refused before any second record.
+#[test]
+fn a_live_foreground_run_refuses_a_second_launch() {
+    let e = setup("live");
+    let fake = write_blocking_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let env: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    let brief = e.brief.to_string_lossy().to_string();
+    let child = e
+        .cmd(
+            &[
+                "work",
+                "--task",
+                "t",
+                "--brief",
+                &brief,
+                "--provider",
+                "ZAI-claude",
+            ],
+            &env,
+        )
+        .spawn()
+        .expect("spawn c3");
+
+    let run_json = e.work_root().join("01-ZAI-claude-glm-5.3").join("run.json");
+    let mut ok = false;
+    for _ in 0..200 {
+        if run_json.is_file() {
+            if let Ok(v) = serde_json::from_str::<Value>(&read(&run_json)) {
+                if v["status"] == "running" && v["pid"].as_i64().unwrap_or(0) > 0 {
+                    ok = true;
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ok, "the run never reported running with a pid");
+
+    // --status reads it as running (exit 2) — the pid owner is alive past any start grace
+    let st = e.c3(&["work", "--task", "t", "--status"], &env);
+    assert_eq!(st.status.code(), Some(2), "{}", text(&st));
+
+    // a second start on the same task refuses before spawning a second record
+    let second = e.work("ZAI-claude", &[], &env);
+    let t = text(&second);
+    assert_eq!(second.status.code(), Some(1), "{t}");
+    assert!(t.contains("already has a live work run"), "{t}");
+    assert!(!e.work_root().join("02-ZAI-claude-glm-5.3").exists());
+
+    std::fs::write(e.repo.join("release.txt"), b"1").unwrap();
+    let out = child.wait_with_output().expect("wait c3");
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let run: Value = serde_json::from_str(&read(&run_json)).unwrap();
+    assert_eq!(run["status"], "done", "{run}");
 }

@@ -455,6 +455,83 @@ fn text_quota(err_text: &str, stderr_lines: &[String]) -> (String, Option<DateTi
     (text, reset)
 }
 
+// --------------------------------------------------------------------------- the terminal outcome
+
+/// (0.2.4, F89-8) The engine's terminal verdict read from its finished stream, independent of the
+/// process exit code: a run is `done` only when the engine emitted its SUCCESSFUL terminal event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Terminal {
+    /// The engine's successful terminal event (claude `result` with `is_error:false`; codex a
+    /// `turn.completed`/`agent_message` with no failure; muse a `completed` terminal).
+    Success,
+    /// The engine's error terminal (claude `result` with `is_error:true`; codex a `turn.failed`
+    /// or a parsed error; muse a non-`completed` terminal or an error).
+    Error,
+    /// No terminal event at all (an empty/truncated stream): completion evidence is missing.
+    None,
+}
+
+/// The terminal verdict of `engine`'s event stream (F89-8): success requires the engine's own
+/// successful terminal event, an error terminal is a failure, and an empty stream is `None`.
+pub fn terminal_outcome(engine: WorkerEngine, events_text: &str) -> Terminal {
+    match engine {
+        WorkerEngine::Claude => {
+            let s = summarize_events(events_text);
+            if !s.has_result {
+                Terminal::None
+            } else if s.is_error {
+                Terminal::Error
+            } else {
+                Terminal::Success
+            }
+        }
+        WorkerEngine::Codex => {
+            if !crate::engines::codex::parse_error(events_text).is_empty() {
+                return Terminal::Error;
+            }
+            let mut saw_completed = false;
+            for line in events_text.split(['\r', '\n']) {
+                let t = line.trim();
+                if !t.starts_with('{') {
+                    continue;
+                }
+                let Ok(obj) = serde_json::from_str::<Value>(t) else {
+                    continue;
+                };
+                match obj.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+                    "turn.failed" => return Terminal::Error,
+                    "turn.completed" => saw_completed = true,
+                    "item.completed"
+                        if obj
+                            .get("item")
+                            .and_then(|i| i.get("type"))
+                            .and_then(|v| v.as_str())
+                            == Some("agent_message") =>
+                    {
+                        saw_completed = true;
+                    }
+                    _ => {}
+                }
+            }
+            if saw_completed {
+                Terminal::Success
+            } else {
+                Terminal::None
+            }
+        }
+        WorkerEngine::Muse => {
+            let ev = crate::engines::muse::read_muse_events(events_text, true);
+            if ev.terminal == "completed" {
+                Terminal::Success
+            } else if !ev.error.is_empty() || !ev.terminal.is_empty() {
+                Terminal::Error
+            } else {
+                Terminal::None
+            }
+        }
+    }
+}
+
 // --------------------------------------------------------------------------- the session id
 
 /// The child session id a resume continues, read from the finished event stream: codex names a
@@ -557,6 +634,23 @@ mod tests {
             session_from_events(WorkerEngine::Codex, s),
             "11111111-2222-3333-4444-555555555555"
         );
+    }
+
+    /// (0.2.4, F89-8) The terminal verdict is read from the stream, not the exit code: a successful
+    /// result is `Success`, an error result is `Error`, an empty stream is `None`.
+    #[test]
+    fn terminal_outcome_reads_the_stream() {
+        let ok = r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#;
+        assert_eq!(terminal_outcome(WorkerEngine::Claude, ok), Terminal::Success);
+        let err = r#"{"type":"result","subtype":"error","is_error":true,"result":"boom"}"#;
+        assert_eq!(terminal_outcome(WorkerEngine::Claude, err), Terminal::Error);
+        assert_eq!(
+            terminal_outcome(WorkerEngine::Claude, "{\"type\":\"system\"}"),
+            Terminal::None
+        );
+        let cx = r#"{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}"#;
+        assert_eq!(terminal_outcome(WorkerEngine::Codex, cx), Terminal::Success);
+        assert_eq!(terminal_outcome(WorkerEngine::Codex, ""), Terminal::None);
     }
 
     #[test]

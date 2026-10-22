@@ -71,6 +71,10 @@ pub struct WorkArgs {
     /// How many times a run may be resumed before it needs a human (0 = 3).
     #[arg(long)]
     pub max_resumes: Option<i64>,
+    /// Lift the allow-list grammar (accept every --allow pattern) and permit the muse worker's
+    /// --disable-sandbox. Recorded in run.json as unrestricted: true.
+    #[arg(long)]
+    pub unrestricted: bool,
     /// INTERNAL: the background process of --detach; never pass it yourself.
     #[arg(long, default_value = "", hide = true)]
     pub detach_id: String,
@@ -107,5 +111,6 @@ pub fn run(args: WorkArgs) -> i32 {
         kick: args.kick,
         quota_window_sec: args.quota_window_sec.unwrap_or(0),
         max_resumes: args.max_resumes.unwrap_or(0),
+        unrestricted: args.unrestricted,
     })
 }

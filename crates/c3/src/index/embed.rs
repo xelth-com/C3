@@ -317,32 +317,48 @@ mod tests {
     fn embed_reaches_a_loopback_fake_via_localhost() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
-        // An in-process fake bound on `localhost` (the same loopback address the pinned resolver
-        // returns, in the same order the OS gives), so the request to `localhost` reaches it
-        // regardless of the 127.0.0.1-vs-::1 ordering on this host.
-        let listener = TcpListener::bind("localhost:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let handle = std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 4096];
-                let _ = stream.read(&mut buf);
-                let body = r#"{"data":[{"index":0,"embedding":[1.0,2.0,3.0]}]}"#;
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                );
-                let _ = stream.write_all(resp.as_bytes());
-                let _ = stream.flush();
-            }
-        });
+        // An in-process fake bound on EVERY loopback address `localhost` resolves to, at one port
+        // (127.0.0.1 first, then ::1 at the same port, best effort), so the request reaches it
+        // whichever address the pinned resolver tries first - the test must not depend on a
+        // refused first address falling through to the second under load (was flaky).
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = first.local_addr().unwrap().port();
+        let mut listeners = vec![first];
+        if let Ok(l) = TcpListener::bind(("::1", port)) {
+            listeners.push(l);
+        }
+        let handles: Vec<_> = listeners
+            .into_iter()
+            .map(|listener| {
+                std::thread::spawn(move || {
+                    if let Ok((mut stream, _)) = listener.accept() {
+                        let mut buf = [0u8; 4096];
+                        let _ = stream.read(&mut buf);
+                        let body = r#"{"data":[{"index":0,"embedding":[1.0,2.0,3.0]}]}"#;
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(resp.as_bytes());
+                        let _ = stream.flush();
+                    }
+                })
+            })
+            .collect();
         let e = Embedder::new(format!("http://localhost:{port}/v1/embeddings"), "m", 3);
         let v = e
             .embed_batch(&["hi".to_string()], Duration::from_secs(5))
             .expect("the request reaches the loopback fake via localhost");
         assert_eq!(v.len(), 1);
         assert_eq!(v[0], vec![1.0, 2.0, 3.0]);
-        let _ = handle.join();
+        // A listener that never got a connection blocks in accept(); unblock it by connecting.
+        for addr in ["127.0.0.1", "::1"] {
+            let _ = std::net::TcpStream::connect((addr, port));
+        }
+        for h in handles {
+            let _ = h.join();
+        }
     }
 
     #[test]

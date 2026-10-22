@@ -364,6 +364,7 @@ impl HttpReviewer {
             plan_caps: Vec::new(),
             reset_hint: String::new(),
             quota_window_sec: 0,
+            unrestricted: false,
             endpoint: None,
         }
     }
