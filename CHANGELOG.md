@@ -7,67 +7,6 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
-## [Unreleased / 0.2.4-dev]
-
-### Fixed
-
-- **`c3 work` wave 10c — Astra acceptance pass 3 (handoff 93, F93-1)** (`docs/port/wave10a-work-acceptance.md`):
-  - **F93-1 (blocker)** the status/`--wait` reader no longer performs an unlocked recovery write:
-    `read_record` is now a pure fallible reader, and the dead→`died` transition is done under the
-    task admission lock via `recover_dead_run`, which re-reads and writes only when the record is
-    still the same generation (pid + pid_start + attempt) and its owner is still dead — so a delayed
-    status read can no longer overwrite a newly claimed live resume. `live_run` now checks liveness
-    directly; the display/resume listings go through the locked `read_for_display`. Regression:
-    `work.rs::a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim`.
-- **`c3 work` wave 10b — Astra acceptance pass 2 (handoff 91, F91-1..F91-4, F89-4/F89-5 remainders)** (`docs/port/wave10a-work-acceptance.md`):
-  - **F91-1 (blocker)** the resume claim now validates permitted status, exhaustion, owner and the
-    attempt generation under the admission lock and computes the attempt from the locked re-read;
-    a stale claim (now done/exhausted/advanced) refuses before any spawn.
-  - **F91-2 (blocker)** admission fails closed on inspection errors: `run_dirs`/`read_record`/
-    `live_run`/`other_live_run` return errors, only a confirmed `NotFound` is absence, and an
-    unreadable or replaced record refuses a second launch (naming the directory, not contents).
-  - **F91-3 (major)** event-stream READ failures are artifact errors: attempt temp files are kept
-    until read and durably appended; `refresh_artifacts` never replaces `report.md` when
-    `events.jsonl` cannot be read; the run becomes `artifact_error`.
-  - **F91-4 (major)** success needs affirmative terminal evidence: claude a `result` with
-    `is_error` present and false (subtype success/absent), codex a `turn.completed` (an
-    `agent_message` alone is not success), muse its completion event — extraction kept separate.
-  - **F89-4 remainder** the restricted grammar refuses a bare shell/exec tool (a bare tool is
-    allowed only for a read/write whitelist) and denies shells, interpreters and git by exe
-    basename (trailing `.exe`/`.cmd`/`.bat`/`.ps1` stripped); path separators are refused.
-  - **F89-5 remainder** `report.md`, `diff.txt` and the persisted argv pass the project's single
-    pack sanitizer (secret-shaped values redacted); `events.jsonl` stays raw; the doc says so.
-- **`c3 work` wave 10a — Astra acceptance pass (handoff 89, F89-1..F89-8)** (`docs/port/wave10a-work-acceptance.md`):
-  - **F89-1 (blocker)** worker liveness: every `running`/`waiting_quota` record now carries the
-    OWNING process's pid + start time (a foreground run writes its own pid BEFORE spawning the
-    child); liveness is that pid-with-start-time being alive, and the 120 s start grace only covers
-    the window before any pid is written. A foreground run past 120 s stays `running` and still
-    makes a second same-task launch refuse.
-  - **F89-2 (blocker)** admission: one task-level admission lock covers starts, resumes and the
-    detached alarm — re-read under the lock, refuse if another run is live, durably claim the
-    record (`running`, new pid/start, attempt number) before spawning; per-attempt event/stderr
-    file names (`.events-resume-<n>.jsonl`). Two concurrent `--resume` of one record: exactly one
-    spawns.
-  - **F89-3 (blocker)** artifact durability: `append_resume`/`refresh_artifacts` return `Result`;
-    the resume's attempt files are deleted only after the append succeeded and was flushed; a
-    `report.md`/`diff.txt`/`events.jsonl` write failure makes the run `artifact_error` (exit
-    non-zero) with the error in `run.json`, never `done`.
-  - **F89-4 (major)** a real allow-list grammar (`<Tool>`, `<Tool>(<exe>)`, `<Tool>(<exe>:*)`, no
-    shells/git) replaces the substring check; the new `--unrestricted` opt-in (flag or roster
-    `ext.unrestricted`) lifts it and is required for the muse worker's `--disable-sandbox`; codex
-    keeps `--sandbox workspace-write`; `run.json` records `unrestricted` and `permission`; the doc
-    states the boundary precisely.
-  - **F89-5 (major)** `run.json` `usage` is rebuilt from an allow list of numeric counters (never a
-    cloned object); the record contract in the doc is made precise (events.jsonl is the raw stream
-    retained verbatim; run.json/report.md/diff.txt carry no secret values).
-  - **F89-6 (major)** the effective `max_resumes` and `quota_window_sec` are persisted at the first
-    run and reused by a later plain `--resume` unless the operator passes the flag.
-  - **F89-7 (minor)** `files_changed` compares content identity (`git hash-object`) before/after,
-    so a pre-dirty file the worker edited further is listed.
-  - **F89-8 (major)** success requires the engine's successful terminal event in addition to exit
-    0; an error terminal or rejecting rate-limit takes precedence over exit 0; an empty stream with
-    exit 0 is `died` with reason `no terminal event`.
-
 ## [0.2.3] - 2026-10-22
 
 ### Added
@@ -135,6 +74,65 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `docs/port/harness-results.md` points at the RC5-RC7 gate documents for every run after Run 17.
 - Phase 2 switch done on the operator's machine (`docs/port/phase2-switch.md`): the `c3` plugin is
   the only enabled reviewer bridge; the operator's `astra`/`workers` skills name `c3:*`.
+
+### Fixed
+
+- **`c3 work` wave 10c — Astra acceptance pass 3 (handoff 93, F93-1)** (`docs/port/wave10a-work-acceptance.md`):
+  - **F93-1 (blocker)** the status/`--wait` reader no longer performs an unlocked recovery write:
+    `read_record` is now a pure fallible reader, and the dead→`died` transition is done under the
+    task admission lock via `recover_dead_run`, which re-reads and writes only when the record is
+    still the same generation (pid + pid_start + attempt) and its owner is still dead — so a delayed
+    status read can no longer overwrite a newly claimed live resume. `live_run` now checks liveness
+    directly; the display/resume listings go through the locked `read_for_display`. Regression:
+    `work.rs::a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim`.
+- **`c3 work` wave 10b — Astra acceptance pass 2 (handoff 91, F91-1..F91-4, F89-4/F89-5 remainders)** (`docs/port/wave10a-work-acceptance.md`):
+  - **F91-1 (blocker)** the resume claim now validates permitted status, exhaustion, owner and the
+    attempt generation under the admission lock and computes the attempt from the locked re-read;
+    a stale claim (now done/exhausted/advanced) refuses before any spawn.
+  - **F91-2 (blocker)** admission fails closed on inspection errors: `run_dirs`/`read_record`/
+    `live_run`/`other_live_run` return errors, only a confirmed `NotFound` is absence, and an
+    unreadable or replaced record refuses a second launch (naming the directory, not contents).
+  - **F91-3 (major)** event-stream READ failures are artifact errors: attempt temp files are kept
+    until read and durably appended; `refresh_artifacts` never replaces `report.md` when
+    `events.jsonl` cannot be read; the run becomes `artifact_error`.
+  - **F91-4 (major)** success needs affirmative terminal evidence: claude a `result` with
+    `is_error` present and false (subtype success/absent), codex a `turn.completed` (an
+    `agent_message` alone is not success), muse its completion event — extraction kept separate.
+  - **F89-4 remainder** the restricted grammar refuses a bare shell/exec tool (a bare tool is
+    allowed only for a read/write whitelist) and denies shells, interpreters and git by exe
+    basename (trailing `.exe`/`.cmd`/`.bat`/`.ps1` stripped); path separators are refused.
+  - **F89-5 remainder** `report.md`, `diff.txt` and the persisted argv pass the project's single
+    pack sanitizer (secret-shaped values redacted); `events.jsonl` stays raw; the doc says so.
+- **`c3 work` wave 10a — Astra acceptance pass (handoff 89, F89-1..F89-8)** (`docs/port/wave10a-work-acceptance.md`):
+  - **F89-1 (blocker)** worker liveness: every `running`/`waiting_quota` record now carries the
+    OWNING process's pid + start time (a foreground run writes its own pid BEFORE spawning the
+    child); liveness is that pid-with-start-time being alive, and the 120 s start grace only covers
+    the window before any pid is written. A foreground run past 120 s stays `running` and still
+    makes a second same-task launch refuse.
+  - **F89-2 (blocker)** admission: one task-level admission lock covers starts, resumes and the
+    detached alarm — re-read under the lock, refuse if another run is live, durably claim the
+    record (`running`, new pid/start, attempt number) before spawning; per-attempt event/stderr
+    file names (`.events-resume-<n>.jsonl`). Two concurrent `--resume` of one record: exactly one
+    spawns.
+  - **F89-3 (blocker)** artifact durability: `append_resume`/`refresh_artifacts` return `Result`;
+    the resume's attempt files are deleted only after the append succeeded and was flushed; a
+    `report.md`/`diff.txt`/`events.jsonl` write failure makes the run `artifact_error` (exit
+    non-zero) with the error in `run.json`, never `done`.
+  - **F89-4 (major)** a real allow-list grammar (`<Tool>`, `<Tool>(<exe>)`, `<Tool>(<exe>:*)`, no
+    shells/git) replaces the substring check; the new `--unrestricted` opt-in (flag or roster
+    `ext.unrestricted`) lifts it and is required for the muse worker's `--disable-sandbox`; codex
+    keeps `--sandbox workspace-write`; `run.json` records `unrestricted` and `permission`; the doc
+    states the boundary precisely.
+  - **F89-5 (major)** `run.json` `usage` is rebuilt from an allow list of numeric counters (never a
+    cloned object); the record contract in the doc is made precise (events.jsonl is the raw stream
+    retained verbatim; run.json/report.md/diff.txt carry no secret values).
+  - **F89-6 (major)** the effective `max_resumes` and `quota_window_sec` are persisted at the first
+    run and reused by a later plain `--resume` unless the operator passes the flag.
+  - **F89-7 (minor)** `files_changed` compares content identity (`git hash-object`) before/after,
+    so a pre-dirty file the worker edited further is listed.
+  - **F89-8 (major)** success requires the engine's successful terminal event in addition to exit
+    0; an error terminal or rejecting rate-limit takes precedence over exit 0; an empty stream with
+    exit 0 is `died` with reason `no terminal event`.
 
 ## [0.2.2] - 2026-10-15
 

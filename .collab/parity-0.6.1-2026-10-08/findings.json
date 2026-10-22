@@ -400,6 +400,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -910,6 +918,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -1321,6 +1337,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -1723,6 +1747,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -2130,6 +2162,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -2541,6 +2581,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -2935,6 +2983,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -3343,6 +3399,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -3755,6 +3819,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -4172,6 +4244,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -4573,6 +4653,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -4956,6 +5044,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -5339,6 +5435,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -5722,6 +5826,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -6100,6 +6212,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -6483,6 +6603,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -6870,6 +6998,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -7258,6 +7394,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -7642,6 +7786,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -8022,6 +8174,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -8401,6 +8561,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -8781,6 +8949,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -9162,6 +9338,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -9592,6 +9776,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -9959,6 +10151,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -10318,6 +10518,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -10686,6 +10894,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -11037,6 +11253,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -11388,6 +11612,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -11745,6 +11977,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -12096,6 +12336,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -12438,6 +12686,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -12777,6 +13033,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -13107,6 +13371,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -13437,6 +13709,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -13762,6 +14042,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -14101,6 +14389,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -14422,6 +14718,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -14859,6 +15163,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -15181,6 +15493,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -15494,6 +15814,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -15929,6 +16257,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -16257,6 +16593,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -16563,6 +16907,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -16870,6 +17222,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -17350,6 +17710,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -17646,6 +18014,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -17948,6 +18324,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -18228,6 +18612,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -18507,6 +18899,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -18774,6 +19174,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -19035,6 +19443,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -19296,6 +19712,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -19545,6 +19969,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -19776,6 +20208,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -19998,6 +20438,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -20226,6 +20674,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -20454,6 +20910,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -20683,6 +21147,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -20904,6 +21376,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -21112,6 +21592,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -21291,6 +21779,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -21470,6 +21966,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -21658,6 +22162,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -21833,6 +22345,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -22015,6 +22535,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -22189,6 +22717,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -22360,6 +22896,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -22522,6 +23066,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -22676,6 +23228,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -22844,6 +23404,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23008,6 +23576,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23137,6 +23713,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23267,6 +23851,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23415,6 +24007,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23542,6 +24142,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23673,6 +24281,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23800,6 +24416,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -23924,6 +24548,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24031,6 +24663,14 @@
                                                      "note":  "Outside the bounded work-mode review.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the scoped wave 10c review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24113,6 +24753,14 @@
                                                      "note":  "Owner/liveness helpers were read, but the original foreground lifetime trigger was not rechecked.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier worker fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24194,6 +24842,14 @@
                                                      "note":  "This review checked the later F91 admission changes, not the full original concurrent-resume and fresh-start fixture.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Selected admission code was read, but the complete earlier fix and runtime scenarios were not revalidated.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24276,6 +24932,14 @@
                                                      "note":  "Durable append and error propagation were inspected; the original write-failure integration trigger was not independently verified.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier worker fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24367,6 +25031,14 @@
                                                      "note":  "The new grammar rejects the named bare-shell/interpreter examples; the complete Claude/Codex/Muse permission contract and runtime boundary were not revalidated.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier worker fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24453,6 +25125,14 @@
                                                      "note":  "Report/diff/argv sanitizer changes and explicit raw-stream documentation were inspected; all original usage-field and secret-persistence paths were not revalidated.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier worker fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24534,6 +25214,14 @@
                                                      "note":  "Persisted cap/window fields were observed, but plain-resume behavior was not independently verified.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Persistence fields and option helpers were visible, but the full resume scenario was not revalidated.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24602,6 +25290,14 @@
                                                      "note":  "Baseline-hash fields were observed; pre-dirty-file attribution was not rechecked.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier worker fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24675,6 +25371,14 @@
                                                      "note":  "The narrowed F91-4 terminal triggers were checked; the complete earlier error/quota/empty-stream matrix was not revalidated.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier worker fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24749,6 +25453,14 @@
                                                      "note":  "For the stated stale-claim trigger, claim_resume now checks status, exhaustion and expected resume generation under the lock before deriving and writing the attempt. Static closure only; the separate unlocked recovery-write race is finding #1.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Locked status and exhaustion checks were partially inspected; the complete claim and concurrent terminal-state scenarios were not revalidated.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24827,6 +25539,14 @@
                                                      "note":  "Inspected admission paths propagate read, parse, metadata, enumeration and entry failures; confirmed NotFound remains absence. Runtime fault injection was not performed.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Strict record reading was inspected, but the complete enumeration and inspection-failure scenarios were not revalidated.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24905,6 +25625,14 @@
                                                      "note":  "Attempt reads now propagate failures and preserve temporary files; aggregate reads precede report replacement and propagate errors to artifact_error. Static inspection only.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier artifact-read fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -24983,6 +25711,14 @@
                                                      "note":  "Claude now requires is_error=false; Codex requires turn.completed. The two incomplete-stream integration fixtures assert died/nonzero; not executed here.",
                                                      "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                                      "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                                 },
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Earlier terminal-evidence fix not independently revalidated in this scoped review.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                                  }
                                              ]
                      },
@@ -25064,6 +25800,76 @@
                                              "evidence":  "",
                                              "base_commit":  "2ceeeadad57fca857d1bfa497b02c9f48ec2e20c",
                                              "tree_sha256":  "6d8163cfe721464b4cf9eb485083da573f62b8104e7387c371f92f4e01fa28ed"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  53,
+                                                     "when":  "2026-10-22T10:39:02+02:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Verified in the diff: read_record is pure; recover_dead_run acquires the admission lock, re-reads the current record, revalidates generation/pending/liveness, and propagates write errors. Status and resume listing use this recovery path. The regression and documentation cover the intended race, with a nonblocking synchronization weakness recorded separately.",
+                                                     "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                                     "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F95-1",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-cli/tests/work.rs",
+                                               "line":  1778
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/work/record.rs",
+                                               "line":  169
+                                           }
+                                       ],
+                         "claim":  "The regression can pass without exercising delayed recovery because it waits a fixed 1.5 seconds instead of observing that the status process captured the stale record and entered the barrier.",
+                         "trigger":  "The status process is delayed until after the test replaces the original running record with quota or the new resume\u0027s running record. It then never captures the stale dead-owner snapshot, yet the final assertions can pass.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-cli/tests/work.rs:1767-1809",
+                                              "observation":  "The test spawns status, sleeps 1500 ms, replaces the original record, and later releases the gate without checking a barrier-entry acknowledgement."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/work/record.rs:test_recovery_barrier",
+                                              "observation":  "The barrier only waits for a release path; it emits no signal proving that the stale snapshot was captured."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "Delayed status-process scheduling",
+                                              "observation":  "A late status read can observe quota or the live resume, skip recovery entirely, and leave all existing assertions satisfied."
+                                          }
+                                      ],
+                         "verification":  "Run RC1 with an explicit barrier-entry acknowledgement and confirm that restoring the stale unconditional recovery write reliably fails the regression.",
+                         "remedy":  "Have the test hook signal barrier entry after capturing the dead-owner snapshot; wait for that signal before replacing the record, with a bounded timeout that fails the test.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  53,
+                                        "reply":  "handoffs/95-codex-codex-0.2.3-acceptance-4.md",
+                                        "thread":  "01a162c0-8261-77c1-8bae-fc0e0e9a2bdc",
+                                        "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                        "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-22T10:39:02+02:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "8098c05fb55a973add5d3dae3b2762542f247190",
+                                             "tree_sha256":  "9f5fe287c1689c5ea1b8aec83e55bed3e489958ce1a9dfa45477af1122e83086"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -26106,6 +26912,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1792656490
+                    },
+                    {
+                        "n":  53,
+                        "consult_id":  "0bac4237-427a-41fa-9526-3965d27088ed",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "acceptance",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-10-22T10:35:43+02:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-10-22T10:44:11+02:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1792658651
                     }
                 ]
 }
