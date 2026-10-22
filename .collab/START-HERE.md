@@ -20,6 +20,9 @@ read `project-c3-parity.md` and `reference-roster-0.6-claude-first.md`) - a sess
   GitHub tags (default on, `C3_UPDATE_CHECK=off`), one hook offer line, `c3 update` / `--apply` bound to the API's commit
   (`cargo install --git --rev`, canonical-URL tag fetch verified against the sha, revalidated ff-merge of a clean checkout,
   `claude plugin update`). Live today: GitHub has v0.2.2 (v0.2.3 not pushed) -> "up to date". docs/port/wave11-update.md.
+- xelth.com telemetry 2026-10-22 (xelth.com f342924+6641ec9): installs = ids seen on 2+ days, an active-7d tile, admin
+  `DELETE /T/v2/admin/events?app_id=&app_version=`; the 971 harness events of 0.1.0 purged - the page now shows 68 events,
+  1 install (this machine). Tests and harnesses never reach the real intake (test mode = loopback only).
 - Carry for 0.2.4: F95-1 (barrier-entry signal in the F93-1 regression); harness-detach F11-2; the 500-anchor limit of the
   shared health file; the muse engine records tokens (`muse export`).
 - Tag procedure (for 0.2.4): bump `Cargo.toml` line 6, `plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`;
