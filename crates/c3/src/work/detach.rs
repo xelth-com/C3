@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
 
-use super::record::{read_record, run_dirs, write_record, RunRecord};
+use super::record::{read_for_display, read_record, run_dirs, write_record, RunRecord};
 use super::{Options, Prepared};
 
 const TOOL: &str = "c3 work";
@@ -307,7 +307,8 @@ fn read_runs(work_root: &Path) -> Vec<WorkRun> {
         .unwrap_or_default()
         .into_iter()
         .map(|(_, dir)| {
-            let (record, error) = match read_record(&dir) {
+            // (0.2.4, F93-1) the display path persists a dead owner's `died` only under the lock.
+            let (record, error) = match read_for_display(work_root, &dir) {
                 Ok(r) => (r, String::new()),
                 Err(e) => (None, e),
             };

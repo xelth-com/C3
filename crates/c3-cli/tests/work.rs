@@ -1724,3 +1724,98 @@ fn a_stale_resume_refuses_under_the_lock() {
     assert_eq!(run["status"], "done", "{run}");
     assert_eq!(run["quota"]["resumes"], 1, "{run}");
 }
+
+// ------------------------------------------------------------------ WAVE 10c (F93-1)
+
+/// Write a raw run.json for `01` with the given status fields (F93-1 regression helper).
+fn write_raw_run(e: &Env, status: &str, pid: Option<i64>, attempt: i64, quota: Option<&str>) {
+    let dir = e.work_root().join("01-ZAI-claude-glm-5.3");
+    std::fs::create_dir_all(&dir).unwrap();
+    let pid_field = pid.map(|p| format!(",\"pid\":{p}")).unwrap_or_default();
+    let quota_field = quota.map(|q| format!(",\"quota\":{q}")).unwrap_or_default();
+    let json = format!(
+        concat!(
+            "{{\"id\":\"01-ZAI-claude-glm-5.3\",\"task\":\"t\",\"seq\":1,\"provider\":\"ZAI-claude\",",
+            "\"model\":\"glm-5.3\",\"engine\":\"claude\",\"argv\":[\"-p\",\"--model\",\"glm-5.3\",\"--session-id\",\"s\"],",
+            "\"child_env_scrubbed\":[],\"started\":\"2026-10-21T10:00:00+00:00\",\"status\":\"{status}\",",
+            "\"session_id\":\"s\",\"attempt\":{attempt},\"max_resumes\":3,\"quota_window_sec\":18000,",
+            "\"pid_start\":\"\",\"timeout_sec\":3600{pid_field}{quota_field}}}"
+        ),
+        status = status,
+        attempt = attempt,
+        pid_field = pid_field,
+        quota_field = quota_field,
+    );
+    std::fs::write(dir.join("run.json"), json).unwrap();
+}
+
+/// (F93-1) A delayed status-recovery write must NOT overwrite a newly claimed live resume. The
+/// status reader snapshots a running record whose owner is dead, pauses at the recovery barrier,
+/// a resume claims the record under the lock and launches a (blocking) live child; the delayed
+/// recovery re-reads under the lock, sees the generation/owner changed, and does NOT write `died`.
+/// A fresh same-task start then refuses before spawning.
+#[test]
+fn a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim() {
+    let e = setup("recovery");
+    let blocking = write_blocking_launcher(&e.work);
+    let bp = blocking.to_string_lossy().to_string();
+    let benv: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", bp.as_str())];
+
+    // 01 is `running` with a DEAD owner (pid 999999 does not exist): the "A running" snapshot.
+    write_raw_run(&e, "running", Some(999999), 0, None);
+
+    // start --status, paused at the recovery barrier (gate absent) in test mode
+    let gate = e.work.join("recovery-gate.txt");
+    let gates = gate.to_string_lossy().to_string();
+    let senv: Vec<(&str, &str)> = vec![
+        ("CODEX_CONSULT_TEST_MODE", "1"),
+        ("CODEX_CONSULT_TEST_WORK_RECOVERY_BARRIER", gates.as_str()),
+    ];
+    let status = e
+        .cmd(&["work", "--task", "t", "--status"], &senv)
+        .spawn()
+        .expect("spawn status");
+    std::thread::sleep(std::time::Duration::from_millis(1500)); // let status reach the barrier
+
+    // A finished as quota (owner gone): rewrite 01 to a resumable quota record
+    let quota = "{\"text\":\"usage limit\",\"reset_at\":null,\"resume_at\":\"2100-01-01T00:01:00+00:00\",\"resumes\":0,\"exhausted\":false}";
+    write_raw_run(&e, "quota", None, 0, Some(quota));
+
+    // resume B claims the quota record under the lock and launches a BLOCKING live child
+    let b = e
+        .cmd(&["work", "--task", "t", "--resume", "01"], &benv)
+        .spawn()
+        .expect("spawn B");
+    let run_json = e.work_root().join("01-ZAI-claude-glm-5.3").join("run.json");
+    let mut bpid = 0i64;
+    for _ in 0..200 {
+        if let Ok(v) = serde_json::from_str::<Value>(&read(&run_json)) {
+            if v["status"] == "running" && v["pid"].as_i64().unwrap_or(0) > 0 && v["pid"] != 999999 {
+                bpid = v["pid"].as_i64().unwrap();
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(bpid > 0, "resume B never claimed the record as running");
+
+    // release the status barrier: its delayed recovery must NOT clobber B's live claim
+    std::fs::write(&gate, b"1").unwrap();
+    let st = status.wait_with_output().expect("wait status");
+    // the record on disk is still B's running claim, never a stale `died`
+    let run: Value = serde_json::from_str(&read(&run_json)).unwrap();
+    assert_eq!(run["status"], "running", "status recovery clobbered B: {}", text(&st));
+    assert_eq!(run["pid"].as_i64().unwrap(), bpid, "{run}");
+    assert_eq!(run["attempt"], 1, "{run}");
+
+    // a fresh same-task start refuses before spawning (B is live); no second record appears
+    let fresh = e.work("ZAI-claude", &[], &benv);
+    let t = text(&fresh);
+    assert_eq!(fresh.status.code(), Some(1), "{t}");
+    assert!(t.contains("already has a live work run"), "{t}");
+    assert!(!e.work_root().join("02-ZAI-claude-glm-5.3").exists());
+
+    // release B and reap
+    std::fs::write(e.repo.join("release.txt"), b"1").unwrap();
+    let _ = b.wait_with_output();
+}

@@ -1584,8 +1584,9 @@ fn pick_run(work_root: &Path, id: &str, want: &[&str]) -> Result<(PathBuf, RunRe
     let id = id.trim().to_lowercase();
     let mut all: Vec<(PathBuf, RunRecord)> = Vec::new();
     // (0.2.4, F91-2) fail closed: enumeration and per-record inspection errors propagate.
+    // (0.2.4, F93-1) a dead owner's `died` transition goes through the locked display recovery.
     for (_, dir) in record::run_dirs(work_root)? {
-        if let Some(rec) = read_record(&dir)? {
+        if let Some(rec) = record::read_for_display(work_root, &dir)? {
             all.push((dir, rec));
         }
     }

@@ -1,0 +1,175 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Unlocked recovery writes can overwrite a live resume claim and permit another worker on the same task.",
+  "reply_markdown": "**Q1.** The specific F91-1 and F91-2 triggers are fixed in the inspected code: resume claims reread eligibility and generation under the lock, and admission propagates inspection errors. The broader serialization criterion remains unmet. F91-3 and F91-4 also appear fixed; tests were inspected, not executed.\n\n**Q2. Blocker — finding #1.** Status does not merely display stale information: `read_record` writes it back. A delayed status read can overwrite a newly claimed live resume with `died`; subsequent admission trusts that overwritten disk record and launches another worker. Make reads pure, and perform recovery transitions under the admission lock with a fresh read and liveness check.\n\n**Q3. HOLD.** Do not move/publish the acceptance tag yet. HEAD is `2ceeead`. Review was limited to selected hunks and relevant ranges; omitted code and runtime scenarios are listed in `unproven`. Reported suite results were not independently reproduced.\n\n## Requested checks\n\n- **RC1:** Working directory `C:\\Users\\Dmytro\\C3`; workspace-write; add/run a barrier fixture for finding #1: capture running A in status, finish A as quota and exit, claim live resume B, then release status. Require B’s record unchanged and a fresh start refused without a launch marker. Budget: one deterministic integration fixture, 15 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 140
+        },
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 157
+        },
+        {
+          "path": "crates/c3/src/work/detach.rs",
+          "line": 310
+        },
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 830
+        },
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 1047
+        },
+        {
+          "path": "docs/port/wave10a-work-acceptance.md",
+          "line": 131
+        }
+      ],
+      "claim": "The status/wait reader performs an unlocked recovery write that can replace a newly claimed live resume with an old died record. A later admission then sees no pending worker and can launch another worker on the same task. Admission's strict locked reads do not protect against this external writer.",
+      "trigger": "Status reads run A while its record is running and pauses before checking liveness. A finishes as quota and its owning process exits. Status determines that its captured owner is dead and pauses before write_record. Resume B claims the quota record under the admission lock, writes its new running owner and launches. Status resumes and atomically replaces B's record with its stale A snapshot marked died. A fresh same-task start then passes live_run while B remains alive.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/record.rs:140-159",
+          "observation": "read_record reads and parses a snapshot, checks that snapshot's owner, then writes the modified snapshot without acquiring admission_lock or rereading; the write result is ignored."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/detach.rs:303-321",
+          "observation": "The status/wait listing calls the mutating read_record without an admission lock, despite describing itself as read-only."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/mod.rs:821-871; crates/c3/src/work/record.rs:240-248",
+          "observation": "claim_resume writes the new running owner under the lock, while live_run later relies on the persisted status and only treats pending states as active."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Interleaving of status read/recovery write, quota completion, resume claim and fresh admission",
+          "observation": "An atomic replacement prevents partial JSON but does not prevent a stale writer from replacing a newer claim; the resulting died status hides the live resumed worker."
+        }
+      ],
+      "verification": "Run RC1 with barriers after the status snapshot read and before its recovery write; verify that a claimed live resume survives the delayed status operation and that a fresh same-task launch refuses before spawning.",
+      "remedy": "Make read_record a pure fallible reader. If recovery must persist died, acquire the task admission lock, reread the current record, revalidate its owner/generation and liveness, and propagate write failures before completing the transition. Update the status-path documentation and add the interleaving regression.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F02-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F02-4","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F02-5","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F02-6","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F02-7","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F02-8","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F04-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F04-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F04-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F06-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F09-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F09-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F09-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F09-4","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F09-5","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F09-6","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F11-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F11-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F11-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F11-4","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F11-5","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F14-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F19-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F19-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F19-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F22-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F23-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F23-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F23-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F23-4","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F23-5","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F24-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F24-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F24-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F24-4","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F24-5","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F24-6","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F25-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F25-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F25-4","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F30-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F30-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F30-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F31-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F36-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F36-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F38-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F40-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F40-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F42-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F46-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F48-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F50-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F52-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F52-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F55-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F55-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F58-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F60-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F62-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F66-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F66-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F66-3","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F66-4","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F66-5","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F66-6","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F68-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F68-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F70-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F72-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F72-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F74-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F74-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F76-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F78-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F78-2","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F80-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F82-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F84-1","status":"not-checked","note":"Outside the bounded work-mode review."},
+    {"id":"F89-1","status":"not-checked","note":"Owner/liveness helpers were read, but the original foreground lifetime trigger was not rechecked."},
+    {"id":"F89-2","status":"not-checked","note":"This review checked the later F91 admission changes, not the full original concurrent-resume and fresh-start fixture."},
+    {"id":"F89-3","status":"not-checked","note":"Durable append and error propagation were inspected; the original write-failure integration trigger was not independently verified."},
+    {"id":"F89-4","status":"not-checked","note":"The new grammar rejects the named bare-shell/interpreter examples; the complete Claude/Codex/Muse permission contract and runtime boundary were not revalidated."},
+    {"id":"F89-5","status":"not-checked","note":"Report/diff/argv sanitizer changes and explicit raw-stream documentation were inspected; all original usage-field and secret-persistence paths were not revalidated."},
+    {"id":"F89-6","status":"not-checked","note":"Persisted cap/window fields were observed, but plain-resume behavior was not independently verified."},
+    {"id":"F89-7","status":"not-checked","note":"Baseline-hash fields were observed; pre-dirty-file attribution was not rechecked."},
+    {"id":"F89-8","status":"not-checked","note":"The narrowed F91-4 terminal triggers were checked; the complete earlier error/quota/empty-stream matrix was not revalidated."},
+    {"id":"F91-1","status":"fixed","note":"For the stated stale-claim trigger, claim_resume now checks status, exhaustion and expected resume generation under the lock before deriving and writing the attempt. Static closure only; the separate unlocked recovery-write race is finding #1."},
+    {"id":"F91-2","status":"fixed","note":"Inspected admission paths propagate read, parse, metadata, enumeration and entry failures; confirmed NotFound remains absence. Runtime fault injection was not performed."},
+    {"id":"F91-3","status":"fixed","note":"Attempt reads now propagate failures and preserve temporary files; aggregate reads precede report replacement and propagate errors to artifact_error. Static inspection only."},
+    {"id":"F91-4","status":"fixed","note":"Claude now requires is_error=false; Codex requires turn.completed. The two incomplete-stream integration fixtures assert died/nonzero; not executed here."}
+  ],
+  "unproven": [
+    "No builds, tests, runtime launches or filesystem fault injections were run; the brief's 882-test, integration, library and clippy results remain reported evidence.",
+    "Finding #1's status/completion/resume interleaving is supported by code tracing, not an executed barrier reproduction.",
+    "The inspected stale-resume integration fixture covers completion as done, uses a fixed 1.5-second sleep without a barrier-arrival acknowledgement, and does not contain the separately claimed exhausted outcome.",
+    "Admission metadata, enumeration, entry and parse failures were checked statically; the integration fixture replacing run.json with a directory does not exercise every error class.",
+    "Successful detached-alarm resumption and cross-platform real-engine behavior were not executed.",
+    "Reading was incomplete: selected portions of mod.rs and record.rs, capped work.rs hunks and selected test ranges were read; remaining hunks/context, complete engine permission construction, the redactor implementation, other work-mode call paths and all earlier-wave implementation files were not audited. One batched output was truncated; decisive recovery-reader code was subsequently read explicitly.",
+    "F89-4 and F89-5 were only partially checked: the named grammar and sanitizer changes do not constitute independent validation of every permission or secret-persistence path."
+  ],
+  "first_run_checklist": [
+    "Observe run.json marked running with the actual owning PID/start identity and expected attempt before the child-launch marker; while the worker is alive, status must retain that owner and a competing same-task start/resume must refuse without another launch marker.",
+    "For a resumed run, observe exactly one new attempt number and resume separator, and verify the retained events contain the complete attempt before its temporary event file disappears.",
+    "Before believing exit 0/done, inspect an affirmative engine terminal: Claude result with is_error=false and success/absent subtype, Codex turn.completed, or Muse's explicit completion; ensure no rejecting quota/error outcome contradicts it.",
+    "Open report.md and diff.txt and compare them with the successful attempt and actual repository changes; run.json must name the same run/session and must not contain artifact_error.",
+    "On the first quota/resume cycle, observe the persisted resume count and configured cap, refusal after exhaustion, and no extra child-launch marker from a stale claimant.",
+    "In the controlled first-run validation, observe a read-denied artifact produce nonzero/artifact_error with recoverable source bytes and the previous report preserved; observe a known sanitizer sentinel redacted from the report while raw events remain explicitly identified as raw."
+  ]
+}

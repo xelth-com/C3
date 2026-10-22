@@ -1,0 +1,101 @@
+# Handoff 10 - Gemini (agy): reply-gemini
+
+Date: 2026-10-22 09:33 local. Author: Gemini (agy) (model gemini-3.8-flash-high, effort tier in the model id), agy-cli (version unknown).
+Reviewer: gemini :: gemini-3.8-flash-high [agy] (provider from roster, model from roster; engine agy (C:\Users\Dmytro\AppData\Local\Microsoft\WinGet\Packages\Google.AntigravityCLI_Microsoft.Winget.Source_8wekyb3d8bbwe\agy.exe); provider fingerprint a612ba12e63e; harness agy-cli (version unknown)).
+Preflight: ok: signed in (6 models).
+Effort: nothing sent (requested high, mapping model-tier, by caps-v1: engine agy, the tier is part of the model id; not confirmed by the provider). Consultation id: 9a4855b4-a7fe-4d90-af47-c4b61918699d.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only, purpose: framing). Argv: `agy -p= --input-format stream-json --output-format stream-json --model gemini-3.8-flash-high --json-schema C:\Users\Dmytro\.codex\c3\schemas\consult-reply.v1.json --print-timeout 0 --sandbox --disable-slash-commands` (prompt on stdin as one NDJSON line).
+Parent thread: (none - new thread). Result thread: `5111c0bc-3e46-4435-af28-05d2a02d5c4a` (source: events).
+Brief: `.collab/consilium-2026-10-22/handoffs/01-claude-remedy-proposals.md` (sha256 e707d1d341d5). Reviewed: 23d49ad, base 23d49adbb5ae6f0cd3cc2c651eba44352ef5869c, tree sha256 673507ea4b1f, 0 changed files.
+Bridge outcome: usable reply. Wall time: 350.8 s. Tokens: in 58846 (cached 89280), out 26559, reasoning 23269.
+Engine turns: 1.
+Timeout: 1800 s (the default of purpose framing); continuation after a timeout kill: up to 900 s.
+Verdict: ADVISE - A 3-role pipeline risks high cost, moving goalposts, and context-free remedies; framing should pivot to executable specification contracts, test-verified solver patches, and fail-closed admission fixes for F91-1 and F91-2. Findings: 2 blocker, 1 major, 1 minor, 0 note (F10-1..F10-4, tracked in `findings.json`). Structured reply: `handoffs/10-agy-reply-gemini.reply.json`.
+Raw event stream: `handoffs/10-agy-reply-gemini.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+### Framing & Architectural Challenges
+
+The proposal frames the acceptance loop problem as a need for multi-vendor remedy brainstorming. This misdiagnoses the root failure: pass-2 blockers occurred not because Claude Code lacked alternative designs, but because one-sentence remedies lacked explicit invariant boundaries and negative test requirements. Adding a 3-seat remedy panel introduces three severe failure modes:
+1. **Context-blind proposals**: Solvers working from isolated context packs miss repository-wide invariants (e.g., process group semantics, platform locks), producing superficial patches.
+2. **Moving goalposts**: Finders evaluate foreign fixes against unstated mental models rather than objective criteria.
+3. **Cost explosion**: Three consultations per blocker will quickly exhaust window quotas (e.g., Astra's 5h limit) and dramatically increase wall-clock time.
+
+**Unlisted Options**:
+- **Executable Specification Contracts**: Instead of textual remedies, the finder must provide a failing test or precise invariant contract. Verification is primarily automated test execution.
+- **Interactive Worker Clarification**: The worker directly queries the finder on edge cases before code freeze, avoiding multi-model coordination overhead.
+
+To choose, the coordinator needs empirical data on whether Astra's pass-2 findings were novel edge cases or predictable ambiguities in the original brief, and the token budget per release.
+
+### Q1: Role Separation & Verification
+Strict finder/solver/verifier separation is brittle. Verification must NOT belong to a third LLM (multiplying subjective variance) nor exclusively to the finder (risking rejection of valid alternative architectures). The primary verifier must be an **automated regression test suite shipped by the solver**. The finder should only perform bounded verification: confirming its specific trigger is neutralized against its initial acceptance criteria.
+
+### Q2: Minimal Workflow & Proposals Record
+- **Schema**: Store under `findings[id].proposals[]`: `{ proposer, approach, locations, patch_sketch, test, risks }`. Store selection under `findings[id].resolution`: `{ status: adopted|rejected|merged, adopted_proposal, rationale }`.
+- **Pack**: Must contain the finding definition, targeted files with enclosing functions, and existing module test suites.
+- **Must NOT be automated**:
+  1. Proposal adoption (requires human/coordinator trade-off analysis).
+  2. Panel auto-dispatch on HOLD (risks token exhaustion).
+  3. Finding closure without automated test pass.
+  4. Vendor exclusion rules (coordinator must retain override authority).
+
+### Q3: Live Demonstration (F91-1 & F91-2)
+- **F91-1 (Blocker - Admission Race & Stale State)**:
+  - *Design*: Move status validation, quota exhaustion check, and attempt counter calculation inside `claim_for_spawn` under `record::admission_lock`.
+  - *Functions*: `crates/c3/src/work/mod.rs::claim_for_spawn` and `resume_once`.
+  - *Invariant*: A run record transitions to `running` for resume if and only if, under the admission lock, its persisted status is non-exhausted `quota` or `timeout`, with `attempt` monotonically derived from that locked state.
+  - *Test*: `test_resume_admission_under_lock_rejects_stale_completion` (finding #2).
+- **F91-2 (Blocker - Fail-Closed Record Inspection)**:
+  - *Design*: Differentiate `ErrorKind::NotFound` from other I/O errors in `read_record`. Propagate errors through `run_dirs` and `other_live_run`.
+  - *Functions*: `crates/c3/src/work/record.rs::read_record`, `run_dirs`, `other_live_run`, and `crates/c3/src/work/mod.rs::claim_for_spawn`.
+  - *Invariant*: Fail-closed admission: all candidate run directories must be deterministically inspected; any read, entry, or parse failure refuses admission.
+  - *Test*: `test_admission_fails_closed_on_unreadable_candidate_record` (finding #3).
+
+### Q4: Scoring & Anti-Gaming
+- **Decouple Adoption from Router Score**: Proposal adoption by the coordinator earns zero permanent router credit. Credit (+1.0) is awarded only upon verified clean execution; regressions penalize the solver (-1.5).
+- **Finder Anti-Gaming**: Finder score must track *defect validity* independently of solver success. Unreproducible blockers or moving goalposts penalize finder precision (-1.0). The router must maintain orthogonal dimensions: `finder_precision`, `spec_clarity`, and `solver_verified_efficacy`.
+
+## Requested checks
+
+- **RC1:** `crates/c3`; workspace-write; add unit test `test_resume_admission_under_lock_rejects_stale_completion` asserting `claim_for_spawn` rejects state transition while holding admission lock; observation: second resume returns Err without launching child or altering `run.json`; budget: 5 minutes.
+- **RC2:** `crates/c3`; workspace-write; add unit test `test_admission_fails_closed_on_unreadable_candidate_record` with mock unreadable `run.json`; observation: `other_live_run` and `claim_for_spawn` return Err and halt; budget: 5 minutes.
+
+---
+
+### Findings
+
+- **F10-1** [major] `.collab/consilium-2026-10-22/handoffs/01-claude-remedy-proposals.md:29` - The proposed finder/solver/verifier pipeline creates high latency, context-blind patches, and moving-goalpost failure modes without addressing the root cause: underspecified acceptance criteria. Trigger: A reviewer raises a blocker with a one-sentence remedy; solvers without whole-repo context propose divergent architectures which the finder later rejects. Evidence: read-code: Pass 2 raised edge cases missed by pass 1 fixes due to one-sentence remedies lacking negative test criteria. Verify: Compare the acceptance pass rate of one-sentence remedies against executable test specification contracts on acceptance loops. Remedy: Require finders to provide executable reproduction triggers or strict acceptance criteria contracts rather than narrative directions. Treat automated regression test execution as primary verification instead of subjective model reviews. Keep multi-model panels optional and budget-capped.
+- **F10-2** [blocker] `crates/c3/src/work/mod.rs:747`, `crates/c3/src/work/mod.rs:1142`, `crates/c3/src/work/mod.rs:1386` - Resume admission permits stale state reuse because status checks, quota exhaustion, and attempt calculation occur before acquiring the admission lock. Trigger: Concurrent or delayed resume after a run has transitioned to terminal status or exhausted quota. Evidence: read-code: claim_for_spawn accepts precomputed attempt number and only checks other live runs and current pid, ignoring terminal status and exhaustion.; read-code: Attempt counter n is calculated before acquiring the admission lock in resume_once.; read-code: do_resume_foreground checks status and exhaustion before calling resume_once without locking. Verify: Run RC1: inject a barrier prior to claim_for_spawn while another process transitions the record to done or exhausted; confirm delayed command is rejected. Remedy: Move status validation, quota exhaustion check, and calculation of attempt = quota.resumes + 1 inside claim_for_spawn under record::admission_lock. Reject any claim where status is not quota or timeout or where quota is exhausted. Return the updated RunRecord and attempt number to resume_once, eliminating stale pre-lock calculations. Supersedes: F91-1.
+- **F10-3** [blocker] `crates/c3/src/work/record.rs:137`, `crates/c3/src/work/record.rs:187`, `crates/c3/src/work/record.rs:221` - Admission lock fails open when candidate run records or directories encounter I/O or permission errors, treating unreadable runs as non-existent. Trigger: A candidate run record cannot be read due to permission denial or I/O failure while another worker is active. Evidence: read-code: read_record maps all std::fs::read errors unconditionally to Ok(None).; read-code: run_dirs returns an empty list on read_dir errors and ignores unreadable entries.; read-code: other_live_run silently flattens record read errors to None, assuming no run is live. Verify: Run RC2: inject PermissionDenied on a candidate run.json; verify claim_for_spawn refuses admission with an explicit error rather than spawning. Remedy: Differentiate ErrorKind::NotFound from other I/O errors in read_record, returning Ok(None) solely when the file is genuinely absent. Propagate inspection errors through run_dirs, live_run, and other_live_run. Enforce fail-closed admission in claim_for_spawn by aborting if any candidate run record cannot be inspected. Supersedes: F91-2.
+- **F10-4** [minor] `crates/c3/src/router/mod.rs` - Crediting solvers on proposal adoption incentivizes shallow, crowd-pleasing patches and allows finders to game scores by raising trivial blockers. Trigger: Routing updates driven by coordinator adoption marks before downstream verification. Evidence: inferred: Proposal states coordinator marks adopted feed the router as a solver dimension. Verify: Track whether adopted proposals that fail subsequent verification inflate solver routing weights. Remedy: Decouple proposal adoption from router scoring. Award solver credit only after verified clean runs, penalize regressions, and track finder precision independently to prevent blocker inflation.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+A 3-role pipeline risks high cost, moving goalposts, and context-free remedies; framing should pivot to executable specification contracts, test-verified solver patches, and fail-closed admission fixes for F91-1 and F91-2.
+
+### Blockers
+
+- **F10-2** `crates/c3/src/work/mod.rs:747`, `crates/c3/src/work/mod.rs:1142`, `crates/c3/src/work/mod.rs:1386` - Resume admission permits stale state reuse because status checks, quota exhaustion, and attempt calculation occur before acquiring the admission lock. Verify: Run RC1: inject a barrier prior to claim_for_spawn while another process transitions the record to done or exhausted; confirm delayed command is rejected. Remedy: Move status validation, quota exhaustion check, and calculation of attempt = quota.resumes + 1 inside claim_for_spawn under record::admission_lock. Reject any claim where status is not quota or timeout or where quota is exhausted. Return the updated RunRecord and attempt number to resume_once, eliminating stale pre-lock calculations.
+- **F10-3** `crates/c3/src/work/record.rs:137`, `crates/c3/src/work/record.rs:187`, `crates/c3/src/work/record.rs:221` - Admission lock fails open when candidate run records or directories encounter I/O or permission errors, treating unreadable runs as non-existent. Verify: Run RC2: inject PermissionDenied on a candidate run.json; verify claim_for_spawn refuses admission with an explicit error rather than spawning. Remedy: Differentiate ErrorKind::NotFound from other I/O errors in read_record, returning Ok(None) solely when the file is genuinely absent. Propagate inspection errors through run_dirs, live_run, and other_live_run. Enforce fail-closed admission in claim_for_spawn by aborting if any candidate run record cannot be inspected.
+- **F03-4** (prior, not-checked) `crates/c3/src/work/mod.rs:747` - Q3/F91-1 remedy: move attempt derivation and resumability revalidation inside claim_for_spawn under the admission lock. claim_for_spawn (mod.rs:747) currently only rejects a different live owner and unconditionally sets running; resume_once (mod.rs:1142) computes n before the lock; do_resume_foreground (mod.rs:1386) checks status/exhaustion on a pre-lock record.
+- **F03-5** (prior, not-checked) `crates/c3/src/work/record.rs:137` - Q3/F91-2 remedy: make admission fail closed on uninspectable records. read_record (record.rs:137) maps every fs::read error to Ok(None), run_dirs (record.rs:187) returns [] on read_dir failure and flattens entry errors, and live_run/other_live_run (record.rs:211/223) discard read errors via .ok(), so a live worker whose run.json is unreadable is invisible to the one-live-worker guard.
+- **F04-4** (prior, not-checked) `crates/c3/src/work/mod.rs:747` - Remedy for F91-1: claim_for_spawn must be the single authority — under admission_lock it revalidates permitted status (not done/artifact_error), quota.exhausted==false, and live-owner, then computes the next attempt from that same locked record; resume_once must drop its pre-lock attempt computation and use the returned attempt. Invariant: authorization and attempt generation derive from one locked record state; stale claims refuse without spawning.
+- **F11-4** (prior, not-checked) `crates/c3/src/work/mod.rs:747` - F91-1 remedy: move all admission validation inside the admission lock in claim_for_spawn/resume_once and derive the attempt number from the same locked record with generation check.
+- **F11-5** (prior, not-checked) `crates/c3/src/work/record.rs:137` - F91-2 remedy: make admission fail-closed on inspection errors through read_record, run_dirs, live_run, and other_live_run.
+- **F12-4** (prior, not-checked) `crates/c3/src/work/mod.rs:747` - For F91-1, replace unconditional resume claiming with a locked, intent-specific state transition that rejects stale snapshots and reserves a fresh attempt.
+- **F12-5** (prior, not-checked) `crates/c3/src/work/record.rs:137` - For F91-2, make the entire admission inspection chain fallible, including metadata filtering, so unreadable competing records cannot be interpreted as absent workers.
+
+### Unproven scenarios
+
+- Behavior of admission lock under concurrent Windows file sharing violations vs POSIX advisory lock semantics
+- Empirical latency and token spend of 3-model remedy panel on Astra window
+
+### First-run checklist (observable)
+
+_(none)_

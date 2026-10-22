@@ -11,6 +11,14 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **`c3 work` wave 10c — Astra acceptance pass 3 (handoff 93, F93-1)** (`docs/port/wave10a-work-acceptance.md`):
+  - **F93-1 (blocker)** the status/`--wait` reader no longer performs an unlocked recovery write:
+    `read_record` is now a pure fallible reader, and the dead→`died` transition is done under the
+    task admission lock via `recover_dead_run`, which re-reads and writes only when the record is
+    still the same generation (pid + pid_start + attempt) and its owner is still dead — so a delayed
+    status read can no longer overwrite a newly claimed live resume. `live_run` now checks liveness
+    directly; the display/resume listings go through the locked `read_for_display`. Regression:
+    `work.rs::a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim`.
 - **`c3 work` wave 10b — Astra acceptance pass 2 (handoff 91, F91-1..F91-4, F89-4/F89-5 remainders)** (`docs/port/wave10a-work-acceptance.md`):
   - **F91-1 (blocker)** the resume claim now validates permitted status, exhaustion, owner and the
     attempt generation under the admission lock and computes the attempt from the locked re-read;

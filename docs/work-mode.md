@@ -60,6 +60,11 @@ in `engines/claude_auth.rs` rather than writing a second one. The prompt travels
 - `events.jsonl` — the child's raw stream, **retained verbatim**, and may contain whatever the
   child printed (including a credential the child itself emitted), exactly like a consult's events
   file. It is the one record artifact that is NOT sanitized.
+- **Writer contract (0.2.4, F93-1):** `run.json` is written only by its owning process (the c3
+  process that claimed the record, writing its own live record) or under the task admission lock
+  after a re-read; a reader never writes. The status/`--wait`/resume readers persist a dead owner's
+  `died` transition only through the locked recovery (`recover_dead_run`), which re-reads and
+  refuses to overwrite a newer generation.
 - **Secret contract (0.2.4, F89-5):** `run.json`, `report.md` and `diff.txt` pass the project's
   single sanitizer (the pack redactor — 12 secret kinds plus an entropy pass); secret-shaped
   values are redacted with `[REDACTED:<kind>]`, the same rules as a pack. `events.jsonl` is the

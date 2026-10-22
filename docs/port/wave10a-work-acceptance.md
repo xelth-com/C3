@@ -92,7 +92,9 @@ by `CODEX_CONSULT_TEST_MODE`.
 candidate is any `NN-` dir whose `run.json` exists in any form, and admission (`run`/`claim_*`/
 `pick_run`) refuses when a record cannot be inspected (naming the directory, not contents). Proof:
 `work.rs::an_unreadable_live_record_refuses_a_second_launch` (a live worker whose run.json is
-replaced by a directory makes a second start refuse, no second record).
+replaced by a directory makes a second start refuse, no second record). (Superseded in part by
+Wave 10c: `read_record` was still performing the dead→`died` recovery write itself; 10c makes it a
+pure reader and moves that write under the admission lock.)
 
 **F91-3 (major) — read failures are artifact errors.** `resume_once` reads the attempt stream with
 `read_events_strict` and preserves the per-attempt temp files on a read failure; `refresh_artifacts`
@@ -134,3 +136,55 @@ events.jsonl).
 - Sanitizing the persisted argv is a no-op on flags, uuids and grammar-validated allow values
   (none are secret-shaped); only a pathological unrestricted allow value carrying a secret would be
   redacted in the record (and then also in a reconstructed resume argv).
+
+# Wave 10c — Astra acceptance pass 3 (handoff 93, F93-1)
+
+Pass 3 held on one blocker: the status/`--wait` reader performed an UNLOCKED recovery write — a
+record whose owner looked dead was rewritten `died` by `read_record` itself, so a delayed status
+read could atomically replace a newly claimed live resume with a stale `died` snapshot, after which
+a fresh start passed `live_run` while the resume was alive.
+
+**Functions changed (`work/record.rs`).** `read_record` is now a PURE fallible reader — it never
+writes. The dead→`died` transition moved to `recover_dead_run(work_root, dir, snapshot)`, which
+takes the admission lock, re-reads the CURRENT record, and writes `died` ONLY when it is still the
+same generation as the snapshot (`same_generation` = pid + pid_start + attempt) AND still pending
+AND its owner is still dead, propagating write failures. `read_for_display(work_root, dir)` is the
+display-path reader (pure read, then locked recovery on a dead owner) and the status/`--wait`
+listing (`detach::read_runs`) and the resume listing (`mod::pick_run`) now call it. `live_run` now
+checks `is_pending && is_live` (a dead pending record no longer counts as live, since the reader no
+longer flips it). A test-only barrier (`CODEX_CONSULT_TEST_WORK_RECOVERY_BARRIER`, gated by
+`CODEX_CONSULT_TEST_MODE`) sits between the snapshot read and the locked recovery.
+
+**Acceptance criteria.** (a) `read_record` is pure — done. (b) recovery takes the lock, re-reads,
+revalidates generation/owner/liveness, propagates write errors — `recover_dead_run`. (c) docs
+updated (this section; the F91-2 note annotated; `docs/work-mode.md` record contract). (d) closing
+regression `work.rs::a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim`.
+
+**Fails-before evidence.** With the guard temporarily reverted (recover_dead_run writing `died`
+from the stale snapshot, no re-read/generation check), the regression FAILS:
+`assertion left == right failed: status recovery clobbered B: left "died", right "running"`. With
+the guard restored it passes. (The pre-10c `read_record` could not be exercised directly because it
+wrote synchronously inside the snapshot read with no barrier; reverting the new guard reproduces its
+hazard deterministically.)
+
+**Audit — every `write_record` call (grep), with its verdict:**
+
+- `record.rs::recover_dead_run` — UNDER the admission lock, after a re-read + generation/liveness
+  revalidation. OK.
+- `record.rs` old `read_record` recovery write — REMOVED (the defect). 
+- `mod.rs::run` initial placeholder write — UNDER the lock (held across live_run + allocate +
+  write). OK.
+- `mod.rs::claim_start`, `mod.rs::claim_resume` — UNDER the lock. OK.
+- `mod.rs::run_prepared` pre-spawn write and final write, `mod.rs::refuse_record`,
+  `mod.rs::finish_artifact_error` — the OWNING process writing its own record (it holds the live
+  claim for this generation; no other process writes this record). OK.
+- `mod.rs::resume_once` final write — the owning (resuming) process after `claim_resume`. OK.
+- `mod.rs::run_alarm` park (`waiting_quota`) and give-up (`exhausted`) writes — the owning detached
+  alarm process. OK.
+- `detach.rs::background` `refused` writes (bad wire / claim failure) — the owning detached
+  background writing its own placeholder before any run; `--detach-id` is internal, no other process
+  writes this record. OK.
+- `detach.rs` / `record.rs` test modules — test code. N/A.
+
+Verdict: after 10c, the only writer that is neither the owning process nor under the lock (the
+reader's recovery) is eliminated; every remaining write is owner-or-locked.

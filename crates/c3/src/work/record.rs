@@ -138,23 +138,80 @@ pub fn write_record(dir: &Path, rec: &RunRecord) -> Result<(), String> {
 /// directory, never the contents) so admission refuses rather than treats an unreadable record as
 /// an absent run.
 pub fn read_record(dir: &Path) -> Result<Option<RunRecord>, String> {
+    // (0.2.4, F93-1) A PURE fallible reader — it NEVER writes. The dead-owner → `died` transition
+    // is a separate, locked operation ([`recover_dead_run`], via [`read_for_display`]); a status
+    // reader must not race the admission lock by rewriting a record it holds only a stale snapshot
+    // of. Liveness is decided by [`is_live`] at the call site (so a dead pending record never counts
+    // as a live run); only the display path persists `died`.
     let p = dir.join("run.json");
     let bytes = match std::fs::read(&p) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("{} could not be read ({e})", p.display())),
     };
-    let mut rec: RunRecord = serde_json::from_slice(&bytes)
+    let rec: RunRecord = serde_json::from_slice(&bytes)
         .map_err(|e| format!("{} does not parse: {e}", p.display()))?;
-    // A pending record (`running`, or `waiting_quota` while a detached alarm sleeps) whose
-    // background is gone (the pid is dead, or it never reported one within the start grace) is a
-    // run that DIED: say so on disk, so `--status`, `--wait` and the one-live-run guard never wait
-    // on a ghost.
-    if is_pending(&rec.status) && !is_live(&rec) {
+    Ok(Some(rec))
+}
+
+/// (0.2.4, F93-1) Whether two records are the SAME generation of the same run: the owning pid, its
+/// start time and the attempt number all match. A recovery write only proceeds when the record on
+/// disk is still the generation the reader snapshotted (so it cannot clobber a newer claim).
+fn same_generation(a: &RunRecord, b: &RunRecord) -> bool {
+    a.pid == b.pid && a.pid_start == b.pid_start && a.attempt == b.attempt
+}
+
+/// (0.2.4, F93-1) TEST-ONLY recovery barrier (honoured only in test mode): when
+/// `CODEX_CONSULT_TEST_WORK_RECOVERY_BARRIER` names a path, wait (bounded) until it exists — the
+/// acceptance test interposes a competing resume claim between the status snapshot and the locked
+/// recovery re-read.
+fn test_recovery_barrier() {
+    if let Some(gate) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_WORK_RECOVERY_BARRIER") {
+        let gate = PathBuf::from(gate);
+        for _ in 0..600 {
+            if gate.exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+/// (0.2.4, F93-1) Persist the `died` transition for a pending record whose owner looks dead, UNDER
+/// the task admission lock. Re-reads the CURRENT record and writes `died` ONLY when it is still the
+/// same generation as `snapshot` AND still pending AND its owner is still dead — so a resume that
+/// claimed the record (new pid/attempt) in the meantime is never overwritten. Returns the current
+/// record after the attempt and PROPAGATES a write failure.
+pub fn recover_dead_run(
+    work_root: &Path,
+    dir: &Path,
+    snapshot: &RunRecord,
+) -> Result<Option<RunRecord>, String> {
+    let _lock = admission_lock(work_root)?;
+    let mut rec = match read_record(dir)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    if same_generation(&rec, snapshot) && is_pending(&rec.status) && !is_live(&rec) {
         rec.status = "died".into();
         rec.ended = Some(chrono::Utc::now().to_rfc3339());
         rec.args = None;
-        let _ = write_record(dir, &rec);
+        write_record(dir, &rec)?;
+    }
+    Ok(Some(rec))
+}
+
+/// (0.2.4, F93-1) Read a record for the DISPLAY path (`--status`/`--wait`/the resume listing): a
+/// pure read, then — when the owner looks dead — the `died` transition done UNDER the admission
+/// lock via [`recover_dead_run`] (never an unlocked write), with its result and errors surfaced.
+pub fn read_for_display(work_root: &Path, dir: &Path) -> Result<Option<RunRecord>, String> {
+    let rec = match read_record(dir)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    if is_pending(&rec.status) && !is_live(&rec) {
+        test_recovery_barrier();
+        return recover_dead_run(work_root, dir, &rec);
     }
     Ok(Some(rec))
 }
@@ -240,7 +297,9 @@ pub fn run_dirs(work_root: &Path) -> Result<Vec<(i64, PathBuf)>, String> {
 pub fn live_run(work_root: &Path) -> Result<Option<String>, String> {
     for (_, dir) in run_dirs(work_root)? {
         if let Some(r) = read_record(&dir)? {
-            if is_pending(&r.status) {
+            // (0.2.4, F93-1) read_record no longer rewrites a ghost, so liveness is checked here:
+            // a pending record whose owner is dead does NOT count as a live run.
+            if is_pending(&r.status) && is_live(&r) {
                 return Ok(Some(r.id));
             }
         }
@@ -766,6 +825,13 @@ mod tests {
         assert!(
             live_run(&work).unwrap().is_none(),
             "an old running record without a pid is dead"
+        );
+        // (F93-1) read_record is PURE: the ghost stays `running` on disk until the DISPLAY path
+        // persists `died` under the admission lock.
+        assert_eq!(read_record(&dir).unwrap().unwrap().status, "running");
+        assert_eq!(
+            read_for_display(&work, &dir).unwrap().unwrap().status,
+            "died"
         );
         assert_eq!(read_record(&dir).unwrap().unwrap().status, "died");
         rec.pid = Some(std::process::id() as i64);
