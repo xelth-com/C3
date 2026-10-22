@@ -52,6 +52,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   1 h after a failed attempt and 24 h after a success, offers only from a success younger than 7
   days (a stale answer that may name a deleted release is dropped silently), and `c3 update` prints
   the cached data with a `refresh failed` note when a forced refresh fails (F97-3).
+- **Wave 11c (Astra acceptance minor, handoff 99)** — the self-update backoff test now observes the
+  fetch directly: the test-mode fetcher counts each actual attempt into
+  `C3_UPDATE_TEST_FETCH_COUNT_FILE` (test-mode only, no network) and the test asserts exactly one
+  fetch across two hook runs, so a throttle miss can no longer hide behind whole-second timestamps
+  (F99-2).
 
 ## [0.2.3] - 2026-10-22
 

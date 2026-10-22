@@ -37,7 +37,13 @@ fn run(home: &PathBuf, tags: Option<&str>, args: &[&str]) -> Output {
         .env("CODEX_CONSULT_TEST_MODE", "1")
         .env("CODEX_CONSULT_ROSTER", "none")
         .env("CODEX_CONSULT_HEALTH", "none")
-        .env("CODEX_CONSULT_TELEMETRY", "off");
+        .env("CODEX_CONSULT_TELEMETRY", "off")
+        // (11b F99-2) the test-mode fetcher appends one line per ACTUAL fetch attempt here, so a
+        // test can observe the throttle independent of whole-second timestamp resolution.
+        .env(
+            "C3_UPDATE_TEST_FETCH_COUNT_FILE",
+            home.join("fetch-count.log"),
+        );
     match tags {
         Some(body) => {
             let f = home.join("tags.json");
@@ -251,19 +257,25 @@ fn hook_still_offers_from_a_fresh_success_on_fetch_failure() {
 
 #[test]
 fn hook_backs_off_after_a_failed_attempt() {
-    // no cache, offline: the first hook attempts and records attempted_at; the immediate second
-    // call is within the 1 h failure backoff, so it does not attempt again (attempted_at unchanged).
+    // no cache, offline: the first hook attempts (and records the failure); the immediate second
+    // call is within the 1 h failure backoff, so it must NOT fetch again. Observe the fetch itself
+    // via the counter file (not whole-second timestamps), so two runs inside one UTC second cannot
+    // slip through.
     let home = scratch("backoff");
-    let o1 = run(&home, None, &["hook"]);
-    assert_eq!(o1.status.code(), Some(0));
-    let first = cache_field(&home, "attempted_at");
-    assert!(!first.is_empty(), "the first failed attempt is recorded");
-    let o2 = run(&home, None, &["hook"]);
-    assert_eq!(o2.status.code(), Some(0));
+    assert_eq!(run(&home, None, &["hook"]).status.code(), Some(0));
+    assert!(
+        !cache_field(&home, "attempted_at").is_empty(),
+        "the first failed attempt is recorded"
+    );
+    assert_eq!(run(&home, None, &["hook"]).status.code(), Some(0));
+    let fetches = std::fs::read_to_string(home.join("fetch-count.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .count();
     assert_eq!(
-        cache_field(&home, "attempted_at"),
-        first,
-        "a second call within 1 h must not attempt again"
+        fetches, 1,
+        "exactly one fetch; the second call must be throttled"
     );
     let _ = std::fs::remove_dir_all(&home);
 }

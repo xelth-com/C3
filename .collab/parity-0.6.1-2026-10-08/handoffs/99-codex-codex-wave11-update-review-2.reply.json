@@ -1,0 +1,182 @@
+{
+  "schema_version": "1",
+  "verdict": "ACCEPT",
+  "verdict_reason": "The three update defects are addressed in the inspected implementation; the remaining findings concern documentation and regression-test strength.",
+  "reply_markdown": "1. **F97-1, F97-2 and F97-3 close at code-review level.** Synchronization revalidates checkout identity after fetching, installs and merges the API commit, and rejects a mismatched fetched tag. Failed checks record attempts and back off; offers expire under the explicitly revised seven-day policy. This changes the original daily-attempt/silent-on-error policy rather than implementing it literally.\n\n2. **ACCEPT for 0.2.4**, with two nonblocking follow-ups: correct the README’s obsolete update commands and strengthen the backoff integration test. The deterministic throttle unit test supports the implementation, but the integration test can pass despite a repeated fetch within the same second.\n\nI read all non-`.collab` diff hunks and the relevant tests. I did not rerun tests, inspect the full unchanged implementations/dependencies, or review other historical findings. The reported green suite remains coordinator-supplied evidence.",
+  "findings": [
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "README.md", "line": 433},
+        {"path": "README.md", "line": 436},
+        {"path": "README.md", "line": 451}
+      ],
+      "claim": "The README still describes tag-based Cargo installation and fetching from origin, contradicting the new API-commit-bound update implementation and release notes.",
+      "trigger": "A reader uses the README to understand or manually reproduce the update procedure.",
+      "evidence": [
+        {
+          "kind": "ran-command",
+          "reference": "rg -n 'hook_backs_off|let o2|Unsigned-tag|--tag|latest_sha|commit.sha|fn newest' crates/c3-cli/tests/update.rs README.md crates/c3/src/update/mod.rs",
+          "observation": "README lines 433, 436 and 451 retain --tag and fetch --tags origin descriptions."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:735 and :812",
+          "observation": "The implementation fetches the canonical release ref, checks its commit, and installs with --rev."
+        }
+      ],
+      "verification": "Compare the README update procedure against Step::command and sync_after_fetch; require matching commands and trust descriptions.",
+      "remedy": "Update the existing README procedure and unsigned-release paragraph to describe --rev, canonical fetching, commit verification and checkout revalidation.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3-cli/tests/update.rs", "line": 253},
+        {"path": "crates/c3-cli/tests/update.rs", "line": 261},
+        {"path": "crates/c3/src/update/mod.rs", "line": 287}
+      ],
+      "claim": "The backoff integration test can pass even if the second hook incorrectly fetches again: it checks only that attempted_at is unchanged, while timestamps are serialized to whole seconds.",
+      "trigger": "Both hook invocations complete within the same UTC second and a regression causes both to attempt the failing fetch.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/update.rs:253",
+          "observation": "The test immediately invokes the second hook and compares attempted_at strings without observing fetch calls."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:287",
+          "observation": "rfc3339 uses SecondsFormat::Secs, allowing two distinct attempts to produce identical timestamps."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Backoff integration-test assertion",
+          "observation": "Equal timestamps cannot establish that only one request occurred. The separate deterministic should_attempt unit test does cover the throttle predicate."
+        }
+      ],
+      "verification": "Temporarily bypass should_attempt in the hook and run a deterministic integration fixture that counts fetch invocations; require the regression to fail on the second fetch.",
+      "remedy": "Assert an injected fetch counter, or use controlled distinct invocation times within the backoff interval, instead of relying on immediate wall-clock timestamp equality.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F02-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F02-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F02-5","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F02-6","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F02-7","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F02-8","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F04-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F04-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F04-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F06-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F09-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F09-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F09-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F09-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F09-5","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F09-6","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F11-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F11-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F11-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F11-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F11-5","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F14-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F19-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F19-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F19-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F22-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F23-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F23-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F23-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F23-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F23-5","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F24-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F24-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F24-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F24-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F24-5","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F24-6","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F25-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F25-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F25-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F30-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F30-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F30-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F31-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F36-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F36-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F38-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F40-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F40-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F42-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F46-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F48-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F50-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F52-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F52-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F55-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F55-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F58-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F60-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F62-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F66-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F66-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F66-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F66-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F66-5","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F66-6","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F68-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F68-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F70-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F72-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F72-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F74-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F74-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F76-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F78-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F78-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F80-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F82-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F84-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-5","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-6","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-7","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F89-8","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F91-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F91-2","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F91-3","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F91-4","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F93-1","status":"not-checked","note":"Outside this update diff review."},
+    {"id":"F95-1","status":"not-checked","note":"Outside this update diff review."},
+    {
+      "id":"F97-1",
+      "status":"fixed",
+      "note":"Read revalidate and its post-fetch call before merge, plus dirty-tree and switched-branch regression fixtures. No tests executed."
+    },
+    {
+      "id":"F97-2",
+      "status":"fixed",
+      "note":"Cargo uses the API revision; sync fetches the canonical ref, compares its peeled commit and merges the revision. Read matching/mismatch fixtures; no tests executed."
+    },
+    {
+      "id":"F97-3",
+      "status":"fixed",
+      "note":"Attempt timestamps, hourly failure backoff, seven-day offer expiry and annotated forced-check fallback address the defect under the explicitly revised policy. Integration-test weakness is finding #2."
+    }
+  ],
+  "unproven": [
+    "No tests, builds, real installations or network requests were executed; the brief's reported results were not independently reproduced.",
+    "The inspected sync fixtures mutate the checkout before sync starts; they do not exercise changes during fetch or concurrent mutation during final inspection and merge.",
+    "The mismatch fixture uses an all-zero expected revision; it does not directly reproduce a divergent fork origin or stale local tag, although the inspected production path bypasses both.",
+    "The loopback change was inspected as a diff only; IPv6-only availability and timeout behavior were not exercised.",
+    "Reading excluded other .collab material, complete unchanged source and documentation, and underlying Git, Cargo and HTTP dependency implementations."
+  ],
+  "first_run_checklist": []
+}

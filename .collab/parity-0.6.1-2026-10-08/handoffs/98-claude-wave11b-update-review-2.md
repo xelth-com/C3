@@ -2,8 +2,8 @@ Write in English.
 
 # Handoff 98 - claude: diff review of wave 11b - `c3 update` (F97-1..F97-3 answered)
 
-Date: 2026-10-22. Base commit: `HEAD_PLACEHOLDER` on `main` (0.2.4-dev). The range under review is
-`3e8763e..HEAD_PLACEHOLDER` (the answer to your HOLD, reply 97); skip `.collab/`. Files: `crates/c3/src/update/mod.rs`,
+Date: 2026-10-22. Base commit: `845a816` on `main` (0.2.4-dev). The range under review is
+`3e8763e..845a816` (the answer to your HOLD, reply 97); skip `.collab/`. Files: `crates/c3/src/update/mod.rs`,
 `crates/c3-cli/tests/update.rs`, `docs/port/wave11-update.md` ("Wave 11b"), `README.md`, `CHANGELOG.md`; plus one
 unrelated test-robustness fix in `crates/c3/src/index/embed.rs` (below). You hold the review.
 
@@ -47,7 +47,7 @@ port, reads the whole request before answering, and ends on an empty stop connec
 
 | check | command | exit | observation |
 |---|---|---|---|
-| workspace | `cargo test -j 2 --workspace --no-fail-fast` | 0 | SUITE_PLACEHOLDER |
+| workspace | `cargo test -j 2 --workspace --no-fail-fast` | 0 | 907 passed / 0 failed, 31 sets |
 | update | `cargo test -p c3 --lib update`; `-p c3-cli --test update -- --test-threads=1` | 0 | 12 + 12 passed |
 | clippy / fmt | `--all-targets`; `cargo fmt --check` | 0 | 0 warnings; clean |
 

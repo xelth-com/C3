@@ -429,15 +429,20 @@ release is the highest `v<major>.<minor>.<patch>` tag, compared with the running
   and latest versions, whether an update exists, the changelog URL, the install kind it detected,
   and the exact commands `--apply` *would* run — then changes nothing. It exits `0` when up to
   date, `3` when an update exists (so a script can branch) and `1` on a fetch failure.
-- **Applying.** `c3 update --apply` installs, stopping at the first failure: (a)
-  `cargo install --git https://github.com/xelth-com/C3.git --tag v<latest> --locked c3-cli`
+- **Applying.** `c3 update --apply` installs, stopping at the first failure, and every step is bound
+  to the COMMIT the GitHub API named for the release (`latest_sha`), never to a tag name: (a)
+  `cargo install --git https://github.com/xelth-com/C3.git --rev <latest_sha> --locked c3-cli`
   (plus `--features index-surreal` when the running binary was built with the indexed bundle); (b)
-  if a **clean** source checkout is known (config `source_checkout`, env `C3_SOURCE_CHECKOUT`, or
-  the git work tree around `CLAUDE_PLUGIN_ROOT`), `git fetch --tags origin` then
-  `git merge --ff-only v<latest>` — a dirty tree, a detached HEAD or a non-fast-forward is printed
-  and skipped, never failing (a); (c) `claude plugin update c3@c3` when `claude` is on PATH, else it
-  prints that command to run by hand. It refuses when you are already up to date or the check
-  failed, and never touches a dirty checkout.
+  if a **clean** source checkout on a branch is known (config `source_checkout`, env
+  `C3_SOURCE_CHECKOUT`, or the git work tree around `CLAUDE_PLUGIN_ROOT`), the release tag is
+  fetched from the canonical `https://github.com/xelth-com/C3.git` (never the checkout's `origin`)
+  into a temporary ref, its peeled commit is compared to `latest_sha` (a mismatch skips the sync
+  with "release tag does not match the GitHub API commit"), the checkout's identity (path, branch,
+  HEAD, cleanliness) is re-checked right before the merge, and only then `git merge --ff-only
+  <latest_sha>` runs - a dirty tree, a detached HEAD, a changed branch or HEAD, or a
+  non-fast-forward is printed and skipped, never failing (a); (c) `claude plugin update c3@c3` when
+  `claude` is on PATH, else it prints that command to run by hand. It refuses when you are already
+  up to date or the check failed, and never touches a dirty checkout.
 - **The off switch (default ON).** Set `C3_UPDATE_CHECK=off`, or `"update_check": false` in
   `<codex home>/c3/config.json`, to silence the automatic hook check. `c3 update` run by hand still
   checks. Nothing here is ever written outside `<codex home>/c3/`, no redirect is ever followed, and
@@ -448,9 +453,10 @@ release is the highest `v<major>.<minor>.<patch>` tag, compared with the running
   younger than 7 days — an older answer is dropped silently, since the release it names may no
   longer exist. A forced `c3 update` whose refresh fails still prints the cached data, annotated
   `(checked <time>, refresh failed: <reason>)`.
-- **Unsigned-tag limitation.** `cargo install --git --tag` fetches the tagged source over HTTPS from
-  GitHub and builds it locally; there is **no release signature** to verify yet. The trust you are
-  extending is to GitHub's transport and to the `xelth-com/C3` tag, exactly as for a manual
+- **Unsigned-release limitation.** `cargo install --git --rev` fetches the source at the API's commit
+  over HTTPS from GitHub and builds it locally; the checkout sync verifies that the tag's commit
+  equals that sha, but there is **no release signature** to verify yet. The trust you are extending
+  is to GitHub's transport and to the `xelth-com/C3` repository, exactly as for a manual
   `cargo install --git`. Signed releases are future work.
 
 ## License

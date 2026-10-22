@@ -123,3 +123,12 @@ the cached data annotated `(checked <checked_at>, refresh failed: <reason>)` and
   regardless of age; a stale (8-day) newer cache would still print a hook line and every hook would
   re-attempt on failure — so the suppression and the unchanged-`attempted_at` assertions fail under
   the old logic.
+
+### Wave 11c — Astra acceptance minor (handoff 99)
+
+- F99-2: the backoff test now observes the fetch itself. The test-mode fetcher appends one line per
+  actual fetch attempt to `C3_UPDATE_TEST_FETCH_COUNT_FILE` (test-mode only, no-socket), and
+  `hook_backs_off_after_a_failed_attempt` asserts exactly ONE line after two hook runs — so two runs
+  inside the same UTC second can no longer both fetch undetected. (The unit
+  `attempt_state_throttle_and_offer_windows` already pins "an attempt within 1 h of a failure is
+  refused" with explicit timestamps.)

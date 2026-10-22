@@ -1,0 +1,170 @@
+codex-consult: detached run 25f40066 (detach id 25f40066-abaa-4f7b-abfd-31a220414a59) - pid 23916 on LAPTOP-9SGIHQ03, started 2026-10-22T13:47:07+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-25f40066.status.json
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - position 1 of 13
+WARNING: ACCEPT with 27 unchecked prior blocker(s) (F14-1, F22-1, F23-1, F23-2, F23-3, F24-1, F25-2, F30-1, F30-2, F31-1, F36-1, F38-1, F40-1, F42-1, F66-1, F76-1, F78-1, F78-2, F80-1, F82-1, F84-1, F89-1, F89-2, F89-3, F91-1, F91-2, F93-1).
+codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a1636f-c872-7c71-9ccc-428dbf3a20b4 (source: events), wall 210.3 s
+quota      : 5h 12% until 18:02; wk 42% until Oct 27; this run 263345 input tokens (194432 cached) in 5 calls, max 68160 per call of 258400; sub-agents 0
+verdict    : ACCEPT - The three update defects are addressed in the inspected implementation; the remaining findings concern documentation and regression-test strength.
+findings   : 0 blocker, 0 major, 2 minor, 0 note -> F99-1..F99-2 in findings.json
+prior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 not-checked, F66-2 not-checked, F66-3 not-checked, F66-4 not-checked, F66-5 not-checked, F66-6 not-checked, F68-1 not-checked, F68-2 not-checked, F70-1 not-checked, F72-1 not-checked, F72-2 not-checked, F74-1 not-checked, F74-2 not-checked, F76-1 not-checked, F78-1 not-checked, F78-2 not-checked, F80-1 not-checked, F82-1 not-checked, F84-1 not-checked, F89-1 not-checked, F89-2 not-checked, F89-3 not-checked, F89-4 not-checked, F89-5 not-checked, F89-6 not-checked, F89-7 not-checked, F89-8 not-checked, F91-1 not-checked, F91-2 not-checked, F91-3 not-checked, F91-4 not-checked, F93-1 not-checked, F95-1 not-checked, F97-1 fixed, F97-2 fixed, F97-3 fixed
+reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\99-codex-codex-wave11-update-review-2.md
+reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\99-codex-codex-wave11-update-review-2.reply.json
+events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\99-codex-codex-wave11-update-review-2.events.jsonl
+
+1. **F97-1, F97-2 and F97-3 close at code-review level.** Synchronization revalidates checkout identity after fetching, installs and merges the API commit, and rejects a mismatched fetched tag. Failed checks record attempts and back off; offers expire under the explicitly revised seven-day policy. This changes the original daily-attempt/silent-on-error policy rather than implementing it literally.
+
+2. **ACCEPT for 0.2.4**, with two nonblocking follow-ups: correct the README’s obsolete update commands and strengthen the backoff integration test. The deterministic throttle unit test supports the implementation, but the integration test can pass despite a repeated fetch within the same second.
+
+I read all non-`.collab` diff hunks and the relevant tests. I did not rerun tests, inspect the full unchanged implementations/dependencies, or review other historical findings. The reported green suite remains coordinator-supplied evidence.
+
+### Findings
+
+- **F99-1** [minor] `README.md:433`, `README.md:436`, `README.md:451` - The README still describes tag-based Cargo installation and fetching from origin, contradicting the new API-commit-bound update implementation and release notes. Trigger: A reader uses the README to understand or manually reproduce the update procedure. Evidence: ran-command: README lines 433, 436 and 451 retain --tag and fetch --tags origin descriptions.; read-code: The implementation fetches the canonical release ref, checks its commit, and installs with --rev. Verify: Compare the README update procedure against Step::command and sync_after_fetch; require matching commands and trust descriptions. Remedy: Update the existing README procedure and unsigned-release paragraph to describe --rev, canonical fetching, commit verification and checkout revalidation.
+- **F99-2** [minor] `crates/c3-cli/tests/update.rs:253`, `crates/c3-cli/tests/update.rs:261`, `crates/c3/src/update/mod.rs:287` - The backoff integration test can pass even if the second hook incorrectly fetches again: it checks only that attempted_at is unchanged, while timestamps are serialized to whole seconds. Trigger: Both hook invocations complete within the same UTC second and a regression causes both to attempt the failing fetch. Evidence: read-code: The test immediately invokes the second hook and compares attempted_at strings without observing fetch calls.; read-code: rfc3339 uses SecondsFormat::Secs, allowing two distinct attempts to produce identical timestamps.; inferred: Equal timestamps cannot establish that only one request occurred. The separate deterministic should_attempt unit test does cover the throttle predicate. Verify: Temporarily bypass should_attempt in the hook and run a deterministic integration fixture that counts fetch invocations; require the regression to fail on the second fetch. Remedy: Assert an injected fetch counter, or use controlled distinct invocation times within the backoff interval, instead of relying on immediate wall-clock timestamp equality.
+
+### Prior findings
+
+- F02-1 - not-checked - Outside this update diff review.
+- F02-3 - not-checked - Outside this update diff review.
+- F02-4 - not-checked - Outside this update diff review.
+- F02-5 - not-checked - Outside this update diff review.
+- F02-6 - not-checked - Outside this update diff review.
+- F02-7 - not-checked - Outside this update diff review.
+- F02-8 - not-checked - Outside this update diff review.
+- F04-1 - not-checked - Outside this update diff review.
+- F04-2 - not-checked - Outside this update diff review.
+- F04-3 - not-checked - Outside this update diff review.
+- F06-1 - not-checked - Outside this update diff review.
+- F09-1 - not-checked - Outside this update diff review.
+- F09-2 - not-checked - Outside this update diff review.
+- F09-3 - not-checked - Outside this update diff review.
+- F09-4 - not-checked - Outside this update diff review.
+- F09-5 - not-checked - Outside this update diff review.
+- F09-6 - not-checked - Outside this update diff review.
+- F11-1 - not-checked - Outside this update diff review.
+- F11-2 - not-checked - Outside this update diff review.
+- F11-3 - not-checked - Outside this update diff review.
+- F11-4 - not-checked - Outside this update diff review.
+- F11-5 - not-checked - Outside this update diff review.
+- F14-1 - not-checked - Outside this update diff review.
+- F19-1 - not-checked - Outside this update diff review.
+- F19-2 - not-checked - Outside this update diff review.
+- F19-3 - not-checked - Outside this update diff review.
+- F22-1 - not-checked - Outside this update diff review.
+- F23-1 - not-checked - Outside this update diff review.
+- F23-2 - not-checked - Outside this update diff review.
+- F23-3 - not-checked - Outside this update diff review.
+- F23-4 - not-checked - Outside this update diff review.
+- F23-5 - not-checked - Outside this update diff review.
+- F24-1 - not-checked - Outside this update diff review.
+- F24-2 - not-checked - Outside this update diff review.
+- F24-3 - not-checked - Outside this update diff review.
+- F24-4 - not-checked - Outside this update diff review.
+- F24-5 - not-checked - Outside this update diff review.
+- F24-6 - not-checked - Outside this update diff review.
+- F25-2 - not-checked - Outside this update diff review.
+- F25-3 - not-checked - Outside this update diff review.
+- F25-4 - not-checked - Outside this update diff review.
+- F30-1 - not-checked - Outside this update diff review.
+- F30-2 - not-checked - Outside this update diff review.
+- F30-3 - not-checked - Outside this update diff review.
+- F31-1 - not-checked - Outside this update diff review.
+- F36-1 - not-checked - Outside this update diff review.
+- F36-2 - not-checked - Outside this update diff review.
+- F38-1 - not-checked - Outside this update diff review.
+- F40-1 - not-checked - Outside this update diff review.
+- F40-2 - not-checked - Outside this update diff review.
+- F42-1 - not-checked - Outside this update diff review.
+- F46-1 - not-checked - Outside this update diff review.
+- F48-1 - not-checked - Outside this update diff review.
+- F50-1 - not-checked - Outside this update diff review.
+- F52-1 - not-checked - Outside this update diff review.
+- F52-2 - not-checked - Outside this update diff review.
+- F55-1 - not-checked - Outside this update diff review.
+- F55-2 - not-checked - Outside this update diff review.
+- F58-1 - not-checked - Outside this update diff review.
+- F60-1 - not-checked - Outside this update diff review.
+- F62-1 - not-checked - Outside this update diff review.
+- F66-1 - not-checked - Outside this update diff review.
+- F66-2 - not-checked - Outside this update diff review.
+- F66-3 - not-checked - Outside this update diff review.
+- F66-4 - not-checked - Outside this update diff review.
+- F66-5 - not-checked - Outside this update diff review.
+- F66-6 - not-checked - Outside this update diff review.
+- F68-1 - not-checked - Outside this update diff review.
+- F68-2 - not-checked - Outside this update diff review.
+- F70-1 - not-checked - Outside this update diff review.
+- F72-1 - not-checked - Outside this update diff review.
+- F72-2 - not-checked - Outside this update diff review.
+- F74-1 - not-checked - Outside this update diff review.
+- F74-2 - not-checked - Outside this update diff review.
+- F76-1 - not-checked - Outside this update diff review.
+- F78-1 - not-checked - Outside this update diff review.
+- F78-2 - not-checked - Outside this update diff review.
+- F80-1 - not-checked - Outside this update diff review.
+- F82-1 - not-checked - Outside this update diff review.
+- F84-1 - not-checked - Outside this update diff review.
+- F89-1 - not-checked - Outside this update diff review.
+- F89-2 - not-checked - Outside this update diff review.
+- F89-3 - not-checked - Outside this update diff review.
+- F89-4 - not-checked - Outside this update diff review.
+- F89-5 - not-checked - Outside this update diff review.
+- F89-6 - not-checked - Outside this update diff review.
+- F89-7 - not-checked - Outside this update diff review.
+- F89-8 - not-checked - Outside this update diff review.
+- F91-1 - not-checked - Outside this update diff review.
+- F91-2 - not-checked - Outside this update diff review.
+- F91-3 - not-checked - Outside this update diff review.
+- F91-4 - not-checked - Outside this update diff review.
+- F93-1 - not-checked - Outside this update diff review.
+- F95-1 - not-checked - Outside this update diff review.
+- F97-1 - fixed - Read revalidate and its post-fetch call before merge, plus dirty-tree and switched-branch regression fixtures. No tests executed.
+- F97-2 - fixed - Cargo uses the API revision; sync fetches the canonical ref, compares its peeled commit and merges the revision. Read matching/mismatch fixtures; no tests executed.
+- F97-3 - fixed - Attempt timestamps, hourly failure backoff, seven-day offer expiry and annotated forced-check fallback address the defect under the explicitly revised policy. Integration-test weakness is finding #2.
+
+## Verdict: ACCEPT
+
+The three update defects are addressed in the inspected implementation; the remaining findings concern documentation and regression-test strength.
+
+**WARNING: ACCEPT with 27 unchecked prior blocker(s) (F14-1, F22-1, F23-1, F23-2, F23-3, F24-1, F25-2, F30-1, F30-2, F31-1, F36-1, F38-1, F40-1, F42-1, F66-1, F76-1, F78-1, F78-2, F80-1, F82-1, F84-1, F89-1, F89-2, F89-3, F91-1, F91-2, F93-1).**
+
+### Blockers
+
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending').
+- **F22-1** (prior, not-checked) `crates/c3-core/src/health.rs:1563` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs.
+- **F23-3** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:5105` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree.
+- **F24-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:640` - The spool-lock fallback marks all non-legacy not-spooled lines as seen without folding or retaining per-file provenance; a later fold counts the same gone-producer files again, so the accounting can double-count and temporarily hide the count.
+- **F25-2** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:357` - Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process.
+- **F30-2** (prior, not-checked) `crates/c3/src/engines/subprocess.rs:536` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues.
+- **F31-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:668` - The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history.
+- **F36-1** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:425` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary.
+- **F38-1** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:687` - The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge.
+- **F40-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:170` - Recovery silently treats failure to enumerate the Codex-home kill-copy directory, or errors while iterating it, as absence of recovery copies. A durable copy naming a live helper can therefore be omitted and the task released.
+- **F42-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:306` - A metadata inspection error on an enumerated recovery copy is treated as absence. read_pending_file uses Path::exists(), which converts metadata errors to false, and returns exists=false with no error. Recovery and findings checks then skip the copy, potentially releasing a task while a helper named only in that durable copy remains alive.
+- **F66-1** (prior, not-checked) `crates/c3/src/consult/recovery.rs:129` - Detached admission treats active recovery records as harmless concurrency without establishing that their owning bridge is still alive. Records retained because an interrupted run left surviving or unverified processes are therefore bypassed, allowing a new engine turn while recovery still considers the previous tree active.
+- **F76-1** (prior, not-checked) `crates/c3-core/src/health.rs:1143` - The new read-time age limit discards identified cap-pair evidence after approximately 24 hours even when a valid reset_hint declares a later weekly or monthly reset. plan_cap_verdict then returns the underlying verdict without enforcing that reset. This makes an exhausted endpoint eligible before the retry time previously displayed and contradicts the documented policy that hinted entries remain unavailable until their reset.
+- **F78-1** (prior, not-checked) `crates/c3-core/src/plan.rs:368` - The cap detector considers only pairs containing the newest qualifying hit. A later isolated instant 429 therefore suppresses an already established cap pair, allowing an exhausted endpoint to become eligible before its declared reset without any successful reply.
+- **F78-2** (prior, not-checked) `crates/c3-core/src/health.rs:100` - The 35-day cap-pair retention applies only to rows supplied to endpoint_health; machine-health writes still prune old rows unless their stored outage or quota window remains active. Consequently, cap evidence originating in another repository can disappear after roughly 24 hours, releasing a hinted exhausted endpoint before its declared reset.
+- **F80-1** (prior, not-checked) `crates/c3-core/src/health.rs:2177` - The new retention policy preserves cap-failure evidence longer and with higher eviction priority than the successful reply that clears it. Once that success disappears, machine-only readers reconstruct the old pair and falsely mark a usable endpoint unavailable until its declared reset.
+- **F82-1** (prior, not-checked) `crates/c3-core/src/health.rs:2288` - The supersede drop does not prevent an obsolete cap refusal when older evidence remains in a skipped journal until after the clearing success is evicted. Journal replay protection covers records actually read, not unread records in a busy journal, and no durable success watermark remains to reject their later application.
+- **F84-1** (prior, not-checked) `crates/c3-core/src/health.rs:2231` - The clearing-anchor protection is not durable under tied-success cap pressure. is_anchor protects every success row sharing an endpoint's newest timestamp, rather than one row. Those duplicates can force eviction of another endpoint's clearing anchor. A later success makes the duplicates unprotected, allowing delayed older evidence for the evicted endpoint to survive and restore a cleared cap refusal.
+- **F89-1** (prior, not-checked) `crates/c3/src/work/mod.rs:730` - A foreground worker is treated as dead after 120 seconds because its running record never receives an owning PID. Reading status or admitting another run can then rewrite the still-active run as died and allow another worker on the same task.
+- **F89-2** (prior, not-checked) `crates/c3/src/work/mod.rs:698` - Resume admission is not exclusive: it neither checks the task's other live runs nor atomically claims the selected run and marks it running before spawning. Two resume commands can execute the same session concurrently and overwrite the same temporary event files; a fresh worker can also start while a foreground resume still has status quota.
+- **F89-3** (prior, not-checked) `crates/c3/src/work/mod.rs:676` - Artifact failures can silently destroy a resumed report while C3 records done and returns success. append_resume ignores open/write errors, after which resume_once deletes the attempt files; refresh_artifacts also ignores report.md and diff.txt write failures.
+- **F91-1** (prior, not-checked) `crates/c3/src/work/mod.rs:747` - Resume admission checks status and exhaustion before acquiring the admission lock, but the locked claim only rejects a live owner. A delayed resume can therefore restart an already completed or exhausted run, and can reuse an attempt number calculated from stale state.
+- **F91-2** (prior, not-checked) `crates/c3/src/work/record.rs:137` - The new admission lock does not enforce one live worker when recovery records cannot be inspected: record reads, directory enumeration failures, entry errors, and parse errors are treated as absent runs.
+- **F93-1** (prior, not-checked) `crates/c3/src/work/record.rs:140` - The status/wait reader performs an unlocked recovery write that can replace a newly claimed live resume with an old died record. A later admission then sees no pending worker and can launch another worker on the same task. Admission's strict locked reads do not protect against this external writer.
+
+### Unproven scenarios
+
+- No tests, builds, real installations or network requests were executed; the brief's reported results were not independently reproduced.
+- The inspected sync fixtures mutate the checkout before sync starts; they do not exercise changes during fetch or concurrent mutation during final inspection and merge.
+- The mismatch fixture uses an all-zero expected revision; it does not directly reproduce a divergent fork origin or stale local tag, although the inspected production path bypasses both.
+- The loopback change was inspected as a diff only; IPv6-only availability and timeout behavior were not exercised.
+- Reading excluded other .collab material, complete unchanged source and documentation, and underlying Git, Cargo and HTTP dependency implementations.
+
+### First-run checklist (observable)
+
+_(none)_

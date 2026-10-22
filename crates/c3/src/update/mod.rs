@@ -199,6 +199,21 @@ struct TestFetcher;
 
 impl Fetcher for TestFetcher {
     fn get(&self, _url: &str, _etag: Option<&str>, _timeout: Duration) -> Result<Fetched, String> {
+        // Test-mode observability (11b F99-2): record every ACTUAL fetch attempt so a test can assert
+        // the throttle suppressed a call, independent of whole-second timestamp resolution. Only this
+        // no-socket test fetcher ever reads it, so it can never affect production.
+        if let Ok(p) = std::env::var("C3_UPDATE_TEST_FETCH_COUNT_FILE") {
+            if !p.trim().is_empty() {
+                use std::io::Write as _;
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&p)
+                {
+                    let _ = writeln!(f, "fetch");
+                }
+            }
+        }
         match std::env::var("C3_UPDATE_TEST_TAGS_FILE") {
             Ok(p) if !p.trim().is_empty() => {
                 let body = std::fs::read(&p).map_err(|e| c3_core::one_line(&e.to_string()))?;
