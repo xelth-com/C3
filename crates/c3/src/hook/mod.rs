@@ -44,6 +44,12 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
             println!("{l}");
         }
     }
+    // (wave 11) one extra line when C3 has a newer release on record: the cache is refreshed if it
+    // is stale (within the 3 s budget) and the check is on; any error, a disabled check or an
+    // up-to-date install prints nothing, so startup/resume/compact output is otherwise unchanged.
+    if let Some(l) = crate::update::hook_line(chrono::Utc::now()) {
+        println!("{l}");
+    }
     0
 }
 

@@ -30,10 +30,25 @@ const MAX_CONFIG_BYTES: u64 = 256 * 1024;
 const MAX_PEERS: usize = 16;
 
 /// A validated configuration. Absent features are simply empty/`None`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct C3Config {
     pub peers: Vec<PeerConfig>,
     pub embedder: Option<EmbedderConfig>,
+    /// The automatic update check (wave 11); default ON, `"update_check": false` turns it off.
+    pub update_check: bool,
+    /// A known C3 source checkout `c3 update --apply` may fast-forward (wave 11); default absent.
+    pub source_checkout: Option<String>,
+}
+
+impl Default for C3Config {
+    fn default() -> Self {
+        C3Config {
+            peers: Vec::new(),
+            embedder: None,
+            update_check: true,
+            source_checkout: None,
+        }
+    }
 }
 
 /// One validated peer entry.
@@ -180,14 +195,38 @@ fn validate(root: &Value) -> Result<C3Config, String> {
     let obj = root
         .as_object()
         .ok_or_else(|| "c3 config: the top level must be a JSON object".to_string())?;
-    check_keys(obj.keys(), &["config_version", "index"], "config")?;
+    check_keys(
+        obj.keys(),
+        &["config_version", "index", "update_check", "source_checkout"],
+        "config",
+    )?;
 
     match obj.get("config_version").and_then(|v| v.as_u64()) {
         Some(1) => {}
         _ => return Err("c3 config: config_version must be 1".to_string()),
     }
 
-    let mut cfg = C3Config::default();
+    // wave 11: the self-update switches (resolved before any early return so the default-on holds).
+    let update_check = match obj.get("update_check") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("c3 config: update_check must be true or false".to_string()),
+    };
+    let source_checkout = match obj.get("source_checkout") {
+        None => None,
+        Some(v) => match v.as_str() {
+            Some(s) if !s.trim().is_empty() => Some(s.to_string()),
+            _ => {
+                return Err("c3 config: source_checkout must be a non-empty string path".to_string())
+            }
+        },
+    };
+
+    let mut cfg = C3Config {
+        update_check,
+        source_checkout,
+        ..Default::default()
+    };
     let Some(index) = obj.get("index") else {
         return Ok(cfg);
     };

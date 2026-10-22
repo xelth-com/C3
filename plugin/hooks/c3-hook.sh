@@ -66,5 +66,10 @@ restore=$(printf '%s\n' "$out" | grep -m1 '^codex-consult: after compaction - ')
 if [ -n "$restore" ]; then
   echo "$restore"
 fi
+# (wave 11) the self-update line: present only when `c3 hook` found a newer release on record
+update=$(printf '%s\n' "$out" | grep -m1 '^c3: update available ')
+if [ -n "$update" ] && [ "$update" != "$first" ]; then
+  echo "$update"
+fi
 echo "$wait_rule"
 exit 0

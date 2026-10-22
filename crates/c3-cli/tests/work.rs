@@ -740,7 +740,10 @@ fn a_work_run_against_the_fake_launcher_lands_its_whole_record() {
     // (0.2.4, F89-4) the permission boundary is recorded; this run was restricted
     assert_eq!(run["unrestricted"], false, "{run}");
     assert!(
-        run["permission"].as_str().unwrap_or("").contains("allow list"),
+        run["permission"]
+            .as_str()
+            .unwrap_or("")
+            .contains("allow list"),
         "{run}"
     );
     assert_eq!(
@@ -1238,20 +1241,27 @@ fn the_allow_grammar_and_muse_opt_in_refuse_before_any_record() {
         // A distinctive (>2 char) pattern is never echoed wholesale (a bare `*` appears in the
         // help text itself, so it is exempt from this check).
         if pat.len() > 2 {
-            assert!(!t.contains(pat), "{pat}: the refusal must never echo the pattern: {t}");
+            assert!(
+                !t.contains(pat),
+                "{pat}: the refusal must never echo the pattern: {t}"
+            );
         }
         assert!(!e.work_root().exists(), "{pat}: no record may exist");
     }
 
     // (F89-4 remainder) A bare shell/exec tool, and shells/interpreters/git by exe basename (even
     // with a .exe suffix), are refused — naming the safe keyword is allowed.
-    for pat in ["Bash", "Bash(sh:*)", "Bash(python:*)", "Bash(powershell.exe:*)"] {
+    for pat in [
+        "Bash",
+        "Bash(sh:*)",
+        "Bash(python:*)",
+        "Bash(powershell.exe:*)",
+    ] {
         let out = e.work("ZAI-claude", &["--allow", pat], &[]);
         let t = text(&out);
         assert_eq!(out.status.code(), Some(1), "{pat}: {t}");
         assert!(
-            t.contains("not allowed in restricted mode")
-                || t.contains("shell, interpreter or git"),
+            t.contains("not allowed in restricted mode") || t.contains("shell, interpreter or git"),
             "{pat}: {t}"
         );
         assert!(!e.work_root().exists(), "{pat}: no record may exist");
@@ -1304,7 +1314,11 @@ fn usage_in_run_json_is_an_allow_list() {
     let e = setup("usage");
     let fake = write_sentinel_usage_launcher(&e.work);
     let fakep = fake.to_string_lossy().to_string();
-    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    let out = e.work(
+        "ZAI-claude",
+        &[],
+        &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())],
+    );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
     let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
@@ -1353,7 +1367,11 @@ fn files_changed_lists_a_pre_dirty_file_the_worker_edited() {
     std::fs::write(e.repo.join("app.txt"), "pre-dirty\n").unwrap();
     let fake = write_edit_launcher(&e.work);
     let fakep = fake.to_string_lossy().to_string();
-    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    let out = e.work(
+        "ZAI-claude",
+        &[],
+        &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())],
+    );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
     let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
@@ -1363,7 +1381,10 @@ fn files_changed_lists_a_pre_dirty_file_the_worker_edited() {
         .iter()
         .filter_map(|v| v.as_str())
         .collect();
-    assert!(changed.contains(&"app.txt"), "pre-dirty edited file listed: {run}");
+    assert!(
+        changed.contains(&"app.txt"),
+        "pre-dirty edited file listed: {run}"
+    );
 }
 
 /// (F89-8) exit 0 alone is not success: an is_error result -> died; an empty stream -> died with
@@ -1373,7 +1394,11 @@ fn exit_zero_without_a_success_terminal_is_not_done() {
     let e = setup("errres");
     let fake = write_error_result_launcher(&e.work);
     let fakep = fake.to_string_lossy().to_string();
-    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    let out = e.work(
+        "ZAI-claude",
+        &[],
+        &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())],
+    );
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
@@ -1383,7 +1408,11 @@ fn exit_zero_without_a_success_terminal_is_not_done() {
     let e2 = setup("empty");
     let fake = write_empty_stream_launcher(&e2.work);
     let fakep = fake.to_string_lossy().to_string();
-    let out = e2.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    let out = e2.work(
+        "ZAI-claude",
+        &[],
+        &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())],
+    );
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let rec = e2.work_root().join("01-ZAI-claude-glm-5.3");
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
@@ -1416,7 +1445,10 @@ fn an_artifact_write_failure_is_not_done() {
         "{run}"
     );
     let events = read(&rec.join("events.jsonl"));
-    assert!(events.contains("\"subtype\":\"resume\",\"n\":1"), "{events}");
+    assert!(
+        events.contains("\"subtype\":\"resume\",\"n\":1"),
+        "{events}"
+    );
 }
 
 /// (F89-1/F89-2) A foreground run stays `running` with a live owning pid while its child blocks,
@@ -1591,11 +1623,18 @@ fn exit_zero_with_incomplete_terminal_is_not_done() {
     let e = setup("noiserr");
     let fake = write_result_no_iserror_launcher(&e.work);
     let fakep = fake.to_string_lossy().to_string();
-    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    let out = e.work(
+        "ZAI-claude",
+        &[],
+        &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())],
+    );
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
-    assert_eq!(run["status"], "died", "claude result without is_error -> died: {run}");
+    assert_eq!(
+        run["status"], "died",
+        "claude result without is_error -> died: {run}"
+    );
 
     let e2 = setup("noturn");
     let fake = write_codex_no_turn_launcher(&e2.work);
@@ -1604,7 +1643,10 @@ fn exit_zero_with_incomplete_terminal_is_not_done() {
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let rec = e2.work_root().join("01-openai-gpt-6.1-sol");
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
-    assert_eq!(run["status"], "died", "codex agent_message without turn.completed -> died: {run}");
+    assert_eq!(
+        run["status"], "died",
+        "codex agent_message without turn.completed -> died: {run}"
+    );
     assert_eq!(run["error"], "no terminal event", "{run}");
 }
 
@@ -1615,17 +1657,33 @@ fn report_md_and_run_json_pass_the_sanitizer() {
     let e = setup("sanitize");
     let fake = write_secret_report_launcher(&e.work);
     let fakep = fake.to_string_lossy().to_string();
-    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    let out = e.work(
+        "ZAI-claude",
+        &[],
+        &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())],
+    );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
     let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
     let report = read(&rec.join("report.md"));
-    assert!(report.contains("[REDACTED:aws-key]"), "report redacted: {report}");
-    assert!(!report.contains("AKIAIOSFODNN7EXAMPLE"), "secret survived in report: {report}");
+    assert!(
+        report.contains("[REDACTED:aws-key]"),
+        "report redacted: {report}"
+    );
+    assert!(
+        !report.contains("AKIAIOSFODNN7EXAMPLE"),
+        "secret survived in report: {report}"
+    );
     let run = read(&rec.join("run.json"));
-    assert!(!run.contains("AKIAIOSFODNN7EXAMPLE"), "secret survived in run.json");
+    assert!(
+        !run.contains("AKIAIOSFODNN7EXAMPLE"),
+        "secret survived in run.json"
+    );
     // events.jsonl is the raw stream, retained verbatim (keeps the secret by contract)
     let events = read(&rec.join("events.jsonl"));
-    assert!(events.contains("AKIAIOSFODNN7EXAMPLE"), "events.jsonl is raw: {events}");
+    assert!(
+        events.contains("AKIAIOSFODNN7EXAMPLE"),
+        "events.jsonl is raw: {events}"
+    );
 }
 
 /// (F91-2) A live worker whose run.json cannot be inspected makes a second same-task command FAIL
@@ -1640,7 +1698,15 @@ fn an_unreadable_live_record_refuses_a_second_launch() {
     let brief = e.brief.to_string_lossy().to_string();
     let child = e
         .cmd(
-            &["work", "--task", "t", "--brief", &brief, "--provider", "ZAI-claude"],
+            &[
+                "work",
+                "--task",
+                "t",
+                "--brief",
+                &brief,
+                "--provider",
+                "ZAI-claude",
+            ],
             &env,
         )
         .spawn()
@@ -1670,7 +1736,10 @@ fn an_unreadable_live_record_refuses_a_second_launch() {
     let second = e.work("ZAI-claude", &[], &env);
     let t = text(&second);
     assert_eq!(second.status.code(), Some(1), "{t}");
-    assert!(t.contains("cannot admit") || t.contains("could not be read"), "{t}");
+    assert!(
+        t.contains("cannot admit") || t.contains("could not be read"),
+        "{t}"
+    );
     assert!(!e.work_root().join("02-ZAI-claude-glm-5.3").exists());
 
     std::fs::write(e.repo.join("release.txt"), b"1").unwrap();
@@ -1718,7 +1787,10 @@ fn a_stale_resume_refuses_under_the_lock() {
     let out = b.wait_with_output().expect("wait B");
     let t = text(&out);
     assert_ne!(out.status.code(), Some(0), "B must refuse: {t}");
-    assert!(!t.contains("resuming work run"), "B must not launch a resume: {t}");
+    assert!(
+        !t.contains("resuming work run"),
+        "B must not launch a resume: {t}"
+    );
     // the record is still A's done result, resumes unchanged at 1
     let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
     assert_eq!(run["status"], "done", "{run}");
@@ -1790,7 +1862,8 @@ fn a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim() {
     let mut bpid = 0i64;
     for _ in 0..200 {
         if let Ok(v) = serde_json::from_str::<Value>(&read(&run_json)) {
-            if v["status"] == "running" && v["pid"].as_i64().unwrap_or(0) > 0 && v["pid"] != 999999 {
+            if v["status"] == "running" && v["pid"].as_i64().unwrap_or(0) > 0 && v["pid"] != 999999
+            {
                 bpid = v["pid"].as_i64().unwrap();
                 break;
             }
@@ -1804,7 +1877,12 @@ fn a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim() {
     let st = status.wait_with_output().expect("wait status");
     // the record on disk is still B's running claim, never a stale `died`
     let run: Value = serde_json::from_str(&read(&run_json)).unwrap();
-    assert_eq!(run["status"], "running", "status recovery clobbered B: {}", text(&st));
+    assert_eq!(
+        run["status"],
+        "running",
+        "status recovery clobbered B: {}",
+        text(&st)
+    );
     assert_eq!(run["pid"].as_i64().unwrap(), bpid, "{run}");
     assert_eq!(run["attempt"], 1, "{run}");
 

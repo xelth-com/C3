@@ -636,12 +636,18 @@ mod tests {
     #[test]
     fn terminal_outcome_reads_the_stream() {
         let ok = r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#;
-        assert_eq!(terminal_outcome(WorkerEngine::Claude, ok), Terminal::Success);
+        assert_eq!(
+            terminal_outcome(WorkerEngine::Claude, ok),
+            Terminal::Success
+        );
         let err = r#"{"type":"result","subtype":"error","is_error":true,"result":"boom"}"#;
         assert_eq!(terminal_outcome(WorkerEngine::Claude, err), Terminal::Error);
         // (F91-4) a result MISSING is_error is not success
         let bare = r#"{"type":"result","result":"done"}"#;
-        assert_eq!(terminal_outcome(WorkerEngine::Claude, bare), Terminal::Error);
+        assert_eq!(
+            terminal_outcome(WorkerEngine::Claude, bare),
+            Terminal::Error
+        );
         assert_eq!(
             terminal_outcome(WorkerEngine::Claude, "{\"type\":\"system\"}"),
             Terminal::None
@@ -650,7 +656,10 @@ mod tests {
         let msg = r#"{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}"#;
         assert_eq!(terminal_outcome(WorkerEngine::Codex, msg), Terminal::None);
         let done = r#"{"type":"turn.completed","usage":{}}"#;
-        assert_eq!(terminal_outcome(WorkerEngine::Codex, done), Terminal::Success);
+        assert_eq!(
+            terminal_outcome(WorkerEngine::Codex, done),
+            Terminal::Success
+        );
         assert_eq!(terminal_outcome(WorkerEngine::Codex, ""), Terminal::None);
     }
 

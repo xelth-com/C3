@@ -97,6 +97,19 @@ the C3 repository's root [README.md](../README.md), section "Telemetry", for exa
 sent, what never is, and how to inspect (`c3 telemetry status`), complain about
 (`c3 complain "<text>"`) or delete (`c3 forget-me`) your data.
 
+## Updating
+
+C3 checks for a newer release of itself and offers it; it never updates on its own. The
+SessionStart hook prints one extra line when the git tags of `xelth-com/C3` show a newer
+`v<major>.<minor>.<patch>` than the installed binary (`c3: update available v<latest> ...`),
+refreshed at most once a day within a 3 s budget and silent on any failure. `c3 update` reports
+installed vs latest and the exact commands an apply would run (exit `3` when an update exists);
+`c3 update --apply` runs them — `cargo install` from the tag, an optional fast-forward of a *clean*
+source checkout, then `claude plugin update c3@c3`. Silence the automatic check with
+`C3_UPDATE_CHECK=off` or `"update_check": false` in `<codex home>/c3/config.json`. See the C3
+repository's root [README.md](../README.md), section "Updating C3", for the full behaviour and the
+unsigned-tag limitation.
+
 ## The MCP server (an alternative surface, not shipped enabled)
 
 `c3 mcp` runs a stdio MCP server that exposes C3's read-and-record tools (providers,

@@ -413,6 +413,40 @@ user scope; other sessions pick it up at their next restart), and the binary
 `--features index-surreal` for the embedded SurrealDB index - see "Light bundle or indexed bundle"). Once a newer plugin version is published (the version is
 bumped at each release), `claude plugin update c3@c3`.
 
+## Updating C3
+
+C3 checks whether a newer release of itself exists and tells you — it never updates on its own.
+The source of truth is the git **tags** of this repository, read once a day through the
+unauthenticated GitHub tags API (`https://api.github.com/repos/xelth-com/C3/tags`); the newest
+release is the highest `v<major>.<minor>.<patch>` tag, compared with the running binary's version.
+
+- **The offer.** The SessionStart hook prints one extra line when a newer release is on record:
+  `c3: update available v<latest> (installed <installed>) - review:
+  https://github.com/xelth-com/C3/blob/v<latest>/CHANGELOG.md ; apply: c3 update --apply`. It
+  refreshes the cached answer at most once every 24 h, within a 3 s budget, and is silent on any
+  failure — a broken or offline check never delays or breaks a session.
+- **The check.** `c3 update` (or `c3 update --check`) forces a check now and prints the installed
+  and latest versions, whether an update exists, the changelog URL, the install kind it detected,
+  and the exact commands `--apply` *would* run — then changes nothing. It exits `0` when up to
+  date, `3` when an update exists (so a script can branch) and `1` on a fetch failure.
+- **Applying.** `c3 update --apply` installs, stopping at the first failure: (a)
+  `cargo install --git https://github.com/xelth-com/C3.git --tag v<latest> --locked c3-cli`
+  (plus `--features index-surreal` when the running binary was built with the indexed bundle); (b)
+  if a **clean** source checkout is known (config `source_checkout`, env `C3_SOURCE_CHECKOUT`, or
+  the git work tree around `CLAUDE_PLUGIN_ROOT`), `git fetch --tags origin` then
+  `git merge --ff-only v<latest>` — a dirty tree, a detached HEAD or a non-fast-forward is printed
+  and skipped, never failing (a); (c) `claude plugin update c3@c3` when `claude` is on PATH, else it
+  prints that command to run by hand. It refuses when you are already up to date or the check
+  failed, and never touches a dirty checkout.
+- **The off switch (default ON).** Set `C3_UPDATE_CHECK=off`, or `"update_check": false` in
+  `<codex home>/c3/config.json`, to silence the automatic hook check. `c3 update` run by hand still
+  checks. Nothing here is ever written outside `<codex home>/c3/`, no redirect is ever followed, and
+  nothing but the plain GET is ever sent.
+- **Unsigned-tag limitation.** `cargo install --git --tag` fetches the tagged source over HTTPS from
+  GitHub and builds it locally; there is **no release signature** to verify yet. The trust you are
+  extending is to GitHub's transport and to the `xelth-com/C3` tag, exactly as for a manual
+  `cargo install --git`. Signed releases are future work.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

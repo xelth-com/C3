@@ -406,8 +406,25 @@ fn validate_allow_pattern(p: &str) -> Result<(), String> {
     // Shells AND interpreters AND git: compared against the exe BASENAME, lowercased, with a
     // trailing .exe/.cmd/.bat/.ps1 stripped.
     const DENY: &[&str] = &[
-        "sh", "bash", "zsh", "fish", "dash", "pwsh", "powershell", "cmd", "wsl", "python",
-        "python3", "py", "node", "deno", "bun", "perl", "ruby", "php", "git",
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "dash",
+        "pwsh",
+        "powershell",
+        "cmd",
+        "wsl",
+        "python",
+        "python3",
+        "py",
+        "node",
+        "deno",
+        "bun",
+        "perl",
+        "ruby",
+        "php",
+        "git",
     ];
     // `<exe>` is a plain executable name, optionally followed by plain subcommand words
     // (`cargo test`, `npm run lint`): single spaces only, a word never starts with `-` (flags such
@@ -653,17 +670,21 @@ pub fn run_prepared(o: &Options, rec_dir: &Path, _id: &str, _seq: i64, detached:
     );
     let window = eff_window(&o, pre.entry.quota_window_sec);
     // (0.2.4, F89-3) An artifact write failure makes the run `artifact_error`, never `done`.
-    let mut rec = match refresh_artifacts(pre.engine, rec_dir, &pre.repo_root, &before, &before_hashes)
-    {
-        Ok(r) => r,
-        Err(e) => return finish_artifact_error(rec_dir, result.exit_code, &e),
-    };
+    let mut rec =
+        match refresh_artifacts(pre.engine, rec_dir, &pre.repo_root, &before, &before_hashes) {
+            Ok(r) => r,
+            Err(e) => return finish_artifact_error(rec_dir, result.exit_code, &e),
+        };
     rec.session_id = session_id.clone();
     rec.exit_code = result.exit_code.map(|c| c as i64);
     rec.timeout_sec = o.timeout_sec;
     rec.status = status.clone();
     rec.ended = Some(iso_now());
-    rec.error = if status == "died" { reason } else { String::new() };
+    rec.error = if status == "died" {
+        reason
+    } else {
+        String::new()
+    };
     if status == "quota" {
         rec.quota = Some(build_quota(&quota_text, reset_at, window, 0, false));
     }
@@ -914,7 +935,9 @@ fn classify_attempt(
             "died",
             format!(
                 "the engine reported success but the process exited {}",
-                exit_code.map(|c| c.to_string()).unwrap_or_else(|| "(none)".into())
+                exit_code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "(none)".into())
             ),
         ),
         engines::Terminal::Error => ("died", "the engine reported an error result".to_string()),
@@ -1286,8 +1309,7 @@ fn append_resume(rec_dir: &Path, n: i64, attempt_events: &str) -> Result<(), Str
 /// recompute every artifact over the whole record, bump `quota.resumes`, and make the record final
 /// again (quota, exhausted, done, died or timeout). Returns the new status.
 fn resume_once(renv: &ResumeEnv, rec_dir: &Path) -> Result<String, String> {
-    let pre = read_record(rec_dir)?
-        .ok_or_else(|| "the work record vanished".to_string())?;
+    let pre = read_record(rec_dir)?.ok_or_else(|| "the work record vanished".to_string())?;
     let expected_resumes = pre.quota.as_ref().map(|q| q.resumes).unwrap_or(0);
     // (0.2.4, F91-1) TEST-ONLY barrier (honoured only in test mode): pause here, AFTER the caller's
     // unlocked read and BEFORE the locked claim, until the gate file appears — the acceptance test
@@ -1358,18 +1380,27 @@ fn resume_once(renv: &ResumeEnv, rec_dir: &Path) -> Result<String, String> {
 
     let before = rec.baseline.clone();
     let before_hashes = rec.baseline_hashes.clone();
-    let mut nrec =
-        match refresh_artifacts(renv.engine, rec_dir, &renv.repo_root, &before, &before_hashes) {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = finish_artifact_error(rec_dir, result.exit_code, &e);
-                return Ok("artifact_error".to_string());
-            }
-        };
+    let mut nrec = match refresh_artifacts(
+        renv.engine,
+        rec_dir,
+        &renv.repo_root,
+        &before,
+        &before_hashes,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = finish_artifact_error(rec_dir, result.exit_code, &e);
+            return Ok("artifact_error".to_string());
+        }
+    };
     nrec.exit_code = result.exit_code.map(|c| c as i64);
     nrec.ended = Some(iso_now());
     nrec.status = status.clone();
-    nrec.error = if status == "died" { reason } else { String::new() };
+    nrec.error = if status == "died" {
+        reason
+    } else {
+        String::new()
+    };
     if status == "quota" {
         let exhausted = n >= renv.max_resumes;
         nrec.quota = Some(build_quota(
@@ -1640,7 +1671,8 @@ mod tests {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let rec_dir = std::env::temp_dir().join(format!("c3-refresh-{}-{nanos}", std::process::id()));
+        let rec_dir =
+            std::env::temp_dir().join(format!("c3-refresh-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&rec_dir).unwrap();
         std::fs::write(rec_dir.join("report.md"), "OLD REPORT").unwrap();
         // make events.jsonl UNREADABLE by making it a directory
@@ -1648,7 +1680,10 @@ mod tests {
         let before: Vec<String> = Vec::new();
         let bh = std::collections::BTreeMap::new();
         let r = refresh_artifacts(WorkerEngine::Claude, &rec_dir, &rec_dir, &before, &bh);
-        assert!(r.is_err(), "an unreadable events.jsonl must be an artifact error");
+        assert!(
+            r.is_err(),
+            "an unreadable events.jsonl must be an artifact error"
+        );
         assert_eq!(
             std::fs::read_to_string(rec_dir.join("report.md")).unwrap(),
             "OLD REPORT",
@@ -1685,9 +1720,17 @@ mod tests {
             "Bash(*)",
             "Bash(python -c:*)",
         ] {
-            assert!(validate_allow_pattern(bad).is_err(), "{bad} must be refused");
+            assert!(
+                validate_allow_pattern(bad).is_err(),
+                "{bad} must be refused"
+            );
         }
-        for ok in ["Read", "Bash(cargo:*)", "Bash(cargo test:*)", "Bash(npm run lint:*)"] {
+        for ok in [
+            "Read",
+            "Bash(cargo:*)",
+            "Bash(cargo test:*)",
+            "Bash(npm run lint:*)",
+        ] {
             assert!(validate_allow_pattern(ok).is_ok(), "{ok} must be allowed");
         }
     }

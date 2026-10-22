@@ -280,12 +280,7 @@ pub fn run_dirs(work_root: &Path) -> Result<Vec<(i64, PathBuf)>, String> {
         match run_json.try_exists() {
             Ok(true) => out.push((seq, entry.path())),
             Ok(false) => continue, // a directory with no run.json is not a run
-            Err(e) => {
-                return Err(format!(
-                    "could not inspect {} ({e})",
-                    run_json.display()
-                ))
-            }
+            Err(e) => return Err(format!("could not inspect {} ({e})", run_json.display())),
         }
     }
     out.sort_by_key(|(seq, _)| *seq);
@@ -580,10 +575,10 @@ fn claude_usage(result_obj: &Value) -> Option<Value> {
         }
     }
     for k in ["num_turns", "duration_ms"] {
-        if let Some(n) = result_obj
-            .get(k)
-            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|x| x.parse().ok())))
-        {
+        if let Some(n) = result_obj.get(k).and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|x| x.parse().ok()))
+        }) {
             map.insert(k.into(), Value::from(n));
         }
     }
@@ -763,7 +758,10 @@ mod tests {
         std::fs::write(repo.join("tracked.txt"), "two\n").unwrap();
         let after2 = status_short(&repo);
         let changed2 = files_changed(&base_h, &after2, &repo);
-        assert!(!changed2.contains(&"tracked.txt".to_string()), "{changed2:?}");
+        assert!(
+            !changed2.contains(&"tracked.txt".to_string()),
+            "{changed2:?}"
+        );
         let _ = std::fs::remove_dir_all(&repo);
     }
 
@@ -819,7 +817,10 @@ mod tests {
         rec.status = "running".into();
         rec.pid = Some(std::process::id() as i64);
         write_record(&dir, &rec).unwrap();
-        assert_eq!(live_run(&work).unwrap().as_deref(), Some("01-zai-claude-glm-5.3"));
+        assert_eq!(
+            live_run(&work).unwrap().as_deref(),
+            Some("01-zai-claude-glm-5.3")
+        );
         rec.pid = None;
         write_record(&dir, &rec).unwrap();
         assert!(

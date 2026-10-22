@@ -81,6 +81,9 @@ try {
     # (R30) after a compaction, the coordinator re-hydration line (present only for the compact source)
     $restore = (@($raw | Where-Object { $_ -like 'codex-consult: after compaction - *' }) | Select-Object -First 1)
     if ($restore) { Write-Output $restore }
+    # (wave 11) the self-update line: present only when `c3 hook` found a newer release on record
+    $update = (@($raw | Where-Object { $_ -like 'c3: update available *' }) | Select-Object -First 1)
+    if ($update -and $update -ne $first) { Write-Output $update }
     Write-Output $WaitRule
 } catch {
     $msg = ("$($_.Exception.Message)" -replace '\s+', ' ').Trim()

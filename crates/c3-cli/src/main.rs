@@ -66,6 +66,8 @@ enum Commands {
     Mcp,
     /// Run a roster model as an ordinary coding worker (docs/work-mode.md).
     Work(c3::cli::work::WorkArgs),
+    /// Check for a newer C3 release and, only with `--apply`, install it (wave 11).
+    Update(c3::cli::update::UpdateArgs),
 }
 
 #[derive(Parser)]
@@ -128,6 +130,7 @@ fn main() {
         Some(Commands::Router(a)) => c3::cli::router::run(a),
         Some(Commands::Mcp) => c3::cli::mcp::run(),
         Some(Commands::Work(a)) => c3::cli::work::run(a),
+        Some(Commands::Update(a)) => c3::cli::update::run(a),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).
             use clap::CommandFactory;

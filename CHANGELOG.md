@@ -7,6 +7,34 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
+## [Unreleased / 0.2.4-dev]
+
+### Added
+
+- **`c3 update` — self-update check and apply** (wave 11, `docs/port/wave11-update.md`): C3 now
+  checks whether a newer release of itself exists and offers it; it applies only on an explicit
+  flag. The source of truth is the git tags of `xelth-com/C3`, read once a day through the
+  unauthenticated GitHub tags API (highest `v<major>.<minor>.<patch>`, compared with
+  `CARGO_PKG_VERSION`); the answer is cached at `<codex home>/c3/update-check.json`
+  (`{checked_at, latest, latest_sha, installed, source}`, atomic write, a failed fetch kept silent
+  and the previous cache kept). The SessionStart hook prints one extra line when a newer version is
+  on record — `c3: update available v<latest> (installed <installed>) - review:
+  https://github.com/xelth-com/C3/blob/v<latest>/CHANGELOG.md ; apply: c3 update --apply` —
+  refreshed within a 3 s budget and never failing a session; startup/resume/compact output is
+  otherwise unchanged, and `plugin/hooks/c3-hook.{ps1,sh}` forward the line. `c3 update`
+  (`--check`) forces a check and reports installed vs latest, whether an update exists, the
+  changelog URL, the detected install kind and the exact commands `--apply` would run, changing
+  nothing (exit 0 up to date, 3 an update exists, 1 on a fetch failure). `c3 update --apply` runs
+  them, stopping at the first failure: `cargo install --git … --tag v<latest> --locked c3-cli`
+  (+ `--features index-surreal` when built with the indexed bundle); then, if a **clean** source
+  checkout on a branch is known (config `source_checkout`, env `C3_SOURCE_CHECKOUT`, or the git work
+  tree around `CLAUDE_PLUGIN_ROOT`), `git fetch --tags origin` + `git merge --ff-only v<latest>`
+  (a dirty tree / detached HEAD / non-fast-forward is printed and skipped, never failing the install);
+  then `claude plugin update c3@c3` when `claude` is on PATH, else the command is printed. The
+  automatic check is ON by default and silenced with `C3_UPDATE_CHECK=off` or `"update_check": false`
+  in the C3 config; in `CODEX_CONSULT_TEST_MODE=1` no network is ever touched. There is no release
+  signature yet: `cargo install --git --tag` trusts GitHub's HTTPS transport and the tag.
+
 ## [0.2.3] - 2026-10-22
 
 ### Added

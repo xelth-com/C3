@@ -162,6 +162,9 @@ impl Env {
             .env("CODEX_CONSULT_TELEMETRY", "off")
             .env("C3_TELEMETRY_HUB", "http://127.0.0.1:9/T")
             .env("C3_PRIORS", "off")
+            // (wave 11) these tests do not exercise the self-update check; keep `c3 hook` offline
+            // and its output byte-identical.
+            .env("C3_UPDATE_CHECK", "off")
             .env("FAKE_CODEX_REPLY", &self.reply);
         for (k, v) in env {
             if v.is_empty() {
