@@ -950,6 +950,9 @@ pub enum EngineError {
     LineageMismatch { thread: Lineage, request: Lineage },
     /// A pre-launch guard refused the turn (e.g. muse per-token billing risk).
     Precheck(String),
+    /// `SubprocessEngine` only *plans* launches; running a turn lives in the c3 crate's
+    /// per-engine adapters (codex/agy/muse/claude/http), not in the core plan engine.
+    PlanOnly,
 }
 
 impl std::fmt::Display for EngineError {
@@ -967,6 +970,10 @@ impl std::fmt::Display for EngineError {
                 thread.0, request.0
             ),
             EngineError::Precheck(msg) => write!(f, "{msg}"),
+            EngineError::PlanOnly => write!(
+                f,
+                "this engine only plans launches; turn execution lives in the c3 crate's adapters"
+            ),
         }
     }
 }
@@ -1000,7 +1007,8 @@ pub trait Engine {
 }
 
 /// A subprocess engine (codex, agy or muse). Its [`Engine::plan`] reproduces the plugin's
-/// argv byte for byte; [`Engine::run`]/[`Engine::continue_turn`] land in M2b.
+/// argv byte for byte; [`Engine::run`]/[`Engine::continue_turn`] are not implemented here
+/// (they return [`EngineError::PlanOnly`]) - turn execution lives in the c3 crate's adapters.
 #[derive(Debug, Clone)]
 pub struct SubprocessEngine {
     pub kind: EngineKind,
@@ -1292,13 +1300,14 @@ impl Engine for SubprocessEngine {
     }
 
     fn run(&self, _turn: &TurnRequest) -> Result<AttemptOutcome, EngineError> {
-        // M2b: launch the subprocess, read the event stream, ingest the reply, repair a
-        // prose reply, kill and continue on timeout. No execution in the contracts task.
-        unimplemented!("Engine::run lands in milestone 2b")
+        // SubprocessEngine is the pure plan/capabilities half of the contract. Running a
+        // turn (subprocess launch, event stream, reply ingestion, format repair) lives in
+        // the c3 crate's per-engine adapters, which delegate here only for `plan`.
+        Err(EngineError::PlanOnly)
     }
 
     fn continue_turn(&self, _turn: &TurnRequest) -> Result<AttemptOutcome, EngineError> {
-        unimplemented!("Engine::continue_turn lands in milestone 2b")
+        Err(EngineError::PlanOnly)
     }
 }
 

@@ -144,16 +144,26 @@ marks 5.0 vs 3.08).**" (plugin README, "Engines (wave 29)", "Endpoint mode"). Po
 A worker run is a roster model as an ordinary CODING WORKER for low-stakes or test work: it
 reads and edits the repository, runs the test commands it is allowed, and reports. It is NOT
 a consultation — no evidence check, no findings, no rating prompt, no review-ledger entry
-(`c3 consult --status` never lists it). First workers (the operator's roster): GLM-5.3 and
-GLM-5.3-flash (z.ai endpoint), DeepSeek-4.1-flash (byteplus endpoint) — all through the
-`claude` engine, which already drives them for reviews. A roster entry opts in with
-`"roles": ["worker"]` (the existing `roles` key).
+(`c3 consult --status` never lists it). A roster entry opts in with `"roles": ["worker"]` (the
+existing `roles` key) on one of three engines:
+
+- **`claude`** — GLM-5.3, GLM-5.3-flash (z.ai), DeepSeek-4.1-flash (byteplus): the engine that
+  already drives them for reviews; writes with the Claude Code tools under the `--allow` list.
+- **`codex`** — `openai :: gpt-6.1-sol`, for complex programs: `codex exec --sandbox
+  workspace-write`; the write mode is the sandbox, so `--allow` does not apply.
+- **`muse`** — `meta :: muse-spark-1.3-contributor`, near-free on the Muse Code subscription:
+  writes and runs the shell headlessly (`--approval-mode never --trust-workspace
+  --disable-sandbox`); the write mode is the workspace, so `--allow` does not apply.
+
+`--model` overrides the entry's model id on the same engine. `run.json`'s `engine` and the
+`--status` line's `[engine]` suffix name which one ran.
 
 ```
 c3 work --task <slug> --brief <file> --provider <roster label> [--model <id>]
         [--prompt <text>] [--effort low|medium|high|xhigh] [--max-turns <n>=80]
         [--timeout-sec <s>=3600] [--allow "Bash(cargo test:*)"]...
         [--detach] [--status [--id <id>]] [--wait [--id <id>]]
+        [--resume [<id>]] [--kick [--id <id>]] [--max-resumes <n>=3] [--quota-window-sec <s>=18000]
 ```
 
 The prompt is a fixed worker preamble (never run git, never leave the repository, never
@@ -167,13 +177,24 @@ never runs git) and `run.json` (status `done|died|timeout|refused`, turns, tool 
 files changed, usage; the argv and scrubbed env NAMES, never a secret value).
 
 Refused before anything starts: a missing/unreadable brief, a prompt above the engine's
-1 MiB cap, a label that is not a worker (the message lists the workers) or not engine
-claude, the entry's `env_key` variable unset, a missing launcher, `--allow` naming git
+1 MiB cap, a label that is not a worker (the message lists the workers) or on an engine that
+is not claude/codex/muse, the entry's credentials unusable (claude: `env_key` unset; muse: the
+Muse sign-in not oauth), a missing launcher, `--allow` naming git
 (a worker never commits), and a second run on a task that already has a live one
 (`--status` exit codes: 0 all done, 1 one died/timed out, 2 one running).
 
 The live-member rule does NOT apply to a worker run: a worker is expected to change the
 tree, so you may keep working (and writing under the collab directory) while one runs.
+
+**Quota, resume and the alarm.** When the worker runs out of its provider's usage limit the
+run is classified `quota` (not `died`) and `run.json` records when the window resets. A
+detached run resumes itself: the background parks `waiting_quota`, sleeps until the window
+reopens, and relaunches the SAME child session with `claude --resume`. A foreground run
+prints the resume time and the exact `c3 work --task <t> --resume <id>` line and exits 3;
+`--kick` forces a resume now (waking a sleeping detached run, or resuming a foreground one).
+Resumes are capped by `--max-resumes` (default 3); past the cap the run stays `quota` with
+`exhausted: true` and needs a human. `--status`: `waiting_quota` reads as running (exit 2),
+`quota` as needing a hand (exit 1).
 
 ## Quota windows and the reading budget (plugin wave 30; C3 wave 8)
 

@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "dca7bf7e-cd97-42aa-9fa3-b95a5db08694",
+    "id8":  "dca7bf7e",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-15T02:38:19+02:00",
+    "updated":  "2026-10-15T02:40:56+02:00",
+    "finished":  "2026-10-15T02:40:56+02:00",
+    "wall_seconds":  157,
+    "pid":  36036,
+    "start_time":  "2026-10-15T00:38:19.2264786Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  5100,
+    "purpose":  "acceptance",
+    "reply_name":  "wave9-acceptance",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/parity-0.6.1-2026-10-08/handoffs/71-claude-wave9-acceptance.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  155.4,
+                        "n":  41,
+                        "handoff":  "72",
+                        "reply":  "handoffs/72-codex-wave9-acceptance.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13cfe-e9a6-7a51-b163-114339ae061c (source: events), wall 155.4 s\u000aquota      : 5h 29% until 07:26; wk 96% until Oct 20; this run 296173 input tokens (226560 cached) in 6 calls, max 68741 per call of 258400; sub-agents 0\u000averdict    : HOLD - The legacy fallback has additional identity loss, and its claimed 24-hour upgrade-risk bound is not enforced on reads.\u000afindings   : 0 blocker, 2 major, 0 minor, 0 note -\u003e F72-1..F72-2 in findings.json\u000aprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 not-checked, F66-2 not-checked, F66-3 fixed, F66-4 not-checked, F66-5 not-checked, F66-6 still-open, F68-1 fixed, F68-2 fixed, F70-1 still-open\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\72-codex-wave9-acceptance.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\72-codex-wave9-acceptance.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\72-codex-wave9-acceptance.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-dca7bf7e.log",
+    "args":  null
+}

@@ -1,0 +1,4 @@
+codex-consult: detached run cdcb52f0 (detach id cdcb52f0-a4b7-4e57-8899-aa613a1d1b97) - pid 28512 on LAPTOP-9SGIHQ03, started 2026-10-14T20:20:11+02:00; status file C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\.consult.detached-cdcb52f0.status.json
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 6 of 12 for -Provider byteplus (codex_config applied)
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: another consultation or status update for task 'consilium-2026-10-14' is running: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\.consult.lock is held open by pid 33580 on LAPTOP-9SGIHQ03 since 2026-10-14T18:20:11.073450500+00:00. Wait for it to finish; the lock is released when that process exits.

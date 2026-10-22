@@ -8,9 +8,30 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// The quota block of a work run that hit a provider usage limit (`docs/work-mode.md`, quota
+/// resume): the limit wording, when the window resets, when `c3 work` will resume the child, how
+/// many times it already has, and whether the resume cap is spent.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Quota {
+    /// The usage-limit wording (the engine's `quota_evidence`, never a secret).
+    pub text: String,
+    /// When the provider says the window resets (RFC3339 UTC), or `null` when it said none.
+    #[serde(default)]
+    pub reset_at: Option<String>,
+    /// When `c3 work` resumes the child: `reset_at` + 60 s when known, else now + the quota window.
+    pub resume_at: String,
+    /// How many times this run has already been resumed.
+    #[serde(default)]
+    pub resumes: i64,
+    /// The resume cap is spent (`resumes` reached `--max-resumes`): the run needs a human.
+    #[serde(default)]
+    pub exhausted: bool,
+}
+
 /// `run.json` of one work run. Written `running` before the child starts, made final
-/// (`done` | `died` | `timeout` | `refused`) when it ends; `args` carries the background's
-/// options wire of a detached run (taken by the background, never a secret).
+/// (`done` | `died` | `timeout` | `refused` | `quota`, or `waiting_quota` while a detached run's
+/// alarm sleeps) when it ends; `args` carries the background's options wire of a detached run
+/// (taken by the background, never a secret).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RunRecord {
     /// The record directory's name (`NN-provider-model`).
@@ -29,8 +50,16 @@ pub struct RunRecord {
     pub ended: Option<String>,
     #[serde(default)]
     pub exit_code: Option<i64>,
-    /// `running` while live, else `done` | `died` | `timeout` | `refused`.
+    /// `running` while live, `waiting_quota` while a detached run's alarm sleeps, else `done` |
+    /// `died` | `timeout` | `refused` | `quota`.
     pub status: String,
+    /// The child session id (`--session-id` of the first launch): the session a quota resume
+    /// continues with `--resume`.
+    #[serde(default)]
+    pub session_id: String,
+    /// The quota block when the run hit a usage limit (status `quota` or `waiting_quota`).
+    #[serde(default)]
+    pub quota: Option<Quota>,
     #[serde(default)]
     pub turns: Option<i64>,
     /// Tool name -> how often the assistant called it.
@@ -50,6 +79,10 @@ pub struct RunRecord {
     /// The background's options wire (a detached run's `running` record only).
     #[serde(default)]
     pub args: Option<String>,
+    /// The `git status --short` baseline captured before the FIRST launch: a quota resume diffs
+    /// the whole run against it, so `diff.txt` and `files_changed` stay stable across resumes.
+    #[serde(default)]
+    pub baseline: Vec<String>,
 }
 
 impl RunRecord {
@@ -73,10 +106,11 @@ pub fn read_record(dir: &Path) -> Result<Option<RunRecord>, String> {
     };
     let mut rec: RunRecord = serde_json::from_slice(&bytes)
         .map_err(|e| format!("{} does not parse: {e}", p.display()))?;
-    // A `running` record whose background is gone (the pid is dead, or it never reported one
-    // within the start grace) is a run that DIED: say so on disk, so `--status`, `--wait` and
-    // the one-live-run guard never wait on a ghost.
-    if rec.status == "running" && !is_live(&rec) {
+    // A pending record (`running`, or `waiting_quota` while a detached alarm sleeps) whose
+    // background is gone (the pid is dead, or it never reported one within the start grace) is a
+    // run that DIED: say so on disk, so `--status`, `--wait` and the one-live-run guard never wait
+    // on a ghost.
+    if is_pending(&rec.status) && !is_live(&rec) {
         rec.status = "died".into();
         rec.ended = Some(chrono::Utc::now().to_rfc3339());
         rec.args = None;
@@ -85,14 +119,20 @@ pub fn read_record(dir: &Path) -> Result<Option<RunRecord>, String> {
     Ok(Some(rec))
 }
 
-/// How long a `running` record may go without a reported pid before it counts as dead
+/// How long a pending record may go without a reported pid before it counts as dead
 /// (the background reports its pid within its first second).
 const START_GRACE_SEC: i64 = 120;
 
-/// Whether a `running` record's background is alive: its reported pid exists, or no pid was
+/// Whether a status means the run's background is still supposed to be alive: `running`, or
+/// `waiting_quota` while a detached run's alarm sleeps until the quota window resets.
+pub fn is_pending(status: &str) -> bool {
+    status == "running" || status == "waiting_quota"
+}
+
+/// Whether a pending record's background is alive: its reported pid exists, or no pid was
 /// reported yet and the record is younger than [`START_GRACE_SEC`]. Anything else is dead.
 pub fn is_live(rec: &RunRecord) -> bool {
-    if rec.status != "running" {
+    if !is_pending(&rec.status) {
         return false;
     }
     match rec.pid {
@@ -130,13 +170,14 @@ pub fn run_dirs(work_root: &Path) -> Vec<(i64, PathBuf)> {
     out
 }
 
-/// Whether a live work run exists for the task (a `running` record): its id, or `None`.
+/// Whether a live work run exists for the task (a `running` or `waiting_quota` record): its id,
+/// or `None`.
 pub fn live_run(work_root: &Path) -> Option<String> {
     run_dirs(work_root).into_iter().find_map(|(_, dir)| {
         read_record(&dir)
             .ok()
             .flatten()
-            .filter(|r| r.status == "running")
+            .filter(|r| is_pending(&r.status))
             .map(|r| r.id)
     })
 }

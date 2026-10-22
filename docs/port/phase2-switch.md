@@ -1,8 +1,14 @@
 # Phase 2 switch-over — installing the C3 plugin alongside (or in place of) `codex-consult`
 
 This is the **supervisor's** runbook for putting the `c3` Claude Code plugin (`plugin/`) into
-service. It is written so the switch is deliberate and reversible. **Nothing here has been run
-on this machine** — two live sessions currently depend on the installed `codex-consult` plugin.
+service. It is written so the switch is deliberate and reversible.
+
+**Status 2026-10-22: the switch is done on the operator's machine.** `c3@c3` is installed from
+the local checkout (`plugin/` of this repository, user scope) and enabled; the user's `astra`
+and `workers` skills were repointed to `c3:consult` / `c3:setup-providers` (`--collab-dir
+.eck/collab`, never `--model`); `codex-consult@claude-codex-consult` was then disabled
+(Option 2 below). It applies to every session started after that moment; sections (b)-(f) stay
+as the record and the rollback. The text below was written before the switch.
 Only the supervisor (or the user) runs the state-changing commands below; the read-only ones
 (`claude plugin list`, `claude plugin details`, `claude plugin validate`) are safe to run first.
 

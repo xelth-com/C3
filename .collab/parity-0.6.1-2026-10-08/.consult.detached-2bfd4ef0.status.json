@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "2bfd4ef0-cb9f-422b-ba97-2fa0a422c775",
+    "id8":  "2bfd4ef0",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "running",
+    "exit":  null,
+    "started":  "2026-10-15T11:46:05+02:00",
+    "updated":  "2026-10-15T11:46:13+02:00",
+    "finished":  null,
+    "wall_seconds":  null,
+    "pid":  6164,
+    "start_time":  "2026-10-15T09:46:06.0518125Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  5100,
+    "purpose":  "acceptance",
+    "reply_name":  "codex-wave9-acceptance-7",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/parity-0.6.1-2026-10-08/handoffs/85-claude-wave9-acceptance-7.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "running",
+                        "outcome":  "",
+                        "wall_seconds":  null,
+                        "n":  48,
+                        "handoff":  "86",
+                        "reply":  ""
+                    }
+                ],
+    "summary":  "",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-2bfd4ef0.log",
+    "args":  null
+}

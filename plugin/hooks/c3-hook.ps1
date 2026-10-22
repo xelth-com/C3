@@ -48,6 +48,19 @@ function Resolve-C3Exe {
 }
 
 try {
+    # (R30 wave-boundary compaction) the SessionStart source arrives as JSON on stdin; read it
+    # only when input is redirected (never block an interactive shell) and pass it to `c3 hook`.
+    # Only `compact` changes the output, so a parse failure (source stays empty) is harmless.
+    $source = ''
+    try {
+        if ([Console]::IsInputRedirected) {
+            $stdin = [Console]::In.ReadToEnd()
+            if ($stdin) {
+                $evt = $stdin | ConvertFrom-Json -ErrorAction Stop
+                if ($evt.source) { $source = [string]$evt.source }
+            }
+        }
+    } catch { $source = '' }
     $exe = Resolve-C3Exe
     if (-not $exe) {
         Write-Output 'c3: not installed - place the c3 binary on PATH or set C3_EXE (see plugin/README.md)'
@@ -56,7 +69,7 @@ try {
     }
     $previous = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $raw = @(& $exe hook --collab-dir $CollabDir 2>&1 | ForEach-Object { "$_" })
+    $raw = @(& $exe hook --collab-dir $CollabDir --source $source 2>&1 | ForEach-Object { "$_" })
     $code = $LASTEXITCODE
     $ErrorActionPreference = $previous
     $first = (@($raw | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
@@ -65,6 +78,9 @@ try {
     # (wave 27, R13 D5) the second line: the pointer to the coordinator's rules (and the telemetry switch)
     $pointer = (@($raw | Where-Object { $_ -like 'codex-consult: coordinator rules - *' }) | Select-Object -First 1)
     if ($pointer -and $pointer -ne $first) { Write-Output $pointer }
+    # (R30) after a compaction, the coordinator re-hydration line (present only for the compact source)
+    $restore = (@($raw | Where-Object { $_ -like 'codex-consult: after compaction - *' }) | Select-Object -First 1)
+    if ($restore) { Write-Output $restore }
     Write-Output $WaitRule
 } catch {
     $msg = ("$($_.Exception.Message)" -replace '\s+', ' ').Trim()

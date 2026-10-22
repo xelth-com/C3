@@ -25,6 +25,15 @@ if [ -n "$1" ]; then
   collab_dir="$1"
 fi
 
+# (R30 wave-boundary compaction) the SessionStart source arrives as JSON on stdin; read it only
+# when stdin is not a terminal (never block an interactive shell) and extract "source". Only
+# `compact` changes the output, so a missing or unparsed value is harmless.
+source=""
+if [ ! -t 0 ]; then
+  event=$(cat)
+  source=$(printf '%s' "$event" | sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([A-Za-z]*\)".*/\1/p' | head -n1)
+fi
+
 c3_exe=""
 if [ -n "$C3_EXE" ] && [ -x "$C3_EXE" ]; then
   c3_exe="$C3_EXE"
@@ -40,7 +49,7 @@ if [ -z "$c3_exe" ]; then
   exit 0
 fi
 
-out=$("$c3_exe" hook --collab-dir "$collab_dir" 2>&1)
+out=$("$c3_exe" hook --collab-dir "$collab_dir" --source "$source" 2>&1)
 code=$?
 first=$(printf '%s\n' "$out" | grep -m1 '.')
 if [ -z "$first" ]; then
@@ -51,6 +60,11 @@ echo "$first"
 pointer=$(printf '%s\n' "$out" | grep -m1 '^codex-consult: coordinator rules - ')
 if [ -n "$pointer" ] && [ "$pointer" != "$first" ]; then
   echo "$pointer"
+fi
+# (R30) after a compaction, the coordinator re-hydration line (present only for the compact source)
+restore=$(printf '%s\n' "$out" | grep -m1 '^codex-consult: after compaction - ')
+if [ -n "$restore" ]; then
+  echo "$restore"
 fi
 echo "$wait_rule"
 exit 0

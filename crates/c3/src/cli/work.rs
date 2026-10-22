@@ -56,12 +56,35 @@ pub struct WorkArgs {
     /// --wait's timeout in seconds (0 = the run's own budget).
     #[arg(long)]
     pub wait_timeout_sec: Option<i64>,
+    /// Resume a quota/timeout run's child in the same session. Optionally takes the run id (or its
+    /// beginning); without one the task's single resumable run, or the one --id names.
+    #[arg(long, num_args = 0..=1, default_missing_value = "")]
+    pub resume: Option<String>,
+    /// Wake a waiting_quota run's sleeper now (it resumes at once), or resume a foreground quota
+    /// run directly. Narrow with --id when the task has more than one.
+    #[arg(long)]
+    pub kick: bool,
+    /// The resume window in seconds when the provider gives no reset time (0 = the roster entry's
+    /// ext.quota_window_sec, else 18000 = 5 h).
+    #[arg(long)]
+    pub quota_window_sec: Option<i64>,
+    /// How many times a run may be resumed before it needs a human (0 = 3).
+    #[arg(long)]
+    pub max_resumes: Option<i64>,
     /// INTERNAL: the background process of --detach; never pass it yourself.
     #[arg(long, default_value = "", hide = true)]
     pub detach_id: String,
 }
 
 pub fn run(args: WorkArgs) -> i32 {
+    let resume_present = args.resume.is_some();
+    let resume_id = args.resume.unwrap_or_default();
+    // --id wins; otherwise the id (or prefix) given to --resume narrows the run.
+    let id = if !args.id.trim().is_empty() {
+        args.id
+    } else {
+        resume_id
+    };
     crate::work::run(Options {
         task: args.task,
         brief: args.brief,
@@ -76,9 +99,13 @@ pub fn run(args: WorkArgs) -> i32 {
         detach: args.detach,
         status: args.status,
         wait: args.wait,
-        id: args.id,
+        id,
         wait_timeout_sec: args.wait_timeout_sec.unwrap_or(0),
         wait_timeout_sec_given: args.wait_timeout_sec.is_some(),
         detach_id: args.detach_id,
+        resume: resume_present,
+        kick: args.kick,
+        quota_window_sec: args.quota_window_sec.unwrap_or(0),
+        max_resumes: args.max_resumes.unwrap_or(0),
     })
 }

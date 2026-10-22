@@ -1,0 +1,149 @@
+git status --short (before the run):
+ M crates/c3-cli/src/main.rs
+ M crates/c3-core/src/claude.rs
+ M crates/c3/src/cli/mod.rs
+ M crates/c3/src/lib.rs
+?? .collab/c3-work/
+?? .collab/consilium-2026-10-14/.consult.detached-0af9be9f.log
+?? .collab/consilium-2026-10-14/.consult.detached-0af9be9f.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-1efef75a.log
+?? .collab/consilium-2026-10-14/.consult.detached-1efef75a.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-37b31a52.log
+?? .collab/consilium-2026-10-14/.consult.detached-37b31a52.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-47deb743.log
+?? .collab/consilium-2026-10-14/.consult.detached-47deb743.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-6d9ec977.log
+?? .collab/consilium-2026-10-14/.consult.detached-6d9ec977.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-778dc5f8.log
+?? .collab/consilium-2026-10-14/.consult.detached-778dc5f8.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-ab66d0ce.log
+?? .collab/consilium-2026-10-14/.consult.detached-ab66d0ce.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-b8e2a8ac.log
+?? .collab/consilium-2026-10-14/.consult.detached-b8e2a8ac.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-cdcb52f0.log
+?? .collab/consilium-2026-10-14/.consult.detached-cdcb52f0.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-0766f722.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-0766f722.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2580db85.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2580db85.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2a811461.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2a811461.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2bfd4ef0.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2bfd4ef0.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2f7a949f.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2f7a949f.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-41b804bf.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-41b804bf.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-445faa8a.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-445faa8a.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-4cd9c0e9.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-4cd9c0e9.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-6b0cdaaf.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-6b0cdaaf.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-74f89a68.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-74f89a68.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-790c98c1.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-790c98c1.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-911aa5ae.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-911aa5ae.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-ae8a595f.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-ae8a595f.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-bc8fa931.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-bc8fa931.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-cf8a9438.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-cf8a9438.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-dca7bf7e.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-dca7bf7e.status.json
+?? .collab/smoke-c3/handoffs/05-claudecode-byteplus-claude-smoke.events.jsonl
+?? .collab/smoke-c3/handoffs/05-claudecode-byteplus-claude-smoke.md
+?? .collab/smoke-c3/handoffs/06-claudecode-byteplus-claude-smoke2.events.jsonl
+?? .collab/smoke-c3/handoffs/06-claudecode-byteplus-claude-smoke2.md
+?? .collab/smoke-c3/handoffs/07-claudecode-kimi-claude-smoke.events.jsonl
+?? .collab/smoke-c3/handoffs/07-claudecode-kimi-claude-smoke.md
+?? .collab/smoke-c3/handoffs/08-claudecode-dola-claude-smoke.events.jsonl
+?? .collab/smoke-c3/handoffs/08-claudecode-dola-claude-smoke.md
+?? crates/c3/src/cli/work.rs
+?? crates/c3/src/work/
+?? docs/work-mode.md
+
+git status --short (after the run):
+ M CHANGELOG.md
+ M README.md
+ M crates/c3-cli/src/main.rs
+ M crates/c3-core/src/claude.rs
+ M crates/c3/src/cli/mod.rs
+ M crates/c3/src/lib.rs
+ M plugin/skills/coordinate/SKILL.md
+?? .collab/c3-work/
+?? .collab/consilium-2026-10-14/.consult.detached-0af9be9f.log
+?? .collab/consilium-2026-10-14/.consult.detached-0af9be9f.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-1efef75a.log
+?? .collab/consilium-2026-10-14/.consult.detached-1efef75a.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-37b31a52.log
+?? .collab/consilium-2026-10-14/.consult.detached-37b31a52.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-47deb743.log
+?? .collab/consilium-2026-10-14/.consult.detached-47deb743.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-6d9ec977.log
+?? .collab/consilium-2026-10-14/.consult.detached-6d9ec977.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-778dc5f8.log
+?? .collab/consilium-2026-10-14/.consult.detached-778dc5f8.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-ab66d0ce.log
+?? .collab/consilium-2026-10-14/.consult.detached-ab66d0ce.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-b8e2a8ac.log
+?? .collab/consilium-2026-10-14/.consult.detached-b8e2a8ac.status.json
+?? .collab/consilium-2026-10-14/.consult.detached-cdcb52f0.log
+?? .collab/consilium-2026-10-14/.consult.detached-cdcb52f0.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-0766f722.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-0766f722.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2580db85.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2580db85.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2a811461.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2a811461.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2bfd4ef0.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2bfd4ef0.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2f7a949f.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-2f7a949f.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-41b804bf.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-41b804bf.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-445faa8a.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-445faa8a.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-4cd9c0e9.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-4cd9c0e9.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-6b0cdaaf.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-6b0cdaaf.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-74f89a68.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-74f89a68.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-790c98c1.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-790c98c1.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-911aa5ae.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-911aa5ae.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-ae8a595f.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-ae8a595f.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-bc8fa931.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-bc8fa931.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-cf8a9438.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-cf8a9438.status.json
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-dca7bf7e.log
+?? .collab/parity-0.6.1-2026-10-08/.consult.detached-dca7bf7e.status.json
+?? .collab/smoke-c3/handoffs/05-claudecode-byteplus-claude-smoke.events.jsonl
+?? .collab/smoke-c3/handoffs/05-claudecode-byteplus-claude-smoke.md
+?? .collab/smoke-c3/handoffs/06-claudecode-byteplus-claude-smoke2.events.jsonl
+?? .collab/smoke-c3/handoffs/06-claudecode-byteplus-claude-smoke2.md
+?? .collab/smoke-c3/handoffs/07-claudecode-kimi-claude-smoke.events.jsonl
+?? .collab/smoke-c3/handoffs/07-claudecode-kimi-claude-smoke.md
+?? .collab/smoke-c3/handoffs/08-claudecode-dola-claude-smoke.events.jsonl
+?? .collab/smoke-c3/handoffs/08-claudecode-dola-claude-smoke.md
+?? crates/c3-cli/tests/work.rs
+?? crates/c3/src/cli/work.rs
+?? crates/c3/src/work/
+?? docs/work-mode.md
+
+git diff --stat (after the run):
+ CHANGELOG.md                      |  15 ++++-
+ README.md                         |  36 ++++++++++++
+ crates/c3-cli/src/main.rs         |   3 +
+ crates/c3-core/src/claude.rs      | 112 ++++++++++++++++++++++++++++++++++++++
+ crates/c3/src/cli/mod.rs          |   1 +
+ crates/c3/src/lib.rs              |   2 +
+ plugin/skills/coordinate/SKILL.md |   8 +++
+ 7 files changed, 176 insertions(+), 1 deletion(-)

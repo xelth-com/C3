@@ -1,0 +1,86 @@
+{
+  "id": "01-ZAI-claude-glm-5.3",
+  "task": "c3-work",
+  "seq": 1,
+  "provider": "ZAI-claude",
+  "model": "glm-5.3",
+  "engine": "claude",
+  "argv": [
+    "-p",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--strict-mcp-config",
+    "--disable-slash-commands",
+    "--permission-mode",
+    "acceptEdits",
+    "--tools",
+    "Read,Edit,Write,Grep,Glob,Bash",
+    "--allowedTools",
+    "Bash(cargo test:*),Bash(cargo clippy:*),Bash(cargo fmt:*),Bash(cargo build:*),Bash(cargo run:*)",
+    "--model",
+    "glm-5.3",
+    "--max-turns",
+    "200",
+    "--session-id",
+    "190441ed-64e7-462a-9ea1-b7e6cd0fba14"
+  ],
+  "child_env_scrubbed": [
+    "AI_AGENT",
+    "CLAUDECODE",
+    "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_PID"
+  ],
+  "started": "2026-10-21T00:07:17+02:00",
+  "ended": "2026-10-21T00:44:32+02:00",
+  "exit_code": 0,
+  "status": "done",
+  "turns": 84,
+  "tool_calls": {
+    "Bash": 28,
+    "Edit": 11,
+    "Grep": 15,
+    "Read": 27,
+    "Write": 2
+  },
+  "files_changed": [
+    "CHANGELOG.md",
+    "README.md",
+    "plugin/skills/coordinate/SKILL.md",
+    "crates/c3-cli/tests/work.rs"
+  ],
+  "usage": {
+    "input_tokens": 92426,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 4076736,
+    "output_tokens": 32772,
+    "output_tokens_details": {
+      "thinking_tokens": 0
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 0,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "",
+    "iterations": [],
+    "speed": "standard",
+    "fallback_credit": null,
+    "total_cost_usd": 1.8404912
+  },
+  "timeout_sec": 5400,
+  "pid": 19640,
+  "args": null
+}

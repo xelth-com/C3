@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "445faa8a-66fd-4991-abca-15e01bc43fdd",
+    "id8":  "445faa8a",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-15T02:56:23+02:00",
+    "updated":  "2026-10-15T03:01:28+02:00",
+    "finished":  "2026-10-15T03:01:28+02:00",
+    "wall_seconds":  305.2,
+    "pid":  21828,
+    "start_time":  "2026-10-15T00:56:23.2786331Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  4200,
+    "purpose":  "diff-review",
+    "reply_name":  "wave9-round5-glm",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/parity-0.6.1-2026-10-08/handoffs/73-claude-wave9-round5.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  302.1,
+                        "n":  42,
+                        "handoff":  "74",
+                        "reply":  "handoffs/74-claudecode-wave9-round5-glm.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - ZAI-claude :: glm-5.3 [claude], mode new, thread cca1159b-d281-479d-b95b-891241f9677a (source: events), wall 302.1 s\u000averdict    : ACCEPT - The 9d removal of the legacy no-id fallback fixes F72-1 and F72-2 outright: the cap pair is built only from id-carrying rows deduped by exact consult id with the 24 h bound applied at read time inside endpoint_health, the negatives (\u003e1 h apart, slow 429, no-id rows, 25 h-old hits) are pinned by tests, and the only residuals found are documented design policy.\u000afindings   : 0 blocker, 0 major, 0 minor, 2 note -\u003e F74-1..F74-2 in findings.json\u000aprior      : F72-1 fixed, F72-2 fixed, F70-1 fixed, F68-1 fixed, F68-2 not-checked, F66-6 fixed, F66-3 fixed, F66-1 not-checked, F66-2 not-checked, F66-4 not-checked, F66-5 not-checked, F62-1 not-checked, F60-1 not-checked, F58-1 not-checked, F55-1 not-checked, F55-2 not-checked, F52-1 not-checked, F52-2 not-checked, F50-1 not-checked, F48-1 not-checked, F46-1 not-checked, F42-1 not-checked, F40-1 not-checked, F40-2 not-checked, F38-1 not-checked, F36-1 not-checked, F36-2 not-checked, F31-1 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F22-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F14-1 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F06-1 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\74-claudecode-wave9-round5-glm.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\74-claudecode-wave9-round5-glm.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\74-claudecode-wave9-round5-glm.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-445faa8a.log",
+    "args":  null
+}

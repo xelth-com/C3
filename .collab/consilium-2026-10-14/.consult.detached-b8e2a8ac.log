@@ -1,0 +1,171 @@
+codex-consult: detached run b8e2a8ac (detach id b8e2a8ac-777d-40c4-9ae1-e4755e5a46d2) - pid 30756 on LAPTOP-9SGIHQ03, started 2026-10-14T20:45:24+02:00; status file C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\.consult.detached-b8e2a8ac.status.json
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 2 of 12 for -Provider ZAI (model applied)
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - ZAI :: glm-5.3, mode new, thread 01a13bbb-d37f-7020-acc1-48f484b11a41 (source: events), wall 602.2 s
+quota      : no window in the rollout; this run 2284196 input tokens (1960832 cached) in 14 calls, max 845018 per call of 996147; sub-agents 0
+format repair: succeeded in 83.4 s; drift: 2 note(s)
+  drift: numbered answers differ: prose 0, reply_markdown 4
+  drift: 14 of the 18 prose sentences (>= 60 chars) are not in reply_markdown (first: 'a table keyed only by adapter name plus vendor also re-label...')
+verdict    : ADVISE - The framing is useful, but both designs need corrected event, trust and interactive-lifecycle contracts before implementation.
+findings   : 4 blocker, 5 major, 0 minor, 0 note -> F28-1..F28-9 in findings.json
+prior      : F03-1 still-open, F03-2 still-open, F03-3 still-open, F03-4 still-open, F03-5 still-open, F04-1 still-open, F04-2 still-open, F04-3 still-open, F04-4 still-open, F04-5 still-open, F04-6 still-open, F04-7 still-open, F04-8 still-open, F05-1 still-open, F05-2 still-open, F05-3 still-open, F05-4 still-open, F05-5 still-open, F05-6 still-open, F05-7 still-open, F07-1 still-open, F07-2 still-open, F07-3 still-open, F07-4 still-open, F07-5 still-open, F08-1 still-open, F08-2 still-open, F08-3 still-open, F08-4 still-open, F08-5 still-open, F08-6 still-open, F08-7 still-open, F08-8 still-open, F10-1 still-open, F10-2 still-open, F11-1 still-open, F11-2 still-open, F11-3 still-open, F11-4 still-open, F11-5 still-open, F11-6 still-open, F12-1 still-open, F12-2 still-open, F12-3 still-open, F13-1 still-open, F13-2 still-open, F13-3 still-open, F13-4 still-open, F13-5 still-open, F13-6 still-open, F19-1 still-open, F19-2 still-open, F19-3 still-open, F19-4 still-open, F19-5 still-open, F19-6 still-open, F20-1 still-open, F20-2 still-open, F20-3 still-open, F20-4 still-open, F20-5 still-open, F20-6 still-open, F20-7 still-open, F20-8 still-open, F20-9 still-open, F21-1 still-open, F21-2 still-open, F21-3 still-open, F21-4 still-open, F23-1 still-open, F23-2 still-open, F23-3 still-open, F24-1 still-open, F24-2 still-open, F24-3 still-open, F24-4 still-open, F24-5 still-open, F24-6 still-open, F24-7 still-open, F24-8 still-open, F24-9 still-open, F25-1 still-open, F25-2 still-open, F25-3 still-open, F25-4 still-open, F27-1 still-open, F27-2 still-open, F27-3 still-open, F27-4 still-open, F27-5 still-open, F27-6 still-open, F27-7 still-open, F27-8 still-open, F27-9 still-open
+unknown ids: F20-8, F20-9 (not in findings.json; ignored)
+supersedes : F20-9 not in findings.json (kept on the new finding only)
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\28-codex-panel-b-ZAI-2.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\28-codex-panel-b-ZAI-2.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\28-codex-panel-b-ZAI-2.events.jsonl
+
+## Framing
+A is an event-semantics problem, not a file-diff utility; B is a human-owned interactive channel, not another autonomous subprocess. Fix those contracts before choosing transport.
+
+**Q1.** Fold a monotonic, append-only, closed-vocabulary event journal plus the existing detached judgement: status/member transitions, liveness-derived `died`, unreadable records, and foreign-host runs as `unknown`, never as quiet. Use `--since <sequence>`, not a wall-clock instant. Do not fold worker STATE prose.
+
+The cheapest reliable schedule is `min(cache-TTL ceiling, periodic liveness deadline, real operator/run deadline)`, with jitter; budget end and quota reset are advisory upper bounds, not completion events. A watch-first wake only shrinks action tokens: the host still supplies cached context. Removing the heartbeat can cold the cache; silent death can masquerade as no change.
+
+**Q2.** Put adapters in C3 (B'). A browser-loaded catalogue conflicts with MV3: Chrome disables WebAssembly under the default extension CSP and requires `wasm-unsafe-eval` for the minimum enabling policy, while remotely fetched WASM is remote-hosted code ([CSP](https://developer.chrome.com/docs/extensions/reference/manifest/content-security-policy), [remote code](https://developer.chrome.com/docs/extensions/develop/migrate/remote-hosted-code)).
+
+Prefer native messaging to a loopback WebSocket: Chrome starts a bound native host and speaks stdio, with non-wildcard `allowed_origins` and port-scoped lifetime ([native messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)). Minimal host API: verify catalogue/signature/revocation; begin a session bound to adapter hash, origin, tab, mode, capabilities and consent; draft composer; subscribe/read only the bound thread; explicit `send`; append audit; end session. Every bridge operation carries the per-run capability and refuses unmatched origin/tab.
+
+**Q3.** Persist an interactive run record: `created`, `relay-connected`, `tab-bound`, `draft-written`, `awaiting-send`, `sent`, `streaming`, `parsing`, then exactly one terminal class: `completed`, `not-sent-expired`, `user-declined`, `tab-closed`, `relay-lost`, `extension-disconnected`, `abandoned-by-operator`, `partial-salvaged`, or `failed`. `awaiting-send` pauses stall/timeout and has its own consent expiry. Stop means record plus abandon/disconnect and partial salvage—never close the user’s tab. Do not seat draft-only browser reviewers in unattended detached runs or concurrent panels by default.
+
+**Q4.** Omitted designs: the event journal; native messaging; a separate adapter-host process; an explicit cache-keepalive path; adapter rows keyed by content hash. To choose, measure host cache TTL/cached-input cost, actual silent-death rate, Chrome context/CSP behavior, native-messaging concurrency and service-worker lifetime, extension update controls, vendor autosave/terms, and user availability.
+
+## Requested checks
+- **RC1** In `C:/Users/Dmytro/C3`, start a detached run, kill its background child, then compare a journal-based watch with `c3 consult --task <t> --status`; workspace-write; the watch must report `died`, never `nothing`; 15 minutes.
+- **RC2** In one instrumented coordinator session, alternate status-first and watch-first wakes and record cached-input tokens; workspace-write; observes the actual saving and cache behavior; one session.
+- **RC3** In `%TEMP%`, load a scratch MV3 extension that instantiates bundled and fetched WASM in an extension page and content script; workspace-write; records CSP/console outcomes per context; two hours.
+- **RC4** In `%TEMP%`, register a user-level native-messaging host and open three extension ports concurrently; workspace-write; verifies concurrent host processes and clean disconnect; two hours.
+- **RC5** With DevTools network capture, run draft-only `composer_put` before send and audit read scope; workspace-write plus logged-in browser; observes any pre-send brief transmission; 30 minutes.
+
+### Findings
+
+- **F28-1** [blocker] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:48`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:50`, `crates/c3/src/consult/detached.rs:274`, `crates/c3/src/consult/detached.rs:356`, `crates/c3/src/consult/detached.rs:370`, `crates/c3/src/consult/detach.rs:60` - A wall-clock/mtime watch over status files and worker tails is not a sound change detector: it can report nothing for a dead detached background, for a foreign-host run whose liveness cannot be judged, or when an atomic terminal write lands after the read. Existing status judgement already derives died and elsewhere from pid, start time and host, so the watch must reuse that judgement and use a monotonic sequence cursor rather than timestamps. Trigger: A background is tree-killed while its status still says running; a status file names another host; or a terminal status replacement lands between the watch read and the coordinator's skip decision. Evidence: read-code: The judgement classifies records as done, running, elsewhere, died, never-started or unreadable using host, pid and start time.; read-code: Status writes atomically replace the file and stamp updated.; read-code: The sketch instead reads files and answers from an instant cursor and known future events. Verify: Start a detached run, kill its child out of band, and compare an mtime-only watch, a journal-based watch and `c3 consult --status`; the accepted watch must report died or unknown, never nothing. Remedy: Add one append-only closed-vocabulary event journal per task, with a sequence number and writer/run id; make every status, member, health and judgement transition append to it; have watch consume `--since <seq>` and re-run liveness judgement on open runs, returning unknown on unreadable or foreign-host records. Supersedes: F19-1, F20-2, F20-3, F21-1, F24-2, F24-3, F27-1.
+- **F28-2** [major] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:50`, `crates/c3/src/consult/detach.rs:1110`, `crates/c3/src/consult/detach.rs:1336` - Watch exit code 3 for changed collides with the existing consult query convention where 3 means still running after the wait limit, so shared host scripts can misread a change as a timeout or vice versa. Trigger: A wrapper branches on C3 exit codes and runs watch alongside `consult --wait`. Evidence: read-code: The query surface documents exit codes 0/1/2/3/4 and returns 3 for a wait timeout.; read-code: The sketch assigns 3 to changed. Verify: Inventory every C3 exit code and run a wrapper that invokes both wait and watch; no shared numeric code may have two meanings. Remedy: Use a separate command namespace with explicitly documented codes, or select currently unused codes and add a machine-readable `--json` result so scripts do not branch on ambiguous numbers. Supersedes: F20-1, F20-9, F21-1, F24-9, F27-3.
+- **F28-3** [major] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:51`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:53`, `plugin/skills/coordinate/SKILL.md:27`, `plugin/skills/coordinate/SKILL.md:38` - Within the stated scope, the watch cannot deliver its headline economy: a wake that runs the watch still pays the cached model read, while replacing the periodic wake can let the prompt cache expire. Budget-end and quota-reset next hints are also unreliable completion predictors, and simultaneous coordinators need jitter. Trigger: A quiet run schedules past cache TTL, a run finishes long before budget end, or many coordinators wake on the same deadline. Evidence: read-code: The existing waiting rule explicitly keeps a roughly 1200-second heartbeat because a cold cache rewrites the whole context.; read-code: The sketch claims a Monitor can replace the periodic wake and schedules against budget or quota events. Verify: Instrument alternating status-first and watch-first wakes and compare cached-input tokens; separately compare next hints with actual completion times over one wave. Remedy: Keep a cache-keepalive heartbeat or host-supported push that is explicitly measured; cap `--next` below the effective cache TTL, fold in a liveness deadline, add jitter, and treat quota/budget times only as advisory upper bounds. Supersedes: F19-2, F21-2, F23-3, F24-1, F25-2, F27-2.
+- **F28-4** [major] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:48`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:50` - Folding the tails of worker STATE files into the coordinator prompt creates a prompt-injection and privacy channel: workers author that text, so it can carry instructions, task shape or paths, and a copied watch line can break closed-class telemetry. Trigger: A worker STATE file contains instruction-like prose, or a watch line is pasted into a handoff or telemetry event. Evidence: read-code: The sketch explicitly proposes reading worker STATE tails and printing their folded content. Verify: Feed a STATE fixture containing an instruction through the watch formatter, then grep printed output and telemetry constructors for the instruction text; neither may contain it. Remedy: Never emit worker-authored text. Watch only registered state-file event records or metadata and print closed vocabulary tokens plus optional file names. Supersedes: F20-4, F27-4.
+- **F28-5** [blocker] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:57`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:68` - Making a signed catalogue supply WASM adapters to the extension is not a viable primary form under current Chrome MV3 policy: remote WASM is remote-hosted code, and extension-page WASM requires the explicitly permitted `wasm-unsafe-eval` CSP. Adapter placement in C3 is therefore a feasibility constraint, not merely a preference. Trigger: The extension fetches or dynamically instantiates catalogue WASM, or ships an extension whose CSP does not enable WebAssembly. Evidence: ran-command: Chrome documents that default extension CSP disables WebAssembly and the minimum enabling policy is `script-src 'self' 'wasm-unsafe-eval'`.; ran-command: Chrome defines remote-hosted code to include JavaScript and WASM and requires extension code to be bundled.; ran-command: No browser engine exists yet; placement can still be constrained before implementation. Verify: Load a scratch unpacked MV3 extension and attempt bundled and fetched WebAssembly instantiation in an extension page, content script and offscreen document; record console/CSP results. Remedy: Adopt B': adapters run as locally verified WASM in C3; if any WASM ever belongs to the extension, bundle it in the extension build and declare the minimum CSP, with catalogue updates shipped as extension updates. Supersedes: F19-3, F23-2, F25-4, F27-5.
+- **F28-6** [major] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:56`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:66` - The transport alternatives omit Chrome native messaging, which removes the loopback WebSocket's bearer token and local-port attack surface: Chrome launches a registered host, communicates over stdio, binds allowed extension origins without wildcards, and ties host lifetime to the messaging port. Trigger: Any local process can connect to the proposed loopback relay if it learns or guesses the per-run token, or the extension and C3 need mutual authentication. Evidence: ran-command: Official documentation describes stdio native hosts, non-wildcard allowed_origins, per-port host processes and port-scoped lifetime.; read-code: The brief only considers a C3 WebSocket relay or a long-lived local socket daemon. Verify: Register a native-messaging host and open three concurrent ports; verify process isolation, message framing, Windows lifecycle and clean disconnect before selecting transport. Remedy: Prototype a native-messaging shim as the extension-to-C3 transport, with a per-run rendezvous and graceful fallback only if concurrency or service-worker lifetime fails the spike. Supersedes: F19-4, F27-9.
+- **F28-7** [blocker] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:59`, `crates/c3/src/engines/subprocess.rs:39`, `crates/c3/src/engines/subprocess.rs:54`, `crates/c3/src/engines/subprocess.rs:59` - A browser reviewer cannot honestly implement the current autonomous subprocess contract: timeout, stall and tree-kill assume a killable child, while draft-only's dominant state is waiting for a human and a tab or relay ending may abandon a stream. Without an interactive persisted state machine and terminal classes, `--wait`, `--kick`, budget stop and crash recovery are undefined. Trigger: The user never presses send, closes the tab, disconnects the extension, or a draft survives a C3 crash; alternatively a stall timer fires while the run is only waiting for the user. Evidence: read-code: The existing contract carries wall timeout, stall cut, child pid/start-time liveness and a pre-kill tree-kill callback.; read-code: The sketch asks the browser engine to use the same contract despite draft-only operation and user-owned tabs. Verify: Walk unsent, sent, tab-closed, relay-lost, truncated-reply and operator-stop endings; each must write exactly one durable terminal record and return from wait without killing the user's tab. Remedy: Define and persist browser-specific states and terminal outcomes, pause automatic stall while awaiting user send, impose consent expiry, salvage partials, implement abandon-with-record rather than kill, and disallow unattended detached or panel seating by default. Supersedes: F19-5, F20-6, F21-3, F24-5, F24-7, F25-1, F25-3, F27-6.
+- **F28-8** [blocker] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:57`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:58`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:61` - The signed catalogue and dumb bridge have no complete trust boundary: the signer, key rotation, revocation, extension/relay update pinning, adapter content identity and per-operation capability scope are unspecified. A table keyed only by adapter name plus vendor also re-labels history when an adapter changes, and a generic DOM bridge can drive or read beyond the catalogued vendor scope. Trigger: An adapter update keeps its name, a catalogue or extension key is compromised, or a bridge call targets a tab or origin outside its declared scope. Evidence: read-code: The sketch names signatures, capability denial and adapter+vendor keys, but not signer identity, rotation, revocation, update pinning or bridge capability binding. Verify: Write the bridge message specification and execute one out-of-scope origin/tab operation and one revoked or updated adapter hash; both must be refused, and intake rows must distinguish hashes. Remedy: Name a trust root and revocation mechanism; key catalogue entries, consent and telemetry by adapter content hash plus catalogue revision; bind each bridge operation to a per-run capability token, adapter hash, exact origin and tab; pin and audit extension updates. Supersedes: F19-6, F20-5, F24-4, F24-6, F27-7.
+- **F28-9** [major] `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:58`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:59`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:61` - Draft-only is not a privacy boundary and manual-send panels measure user availability: composer autosave or an RPC-backed editor can transmit the brief before send, a broad `read_reply` can scrape history, vendor terms may prohibit automation, and several draft-only reviewers serialize on one user's attention. Trigger: A vendor autosaves drafts, read capability is granted page-wide rather than thread-scoped, or two browser members sit in one panel while the operator is away. Evidence: read-code: The sketch permits composer writes, reply reads and panel use without stating network-leak, scope or attendance constraints.; assumed: No network capture or terms audit was possible in this read-only consultation. Verify: Capture network traffic during a pre-send draft write and audit every read operation's DOM reach; seat two draft-only members and measure waiting-for-user wall time. Remedy: Require per-adapter evidence of no pre-send transmission where possible, bind reads to the active thread and minimum necessary region, document terms risk, and gate browser seats on explicit user attendance and concurrency limits. Supersedes: F20-7, F24-8, F27-8.
+
+### Prior findings
+
+- F03-1 - still-open - Cross-vendor window-share denominator remains unimplemented and unsuitable.
+- F03-2 - still-open - Native requested effort is still not represented in the proposed events.
+- F03-3 - still-open - SubagentStop effort availability remains an unverified design assumption.
+- F03-4 - still-open - Scout digest anchoring remains unaddressed.
+- F03-5 - still-open - No reworked outcome class exists.
+- F04-1 - still-open - Worker outcome vocabularies remain unreconciled.
+- F04-2 - still-open - Telemetry closer still permits only consultation and rating.
+- F04-3 - still-open - Window-share score remains uncomputable and biased.
+- F04-4 - still-open - Endpoint-local effort vocabularies remain a policy hazard.
+- F04-5 - still-open - SubagentStop-only data remains survivorship-biased.
+- F04-6 - still-open - Free-text note versus closed-class contract remains unresolved.
+- F04-7 - still-open - Digest compression loss remains unmeasured.
+- F04-8 - still-open - Reviewer-by-effort observational confounding remains.
+- F05-1 - still-open - Quota observations are still not incremental run cost.
+- F05-2 - still-open - Observational usefulness still cannot establish causal effort effects.
+- F05-3 - still-open - One stop still cannot equal one completed worker.
+- F05-4 - still-open - Agent-name tier classification remains unreliable.
+- F05-5 - still-open - Requested and sent effort semantics remain inconsistent across sketches.
+- F05-6 - still-open - Command-pattern verification classification remains unsafe.
+- F05-7 - still-open - Digest-first judge omission risk remains.
+- F07-1 - still-open - Window share remains non-portable and contaminated.
+- F07-2 - still-open - zai mapping still collapses requested tiers in telemetry.
+- F07-3 - still-open - SubagentStop attribution and cross-host limits remain.
+- F07-4 - still-open - Worker telemetry joinability and free-text risk remain.
+- F07-5 - still-open - Scout falsification budget remains absent.
+- F08-1 - still-open - Window denominator still misattributes GLM and shared Astra cost.
+- F08-2 - still-open - Event still lacks effort disambiguators carried by the ledger.
+- F08-3 - still-open - No telemetry schema version exists on the wire.
+- F08-4 - still-open - Stop-hook undercount of killed or vanished workers remains.
+- F08-5 - still-open - No rework attribution class exists.
+- F08-6 - still-open - Free-text note and digest carriers remain outside the privacy contract.
+- F08-7 - still-open - Sparse biased usefulness cells remain unsuitable for policy fitting.
+- F08-8 - still-open - Scout false negatives and digest anchoring remain unobserved.
+- F10-1 - still-open - No calibration-run fields or protocol were added.
+- F10-2 - still-open - No worker role field exists.
+- F11-1 - still-open - Current and proposed event fields still cannot recover requested z.ai effort.
+- F11-2 - still-open - Account-wide nonlinearity still invalidates per-run window share.
+- F11-3 - still-open - Closer still drops event types outside consultation and rating.
+- F11-4 - still-open - state.md note contradicts the handoff's closed-class mark.
+- F11-5 - still-open - Resume counting and hook effort fields remain unresolved.
+- F11-6 - still-open - Digest loss and shared model blind spots remain unmeasured.
+- F12-1 - still-open - close_event still rejects worker events.
+- F12-2 - still-open - Roster validator still rejects effort policy keys.
+- F12-3 - still-open - caps-v1 still has no purpose mappings.
+- F13-1 - still-open - No assignment field exists for routed observational data.
+- F13-2 - still-open - No universal cost denominator exists.
+- F13-3 - still-open - Semantic digests still flatten hunk-level defects.
+- F13-4 - still-open - No crash backfill emits unknown worker outcomes.
+- F13-5 - still-open - Sent effort versus agent definition remains unverified.
+- F13-6 - still-open - Roster policies would duplicate purpose presets.
+- F19-1 - still-open - Consolidated into finding #1; not implemented.
+- F19-2 - still-open - Consolidated into finding #3; heartbeat must remain until measured.
+- F19-3 - still-open - Consolidated and corrected in finding #5 using current Chrome policy.
+- F19-4 - still-open - Consolidated into finding #6.
+- F19-5 - still-open - Consolidated into finding #7.
+- F19-6 - still-open - Consolidated into finding #8.
+- F20-1 - still-open - Consolidated into finding #2.
+- F20-2 - still-open - Split across findings #1 and #3.
+- F20-3 - still-open - Consolidated into finding #1.
+- F20-4 - still-open - Split across findings #4 and #8.
+- F20-5 - still-open - Consolidated into finding #8.
+- F20-6 - still-open - Consolidated into finding #7.
+- F20-7 - still-open - Consolidated into finding #9.
+- F20-8 - still-open - Consolidated into finding #7.
+- F20-9 - still-open - Consolidated into finding #2.
+- F21-1 - still-open - Split across findings #1 and #2.
+- F21-2 - still-open - Consolidated into finding #3.
+- F21-3 - still-open - Consolidated into finding #7.
+- F21-4 - still-open - Consolidated across findings #6 and #8.
+- F23-1 - still-open - Consolidated into finding #1.
+- F23-2 - still-open - Consolidated into finding #5.
+- F23-3 - still-open - Consolidated into finding #3.
+- F24-1 - still-open - Consolidated into finding #3.
+- F24-2 - still-open - Consolidated into finding #1.
+- F24-3 - still-open - The journal design is now incorporated in finding #1.
+- F24-4 - still-open - Consolidated into finding #8.
+- F24-5 - still-open - Consolidated into finding #7.
+- F24-6 - still-open - Split across findings #6 and #8.
+- F24-7 - still-open - Consolidated into finding #7.
+- F24-8 - still-open - Consolidated into finding #9.
+- F24-9 - still-open - Consolidated into finding #2.
+- F25-1 - still-open - Consolidated into finding #7.
+- F25-2 - still-open - Consolidated into finding #3.
+- F25-3 - still-open - Consolidated into finding #7.
+- F25-4 - still-open - Consolidated into finding #5.
+- F27-1 - still-open - Consolidated into finding #1.
+- F27-2 - still-open - Consolidated into finding #3.
+- F27-3 - still-open - Consolidated into finding #2.
+- F27-4 - still-open - Consolidated into finding #4.
+- F27-5 - still-open - Consolidated into finding #5.
+- F27-6 - still-open - Consolidated into finding #7.
+- F27-7 - still-open - Consolidated into finding #8.
+- F27-8 - still-open - Consolidated into finding #9.
+- F27-9 - still-open - Split across findings #1 and #6.
+
+## Verdict: ADVISE
+
+The framing is useful, but both designs need corrected event, trust and interactive-lifecycle contracts before implementation.
+
+### Blockers
+
+- **F28-1** `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:48`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:50`, `crates/c3/src/consult/detached.rs:274`, `crates/c3/src/consult/detached.rs:356`, `crates/c3/src/consult/detached.rs:370`, `crates/c3/src/consult/detach.rs:60` - A wall-clock/mtime watch over status files and worker tails is not a sound change detector: it can report nothing for a dead detached background, for a foreign-host run whose liveness cannot be judged, or when an atomic terminal write lands after the read. Existing status judgement already derives died and elsewhere from pid, start time and host, so the watch must reuse that judgement and use a monotonic sequence cursor rather than timestamps. Verify: Start a detached run, kill its child out of band, and compare an mtime-only watch, a journal-based watch and `c3 consult --status`; the accepted watch must report died or unknown, never nothing. Remedy: Add one append-only closed-vocabulary event journal per task, with a sequence number and writer/run id; make every status, member, health and judgement transition append to it; have watch consume `--since <seq>` and re-run liveness judgement on open runs, returning unknown on unreadable or foreign-host records.
+- **F28-5** `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:57`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:68` - Making a signed catalogue supply WASM adapters to the extension is not a viable primary form under current Chrome MV3 policy: remote WASM is remote-hosted code, and extension-page WASM requires the explicitly permitted `wasm-unsafe-eval` CSP. Adapter placement in C3 is therefore a feasibility constraint, not merely a preference. Verify: Load a scratch unpacked MV3 extension and attempt bundled and fetched WebAssembly instantiation in an extension page, content script and offscreen document; record console/CSP results. Remedy: Adopt B': adapters run as locally verified WASM in C3; if any WASM ever belongs to the extension, bundle it in the extension build and declare the minimum CSP, with catalogue updates shipped as extension updates.
+- **F28-7** `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:55`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:59`, `crates/c3/src/engines/subprocess.rs:39`, `crates/c3/src/engines/subprocess.rs:54`, `crates/c3/src/engines/subprocess.rs:59` - A browser reviewer cannot honestly implement the current autonomous subprocess contract: timeout, stall and tree-kill assume a killable child, while draft-only's dominant state is waiting for a human and a tab or relay ending may abandon a stream. Without an interactive persisted state machine and terminal classes, `--wait`, `--kick`, budget stop and crash recovery are undefined. Verify: Walk unsent, sent, tab-closed, relay-lost, truncated-reply and operator-stop endings; each must write exactly one durable terminal record and return from wait without killing the user's tab. Remedy: Define and persist browser-specific states and terminal outcomes, pause automatic stall while awaiting user send, impose consent expiry, salvage partials, implement abandon-with-record rather than kill, and disallow unattended detached or panel seating by default.
+- **F28-8** `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:57`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:58`, `.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md:61` - The signed catalogue and dumb bridge have no complete trust boundary: the signer, key rotation, revocation, extension/relay update pinning, adapter content identity and per-operation capability scope are unspecified. A table keyed only by adapter name plus vendor also re-labels history when an adapter changes, and a generic DOM bridge can drive or read beyond the catalogued vendor scope. Verify: Write the bridge message specification and execute one out-of-scope origin/tab operation and one revoked or updated adapter hash; both must be refused, and intake rows must distinguish hashes. Remedy: Name a trust root and revocation mechanism; key catalogue entries, consent and telemetry by adapter content hash plus catalogue revision; bind each bridge operation to a per-run capability token, adapter hash, exact origin and tab; pin and audit extension updates.
+- **F21-3** (prior, still-open) `crates/c3/src/engines/codex.rs:1` - A browser reviewer cannot satisfy the engine contract the sketch promises (brief in, structured reply out, transcript, kill record): there is no child to kill, and the dominant state 'draft prepared, user has not pressed send' has no timeout, no partial, and no owner in the current recovery chain.
+
+### Unproven scenarios
+
+- Effective Claude Code prompt-cache lifetime and cached-input savings from watch-first wakes.
+- Real SubagentStart/Stop payload fields and worker STATE formats across resumes and crashes.
+- Actual Chrome WASM/CSP behavior in every relevant extension context on the installed Chrome version.
+- Native messaging concurrency, Windows host lifecycle and extension service-worker behavior with multiple simultaneous C3 runs.
+- Vendor composer autosave behavior, read-scope enforcement and terms of service for logged-in web chats.
+
+### First-run checklist (observable)
+
+_(none)_

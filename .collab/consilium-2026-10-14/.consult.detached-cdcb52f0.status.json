@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "cdcb52f0-a4b7-4e57-8899-aa613a1d1b97",
+    "id8":  "cdcb52f0",
+    "task":  "consilium-2026-10-14",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  1,
+    "started":  "2026-10-14T20:20:11+02:00",
+    "updated":  "2026-10-14T20:20:13+02:00",
+    "finished":  "2026-10-14T20:20:13+02:00",
+    "wall_seconds":  2.9,
+    "pid":  28512,
+    "start_time":  "2026-10-14T18:20:11.2365026Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3300,
+    "purpose":  "framing",
+    "reply_name":  "panel-b-deepseek",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "byteplus :: deepseek-v4.1-flash",
+                        "state":  "skipped",
+                        "outcome":  "not started: another consultation or status update for task \u0027consilium-2026-10-14\u0027 is running: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.lock is held open by pid 33580 on LAPTOP-9SGIHQ03 since 20...",
+                        "wall_seconds":  null,
+                        "n":  null,
+                        "handoff":  "",
+                        "reply":  ""
+                    }
+                ],
+    "summary":  "codex-consult: another consultation or status update for task \u0027consilium-2026-10-14\u0027 is running: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.lock is held open by pid 33580 on LAPTOP-9SGIHQ03 since 2026-10-14T18:20:11.073450500+00:00. Wait for it to finish; the lock is released when that process exits.",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.detached-cdcb52f0.log",
+    "args":  null
+}

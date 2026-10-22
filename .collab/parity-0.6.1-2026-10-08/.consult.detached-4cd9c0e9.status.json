@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "4cd9c0e9-1565-4cf4-bcdf-0120361b0212",
+    "id8":  "4cd9c0e9",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-15T02:15:48+02:00",
+    "updated":  "2026-10-15T02:18:57+02:00",
+    "finished":  "2026-10-15T02:18:57+02:00",
+    "wall_seconds":  189.1,
+    "pid":  29112,
+    "start_time":  "2026-10-15T00:15:48.3019595Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3900,
+    "purpose":  "diff-review",
+    "reply_name":  "wave9-round2",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/parity-0.6.1-2026-10-08/handoffs/67-claude-wave9-round2.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  187.4,
+                        "n":  39,
+                        "handoff":  "68",
+                        "reply":  "handoffs/68-codex-wave9-round2.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13cea-4ebd-72d2-84da-6d4849cb3a61 (source: events), wall 187.4 s\u000aquota      : 5h 69% until 02:23; wk 91% until Oct 20; this run 365418 input tokens (293248 cached) in 7 calls, max 71057 per call of 258400; sub-agents 0\u000averdict    : HOLD - Time-based deduplication still merges distinct consultations and suppresses the declared-cap verdict; the new recovery test also introduces an unconditional PowerShell dependency.\u000afindings   : 0 blocker, 1 major, 1 minor, 0 note -\u003e F68-1..F68-2 in findings.json\u000aprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 fixed, F66-2 fixed, F66-3 fixed, F66-4 fixed, F66-5 fixed, F66-6 fixed\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\68-codex-wave9-round2.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\68-codex-wave9-round2.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\68-codex-wave9-round2.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-4cd9c0e9.log",
+    "args":  null
+}

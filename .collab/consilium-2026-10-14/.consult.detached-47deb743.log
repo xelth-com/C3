@@ -1,0 +1,4 @@
+codex-consult: detached run 47deb743 (detach id 47deb743-4cbe-4546-aaa1-44066a63e868) - pid 35664 on LAPTOP-9SGIHQ03, started 2026-10-14T20:19:33+02:00; status file C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\.consult.detached-47deb743.status.json
+Roster: C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json - entry 2 of 12 for -Provider ZAI (model applied)
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: another consultation or status update for task 'consilium-2026-10-14' is running: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\.consult.lock is held open by pid 20696 on LAPTOP-9SGIHQ03 since 2026-10-14T18:19:33.734195400+00:00. Wait for it to finish; the lock is released when that process exits.

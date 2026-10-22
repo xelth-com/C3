@@ -606,6 +606,48 @@ fn fmt_utc(d: &DateTime<Utc>) -> String {
     d.format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
+/// (D6) The quota evidence of a claude turn: the `usage limit ...; resets at <utc>` text and the
+/// reset instant, or `("", None)` when the turn hit no usage limit - a rejecting rate_limit_event,
+/// else the limit wording of the result's text (`e.error`) or a stderr line, and the reset time
+/// (the event's `resetsAt`, else a `|<unix time>` in the text). Shared by [`claude_turn_outcome`]
+/// (a review turn) and the work run's quota classification ([`crate::work`]), so both read one
+/// wording and one regex.
+pub(crate) fn quota_evidence(
+    e: &ClaudeEvents,
+    stderr_lines: &[String],
+) -> (String, Option<DateTime<Utc>>) {
+    let err_text = e.error.clone();
+    let quota_re = re(QUOTA_RE);
+    let mut quota_text = String::new();
+    let mut reset_at = e.rate_limit_reset;
+    if e.rate_limit_rejected {
+        quota_text = format!(
+            "usage limit reached (claude rate_limit_event {}{})",
+            e.rate_limit_status,
+            if e.rate_limit_type.is_empty() {
+                String::new()
+            } else {
+                format!(", {}", e.rate_limit_type)
+            }
+        );
+    } else if !err_text.is_empty() && quota_re.is_match(&err_text) {
+        quota_text = format!("usage limit: {}", one_line(&err_text));
+    } else if let Some(ql) = stderr_lines.iter().find(|l| quota_re.is_match(l)) {
+        quota_text = format!("usage limit: {}", one_line(ql));
+    }
+    if !quota_text.is_empty() && reset_at.is_none() {
+        if let Some(c) = re(r"\|(?P<t>[0-9]{10,13})\b").captures(&err_text) {
+            reset_at = reset_time(&Value::String(c["t"].to_string()));
+        }
+    }
+    if !quota_text.is_empty() {
+        if let Some(r) = reset_at {
+            quota_text.push_str(&format!("; resets at {}", fmt_utc(&r)));
+        }
+    }
+    (quota_text, reset_at)
+}
+
 /// `Get-ClaudeTurnOutcome`: the failure rules of one claude turn. `pre`: a failure the bridge
 /// already knows (a kill) - it wins over everything but the proof of the turn's init and model
 /// (E12). `expect_thread` / `expect_model` as the plugin's.
@@ -668,38 +710,11 @@ pub fn claude_turn_outcome(
     } else {
         String::new()
     };
-    // (D6) the quota evidence: a rejecting rate_limit_event, else the limit wording of the
-    // result's text or stderr; its reset time (the event's, else a "|<unix time>" in the text)
+    // (D6) the quota evidence (shared with the work run's classification, [`quota_evidence`]):
+    // a rejecting rate_limit_event, else the limit wording of the result's text or stderr.
     let err_text = e.error.clone();
-    let quota_re = re(QUOTA_RE);
     let auth_re = re(AUTH_RE);
-    let mut quota_text = String::new();
-    let mut reset_at = e.rate_limit_reset;
-    if e.rate_limit_rejected {
-        quota_text = format!(
-            "usage limit reached (claude rate_limit_event {}{})",
-            e.rate_limit_status,
-            if e.rate_limit_type.is_empty() {
-                String::new()
-            } else {
-                format!(", {}", e.rate_limit_type)
-            }
-        );
-    } else if !err_text.is_empty() && quota_re.is_match(&err_text) {
-        quota_text = format!("usage limit: {}", one_line(&err_text));
-    } else if let Some(ql) = lines.iter().find(|l| quota_re.is_match(l)) {
-        quota_text = format!("usage limit: {}", one_line(ql));
-    }
-    if !quota_text.is_empty() && reset_at.is_none() {
-        if let Some(c) = re(r"\|(?P<t>[0-9]{10,13})\b").captures(&err_text) {
-            reset_at = reset_time(&Value::String(c["t"].to_string()));
-        }
-    }
-    if !quota_text.is_empty() {
-        if let Some(r) = reset_at {
-            quota_text.push_str(&format!("; resets at {}", fmt_utc(&r)));
-        }
-    }
+    let (quota_text, _reset_at) = quota_evidence(e, &lines);
     let mut auth_text = String::new();
     if quota_text.is_empty() {
         if !err_text.is_empty() && auth_re.is_match(&err_text) {

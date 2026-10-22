@@ -46,6 +46,15 @@ here.) The consultation procedure itself is the `consult` skill; wiring reviewer
   - *Compaction* only at a wave boundary (the report is read, the state is on disk) and only
     while the cache is warm. In Claude Code the agent has no means to compact itself: while work
     runs, keep the context warm however long the wait; when idle, hand over as above.
+  - *(R30) The bridge marks the boundary and re-hydrates.* Right after a detached launch
+    (`c3 consult --detach`, `--panel --detach`, the MCP `c3_panel` tool) the bridge prints one
+    `compact now (wave boundary): /compact keep the task ..., the detach id ... and the coordinator
+    record; then \`c3 consult --task ... --status --id ...\` on wake` line to stderr — the one safe
+    point to compact, with the background already spawned. Run that `/compact` keeping exactly the
+    task, the detach id and the coordinator record. On the next turn the SessionStart hook fires
+    on the `compact` source and prints the coordinator identity it recovers from
+    `CODEX_CONSULT_COORDINATOR` plus the detached runs still in flight, so a compacted session can
+    resume the wave with `c3 consult --status`.
 - **Rate every consultation** once its reply is read (`c3 findings --task <task> --rate <n>
   --useful yes|partly|no`). A routed panel draws its seats from these marks.
 - **Ask the operator before going on without a required reviewer** — when one the topic needs is
@@ -101,7 +110,19 @@ worker (a brief file, an allow list, a record under `<collab>/<task>/work/`); `c
 consult (0 done, 1 died, 2 running). A worker run counts as *running work* for the wait rule —
 poll its `--status`, keep the wakeup armed until it reports. The live-member rule does NOT
 apply to it: a worker is expected to change the tree, so you may write under the collab
-directory (and hold your writing workers) while one runs.
+directory (and hold your writing workers) while one runs. Pick the engine by the work:
+`muse` (`meta :: muse-spark-1.3-contributor`) is near-free — use it for simple, low-stakes
+work; the `claude` endpoint workers (GLM/DeepSeek on cheap API plans) for ordinary coding; and
+`codex` (`openai :: gpt-6.1-sol`) for complex programs.
+
+**Worker quota (`c3 work --resume` / `--kick`).** A worker that runs out of its provider's usage
+limit is parked, not failed: `--status` shows `quota` (or `waiting_quota` while a detached run
+sleeps, which reads as running). A foreground run prints the `resume_at` time and the exact
+`c3 work --task <t> --resume <id>` line and exits 3 — schedule a `ScheduleWakeup` for that time
+instead of blocking, then resume it. A detached run resumes itself when the window reopens (it
+sleeps until `resume_at`); `c3 work --kick [--id <id>]` forces it now (or resumes a foreground
+quota run directly). Resumes are capped by `--max-resumes` (default 3); past the cap the run is
+`quota` with `exhausted: true` and needs a human.
 
 **Quota windows (wave 8).** Before a wave of reviews on a subscription plan, read the QUOTA column of
 `c3 providers` (`5h 96% until 18:32; wk 15% until Oct 20`): a quota window at 98 % or more makes

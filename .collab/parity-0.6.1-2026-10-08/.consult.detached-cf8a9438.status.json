@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "cf8a9438-8729-4e55-858c-6d8dee4f39ae",
+    "id8":  "cf8a9438",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-15T13:10:24+02:00",
+    "updated":  "2026-10-15T13:14:24+02:00",
+    "finished":  "2026-10-15T13:14:24+02:00",
+    "wall_seconds":  240.3,
+    "pid":  8660,
+    "start_time":  "2026-10-15T11:10:24.3215499Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  5100,
+    "purpose":  "acceptance",
+    "reply_name":  "codex-wave9-acceptance-7",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/parity-0.6.1-2026-10-08/handoffs/85-claude-wave9-acceptance-7.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  232.4,
+                        "n":  49,
+                        "handoff":  "87",
+                        "reply":  "handoffs/87-codex-codex-wave9-acceptance-7.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13f41-b95b-77f3-b8ec-3def689da532 (source: events), wall 232.4 s\u000aquota      : 5h 77% until 14:18; wk 12% until Oct 22; this run 179787 input tokens (93824 cached) in 4 calls, max 57891 per call of 258400; sub-agents 0\u000averdict    : ACCEPT - The inspected change closes F84-1; acceptance is conditional on the clean workspace rerun and pinned harness passing before tagging v0.2.2.\u000afindings   : none\u000aprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 not-checked, F66-2 not-checked, F66-3 not-checked, F66-4 not-checked, F66-5 not-checked, F66-6 not-checked, F68-1 fixed, F68-2 not-checked, F70-1 fixed, F72-1 fixed, F72-2 fixed, F74-1 still-open, F74-2 not-checked, F76-1 fixed, F78-1 fixed, F78-2 fixed, F80-1 fixed, F82-1 fixed, F84-1 fixed\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\87-codex-codex-wave9-acceptance-7.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\87-codex-codex-wave9-acceptance-7.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\87-codex-codex-wave9-acceptance-7.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-cf8a9438.log",
+    "args":  null
+}

@@ -100,6 +100,11 @@ pub struct RosterEntry {
     /// (wave 9, D4) `ext.c3.reset_hint` - when the declared cap resets (see
     /// [`crate::plan::next_cap_reset`]); `""` when none.
     pub reset_hint: String,
+    /// (0.2.3, work-mode quota resume) `ext.quota_window_sec` - how long after a worker run hits
+    /// this entry's usage limit `c3 work` waits before it resumes the child when the reset time
+    /// is unknown (seconds, >= 60); `0` when the entry names none (the run takes `--quota-window-sec`,
+    /// else 18000 = 5 h). The plugin validates `ext` as an object only, so the key is invisible to it.
+    pub quota_window_sec: i64,
     /// (0.6.0, wave 29b E1) The claude entry's endpoint (auth `endpoint` only; its `plan` is the
     /// entry's).
     pub endpoint: Option<crate::claude::ClaudeEndpoint>,
@@ -571,10 +576,22 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             // ext (D12): validated as an object, otherwise ignored.
             let mut plan_caps: Vec<String> = Vec::new();
             let mut reset_hint = String::new();
+            let mut quota_window_sec: i64 = 0;
             if let Some(xv) = iobj.get("ext") {
                 if !xv.is_object() {
                     why = format!("{at}: ext must be an object (the extension point of other implementations; got {})", compact(xv));
                     break;
+                }
+                // (0.2.3, work-mode quota resume) ext.quota_window_sec: the resume window when a
+                // reset time is unknown (seconds, >= 60). Invisible to the plugin (ext is an object).
+                if let Some(qw) = xv.get("quota_window_sec") {
+                    match qw.as_i64() {
+                        Some(n) if n >= 60 => quota_window_sec = n,
+                        _ => {
+                            why = format!("{at}: ext.quota_window_sec must be an integer of at least 60 seconds (the work-run resume window when the reset time is unknown; got {})", compact(qw));
+                            break;
+                        }
+                    }
                 }
                 // (wave 9, D4) C3's own per-entry extension: the plan's cap windows and when they reset
                 if let Some(c3x) = xv.get("c3").and_then(|c| c.as_object()) {
@@ -878,6 +895,7 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 plan,
                 plan_caps,
                 reset_hint,
+                quota_window_sec,
                 endpoint: entry_endpoint,
             });
         }

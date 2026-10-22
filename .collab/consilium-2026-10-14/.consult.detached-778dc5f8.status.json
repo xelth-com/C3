@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "778dc5f8-c2dd-4f6b-8e24-5751feb88ec9",
+    "id8":  "778dc5f8",
+    "task":  "consilium-2026-10-14",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  1,
+    "started":  "2026-10-14T20:19:31+02:00",
+    "updated":  "2026-10-14T20:20:05+02:00",
+    "finished":  "2026-10-14T20:20:05+02:00",
+    "wall_seconds":  34.3,
+    "pid":  20696,
+    "start_time":  "2026-10-14T18:19:31.5489246Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3300,
+    "purpose":  "framing",
+    "reply_name":  "panel-b-openai",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "failed",
+                        "outcome":  "failed: stopped at the quota budget: 5-hour window 89 % used, resets 21:23; the partial is kept",
+                        "wall_seconds":  30.6,
+                        "n":  24,
+                        "handoff":  "26",
+                        "reply":  "handoffs/26-codex-panel-b-openai.md"
+                    }
+                ],
+    "summary":  "codex-consult: failed: stopped at the quota budget: 5-hour window 89 % used, resets 21:23; the partial is kept (wall 30.6 s)\u000aquota      : 5h 89% until 21:23; wk 79% until Oct 20; this run 36172 input tokens (0 cached) in 1 calls, max 36172 per call of 258400; sub-agents 0\u000apartial    : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\26-codex-panel-b-openai.partial.md (killed at 30.6 s at the quota budget; thread 01a13ba4-29b2-7070-88f0-407e21a1e737 - continue with `-Task consilium-2026-10-14 -CollabDir C:\\Users\\Dmytro\\C3\\.collab -Mode resume -Thread 01a13ba4-29b2-7070-88f0-407e21a1e737 -Provider openai -Model gpt-6-astra -Purpose framing -ReplyName panel-b-openai -Budget 85 -Prompt \"finish your review\"`)\u000aresume     : -Task consilium-2026-10-14 -CollabDir C:\\Users\\Dmytro\\C3\\.collab -Mode resume -Thread 01a13ba4-29b2-7070-88f0-407e21a1e737 -Provider openai -Model gpt-6-astra -Purpose framing -ReplyName panel-b-openai -Budget 85 -Prompt \"finish your review\"\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\26-codex-panel-b-openai.md\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\26-codex-panel-b-openai.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.detached-778dc5f8.log",
+    "args":  null
+}

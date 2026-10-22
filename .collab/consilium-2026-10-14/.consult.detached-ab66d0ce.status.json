@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "ab66d0ce-d91f-447c-8c4f-9b6ff1772ecc",
+    "id8":  "ab66d0ce",
+    "task":  "consilium-2026-10-14",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-14T21:26:21+02:00",
+    "updated":  "2026-10-14T21:31:01+02:00",
+    "finished":  "2026-10-14T21:31:01+02:00",
+    "wall_seconds":  280.7,
+    "pid":  33712,
+    "start_time":  "2026-10-14T19:26:21.8137230Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3300,
+    "purpose":  "framing",
+    "reply_name":  "panel-b-openai-2",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  276.5,
+                        "n":  28,
+                        "handoff":  "30",
+                        "reply":  "handoffs/30-codex-panel-b-openai-2.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13be1-51df-7a03-bbb3-11b458533e3f (source: events), wall 276.5 s\u000aquota      : 5h 29% until 02:23; wk 85% until Oct 20; this run 354962 input tokens (275200 cached) in 6 calls, max 78932 per call of 258400; sub-agents 0\u000averdict    : ADVISE - Proceed with a bounded watch and interactive browser prototype, but separate notification, execution, transport and recovery contracts before selecting the architecture.\u000afindings   : 0 blocker, 6 major, 1 minor, 0 note -\u003e F30-1..F30-7 in findings.json\u000aprior      : F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F04-1 not-checked, F04-2 still-open, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F05-1 not-checked, F05-2 not-checked, F05-3 not-checked, F05-4 not-checked, F05-5 not-checked, F05-6 not-checked, F05-7 not-checked, F07-1 not-checked, F07-2 not-checked, F07-3 not-checked, F07-4 not-checked, F07-5 not-checked, F08-1 not-checked, F08-2 still-open, F08-3 not-checked, F08-4 not-checked, F08-5 not-checked, F08-6 not-checked, F08-7 not-checked, F08-8 not-checked, F10-1 not-checked, F10-2 not-checked, F11-1 still-open, F11-2 not-checked, F11-3 still-open, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F12-1 still-open, F12-2 still-open, F12-3 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F19-1 still-open, F19-2 still-open, F19-3 still-open, F19-4 still-open, F19-5 still-open, F19-6 still-open, F20-1 still-open, F20-2 still-open, F20-3 still-open, F20-4 still-open, F20-5 still-open, F20-6 still-open, F20-7 still-open, F21-1 still-open, F21-2 still-open, F21-3 still-open, F21-4 still-open, F23-1 still-open, F23-2 still-open, F23-3 not-checked, F24-1 still-open, F24-2 still-open, F24-3 still-open, F24-4 still-open, F24-5 still-open, F24-6 still-open, F24-7 still-open, F24-8 still-open, F24-9 still-open, F25-1 still-open, F25-2 still-open, F25-3 still-open, F25-4 still-open, F27-1 still-open, F27-2 still-open, F27-3 still-open, F27-4 still-open, F27-5 still-open, F27-6 still-open, F27-7 still-open, F27-8 still-open, F27-9 still-open, F28-1 still-open, F28-2 still-open, F28-3 still-open, F28-4 still-open, F28-5 still-open, F28-6 still-open, F28-7 still-open, F28-8 still-open, F28-9 still-open, F29-1 still-open, F29-2 still-open, F29-3 still-open, F29-4 still-open, F29-5 still-open\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\30-codex-panel-b-openai-2.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\30-codex-panel-b-openai-2.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\30-codex-panel-b-openai-2.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.detached-ab66d0ce.log",
+    "args":  null
+}

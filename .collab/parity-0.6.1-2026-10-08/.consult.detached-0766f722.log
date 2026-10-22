@@ -1,0 +1,147 @@
+codex-consult: detached run 0766f722 (detach id 0766f722-032e-4249-960e-5376b08d8529) - pid 15672 on LAPTOP-9SGIHQ03, started 2026-10-15T10:27:54+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-0766f722.status.json
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - entry 1 of 10 for -Provider openai (model applied)
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13eac-dda5-79f0-b73e-d20f7839a5db (source: events), wall 320.9 s
+quota      : 5h 27% until 14:18; wk 4% until Oct 22; this run 327059 input tokens (269184 cached) in 7 calls, max 56789 per call of 258400; sub-agents 0
+verdict    : HOLD - The direct F76-1 filter is corrected, but a later isolated failure or machine-health pruning can still remove a cap refusal before its declared reset.
+findings   : 2 blocker, 0 major, 0 minor, 0 note -> F78-1..F78-2 in findings.json
+prior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 not-checked, F66-2 not-checked, F66-3 not-checked, F66-4 fixed, F66-5 not-checked, F66-6 still-open, F68-1 fixed, F68-2 not-checked, F70-1 fixed, F72-1 fixed, F72-2 fixed, F74-1 still-open, F74-2 not-checked, F76-1 fixed
+reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\78-codex-wave9-acceptance-3.md
+reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\78-codex-wave9-acceptance-3.reply.json
+events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\78-codex-wave9-acceptance-3.events.jsonl
+
+1. **Q1:** Yes. A newer isolated 429 hides an earlier qualifying pair (finding #1). Machine-health pruning can erase another repository’s pair after roughly 24 hours despite the new 35-day read filter (finding #2).
+
+2. **Q2: HOLD** for blockers #1–2; do not tag v0.2.2. F76-1’s specific read-time filter is fixed, but persistence of the refusal remains incomplete.
+
+Read all four diffs and targeted context; skipped older handoffs, unrelated code, and test logs. No tests run.
+
+## Requested checks
+
+- **RC1:** Repository root; workspace-write; extend the policy fixture with a distinct 22:00Z failure after the 20:00/20:20Z pair, evaluate at 22:11Z, and run `cargo test -p c3-core plan::`. Require the monthly refusal to remain. Budget: 15 minutes.
+- **RC2:** Repository root; workspace-write; seed the pair only in scratch machine health, perform an unrelated update at +48 hours, then evaluate without ledger copies. Require refusal until reset. Budget: 20 minutes.
+
+### Findings
+
+- **F78-1** [blocker] `crates/c3-core/src/plan.rs:368`, `crates/c3-core/src/health.rs:1158`, `docs/port/wave9-consilium-defects.md:101` - The cap detector considers only pairs containing the newest qualifying hit. A later isolated instant 429 therefore suppresses an already established cap pair, allowing an exhausted endpoint to become eligible before its declared reset without any successful reply. Trigger: For a monthly-capped endpoint with reset_hint='monthly:27T00:00+08:00', retain distinct identified instant failures at 2026-10-14T20:00Z, 20:20Z, and 22:00Z, with no success. Evaluate at 22:11Z after the latest ordinary burst expires. The first two failures establish the cap refusal, but neither is within 60 minutes of the newest failure. Evidence: read-code: After period filtering, the detector fixes second=hits[0] and returns the underlying verdict if no remaining hit is within 60 minutes of that one; it never searches for an older qualifying pair.; read-code: Records are ordered newest first, and distinct consultation identities contribute their hits in that order.; read-code: The documented policy holds a hinted entry out until reset, with a successful explicit run or hint edit clearing the refusal.; inferred: At 22:11Z all three hits remain in the monthly period, but the newest hit has no partner within an hour, so the earlier valid pair is ignored. Verify: Run RC1 and assert that adding the third failed consultation cannot change the existing monthly cap refusal to available. Remedy: Search all retained, distinct-consultation hits for a qualifying pair, or persist the established cap refusal until its reset or a newer usable reply clears it. Add a regression covering a later isolated failure.
+- **F78-2** [blocker] `crates/c3-core/src/health.rs:100`, `crates/c3-core/src/health.rs:1147`, `crates/c3-core/src/health.rs:2336`, `docs/port/wave9-consilium-defects.md:166` - The 35-day cap-pair retention applies only to rows supplied to endpoint_health; machine-health writes still prune old rows unless their stored outage or quota window remains active. Consequently, cap evidence originating in another repository can disappear after roughly 24 hours, releasing a hinted exhausted endpoint before its declared reset. Trigger: Two identified instant-429 machine rows establish a monthly cap pair and have expired ordinary burst until values, with no quota window or quota mark extending them. After 48 hours, an unrelated machine-health update prunes those rows. A different repository evaluates the endpoint without the original repository's ledger copies and before the declared monthly reset. Evidence: read-code: CAP_PAIR_RETENTION_MINUTES is now 35 days, but its use is a filter over already loaded records.; read-code: The persistent endpoint retention rule remains recent || still_out. Recent uses num_hours() <= 24; still_out depends on stored until, quota_mark, or a blocking quota window, with no exception for identified cap-pair evidence.; read-code: The new 48-hour regression evaluates an unchanged in-memory rows array, so it does not exercise pruning of persisted machine evidence.; inferred: Once both expired machine rows are removed, the longer read filter cannot recover them; a reader lacking their ledger copies has no pair to enforce. Verify: Run RC2 through the production machine-health update and conversion path; compare the cap verdict before and after pruning while the declared reset remains in the future. Remedy: Persist sufficient identified cap evidence through the supported cap period, either separately from ordinary endpoint retention or with retention rules that preserve active cap evidence. Test another repository reading after an unrelated health update.
+
+### Prior findings
+
+- F02-1 - not-checked - Telemetry spool code is outside this review.
+- F02-3 - not-checked - Deletion retry code is outside this review.
+- F02-4 - not-checked - Harness coverage mapping was not reviewed.
+- F02-5 - not-checked - Rating transaction code was not reviewed.
+- F02-6 - not-checked - Prompt anchors were not reviewed.
+- F02-7 - not-checked - Cross-engine plan identity was not reviewed.
+- F02-8 - not-checked - No route benchmark evidence was reviewed.
+- F04-1 - not-checked - Process-name handling was not reviewed.
+- F04-2 - not-checked - Windows local-zone behavior was not reviewed.
+- F04-3 - not-checked - Required-light ledger metadata was not reviewed.
+- F06-1 - not-checked - Historical Samoa offset handling was not reviewed.
+- F09-1 - not-checked - Context configuration handling was not reviewed.
+- F09-2 - not-checked - Flush/deletion synchronization was not reviewed.
+- F09-3 - not-checked - Deletion cleanup durability was not reviewed.
+- F09-4 - not-checked - Spool reread failure handling was not reviewed.
+- F09-5 - not-checked - Legacy telemetry sanitization was not reviewed.
+- F09-6 - not-checked - Rating actor inference was not reviewed.
+- F11-1 - not-checked - Journal I/O failure handling was not reviewed.
+- F11-2 - not-checked - Required-reviewer launcher resolution was not reviewed.
+- F11-3 - not-checked - Required-reviewer shared-plan evaluation was not reviewed.
+- F11-4 - not-checked - PowerShell hook commands were not reviewed.
+- F11-5 - not-checked - AGY stall behavior was not reviewed.
+- F14-1 - not-checked - Local-only deletion transactions were not reviewed.
+- F19-1 - not-checked - Complaint/deletion synchronization was not reviewed.
+- F19-2 - not-checked - Unreadable-salt cleanup was not reviewed.
+- F19-3 - not-checked - Duplicate-key telemetry sanitization was not reviewed.
+- F22-1 - not-checked - Durable journal replay deduplication was not reviewed.
+- F23-1 - not-checked - Process metadata inspection failures were not reviewed.
+- F23-2 - not-checked - Unknown process creation-time recovery was not reviewed.
+- F23-3 - not-checked - Kill evidence durability was not reviewed.
+- F23-4 - not-checked - Recovery fixture strength was not reviewed.
+- F23-5 - not-checked - Production Windows Samoa behavior was not reviewed.
+- F24-1 - not-checked - Not-spooled fallback accounting was not reviewed.
+- F24-2 - not-checked - Unterminated not-spooled suffix handling was not reviewed.
+- F24-3 - not-checked - Concurrent not-spooled cleanup was not reviewed.
+- F24-4 - not-checked - Not-spooled status selection was not reviewed.
+- F24-5 - not-checked - Plugin-home oracle compatibility was not reviewed.
+- F24-6 - not-checked - Fold-record rewrite failures were not reviewed.
+- F25-2 - not-checked - Endpoint transcript-location safety was not reviewed.
+- F25-3 - not-checked - Claude model case handling was not reviewed.
+- F25-4 - not-checked - Credential-safe debug output was not reviewed.
+- F30-1 - not-checked - Unknown helper ancestry recovery was not reviewed.
+- F30-2 - not-checked - Pre-kill persistence failures were not reviewed.
+- F30-3 - not-checked - Kill-site integration coverage was not reviewed.
+- F31-1 - not-checked - Live-to-gone producer accounting was not reviewed.
+- F36-1 - not-checked - Unicode transcript-path slicing was not reviewed.
+- F36-2 - not-checked - Transcript-path NFC normalization was not reviewed.
+- F38-1 - not-checked - Recovery after multiple persistence failures was not reviewed.
+- F40-1 - not-checked - Kill-copy enumeration failures were not reviewed.
+- F40-2 - not-checked - Kick acknowledgement after persistence failure was not reviewed.
+- F42-1 - not-checked - Recovery-copy metadata failures were not reviewed.
+- F46-1 - not-checked - Equal-time quota aggregation was not reviewed.
+- F48-1 - not-checked - Secondary-window quota aggregation was not reviewed.
+- F50-1 - not-checked - Quota reset-completeness tie handling was not reviewed.
+- F52-1 - not-checked - Quota aggregation comparison-clock behavior was not reviewed.
+- F52-2 - not-checked - Nonfinite quota percentage handling was not reviewed.
+- F55-1 - not-checked - Quota cache behavior across reset boundaries was not reviewed.
+- F55-2 - not-checked - Malformed newer quota observations were not reviewed.
+- F58-1 - not-checked - Per-window observation timestamp aggregation was not reviewed.
+- F60-1 - not-checked - Per-window timestamp persistence was not reviewed.
+- F62-1 - not-checked - Fractional-second quota timestamp persistence was not reviewed.
+- F66-1 - not-checked - Detached admission and bridge ownership were not reviewed.
+- F66-2 - not-checked - Detached reservation durability was not reviewed.
+- F66-3 - not-checked - Identity deduplication is visible, but production machine/ledger conversion was not inspected.
+- F66-4 - fixed - Read-code confirmation: next_cap_reset and split_clock reject non-ASCII input before byte slicing. No test executed.
+- F66-5 - not-checked - Shim environment restoration was not reviewed.
+- F66-6 - still-open - The heuristic tradeoff remains explicitly documented: transient pairs can block until reset, and unhinted exhausted entries become eligible for a probe. It is treated as release policy, not a new blocker here.
+- F68-1 - fixed - Read-code confirmation: nonempty consultation IDs alone determine deduplication; distinct IDs at identical times remain distinct, and no-ID rows are excluded.
+- F68-2 - not-checked - The note reports a portable fixture, but recovery test code was not inspected.
+- F70-1 - fixed - The legacy matching fallback is absent from cap-pair construction; rows without consultation IDs are excluded.
+- F72-1 - fixed - No-ID legacy machine rows cannot contribute to the cap pair, regardless of their age or pruning.
+- F72-2 - fixed - Cap-pair identity no longer uses truncated failure text or timestamps; it requires a nonempty consultation ID.
+- F74-1 - still-open - One consultation still contributes at most one hit. This is explicitly documented policy and is not refiled.
+- F74-2 - not-checked - next_cap_reset rejects day 99, but roster-load validation was not inspected to establish that the fallback is unreachable.
+- F76-1 - fixed - The specific unconditional 24-hour read filter is replaced by a per-entry period filter, with the requested 48-hour fixture added. Findings #1–2 identify separate ways the refusal can still disappear.
+
+## Verdict: HOLD
+
+The direct F76-1 filter is corrected, but a later isolated failure or machine-health pruning can still remove a cap refusal before its declared reset.
+
+### Blockers
+
+- **F78-1** `crates/c3-core/src/plan.rs:368`, `crates/c3-core/src/health.rs:1158`, `docs/port/wave9-consilium-defects.md:101` - The cap detector considers only pairs containing the newest qualifying hit. A later isolated instant 429 therefore suppresses an already established cap pair, allowing an exhausted endpoint to become eligible before its declared reset without any successful reply. Verify: Run RC1 and assert that adding the third failed consultation cannot change the existing monthly cap refusal to available. Remedy: Search all retained, distinct-consultation hits for a qualifying pair, or persist the established cap refusal until its reset or a newer usable reply clears it. Add a regression covering a later isolated failure.
+- **F78-2** `crates/c3-core/src/health.rs:100`, `crates/c3-core/src/health.rs:1147`, `crates/c3-core/src/health.rs:2336`, `docs/port/wave9-consilium-defects.md:166` - The 35-day cap-pair retention applies only to rows supplied to endpoint_health; machine-health writes still prune old rows unless their stored outage or quota window remains active. Consequently, cap evidence originating in another repository can disappear after roughly 24 hours, releasing a hinted exhausted endpoint before its declared reset. Verify: Run RC2 through the production machine-health update and conversion path; compare the cap verdict before and after pruning while the declared reset remains in the future. Remedy: Persist sufficient identified cap evidence through the supported cap period, either separately from ordinary endpoint retention or with retention rules that preserve active cap evidence. Test another repository reading after an unrelated health update.
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending').
+- **F22-1** (prior, not-checked) `crates/c3-core/src/health.rs:1563` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs.
+- **F23-3** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:5105` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree.
+- **F24-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:640` - The spool-lock fallback marks all non-legacy not-spooled lines as seen without folding or retaining per-file provenance; a later fold counts the same gone-producer files again, so the accounting can double-count and temporarily hide the count.
+- **F25-2** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:357` - Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process.
+- **F30-2** (prior, not-checked) `crates/c3/src/engines/subprocess.rs:536` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues.
+- **F31-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:668` - The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history.
+- **F36-1** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:425` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary.
+- **F38-1** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:687` - The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge.
+- **F40-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:170` - Recovery silently treats failure to enumerate the Codex-home kill-copy directory, or errors while iterating it, as absence of recovery copies. A durable copy naming a live helper can therefore be omitted and the task released.
+- **F42-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:306` - A metadata inspection error on an enumerated recovery copy is treated as absence. read_pending_file uses Path::exists(), which converts metadata errors to false, and returns exists=false with no error. Recovery and findings checks then skip the copy, potentially releasing a task while a helper named only in that durable copy remains alive.
+- **F66-1** (prior, not-checked) `crates/c3/src/consult/recovery.rs:129` - Detached admission treats active recovery records as harmless concurrency without establishing that their owning bridge is still alive. Records retained because an interrupted run left surviving or unverified processes are therefore bypassed, allowing a new engine turn while recovery still considers the previous tree active.
+- **F76-1** (prior, fixed) `crates/c3-core/src/health.rs:1143` - The new read-time age limit discards identified cap-pair evidence after approximately 24 hours even when a valid reset_hint declares a later weekly or monthly reset. plan_cap_verdict then returns the underlying verdict without enforcing that reset. This makes an exhausted endpoint eligible before the retry time previously displayed and contradicts the documented policy that hinted entries remain unavailable until their reset.
+
+### Unproven scenarios
+
+- No tests were executed; the brief's test results and environmental explanation for workspace failures were not independently verified.
+- The later-isolated-failure schedule in finding #1 was established by code inspection, not an executed fixture.
+- Machine-only cap evidence surviving a production health update and another repository's read remains untested.
+- Exact-reset, weekly, daily, and month-end boundary behavior was not executed.
+- Older handoffs, unrelated implementations, raw test logs, and the broader wave-9 range were not reviewed.
+- The plugin harness was not rerun at c82d97d according to the brief.
+
+### First-run checklist (observable)
+
+- [ ] Observe a provider/preflight refusal containing 'plan quota' and the expected monthly reset for two distinct instant-429 consultations, including a read more than 48 hours later.
+- [ ] After a later isolated instant 429 and expiration of its ordinary burst, observe that the original monthly refusal remains and no engine-turn marker is created.
+- [ ] From a second repository without ledger copies, observe the same refusal after an unrelated machine-health update; verify that sufficient pair evidence remains persisted.
+- [ ] At the declared reset, observe the cap refusal disappear; separately confirm that a newer usable reply clears it and that an unhinted pair permits a probe after its 24-hour bound.
+- [ ] Require actual assertion counts and zero failures from the targeted regressions; resolve or rerun the reported workspace startup-probe failures before treating an aggregate exit code as release evidence.

@@ -7,10 +7,21 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
-## [Unreleased / 0.2.3-dev]
+## [0.2.3] - 2026-10-22
 
 ### Added
 
+- **R30 wave-boundary compaction** (`plugin/skills/coordinate/SKILL.md`): a Claude Code coordinator
+  now compacts right after a wave launches, not mid-review, and recovers its identity afterwards.
+  A detached launch (`c3 consult --detach`, `c3 consult --panel --detach`, the MCP `c3_panel`
+  tool) prints one extra stderr line after its `status`/`come back` lines — `compact now (wave
+  boundary): /compact keep the task ..., the detach id ... and the coordinator record; then
+  \`c3 consult --task ... --status --id ...\` on wake` — not in `--dry-run`, not from the
+  background child, not from panel members. The SessionStart hook now also fires on the `compact`
+  source (`plugin/hooks/hooks.json` matcher, `c3 hook --source`): after a compaction it prints one
+  re-hydration line restoring the coordinator identity (`CODEX_CONSULT_COORDINATOR`, resolved
+  against the roster) when a coordinator record exists, so the session picks its detached runs (the
+  availability line already names them) back up; `startup`/`resume` output is unchanged.
 - **`c3 work` — worker runs** (`docs/work-mode.md`): a roster model (engine claude, role
   `"worker"`) as an ordinary coding worker for low-stakes or test work — it edits the tree and
   reports; not a consultation (no evidence check, no findings, no rating, no ledger entry). The
@@ -21,6 +32,28 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `diff.txt` (git status/diff computed by c3, never by the worker) and `run.json` (status, turns,
   tool calls, files changed, usage — no secret values anywhere). One live run per task;
   `--detach`/`--status`/`--wait` as the consult flags (status exit 0 done / 1 died / 2 running).
+- **`c3 work` — quota, resume and the alarm** (`docs/work-mode.md`): a worker that runs out of its
+  provider's usage limit no longer just dies. The run is classified `quota` (a rejecting
+  `rate_limit_event`, or the limit wording — the engine's shared `quota_evidence`), `run.json`
+  records `quota {text, reset_at, resume_at, resumes, exhausted}`, and the SAME child session is
+  resumed with `claude --resume` when the window reopens: automatically in a detached run (the
+  background parks `waiting_quota` and sleeps in 30 s slices until `resume_at`, waking on a kick
+  file), or on demand with `c3 work --resume <id>` / `--kick`. A foreground quota run prints the
+  resume time and the exact resume command and exits 3; resumes are capped by `--max-resumes`
+  (default 3), after which the run is `quota` with `exhausted: true` and needs a human. The
+  resume window when the provider gives no reset time is `--quota-window-sec` (default 18000 = 5 h)
+  or a roster entry's `ext.quota_window_sec`.
+- **`c3 work` — the codex and muse engines** (`docs/work-mode.md` "v1.1 engines"): a worker run
+  may now drive the `codex` engine (`openai :: gpt-6.1-sol`, `codex exec --sandbox workspace-write`
+  — for complex programs) and the `muse` engine (`meta :: muse-spark-1.3-contributor`, near-free on
+  the Muse Code subscription) beside the existing `claude` engine. `select_worker` accepts a worker
+  entry on any of the three engines; the refusal names all three. Per engine: codex takes its prompt
+  on stdin and names its thread in the stream (a resume uses `codex exec resume <thread>`); muse
+  takes a `--prompt-file`, writes with `--approval-mode never --trust-workspace --disable-sandbox`
+  (shell needs the sandbox off on Windows), and mints its `--session-id` up front so a resume
+  continues it. `--allow` applies to claude only; codex/muse write through the sandbox/workspace.
+  `run.json`'s `engine` and the `--status` line's `[engine]` suffix name the engine. A second
+  byteplus worker entry (`deepseek-v4-1-flash-261017`) was added to the roster.
 
 ### Fixed
 
@@ -30,6 +63,17 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   the muse CLI itself answered. The id is declared now. The consult reference documents the Muse
   priority: spark-contributor by default, spark-1.3 only when the contributor is down, wonder only
   for hard reviews and consilia.
+
+### Changed
+
+- Tech-debt audit (2026-10-22, `.eck/TECH_DEBT.md`): `c3_core::engine::SubprocessEngine::{run,
+  continue_turn}` no longer panic with a stale "milestone 2b" `unimplemented!` - they return the new
+  `EngineError::PlanOnly` (that type only plans launches; execution lives in the `c3` adapters);
+  stale `allow(dead_code)` and the `_wall` import shim removed; `.gitattributes` gains `* text=auto`
+  so line endings normalise the same on every machine (the byte-exact fixture rules are unchanged);
+  `docs/port/harness-results.md` points at the RC5-RC7 gate documents for every run after Run 17.
+- Phase 2 switch done on the operator's machine (`docs/port/phase2-switch.md`): the `c3` plugin is
+  the only enabled reviewer bridge; the operator's `astra`/`workers` skills name `c3:*`.
 
 ## [0.2.2] - 2026-10-15
 

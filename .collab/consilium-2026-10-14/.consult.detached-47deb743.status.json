@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "47deb743-4cbe-4546-aaa1-44066a63e868",
+    "id8":  "47deb743",
+    "task":  "consilium-2026-10-14",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  1,
+    "started":  "2026-10-14T20:19:33+02:00",
+    "updated":  "2026-10-14T20:19:35+02:00",
+    "finished":  "2026-10-14T20:19:35+02:00",
+    "wall_seconds":  2.3,
+    "pid":  35664,
+    "start_time":  "2026-10-14T18:19:33.1737374Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3300,
+    "purpose":  "framing",
+    "reply_name":  "panel-b-ZAI",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "ZAI :: glm-5.3",
+                        "state":  "skipped",
+                        "outcome":  "not started: another consultation or status update for task \u0027consilium-2026-10-14\u0027 is running: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.lock is held open by pid 20696 on LAPTOP-9SGIHQ03 since 20...",
+                        "wall_seconds":  null,
+                        "n":  null,
+                        "handoff":  "",
+                        "reply":  ""
+                    }
+                ],
+    "summary":  "codex-consult: another consultation or status update for task \u0027consilium-2026-10-14\u0027 is running: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.lock is held open by pid 20696 on LAPTOP-9SGIHQ03 since 2026-10-14T18:19:33.734195400+00:00. Wait for it to finish; the lock is released when that process exits.",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.detached-47deb743.log",
+    "args":  null
+}

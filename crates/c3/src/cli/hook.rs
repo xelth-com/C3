@@ -17,10 +17,15 @@ pub struct HookArgs {
     /// -Explain coordinate`).
     #[arg(long, default_value = "", hide = true)]
     pub explain_command: String,
+    /// (R30 wave-boundary compaction) The SessionStart source (`startup`/`resume`/`compact`), as
+    /// the plugin hook reads it from its stdin event. Only `compact` changes the output (one extra
+    /// re-hydration line); any other value, or none, prints the startup/resume output unchanged.
+    #[arg(long, default_value = "", hide = true)]
+    pub source: String,
 }
 
 /// Print the SessionStart line and return the process exit code (always 0, as the
 /// plugin hook is: a session must never fail because a reviewer check did).
 pub fn run(args: HookArgs) -> i32 {
-    crate::hook::run(&args.collab_dir, &args.explain_command)
+    crate::hook::run(&args.collab_dir, &args.explain_command, &args.source)
 }

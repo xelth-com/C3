@@ -1,0 +1,716 @@
+codex-consult: detached run 37b31a52 (detach id 37b31a52-fcb6-47ad-8d9e-777af29125a7) - pid 7612 on LAPTOP-9SGIHQ03, started 2026-10-14T19:29:06+02:00; status file C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\.consult.detached-37b31a52.status.json
+Panel b694a074: 12 of 12 roster entries run, at most 8 at a time (roster C:/Users/Dmytro/.codex/codex-consult-roster-0.6.json; panel id b694a074-6586-483b-b200-1e9b676c2ea8)
+  #1 openai :: gpt-6-astra - member, n=3, handoff 05
+  #2 ZAI :: glm-5.3 - member, n=11, handoff 13
+  #3 mimo :: mimo-v2.6-pro - member, n=12, handoff 14
+  #4 gemini :: gemini-3.8-flash-high [agy] - member, n=10, handoff 12
+  #5 gemini :: gemini-3.1-pro-high [agy] - member, n=7, handoff 09
+  #6 byteplus :: deepseek-v4.1-flash - member, n=6, handoff 08
+  #7 byteplus :: dola-seed-2.0-pro - member, n=8, handoff 10
+  #8 kimi :: k3 - member, n=1, handoff 03
+  #9 alibaba :: qwen3.8-max - member, n=4, handoff 06
+  #10 meta :: muse-spark-1.3-contributor [muse] - member, n=5, handoff 07
+  #11 ZAI-claude :: glm-5.3 [claude] - member, n=9, handoff 11
+  #12 mimo-claude :: mimo-v2.6-pro [claude] - member, n=2, handoff 04
+Routing: routed by the ratings - size 12 (-PanelAll); seed 843c9c8b2c5f (nonce 2026-10-14 from date); exploration 0.2 per slot
+  eligible: #1 openai :: gpt-6-astra (lab openai by vendor; score 1.865 all-purpose of 24), #2 ZAI :: glm-5.3 (lab zhipu by vendor; score 1.65 all-purpose of 3), #3 mimo :: mimo-v2.6-pro (lab xiaomi by vendor; score 1.708 all-purpose of 10), #4 gemini :: gemini-3.8-flash-high [agy] (lab google by vendor; score 1.125 neutral), #5 gemini :: gemini-3.1-pro-high [agy] (lab google by vendor; score 1.125 neutral), #6 byteplus :: deepseek-v4.1-flash (lab deepseek by vendor; score 1.125 neutral), #7 byteplus :: dola-seed-2.0-pro (lab bytedance by vendor; score 1.125 neutral), #8 kimi :: k3 (lab moonshot by vendor; score 1.417 all-purpose of 4), #9 alibaba :: qwen3.8-max (lab alibaba by vendor; score 1.125 neutral), #10 meta :: muse-spark-1.3-contributor [muse] (lab meta by vendor; score 1.125 neutral), #11 ZAI-claude :: glm-5.3 [claude] (lab zhipu by vendor; score 1.125 neutral), #12 mimo-claude :: mimo-v2.6-pro [claude] (lab xiaomi by vendor; score 1.125 neutral)
+  picked  : 1. #8 kimi :: k3 (lab-draw), 2. #12 mimo-claude :: mimo-v2.6-pro [claude] (lab-draw), 3. #1 openai :: gpt-6-astra (lab-draw), 4. #9 alibaba :: qwen3.8-max (lab-draw), 5. #10 meta :: muse-spark-1.3-contributor [muse] (lab-draw), 6. #6 byteplus :: deepseek-v4.1-flash (lab-draw), 7. #5 gemini :: gemini-3.1-pro-high [agy] (lab-draw), 8. #7 byteplus :: dola-seed-2.0-pro (lab-draw), 9. #11 ZAI-claude :: glm-5.3 [claude] (lab-explore), 10. #4 gemini :: gemini-3.8-flash-high [agy] (rank-explore), 11. #2 ZAI :: glm-5.3 (rank-draw), 12. #3 mimo :: mimo-v2.6-pro (rank-draw)
+Concurrency: at most 8 at a time - endpoint groups: kimi x1, mimo-claude+ZAI-claude+ZAI+mimo x4 one after another, openai x1, alibaba x1, meta x1, byteplus x2 at once, gemini x2 one after another; -PanelConcurrency 0 (no cap)
+Timeout: 1800 s per member (the default of purpose framing); #9 alibaba :: qwen3.8-max 2700 s (roster); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 4 of 12 finished: alibaba :: qwen3.8-max - failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 357b0e28-e6dd-432... (44.9 s)
+  panel member 7 of 12 finished: gemini :: gemini-3.1-pro-high [agy] - failed: agy exit 1 - invalid model selection (--model "gemini-3.1-pro-high" --effort ""): model gemini-3.1-pro... (65.4 s)
+  panel member 8 of 12 finished: byteplus :: dola-seed-2.0-pro - usable reply (135.4 s)
+  panel member 5 of 12 finished: meta :: muse-spark-1.3-contributor [muse] - usable reply (167.1 s)
+  panel member 3 of 12 finished: openai :: gpt-6-astra - usable reply (259.9 s)
+  panel member 1 of 12 finished: kimi :: k3 - usable reply (423.4 s)
+  panel member 6 of 12 finished: byteplus :: deepseek-v4.1-flash - usable reply (482.2 s)
+  panel member 2 of 12 finished: mimo-claude :: mimo-v2.6-pro [claude] - usable reply (515.3 s)
+  panel member 10 of 12 finished: gemini :: gemini-3.8-flash-high [agy] - usable reply (661.8 s)
+  panel member 9 of 12 finished: ZAI-claude :: glm-5.3 [claude] - usable reply (309.3 s)
+  panel member 11 of 12 finished: ZAI :: glm-5.3 - usable reply (238.2 s)
+  panel member 12 of 12 finished: mimo :: mimo-v2.6-pro - failed: transport - Reconnecting... 1/5 (stream disconnected before completion: idle timeout waiting for SSE) (1132.5 s)
+
+=== panel b694a074 member 1 of 12: kimi :: k3 (roster #8) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - kimi :: k3, mode new, thread 01a13b76-2074-78e1-bba0-7251c499ad78 (source: events), wall 310.7 s
+quota      : no window in the rollout; this run 432724 input tokens (248576 cached) in 7 calls, max 72472 per call of 243200; sub-agents 0
+format repair: succeeded in 107 s; drift: 1 note(s)
+  drift: 11 of the 20 prose sentences (>= 60 chars) are not in reply_markdown (first: 'if the judge cannot fetch raw context, the routing saves mon...')
+verdict    : ADVISE - The sketch's two parts differ in risk: extending the closed vocabulary is safe (every list already degrades to `other`), but the scoring denominators and the worker-effort capture assumption are not yet sound enough to publish.
+findings   : 0 blocker, 2 major, 2 minor, 1 note -> F03-1..F03-5 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\03-codex-panel-a-measure-kimi.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\03-codex-panel-a-measure-kimi.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\03-codex-panel-a-measure-kimi.events.jsonl
+
+## Framing challenge first
+
+The brief bundles one safe decision with two unsafe ones. Extending the closed vocabulary is nearly free: `classes.rs` already maps anything unknown to `other`/`unknown`, so new values never break old intakes. The risky parts are (a) committing to a *published score* before the denominators are comparable, and (b) assuming the hook can see effort.
+
+Options the brief does not list:
+
+- **(5) Tier-split panels as the experiment.** Alternative 2 (local A/B) is dismissed as "nothing learned for other users" — but the routed panel already exists. Send the same brief at two efforts to two seats of one panel; the existing consult events capture it for everyone once `effort` ships. This is alternative 1 and 2 combined, at panel cost.
+- **(6) Publish counts, keep scores local.** `c3 scoreboard` is already local. Ship only `effort` on events and let each install compute its own usefulness-per-cost; the intake publishes distributions, not rankings. Defers the irreversible "published metric" decision until the findings join (alternative 3) exists.
+- **(7) Record effort now, commit to no score at all.** Schema first, semantics later.
+
+What I would need to choose: does z.ai expose more than three glm-5.3 tiers; does `SubagentStop` stdin (or the transcript metadata) carry the Agent call's effort override; how is the intake schema versioned today.
+
+## Q1 — tiers and denominator
+
+Tiers: gpt-6-astra (window-bound): chore low, checkpoint/reading medium, diff-review/acceptance high, core-contract/stuck xhigh. glm-5.3 (money-bound, no 5-hour window): chore low, everything else high, stuck max — the asymmetry is real and the policy should encode it. Denominator: findings-confirmed per unit of the *binding constraint* — window-share for OpenAI, money for GLM, wall time only as a guard. Finding F1: window share is not a cross-vendor denominator (quota.rs reads Codex rollouts only), so "usefulness per window share" cannot be the single published score. Design not listed: score the **marginal finding** — findings no other panel seat produced — per cost unit; it survives routed panels where seats differ.
+
+## Q2 — worker capture
+
+`SubagentStop` is the right capture point for Claude Code; other hosts report via the coordinator's own `rate` path with tier `other`. Must stay out: transcript/cwd/repo paths, session id (hash it), the agent label as typed. Effort: do not trust the transcript — the coordinator knows effort at spawn; have it write a local worker-id→{tier,effort} registry the hook reads (zero tokens, no parsing). Attribution under rework: add outcome `reworked`, marked at rating time; credit completion to the last worker, charge the rework against the original tier's score. Without this the original tier's completion share is inflated (F5).
+
+## Q3 — add to the vocabulary now
+
+`effort` (sent, closed none|low|medium|high|xhigh|max), `effort_requested` (preset name or `other`), `effort_native` (pre-mapping label — otherwise medium→high is indistinguishable from native high later, F2), `cost_basis` (window|money|none) so denominators stay interpretable, and `schema_v` per event. Worker event: tier, effort, outcome class, duration/token buckets, verified flag, resume count, reworked flag.
+
+## Q4 — scout and judge
+
+Failure modes: the scout summarizes the anomaly away; the judge anchors on the scout's conclusion; a cold-cache digest silently drops context. Rules: the scout emits a **fixed schema**, never a verdict — file list, hunk ids, suspicion 0–3 per hunk — capped at ~200 lines; the judge always gets the raw file list and may fetch the raw diff of any hunk (a tool call, not a bigger digest). If the judge cannot fetch raw context, the routing saves money by silently lowering review quality — that is the real cost cap to set.
+
+### Findings
+
+- **F03-1** [major] `crates/c3-core/src/quota.rs:401` - Window-share is not a cross-vendor scoring denominator: quota.rs reads Codex CLI rollouts only, so GLM/z.ai tiers have no window share and 'usefulness per 5-hour-window share' cannot be the single published tier score; a GLM max round looks infinitely cheap on that metric. Trigger: Publishing the intake's usefulness table split per reviewer x effort with window share as the denominator, once GLM events carry effort. Evidence: read-code: All quota observation paths parse Codex rollout token_count lines and Codex session files; no z.ai or money-cost source exists.; read-code: The brief itself states a GLM round at max 'has no 5-hour window', confirming the denominator is OpenAI-only. Verify: Attempt to compute a window-share cost for one glm-5.3 ledger entry; observe that no quota record exists for a non-Codex engine. Remedy: Score per binding constraint with a cost_basis field on the event (window|money|none); publish per-basis tables, never a merged ranking; long-term use marginal-findings-confirmed per cost unit.
+- **F03-2** [minor] `.collab/parity-0.6.1-2026-10-08/state.md:186` - Recording only the mapped effort (medium->high, xhigh->max) plus the preset name loses the native requested tier; later analysis cannot distinguish 'medium requested, sent as high' from 'high natively', biasing the z.ai medium tier's measured usefulness to zero samples forever. Trigger: Any retrospective that tries to evaluate the medium->high mapping itself from intake data. Evidence: read-code: The sketch carries effort (tier sent after mapping) and effort_requested (preset name); neither is the endpoint-native tier label before the vocabulary mapping. Verify: Check whether the consult event constructors have any field for the pre-mapping effort label; they do not. Remedy: Add effort_native (closed list plus other/unknown) alongside effort and effort_requested before the schema is published.
+- **F03-3** [major] `.collab/parity-0.6.1-2026-10-08/state.md:118` - The worker-telemetry design is gated on an unverified assumption that the SubagentStop hook can see the worker's effort; the state notes admit an Agent-call effort override may not appear in the subagent transcript, so the primary tier x effort table could silently record effort=unknown for the majority of workers. Trigger: Shipping the hook without a spawn-time effort source; the intake's workers table aggregates mostly unknown-effort rows. Evidence: read-code: States the override 'may not be in the subagent transcript - an open question for the consilium; fallback: the coordinator's rate command carries --effort'. Verify: Run one Claude Code subagent with an explicit effort override and inspect the SubagentStop stdin JSON and the transcript for the effort value. Remedy: Coordinator-side spawn registry: the coordinator writes worker-id -> {tier, effort} locally at spawn; the hook reads classes from it; keep --effort on the rate command only as backfill.
+- **F03-4** [minor] (no location) - The scout-and-judge routing fails by anchoring: if the scout's digest contains a conclusion ('looks fine'), the judge's defect-finding rate drops toward the scout's, and the window saving is bought with judge quality while telemetry credits the judge's tier. Trigger: A digest that hides or soft-pedals the one anomalous hunk (the wave-8 history shows exactly one real defect per round - the digest only has to miss one). Evidence: read-code: The sketch specifies a digest plus a call cap for the judge but no rule that the digest carry only facts or that the judge can fetch raw context.; inferred: With ~1 real defect per round, single-hunk recall is the entire value of the review; a lossy digest destroys it. Verify: Replay one past round (e.g. F60-1) through a scout digest and check whether the judge can still find the defect from the digest alone. Remedy: Fixed-schema digest (file list, hunk ids, suspicion 0-3, no verdict), ~200-line cap, and a judge-side raw-diff fetch per hunk; log digest-coverage in telemetry.
+- **F03-5** [note] (no location) - The worker outcome classes (reported|stopped-by-coordinator|error|unknown) have no reworked state; when the coordinator redoes a worker's output, the wave's success attributes to the original tier and inflates its measured completion share. Trigger: Any wave where the coordinator rewrites a worker's patch before the reviewer accepts it (the AGENTS.md delegation guidance already anticipates rework). Evidence: read-code: The outcome class list contains no rework attribution; the attribution question is explicitly open. Verify: Inspect one wave in .collab where the coordinator edited a worker's output and check what the proposed event would have recorded. Remedy: Add outcome reworked, set by the coordinator at rating time; credit completion to the final worker, charge the rework count to the original tier's score.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+The sketch's two parts differ in risk: extending the closed vocabulary is safe (every list already degrades to `other`), but the scoring denominators and the worker-effort capture assumption are not yet sound enough to publish.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether z.ai exposes more than low|high|max on glm-5.3 (assumed three per the caps-v1 mapping).
+- What SubagentStop stdin and the subagent transcript actually carry for tier and effort override - never observed in this read-only pass.
+- Whether a fixed-schema digest preserves single-defect recall in practice (no replay run was possible read-only).
+- Whether the intake schema at xelth.com/T/ has any versioning mechanism today, which affects how costly adding fields later really is.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 2 of 12: mimo-claude :: mimo-v2.6-pro [claude] (roster #12) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - mimo-claude :: mimo-v2.6-pro [claude], mode new, thread 2a396b93-8fcb-4e80-9874-6272e678eb66 (source: events), wall 467.7 s
+verdict    : ADVISE - Framing review of two measurement designs before implementation; several premises of the sketch (window-share attribution, hook visibility, one outcome vocabulary) are contradicted or untested in the evidence, so the design should be revised before the closed vocabulary is published.
+findings   : 0 blocker, 3 major, 2 minor, 3 note -> F04-1..F04-8 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\04-claudecode-panel-a-measure-mimo-claude.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\04-claudecode-panel-a-measure-mimo-claude.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\04-claudecode-panel-a-measure-mimo-claude.events.jsonl
+
+**Framing.** The sketch treats the vocabulary as the hard commitment and the score as later work. Invert it: scores will be revised many times, so publish only raw closed measures (with `unknown` for what a host cannot see) and derive every score nightly. Two premises are shaky: (i) window share is not attributable — the 5-hour window moved 8→72 % with no run of ours (state.md 11:57) and 260k tokens moved it 30→65 % (09:02); (ii) usefulness is confounded — hard tasks get high effort, so high effort will look worse. To choose I need: how often accounts have other consumers; whether z.ai has a fourth tier on glm-5.3; what SubagentStop really carries; and the install count (below ~50, per-tier tables stay noise).
+
+**Q1.** gpt-6-astra: chore low, reading/digest **medium** (a cheap digest poisons the judge), checkpoint medium, diff-review high, acceptance high, core-contract/stuck xhigh. glm-5.3: scout low, checkpoint/diff-review/acceptance high, max only for stuck/core-contract or as second judge on disagreement — GLM is the cheap, window-free workhorse; move non-acceptance to it. Express roster policy as **presets or floor/cap**, never endpoint tiers: z.ai maps medium→high and xhigh→max, so "checkpoint medium" is high on GLM; events must carry `effort` (sent) and `effort_requested` (preset) or the table compares incomparable tiers. Denominator: a **vector**, not a scalar — confirmed findings per window-share-point, per money, per wall-minute; score window share only when the run's own delta explains the movement. Unlisted designs: (a) raw-only schema + nightly derived scores (revisable without a break); (b) randomised exploration — 10–20 % of runs one tier off policy, flagged `effort_source: explore`; (c) paired judging — same digest at high and xhigh; disagreement rate is the top tier's marginal value; (d) effort ratchet — escalate only on empty/invalid reply.
+
+**Q2.** SubagentStop is the right *closing* point, but pair it with SubagentStart: a worker dying with the host emits nothing, so error shares are survivorship-biased (next start closes an orphan as `unknown`). The hook sees the **agent definition name**, not model or effort: tier from the name (closed list), model through CLAUDE_MODELS, `effort` + `effort_source: hook|transcript|rate|unknown` — `workers rate --effort` must never silently claim what the hook did not see. Never send: prompts, briefs, paths, transcript/session ids, agent labels as typed (custom names carry customer names → map or `other`), free-text notes, verification pattern names (boolean only). Attribution under rework: a pseudonymous `wave_ref` per wave, per-worker `useful` marks and credited-finding **counts** (no ids); a reworked worker is `partly` by definition and the rework is its own event; `verified` stays the objective signal; wave success is never inferred from worker outcome. Other hosts fit only if `other`/`unknown` is first-class, not a degradation.
+
+**Q3.** Consult: `effort`, `effort_requested`, `effort_source`, `effort_mapping`, `quota_cost` **bucketed** (exact percentages leak account size). Rating: `findings_confirmed` / `findings_implemented` counts at rating time — alternative 3's join without intake-side ids. New `worker` event: host, tier, model, effort, effort_source, duration bucket, outcome class, token/tool/edits buckets, `verified`, `resumes`, `wave_ref`. All optional-with-`unknown`, additive: `close_event` must keep events missing new fields (old clients) and must stop discarding non-consultation|rating types (classes.rs:870). No derived scores, no free text; never reuse the intake's free-text `agent_report`.
+
+**Q4.** Scout-and-judge fails on compression loss and anchoring — a confident wrong digest is worse than none. Caps: (1) digest = **map**, not summary — one line per changed file, no correctness claims; (2) ≤40 lines / 4 KB with machine-checked **coverage** — every diffstat file appears once or the digest is discarded and the judge gets raw; (3) the judge always gets diffstat + file list + ≤N raw-hunk requests (one budgeted call); (4) the judge's cap is in **calls** (1 + ≤2 escalations on empty/invalid replies) — the window is not token-linear; (5) audit arm: 1 in 5 judgings gets the raw diff; the confirmed-finding gap measures digest loss. A blocker claim must quote a raw path:line.
+
+## Requested checks
+- **RC1** (finding #2) — cwd: the xelth.com repo. Read `docs/t-hub` and the intake's event parser. Read-only, 30 min. Settles whether unknown `event_type`/details fields are dropped, 400-refused or stored; the worker event's phasing depends on it.
+- **RC2** (Q1) — cwd: this repo. One `c3 consult` chore to z.ai glm-5.3 with `--native-effort xhigh`; observe accept/refuse and ledger `effort_confirmed`. Workspace-write (small quota cost), 5 min. Settles the fourth-tier question.
+- **RC3** (Q2) — cwd: scratch. SubagentStart/Stop hooks dumping stdin JSON to a temp file; run one Task with a haiku agent and an explicit effort override. Workspace-write, 10 min. Settles whether the payload carries model/effort or only the agent name.
+- **RC4** (finding #3) — cwd: this machine. Script over `~/.codex/sessions` rollouts: per-run window deltas vs total window movement. Read-only, 20 min. Settles the attributable share of window consumption.
+
+### Findings
+
+- **F04-1** [major] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:59`, `.collab/parity-0.6.1-2026-10-08/state.md:128` - The two planning sources define different closed worker-outcome vocabularies (handoff: reported|stopped-by-coordinator|error|unknown; state.md: completed|error:rate_limit|error:context|error:other|stopped). A closed vocabulary that ships from contradictory sketches will be wrong for one of them and unchangeable once published. Trigger: Implementing worker telemetry from either document without reconciling the outcome class list. Evidence: read-code: outcome class listed as reported | stopped-by-coordinator | error | unknown; read-code: outcome listed as completed, error:rate_limit, error:context, error:other, stopped. Verify: Grep both documents for the outcome lists and diff them; confirm no third source already picks one. Remedy: Adopt the finer list (completed|stopped|error:rate_limit|error:context|error:other|unknown): error cause is the tier signal; map reported->completed, stopped-by-coordinator->stopped; write it into the schema doc before any code.
+- **F04-2** [major] `crates/c3/src/telemetry/classes.rs:870`, `crates/c3/src/telemetry/classes.rs:922`, `crates/c3/src/telemetry/event.rs:58` - The client-side closer rebuilds every event from a fixed key set and discards any event_type other than consultation|rating (close_event returns None). A new worker event, and new fields such as effort on existing events, are silently dropped on old or un-updated code paths unless the closer is extended in the same release with additive semantics (absent new fields must still close). Trigger: Queueing a worker event or an effort-carrying consult event and letting close_event_body run before send. Evidence: read-code: if event_type != "consultation" && event_type != "rating" { return None } - the event is discarded; read-code: details rebuilt key by key from a fixed allowlist; unknown keys never leave, unknown shapes become other/unknown; read-code: Details/RatingDetails structs carry no effort field today. Verify: Add a unit test: a worker event closes to itself; a consultation without effort closes unchanged; run cargo test -p c3 telemetry. Remedy: Extend close_event and the constructors with event_type worker and optional effort fields in one release; state explicitly that missing new fields close to absent/unknown so old clients' events keep flowing.
+- **F04-3** [major] `.collab/parity-0.6.1-2026-10-08/state.md:184`, `.collab/parity-0.6.1-2026-10-08/state.md:208`, `crates/c3/src/telemetry/event.rs:58` - The proposed tier score (usefulness per 5-hour-window share) is not computable from published telemetry (the event carries tokens but no quota cost) and is biased where it is computable: the window moved 8->72 % without our runs (another consumer) and 260k tokens moved it 30->65 % (non-linear), so per-run window share is both unattributable and non-monotone in effort. Trigger: Aggregating usefulness per window share at the intake from current event fields. Evidence: read-code: window 8 % -> 72 % between 11:18 and 11:55 WITHOUT our runs; another consumer on the account; read-code: window went 30 -> 65 % for 260k tokens inside one round - non-linear; inferred: quota cost lives only in the ledger (to_quota); the consult event has tokens_in/out but no window share. Verify: RC4: compute per-run window deltas against total window movement on one day of local rollouts and report the attributable fraction. Remedy: Add a bucketed quota_cost to the consult event; score window share only for runs whose delta explains the movement, else mark unscoreable; always publish the token/wall vector so other denominators can be derived later.
+- **F04-4** [minor] `.collab/parity-0.6.1-2026-10-08/state.md:189`, `crates/c3-core/src/effort.rs:103` - Effort tiers are endpoint-local (z.ai: low|high|max with medium->high, xhigh->max; openai: low|medium|high|xhigh). A roster policy written in universal tier names silently overspends on GLM - 'checkpoint medium' is high there - so a per-purpose policy must be expressed in preset names or floor/cap and the SENT tier must be recorded, or the usefulness table compares incomparable tiers. Trigger: Applying the sketch's per-purpose effort policy to glm-5.3 through the caps-v1 mapping. Evidence: read-code: z.ai low|high|max with medium->high and xhigh->max; openai low|medium|high|xhigh; read-code: caps-v1 rows give api.z.ai the zai vocabulary, builtin:openai the openai vocabulary. Verify: Trace one preset (checkpoint -> medium) through the zai mapping and confirm the ledger's effort_sent becomes high. Remedy: Store presets/floor-cap in the roster entry; send effort (post-mapping) and effort_requested (preset) in events; group the usefulness table by sent tier within endpoint vocabulary.
+- **F04-5** [minor] `.collab/parity-0.6.1-2026-10-08/state.md:122`, `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:57` - SubagentStop alone yields survivorship-biased and missing-not-at-random data: a worker dying with the host emits no event (error share understated), and the hook carries the agent definition name, not the model or the effort (an explicit Agent-call effort override may be absent from the transcript), so the effort dimension would be systematically empty exactly where it matters. Trigger: Counting tier x effort completion rates from SubagentStop events only. Evidence: read-code: hook fires at agent end with the agent id; tier from the plugin's agent names; effort lives in the definition frontmatter; an Agent-call override 'may not be in the subagent transcript - an open question'; assumed: model and effort presence in the payload is unverified. Verify: RC3: dump the SubagentStart/Stop stdin JSON for one haiku Task with an explicit effort override and inspect which fields exist. Remedy: Pair Start+Stop (orphan Start closed as unknown on next start); record tier, model and effort each with its own source field (hook|transcript|rate|unknown); never let the rate command fill a field the hook did not observe.
+- **F04-6** [note] `.collab/parity-0.6.1-2026-10-08/state.md:149` - The intake already has a free-text agent_report event and the rate command has a --note; the worker event must be a distinct closed class and notes must never leave the machine, or the closed-class contract is broken on the first convenience path. Trigger: Implementing c3 workers rate with a note and reusing the existing intake worker/agent table. Evidence: read-code: intake has agent_report with task_scope free text from an older project; 'the worker event must NOT reuse it'. Verify: Grep the worker-event plan and rate command for any free-text field destined for the intake. Remedy: New event class worker with closed fields only; --note stored locally beside the mark, never serialised into telemetry.
+- **F04-7** [note] `.collab/parity-0.6.1-2026-10-08/state.md:200` - Scout-and-judge fails by compression loss and anchoring: a confident wrong digest misleads the judge worse than no digest, and nothing in the sketch measures that loss. Trigger: Routing a reading pass (GLM low / Haiku) whose digest omits a defect that the judge then never sees. Evidence: read-code: scout writes the digest handoff, the judge gets the digest plus a call cap; no coverage rule or audit arm specified; inferred: an observational usefulness table cannot separate digest loss from tier quality without a raw-diff control arm. Verify: Run 5 judgings with raw diff and 5 with digest on one wave; compare confirmed findings (a pilot of the audit arm). Remedy: Digest as a per-file map with machine-checked coverage and a size cap; judge gets diffstat + file list + limited raw-hunk requests; 1-in-5 raw-diff audit arm; judge cap in calls, not tokens.
+- **F04-8** [note] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:52` - Splitting usefulness per reviewer x effort from observational runs confounds tier quality with task difficulty (hard tasks are sent at high effort), so the table will make the expensive tiers look worse; and any derived score published inside the closed vocabulary freezes a definition that will need revision. Trigger: Aggregating the intake's usefulness table per reviewer x effort after months of policy-driven routing. Evidence: read-code: sketch plans a usefulness table split per reviewer x effort and scores a tier by usefulness per window share; inferred: effort is chosen from the purpose, so effort correlates with task class by construction. Verify: Before trusting the table, check within one purpose whether effort assignment varies at all; if not, no identification is possible. Remedy: Add an exploration flag (10-20 % of runs one tier off policy) and/or paired same-brief judgings; publish only raw counts and let nightly derived scores live outside the schema.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Framing review of two measurement designs before implementation; several premises of the sketch (window-share attribution, hook visibility, one outcome vocabulary) are contradicted or untested in the evidence, so the design should be revised before the closed vocabulary is published.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether z.ai exposes more than three reasoning tiers on glm-5.3 (RC2).
+- What the SubagentStart/Stop hook payload actually contains (model, effort, agent name) on current Claude Code (RC3).
+- Whether the intake drops, rejects or stores unknown event types and unknown details fields (RC1).
+- The fraction of 5-hour window movement attributable to a single installation's runs (RC4).
+- The number of reporting installs needed for a per-tier usefulness table to beat noise.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 3 of 12: openai :: gpt-6-astra (roster #1) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13b76-2a1b-7000-acd4-a39e3cb797fe (source: events), wall 251.7 s
+quota      : 5h 83% until 21:23; wk 78% until Oct 20; this run 575705 input tokens (474624 cached) in 10 calls, max 87115 per call of 258400; sub-agents 0
+verdict    : ADVISE - Proceed with versioned measurement and controlled experiments, but correct quota attribution, worker identity, and outcome semantics before using telemetry for routing.
+findings   : 0 blocker, 6 major, 1 minor, 0 note -> F05-1..F05-7 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\05-codex-panel-a-measure-openai.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\05-codex-panel-a-measure-openai.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\05-codex-panel-a-measure-openai.events.jsonl
+
+The framing should optimize verified task outcomes under resource constraints, rather than assume a universal tier leaderboard. Missing options include deterministic scouting, local aggregation before upload, and randomized shadow evaluations that leave production routing unchanged. Choosing requires the task mix, tolerated misses, latency target, binding subscription limits, and coordinator rework cost.
+
+**Q1.** Initial experimental defaults—not measured optima:
+
+| Purpose | Astra | GLM-5.3 |
+|---|---|---|
+| Chore/extraction | low | low |
+| Reading/checkpoint | medium | high |
+| Framing/decision | high | high |
+| Diff-review/acceptance | high | max |
+| Core-contract/stuck | xhigh | max |
+
+Treat reading as a stage, not another purpose. Escalate on unresolved evidence or risk, not just the purpose label. [Z.ai documents](https://docs.z.ai/guides/llm/glm-5.3) exactly three tiers. [OpenAI documents](https://developers.openai.com/api/docs/models/gpt-6-astra) Astra `max` too; that does not establish support through this bridge’s subscription route.
+
+There is no universal denominator. Confirmed findings are benefits, not costs. Compare independently verified task quality against quota consumption, elapsed time, paid usage/points, and rework separately. Within an isolated subscription experiment, use total quality benefit divided by total attributable quota consumption, including failed attempts; track both windows. Current quota snapshots are not attributable consumption (finding #1). Deduplicate confirmed findings and measure misses on known-defect cases; `implemented` alone is not confirmation. Randomize paired trials by task class and report uncertainty and rating coverage.
+
+**Q2.** Use command hooks at Start and Stop, plus reconciliation for missing endings; define an execution episode separately from a resumed worker. Current [hook documentation](https://code.claude.com/docs/en/hooks#common-input-fields) includes conditional `effort.level`, but Stop lacks a model field. Validate the installed host and resolve actual model identity locally; retain unknown effort instead of dropping workers.
+
+Upload only reconstructed allowlisted classes/counts. Exclude raw hook JSON, prompts, messages, transcripts, paths, commands, errors, agent names, session/thread/agent IDs, credentials, and notes. Mint random worker references; keep their mapping local. Apply existing telemetry opt-out and deletion behavior. Other hosts can submit the same adapter-neutral record with explicit provenance and missingness.
+
+Rate worker contribution separately from final wave success: accepted unchanged, minor rework, substantial rework, discarded, or unknown; record rework duration and independent verification separately. Command execution does not prove verification passed.
+
+**Q3.** Promise versioned compatibility, not a vocabulary frozen forever. Add schema/capability/policy versions; requested and sent effort separately; confirmation state; policy source; resolved model class; work class/stage; measurement source/completeness; cost basis and attribution quality. Keep `none`, `unknown`, and `unsupported` distinct. Worker records need random reference, episode/revision, lifecycle outcome, duration/token buckets, rework class, verification result, and rating revision/judge. Copy effort metadata from the original run when rating. Aggregate finding outcomes locally against existing `consult_ref`; private finding IDs need not leave the machine.
+
+**Q4.** No digest cap guarantees honesty. Start at 1,000 tokens containing evidence pointers, invariants, hypotheses, omissions, and uncertainty. Give the judge the original brief, diff inventory, and direct source access; require independent inspection of relevant boundaries. Budget exhaustion means incomplete coverage, never automatic acceptance. Compare digest-assisted review against independent review.
+
+## Requested checks
+
+- **RC1:** In a disposable workspace, capture local Start/Stop payloads for completion, resume, cancellation, and forced termination with differing parent/child settings. Permission: workspace-write. Budget: four cases/20 minutes. Settle findings #3–4 through event counts and model/effort provenance; upload nothing.
+- **RC2:** In a disposable checkout, run eight frozen known-defect cases at two efforts in randomized order with isolated account usage and blind adjudication. Permission: workspace-write. Budget: 16 reviews, capped at 20 quota percentage points. Settle findings #1–2 through attributable cost, misses, precision, and rework.
+
+### Findings
+
+- **F05-1** [major] `crates/c3-core/src/quota.rs:830`, `.collab/parity-0.6.1-2026-10-08/state.md:208` - The existing quota record is an account-window observation, not the incremental quota cost of a consultation; using it directly, or taking uncontrolled before/after differences, can misrank effort tiers. Trigger: Other consumers use the account during a review, a reset occurs, or observations are stale or missing. Evidence: read-code: codex_run_quota merges window observations and serializes the selected observation. Baseline subtraction is applied to token totals, not quota percentages.; read-code: The coordinator records the account window rising from 8% to 72% without its runs and attributes this to another consumer. Verify: Run RC2 with before/after observations from the same reset interval and account isolation; separately classify reset crossings, missing observations, and concurrent usage. Remedy: Separate quota state from measured consumption. Record attribution quality and window identity locally; exclude contaminated or unavailable deltas from cost ratios rather than treating them as zero. Retain token, latency, and rework measurements.
+- **F05-2** [major] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:51`, `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:72` - A reviewer-by-effort usefulness table, or a count of implemented findings, cannot by itself establish which effort causes better outcomes. Trigger: Higher efforts receive harder tasks, routing preferentially selects past winners, only some runs receive ratings, or repeated findings and coordinator fixes receive credit. Evidence: read-code: The sketch assigns effort by purpose, splits usefulness by reviewer and effort, and proposes treating implemented or verified findings as hits.; inferred: Task difficulty and selection affect both effort assignment and observed outcomes; implementation status does not independently prove the original finding was correct. Verify: Run RC2 and compare the blind paired results with the observational ordering; include missed known defects and unrated runs. Remedy: Use randomized shadow comparisons on frozen inputs, stratify by work class and stage, deduplicate independently confirmed findings, and report rating coverage, uncertainty, false positives, and misses. Keep production telemetry descriptive until calibration supports routing.
+- **F05-3** [major] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:57` - One SubagentStop invocation cannot safely be equated with one completed worker or used alone to estimate worker failure rates. Trigger: A worker resumes, a stop is blocked, an internal agent emits a stop event, or a process disappears without an observed ending. Evidence: read-code: The proposal describes one event and one hook invocation per worker.; ran-command: The documentation describes stops after responses, internal-agent stop events, resumable agents, and hooks that can prevent stopping.; inferred: Without a start inventory, missing stop events cannot be distinguished from workers that never existed. Verify: Run RC1 and compare observed starts, stops, and resumes with the four deliberately controlled execution histories. Remedy: Maintain a local lifecycle journal with execution episodes, deduplicate delivery, reconcile unmatched starts as unknown endings, and distinguish coordinator-spawned workers from other agent activity. Keep hooks silent and non-blocking.
+- **F05-4** [major] `.collab/parity-0.6.1-2026-10-08/state.md:125` - Classifying model tier from names such as opus-worker measures the agent definition's label rather than reliably measuring the model that executed. Trigger: An agent definition changes model, inherits a model, uses an override, or runs through a floating alias. Evidence: read-code: The sketch derives tier from plugin agent names and separately proposes an actual-model field.; ran-command: agent_type identifies the agent name. SubagentStop has no model field; effort.level is conditional. Verify: In RC1, run a deliberately mismatched agent name and model, then compare the proposed tier with locally observed resolved model identity. Remedy: Keep role classification separate from model family. Derive tier from confirmed resolved model identity, with source and completeness fields; use unknown when unavailable. Verify whether observed effort belongs to the child execution before attributing it.
+- **F05-5** [minor] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:51`, `crates/c3-core/src/ledger.rs:197` - The sketch ambiguously defines effort_requested as a preset name, whereas the existing ledger represents requested effort separately from sent effort and capability metadata. Trigger: A purpose default is overridden by roster policy or an explicit effort, or mapping sends a different endpoint tier. Evidence: read-code: The event proposal calls effort_requested the preset name.; read-code: The ledger distinguishes requested, sent, mapping, caps, and confirmation; the handoff example uses high as the requested value. Confirmation is reserved and currently null. Verify: Trace a checkpoint preset with an explicit effort override through launch, ledger, consultation event, and later rating; verify each field retains one consistent meaning. Remedy: Define effort_requested as the pre-mapping level, effort_sent as the emitted level, and policy_source/purpose separately. Preserve unknown confirmation and copy immutable execution metadata into rating events.
+- **F05-6** [major] `.collab/parity-0.6.1-2026-10-08/state.md:130` - Recognizing a test-command pattern and labeling the worker verified can report successful verification when tests failed, never completed, or did not cover the result. Trigger: A transcript contains cargo test, pytest, or another recognized command whose result is failing, cancelled, or irrelevant to the delivered work. Evidence: read-code: The sketch maps the presence of verification-command patterns to verified.; inferred: A command name establishes an attempted action, not its exit status or adequacy. Verify: Feed a local classifier fixture containing a recognized test command with a failing exit status and require attempted/failed rather than verified. Remedy: Separate verification attempted, observed result, and independent acceptance. Use unknown for missing results and retain coordinator rework as a separate outcome.
+- **F05-7** [major] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:52` - A digest-first judge constrained by a call cap can inherit the scout's omissions and issue an unsupported acceptance; reducing digest length does not resolve that risk. Trigger: The defect lies in an omitted dependency, invariant, error path, or unchanged caller, and the judge lacks sufficient source inspection budget. Evidence: read-code: The proposed judge receives a scout digest plus a call cap.; inferred: A lossy summary cannot establish absence of defects in evidence it omits; the cap can prevent independent recovery. Verify: Use a known-defect case whose relevant caller is omitted from the digest and check whether the judge independently finds it or explicitly reports incomplete coverage. Remedy: Provide the original brief, diff inventory, source access, explicit omissions, and evidence pointers. Require independent boundary checks and an incomplete outcome when the budget prevents them. Evaluate the combined workflow against independent review at equal total cost.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Proceed with versioned measurement and controlled experiments, but correct quota attribution, worker identity, and outcome semantics before using telemetry for routing.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- No controlled effort comparison was run; the recommended defaults are experimental policies, not measured optima.
+- The installed Claude Code version's hook payloads, cancellation behavior, and child-effort provenance were not exercised.
+- Provider documentation does not prove effective effort handling on the exact installed CLI, subscription, and endpoint routes.
+- The intake server's schema migration and unknown-field behavior were not inspected.
+- No files were written, no implementation changes were made, and no live model calls or tests were launched.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 4 of 12: alibaba :: qwen3.8-max (roster #9) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 357b0e28-e6dd-4322-8579-26b60de2963c (wall 0 s)
+quota      : no window in the rollout
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\06-codex-panel-a-measure-alibaba.md
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\06-codex-panel-a-measure-alibaba.events.jsonl
+
+=== panel b694a074 member 5 of 12: meta :: muse-spark-1.3-contributor [muse] (roster #10) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - meta :: muse-spark-1.3-contributor [muse], mode new, thread 01a13b77-15ad-7453-b9d3-915bd935e8f6 (source: events), wall 117.8 s
+warning    : muse: warning: rules file at \\?\C:\Users\Dmytro\C3\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules
+verdict    : ADVISE - Framing needs a routing-first redesign with a portable cost vector and Start/Stop worker join before any closed-schema freeze.
+findings   : 0 blocker, 4 major, 1 minor, 0 note -> F07-1..F07-5 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\07-muse-panel-a-measure-meta.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\07-muse-panel-a-measure-meta.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\07-muse-panel-a-measure-meta.events.jsonl
+
+Framing challenge: the brief asks how to measure tiers, but the decision that locks in value is routing under scarcity, not scoring after months. Both sketches assume one closed table can serve billing, privacy, and learning; those goals conflict. Decide the routing policy first (what the bridge does when the window is hot), then derive the minimal telemetry that can falsify it.
+
+**Q1. Tiers and denominator.** Do not assign fixed tiers per purpose yet; assign a default plus an exploration budget (e.g. 10% of reviews run one tier lower/higher). Unlisted designs: (a) calibration set — rerun a frozen defect-seeded diff monthly at each tier; (b) token-denominated cost as the cross-vendor score, window-share only as a same-account constraint; (c) usefulness per confirmed finding, not per mark. To choose I need: purpose mix shares, GLM price vs subscription shadow price, and whether z.ai tiers are speed- or quality-ordered (finding #2).
+
+**Q2. Worker capture.** SubagentStop alone is the wrong point; use Start (intent: tier, effort, task class) joined by agent id to Stop (outcome, usage) plus a coordinator rework flag (used-as-is | reworked | discarded). Keep out everything in finding #4. Attribution: credit = worker outcome class × coordinator disposition, never a single usefulness bit. To choose I need: five real hook stdin samples and the Codex/Kimi equivalent signal.
+
+**Q3. Schema.** Add now or break later: `effort_requested`, `effort_sent`, `caps_version`, `purpose`, `task_class` (review/worker shared enum), `disposition` (rework flag), `judge_source`, and a `schema_version` + reserved `other` on every new enum. Keep consult and worker events disjoint; never extend `agent_report`.
+
+**Q4. Scout-and-judge.** It fails exactly where quotas bite: the scout drops the hunk containing the defect and the judge, call-capped and anchored, never re-opens it. A byte cap is insufficient; require coverage attestation (hunk list + omitted ranges) plus one mandatory judge re-read outside the digest (finding #5). To choose I need: the miss rate on seeded diffs at scout-low vs scout-medium.
+
+## Requested checks
+RC1 (read-only): `cat` five real `SubagentStop` hook stdin payloads from `~/.claude/hooks/` session logs — settles finding #3 effort visibility. Budget: 30 min.
+RC2 (read-only): run the same brief at z.ai requested `medium` vs `high`, diff sent tier in ledger `effort_sent` — settles tier collapse. Budget: 2 consults.
+
+### Findings
+
+- **F07-1** [major] `crates/c3-core/src/quota.rs`, `.collab/parity-0.6.1-2026-10-08/state.md:186` - Window-share is not a portable denominator: it is plan-specific (subscription 5h/weekly vs pay-per-token GLM), nonlinear within a window (n=30: 30->65% for 260k tokens), polluted by other consumers on the same account (n=33: 8->72% with no local runs), and invisible to z.ai; scoring tiers per window-share cannot compare Astra against GLM or Sonnet-max against Opus-max users. Trigger: Comparing an Astra high round (10-15% of 5h window) against a GLM max round (no window, money cost) or across users on different plans. Evidence: read-code: quota.rs derives cost from Codex rollout token_count + rate_limits primary/secondary windows only; no money or token-price path exists.; read-code: State log records nonlinear jumps, other-consumer pollution, and budget-stop events that confirm the denominator moves without local runs. Verify: Recompute the nine accepted rounds F46-1..F62-1 in both units (window-% vs tokens) and check whether the ranking of tiers flips. Remedy: Score with a vector, not one denominator: tokens in/out+cached, wall time, and window-share where defined, plus money where billable; normalize usefulness per 1M input tokens as the cross-vendor comparator and keep window-share as a routing constraint, not the score.
+- **F07-2** [major] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:48` - The caps-v1 mapping (medium->high, xhigh->max on z.ai) destroys the treatment variable: logging only the sent tier confounds preset intent with endpoint capability, and three coarse buckets cannot detect whether z.ai has intermediate tiers or silent remapping. Trigger: Any per reviewer x effort usefulness split on z.ai where medium and high collapse to the same sent value. Evidence: read-code: Brief states effort vocabularies low|medium|high|xhigh vs low|high|max with medium->high and xhigh->max mapping, and proposes logging sent tier plus requested preset name.; inferred: With only sent-tier logged, GLM high mixes requested-medium and requested-high; no field records endpoint caps version or raw model string. Verify: Send the same brief at requested medium vs high via z.ai and confirm the two events are distinguishable in the intake table. Remedy: Log the triple (effort_requested preset, effort_mapped sent tier, caps_version + endpoint id); add a calibration probe set run at each tier so tier effects are identified without waiting months.
+- **F07-3** [major] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:57` - SubagentStop alone cannot reliably capture tier x effort or attribute outcomes: effort frontmatter vs Agent-call override vs model alias may disagree, the hook fires on coordinator stops and errors identically, reworked waves misattribute credit, and Codex/Kimi hosts have no such hook so the table will be Claude-only while claiming cross-user comparability. Trigger: A worker whose definition says sonnet but whose transcript model resolved to haiku, or a wave the coordinator rewrote before success. Evidence: read-code: Worker sketch assumes hook sees agent type and effort reliably and lists attribution and cross-host reporting as open questions.; read-code: Coordinator sketch notes agent definition vs model alias ambiguity and rework attribution as unresolved. Verify: Sample five real SubagentStop stdin payloads and check tier, effort, and model fields are all present and agree. Remedy: Capture at SubagentStart (declared type+effort+task class) joined by agent id to SubagentStop (outcome+usage), coordinator rate carries --effort fallback and a rework flag (used-as-is|reworked|discarded); define a host-adapter interface so Codex/Kimi report the same closed event manually.
+- **F07-4** [major] `crates/c3/src/telemetry/classes.rs:1` - The proposed worker event still leaks task shape: duration/token/tool/edit/verification buckets plus agent id and timing joinable to ledger consult_refs fingerprint task size and workflow, and the old agent_report free-text event is one misroute away from breaking the closed-class contract. Trigger: Joining a workers table row (duration+tokens+timestamp) against a consult event from the same task window. Evidence: read-code: Telemetry classes are closed by construction (table text or other/unknown, never labels/hosts/models as typed); worker sketch proposes buckets plus optional ~50-token rating note.; read-code: State sketch explicitly warns the worker event must not reuse the free-text agent_report event. Verify: Attempt the join on synthetic intake data and confirm no task can be re-identified beyond tier x effort x outcome class. Remedy: MUST stay out: prompts, paths, names, transcript excerpts, task_scope text, raw token counts, session/transcript paths; coarse-bucket counts only, agent id as a one-way pseudonym rotated per task, explicit blocklist test rejecting free-text fields at intake.
+- **F07-5** [minor] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md:51` - Scout-and-judge without a falsification budget will hide defects: a cheap scout optimizes for plausible digests, the judge anchored on the digest under-checks omitted hunks, and a stale digest surviving a cold cache silently narrows the judge's scope; no output cap alone keeps the judge honest. Trigger: A defect in a hunk the scout summarized as clean and excluded from the digest. Evidence: read-code: Routing proposes a cheap tier writing a digest handoff consumed by the judge plus a call cap, with the digest surviving a cold cache.; inferred: Quota history shows cold-cache pressure is real (96% fork cost, 8-23% per round), so digest staleness and scope-narrowing are the likely failure mode, not cost. Verify: Seed one defect outside the digest on a test diff and check the judge still finds it under the cap. Remedy: Require the scout to emit diff-range coverage (files+hunk counts) plus verbatim suspicious hunks under a byte cap, and require the judge to re-read at least one unmentioned hunk and report coverage; measure miss rate on seeded-defect calibration diffs.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Framing needs a routing-first redesign with a portable cost vector and Start/Stop worker join before any closed-schema freeze.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether z.ai glm-5.3 exposes more than three effective tiers or silently remaps them.
+- Whether coordinator usefulness marks correlate with findings-confirmed hits once the findings join exists.
+- Whether a weekly optimiser note changes tier choice versus a static recommendation table.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 6 of 12: byteplus :: deepseek-v4.1-flash (roster #6) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - byteplus :: deepseek-v4.1-flash, mode new, thread 01a13b76-2180-7e61-8c6d-4e98e5ebca9b (source: events), wall 421.9 s
+quota      : no window in the rollout; this run 1099184 input tokens (865408 cached) in 14 calls, max 100698 per call of 258400; sub-agents 0
+format repair: succeeded in 53.6 s; drift: 1 note(s)
+  drift: 11 of the 20 prose sentences (>= 60 chars) are not in reply_markdown (first: 'the ledger already carries the disambiguators (`effort_reque...')
+verdict    : ADVISE - Framing consultation: the two designs are one schema decision, and the sketch's denominator, capture point and scout cap are wrong as written - ADVISE with the unlisted alternatives and the missing facts named.
+findings   : 0 blocker, 8 major, 0 minor, 0 note -> F08-1..F08-8 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\08-codex-panel-a-measure-byteplus.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\08-codex-panel-a-measure-byteplus.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\08-codex-panel-a-measure-byteplus.events.jsonl
+
+# Framing
+
+The brief treats (A) and (B) as two measurement designs. They are one decision: both need the same two axes - a normalized effort token and an actor/tier class - added to a closed vocabulary. Decide that once, not twice.
+
+Options the brief does not list: (O5) record nothing new now - the local ledger already holds `effort`, `effort_requested`, `effort_mapping`, `effort_caps` (`crates/c3-core/src/ledger.rs:195`), and `crates/c3/src/telemetry/backfill.rs` shows backfill is a paved road; write the events once you know the fields. (O6) Make effort a randomized router arm (epsilon-exploration), so the score falls out of decisions you must make anyway. (O7) A paired design: the same brief at two tiers on the same diff - the only cheap route to identified causal data.
+
+To choose I would need: how many usable cells you will really have in three months; whether the intake rejects unknown keys and carries a schema version; whether Astra's window share is attributable per run at all.
+
+## Q1 - tiers and the denominator
+gpt-6-astra: nothing below `high` for a run that yields a verdict; `medium` only for a mechanical reading pass over a diff you already trust; `xhigh` for core-contract/stuck only. The only evidence is nine hits at `high`; `medium` for a reading pass is an untested bet - pair it (O7) rather than assume it. glm-5.3: the three tiers are the vendor's cap (`crates/c3-core/src/effort.rs:101`), so `low`=chore, `high`=review, `max`=stuck. The denominator: none is universal. Astra's window is shared with the operator's other traffic (8 to 72 % with no bridge runs, `state.md:208`), so use the marginal change around the run, not the nominal share; GLM has no window at all, so compare on money or wall time only. Confirmed findings (option 3) is the right long-term numerator, but usefulness marks are chosen by the coordinator who chose the tier - they measure the chooser.
+
+## Q2 - capture point, privacy, attribution
+`SubagentStop` is necessary and not sufficient: it does not fire for a worker the coordinator kills or one that dies with the process, so `stopped`/`error` - the shares the table exists to show - are under-counted. Pair it with `SubagentStart` and reconcile at wave end (Start without Stop implies stopped/unknown). An Agent call's effort override is probably absent from the transcript: take effort from the coordinator or send `unknown`, never guess. Keep out: brief or prompt text, paths (`agent_transcript_path` stays local), the agent label as typed, session/agent ids (pseudonymise like `consult_ref`), the `--note` text, tool arguments, repo and cwd. Attribution: the hook sees execution, not survival. Add a coordinator-side post-hoc class - `as-delivered | reworked | superseded | unused` - and attribute primarily at the wave (did the wave pass, in how many attempts).
+
+## Q3 - fields to add now
+- `vocab_version`: the event must name the mapping that produced the tier; `CAPS_VERSION` exists locally (`crates/c3-core/src/effort.rs:5`) and has no place on the wire.
+- `effort` (sent) + `effort_requested` + `effort_mapping`: z.ai maps `medium` and `high` to the single sent value `high` (`crates/c3/src/consult/orchestrate.rs:1193`), so the sent token alone cannot tell the two apart - exactly the comparison you want.
+- `actor` (`reviewer|worker|coordinator`), `tier` (`haiku|sonnet|opus|fable|other`), `host` class - one event family, not two tables.
+- `billing` class plus an optional window share: an absent denominator must be legal, not zero.
+- `wave_id` and `attempt_index` (pseudonymous) to join rework.
+Anti-breakage is permissive ingest plus a version, not more fields: the payload is a fixed struct with an exact-bytes test (`crates/c3/src/telemetry/classes.rs:267`), so accept-and-ignore unknown keys before the first new field ships.
+
+## Q4 - scout and judge
+It fails where the scout's false negative is invisible: the judge can only audit what the digest contains, and shrinking the digest drops the anchors that would let the judge contradict it. A cold-cache digest that does not name its commit lets the judge reason on a moved tree. Cap items (at most N) and per-item quote length, not bytes; demand one anchor per claim and a what-I-did-not-read coverage count; let the judge open N anchors itself; make `digest insufficient, escalate to full read` a counted outcome; and run the occasional unassisted control to measure the scout's miss rate.
+
+## Requested checks
+- RC1: `rg -n "deny_unknown_fields|schema_version|vocab_version" crates` in `C:\Users\Dmytro\C3` (read-only, under a minute) - settles whether the local event path tolerates new keys at all (finding #3).
+- RC2: `rg -n "effort" crates/c3/src/telemetry/event.rs` (read-only, seconds) - confirms no event field carries effort today (finding #2).
+- RC3: review the xelth.com intake request validator for unknown-key tolerance and a schema version (read-only, ~10 min) - settles the wire-compat half of finding #3; the intake is outside this repository.
+- RC4: paired pilot - run one wave's brief at `medium` and at `high` on the same revision (workspace-write for the handoff files, two rounds) - settles whether `medium` suffices for a reading pass (finding #7).
+- RC5: launch one worker, capture its `SubagentStart`/`SubagentStop` stdin JSON, then kill a worker mid-flight and see whether Stop arrives (read-only, one worker) - settles findings #4 and #5.
+
+### Findings
+
+- **F08-1** [major] `crates/c3-core/src/quota.rs`, `.collab/parity-0.6.1-2026-10-08/state.md:200` - The sketch's denominator (usefulness per 5-hour-window share) cannot compare the two standing consultants and misattributes cost: glm-5.3 has no ChatGPT 5-hour window at all, and Astra's window is shared with the operator's own traffic, so a per-run window-share score charges other consumers to the reviewer and leaves GLM with an undefined denominator. Trigger: Scoring a reviewer on an endpoint with no 5-hour window, or on a window that moved between the run's baseline and its end. Evidence: read-code: The sketch asks how to score a tier as usefulness per 5-hour-window share, not per run.; read-code: The window went 8 to 72 percent between 11:18 and 11:55 with no runs of ours - another consumer on the same ChatGPT account.; read-code: The caps-v1 api.z.ai row declares a zai vocabulary and no window notion; only the builtin openai endpoint has the 5-hour/weekly windows. Verify: List two consecutive Astra rounds from the quota ledger and compare each round's pre-run and post-run window share against the round's own token count; if the window moved by more than the round could explain, per-run share is contaminated. Remedy: Use the marginal window share measured immediately around a run (and a separate correction when an unrelated consumer moves the window); score GLM on money and wall time; only compare reviewers on a cost scale both endpoints have (money or wall time), keeping window share an Astra-internal metric.
+- **F08-2** [major] `crates/c3/src/consult/orchestrate.rs:1193`, `crates/c3-core/src/ledger.rs:195`, `crates/c3/src/telemetry/event.rs:58` - An event carrying only the sent `effort` cannot support the reviewer x effort table on z.ai: the zai vocabulary maps both `medium` and `high` to the sent value `high` (and `xhigh` to `max`), so rows with effort=high are an unlabelled blend of two requested tiers - the exact comparison the design exists to make. The ledger already carries the disambiguators (`effort_requested`, `effort_mapping` = zai-v1) but the event drops all of them. Trigger: Splitting the intake's usefulness table by reviewer x effort for glm-5.3, or reading a z.ai `high` row. Evidence: read-code: vocabulary_map: "zai" => ("zai-v1", "low", "high", "high", "max") - medium is sent as high and xhigh as max.; read-code: LedgerEntry already has effort, effort_requested, effort_sent, effort_mapping, effort_caps, effort_confirmed.; read-code: The Details allowlist has engine, provider, model, purpose, outcome, wall_seconds, tokens, findings, flags, panel_size, peers_used, os, runtime, topic_tag, useful, verified, rejected, consult_ref - no effort field. Verify: Read the Details struct in crates/c3/src/telemetry/event.rs and confirm no effort key; then compare the ledger field set with the event field set to see which ledger facts never reach the wire. Remedy: Send `effort` (sent) together with `effort_requested` (the requested tier or preset) and `effort_mapping` (the vocabulary/version label), so a lossy endpoint mapping is recoverable per row.
+- **F08-3** [major] `crates/c3/src/telemetry/event.rs:58`, `crates/c3/src/telemetry/classes.rs:267`, `crates/c3-core/src/effort.rs:5` - The closed vocabulary has no version on the wire: CAPS_VERSION (caps-v1) exists only locally, and the event payload is a fixed struct whose exact bytes a unit test pins - so a later caps change silently re-labels historical rows, and any added field is a breaking change for a strict intake. Trigger: A caps-v2 tier set, or an intake that rejects an event containing an unknown key. Evidence: read-code: pub const CAPS_VERSION: &str = "caps-v1" - the version is a local constant with no telemetry counterpart.; read-code: Test a_current_event_closes_to_its_exact_bytes asserts each event serialises to its exact bytes and that whitespace re-normalises to the same bytes.; read-code: Local prior art explicitly ignores unknown keys (no deny_unknown_fields) - the permissive pattern exists but is not stated for the event or the intake. Verify: Ask the operator to show the intake's request validator and confirm whether unknown keys are rejected and whether any schema version is stored per event. Remedy: Add a `vocab_version` to every event and make the intake accept-and-ignore unknown keys before the first new field ships; keep the permissive ingest as the anti-breakage mechanism, not more fields.
+- **F08-4** [major] `.collab/parity-0.6.1-2026-10-08/state.md:118` - The SubagentStop hook alone under-counts the outcome classes the worker table exists to show: it does not fire for a worker the coordinator kills or one that dies with the process, so `stopped` and `error` shares are systematically low, and a worker that never stops is invisible entirely. Trigger: A wave in which the coordinator stops a worker mid-flight, or a worker process dies, the pattern recorded repeatedly in state.md. Evidence: read-code: The plan names stopped-by-coordinator and error as outcome classes while the only signal source given is the SubagentStop hook.; inferred: An end-of-agent hook by construction cannot report an agent that never reaches its end.; assumed: No real SubagentStart/SubagentStop payload was inspected in this session. Verify: Launch one worker, capture its SubagentStart and SubagentStop stdin JSON, then kill a worker mid-flight and observe whether a Stop payload arrives at all. Remedy: Pair SubagentStart with SubagentStop and reconcile at wave end (a Start with no Stop becomes stopped/unknown); carry the worker's effort from the coordinator's own provenance or send `unknown`.
+- **F08-5** [major] (no location) - Per-worker attribution from the hook conflates execution with outcome: the hook can report that a worker ran and how it ended, but not whether its result survived, so a worker whose work the coordinator rewrote still scores as reported and flatters its tier. There is no rework class in the proposed vocabulary. Trigger: Any wave where the coordinator rewrites or discards a worker's edit after the worker reports. Evidence: read-code: The proposed outcome classes are completed, error:..., stopped - all execution states; the optional coordinator mark is the only outcome signal and is per worker, only yes/partly/no.; read-code: Observed 2026-10-13/14: workers did each fix in 15-70 minutes and waves were then reworked across multiple rounds, so rework is the normal case.; inferred: The brief itself asks how to attribute a wave's success to a worker when the coordinator reworks it - the vocabulary as sketched cannot. Verify: Take one merged wave and list, per worker, whether the coordinator kept its edit as delivered or rewrote it; count how many would be mis-scored by the current outcome classes. Remedy: Add a coordinator-side post-hoc class `as-delivered | reworked | superseded | unused` per worker, and make the wave/gate the primary attribution unit (did the wave pass, in how many attempts) rather than the individual worker.
+- **F08-6** [major] (no location) - Two free-text carriers sit inside the worker and scout designs: the coordinator's `--note` on `c3 workers rate` and the scout's digest. If either is ever placed in a telemetry event (or the digest is stored with telemetry), the privacy-by-construction invariant breaks - the digest is a re-encoding of the brief, paths and code, i.e. exactly what the closed vocabulary exists to keep off the machine. Trigger: Adding a note or digest field to an event, or exporting the digest beyond the local handoff file. Evidence: read-code: The module header states every string an event carries comes from a CLOSED set and that a harmless private label must never leave the machine.; read-code: The worker plan adds a --note text and the scout plan a digest handoff, neither assigned a closed class.; inferred: A digest summarising a diff necessarily contains paths and code fragments, so it cannot travel on the event channel. Verify: Grep the telemetry event constructors and the intake schema for any free-text field (note, digest, title) and confirm none is accepted; check where the digest is written today. Remedy: Keep the digest and the note on the local handoff/ledger channel only, never in an event; pseudonymise every id the way `consult_ref` does; keep `agent_transcript_path` local and delete it per the forget-me contract.
+- **F08-7** [major] `.collab/parity-0.6.1-2026-10-08/state.md:186` - The score the design wants will read noise as signal: with the observed volume (nine Astra rounds in one wave, one animal per reviewer) the reviewer x effort x purpose table has essentially no cells, and the usefulness mark is entered by the same coordinator who chose the tier, so it measures the chooser rather than the tier. A tier policy fitted on this degrades routing. Trigger: Building a per-tier usefulness table from three months of the current cadence, or deriving a roster effort policy from it. Evidence: read-code: The sketch wants the usefulness table split per reviewer x effort while the only evidence quoted is nine rounds of one reviewer at one effort.; read-code: Nine rounds of one wave produced one finding each - a single reviewer-effort cell, n=9, with no control arm.; inferred: Alternative 3 (findings confirmed) is a stronger numerator but needs the findings join, which the brief marks as not yet in place. Verify: Ask the operator for the intake's current reviewer x purpose cell counts and the smallest cell with more than a handful of rows; if every cell is under about twenty, no per-tier score is identifiable. Remedy: Instrument now and defer the policy decision; obtain identified data from a randomized or paired arm (same brief at two tiers, or an epsilon-exploration router arm); report usefulness with the coverage/dispersion, not as a point estimate, and promote confirmed findings once the findings join exists.
+- **F08-8** [major] `.collab/parity-0.6.1-2026-10-08/state.md:200` - The scout-and-judge route fails silently at the scout: a cheap tier's false negative is unobservable to the judge, which can only audit the digest, and the digest's incentive is to keep the cheap path short; a byte cap on the digest forces dropping exactly the line anchors that would let the judge contradict it, and a digest that does not name its commit lets the judge reason on a moved tree. Trigger: A diff whose defect is in a hunk the scout summarised as uninteresting, or a judge reading a digest cut at an earlier commit. Evidence: read-code: The sketch routes a cheap tier to write a digest handoff and gives the judge the digest plus a call cap; the digest survives a cold cache, and no coverage or commit anchoring is specified.; read-code: The existing reading discipline already requires `git diff --stat` first, one path at a time with a line cap, and a verdict even on an incomplete read - the discipline that makes a full read auditable.; inferred: Real defects were found in low-salience hunks (an error-to-absence conversion, a second-precision instant), the class of finding a summarising scout is most likely to drop. Verify: Run the scout route on a revision whose defect is already known from a prior full-review round and check whether the digest mentions the hunk at all; repeat on one clean revision to see whether the digest invents findings. Remedy: Cap items and per-item quote length rather than bytes; require one file:line anchor and a short quotable fragment per claim; require a what-I-did-not-read coverage count and the commit/range the digest was cut from; have the judge open at least N anchors itself and get the raw diff of the digest's suspicious hunks; make `digest insufficient, escalate to full read` a first-class counted outcome; and run a periodic unassisted control to measure the scout's miss rate.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Framing consultation: the two designs are one schema decision, and the sketch's denominator, capture point and scout cap are wrong as written - ADVISE with the unlisted alternatives and the missing facts named.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether the xelth.com intake rejects unknown keys or stores a schema version - the intake is not in this repository, so only the operator can show its validator.
+- What a real SubagentStart/SubagentStop stdin payload contains (agent type, transcript path, any effort or model-alias field) - no hook was executed in this read-only session.
+- Whether z.ai exposes more than the three effort tiers caps-v1 records for glm-5.3 - the bridge caps the vocabulary at three regardless, so the tier policy is unchanged either way.
+- The actual cell counts in the intake's reviewer x effort x purpose tables - not readable from this checkout.
+- Whether the scout digest currently exists in code at all, or is only a plan in state.md - only the plan text was read.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 7 of 12: gemini :: gemini-3.1-pro-high [agy] (roster #5) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: failed: agy exit 1 - invalid model selection (--model "gemini-3.1-pro-high" --effort ""): model gemini-3.1-pro-high is not recognized as a known model or custom model in settings Available models: Gemini 3.8 Flash (High) Gemini 3.8 Flash (Medium) Gemini 3.8 Flash (Low) Claude Sonnet 4.6 (Thinking) Claude Opus 4.6 (Thinking) GPT-OSS 120B (Medium) (wall 0 s)
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\09-agy-panel-a-measure-gemini.md
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\09-agy-panel-a-measure-gemini.events.jsonl
+
+=== panel b694a074 member 8 of 12: byteplus :: dola-seed-2.0-pro (roster #7) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - byteplus :: dola-seed-2.0-pro, mode new, thread 01a13b76-23a6-7df1-93b2-72c5e539d9f7 (source: events), wall 128.3 s
+quota      : no window in the rollout; this run 170981 input tokens (1848 cached) in 3 calls, max 59227 per call of 258400; sub-agents 0
+verdict    : ADVISE - Provided framing analysis, answers to all questions, unlisted design alternatives, and schema stability recommendations.
+findings   : 0 blocker, 0 major, 1 minor, 1 note -> F10-1..F10-2 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\10-codex-panel-a-measure-byteplus.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\10-codex-panel-a-measure-byteplus.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\10-codex-panel-a-measure-byteplus.events.jsonl
+
+# Answers
+
+**Q1.**  
+- gpt-6-astra: chore/reading pass → medium, diff-review → high, core-contract/stuck → xhigh  
+- glm-5.3: chore → low, diff-review → high, stuck → max  
+- Denominator: window share for Astra (hard quota limits are the real constraint), money for GLM.  
+- Unlisted design: periodic side-by-side calibration runs: send 5% of identical briefs to two tiers of the same model to measure marginal utility before locking policies.
+
+**Q2.**  
+- SubagentStop is the correct capture point (authoritative end event, no race conditions).  
+- Must exclude: all user content (brief, file paths, repo names, worker output); only closed enum classes are allowed.  
+- Attribution: add `worker_role` (scout/judge/fixer/verifier) set at spawn time, plus `coordinator_modified_result` boolean marked after review. Even if reworked, the event still records what the worker was assigned to do.
+
+**Q3.**  
+Add these closed-enum fields now (never free text):  
+- `effort`, `effort_requested`  
+- `worker_tier`, `worker_effort`, `worker_role`  
+- `coordinator_modified`  
+- `outcome_confirmed` (boolean for verified findings)
+
+**Q4.**  
+- Fails when the defect lives in context the scout omits: off-by-one line boundaries, cross-file dependencies, whitespace-sensitive logic, or subtle edge cases.  
+- Scout cap: max 500 words, plus a mandatory "omitted hunks" section listing every diff segment not included. Judge must explicitly confirm they reviewed this list, or the review is marked incomplete.
+
+## Requested checks
+RC1: Run `cat crates/c3/src/telemetry/classes.rs` (read-only) to confirm reserved space exists for new closed enum fields without schema breakage.
+RC2: Run `cat .collab/parity-0.6.1-2026-10-08/state.md` (read-only) to verify the current tier sketch matches the handoff description.
+
+### Findings
+
+- **F10-1** [note] (no location) - The current sketch omits side-by-side calibration runs, which are required to avoid locking in suboptimal tier policies. Trigger: When tier policies are set without comparative utility data. Evidence: read-code: The listed alternatives do not include comparative calibration runs. Verify: Check if any existing telemetry design includes fields for side-by-side run comparison. Remedy: Add 5% periodic side-by-side calibration runs to the implementation plan.
+- **F10-2** [minor] (no location) - The worker telemetry sketch lacks a `worker_role` field, making attribution impossible when the coordinator reworks output. Trigger: When a worker's output is modified by the coordinator before being used. Evidence: read-code: Proposed worker event fields do not include role or coordinator modification status. Verify: Review the SubagentStop hook definition to see if role metadata is already exposed. Remedy: Add `worker_role` and `coordinator_modified_result` fields to the worker event schema.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Provided framing analysis, answers to all questions, unlisted design alternatives, and schema stability recommendations.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether z.ai exposes more than three effort tiers for glm-5.3
+- Whether the SubagentStop hook can reliably access effort level and tier information
+- Whether medium effort on gpt-6-astra is sufficient for reading passes
+- How findings store IDs can be joined to telemetry events without leaking private data
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 9 of 12: ZAI-claude :: glm-5.3 [claude] (roster #11) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - ZAI-claude :: glm-5.3 [claude], mode new, thread fce0621f-b849-4d90-8ff3-5e078c46c3b2 (source: events), wall 306.4 s
+verdict    : ADVISE - This is a framing consultation on two measurement designs, not an acceptance or diff review, so the verdict is advice only.
+findings   : 0 blocker, 5 major, 1 minor, 0 note -> F11-1..F11-6 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\11-claudecode-panel-a-measure-zai-claude.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\11-claudecode-panel-a-measure-zai-claude.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\11-claudecode-panel-a-measure-zai-claude.events.jsonl
+
+## Framing - challenged first
+
+- **No single denominator spans both vendors.** Astra's binding resource is a shared, time-gated window; GLM's is money. Score within vendor and publish per-vendor tables; a cross-vendor "winner" is meaningless.
+- **Window share is the wrong denominator even for Astra.** The window is account-wide: it moved 8 to 72 % with no C3 run at all (state.md 11:57) and 30 to 65 % nonlinear inside one run (09:02). Per-run window deltas charge other consumers' spend to the reviewer. Denominator: the run's OWN input tokens (ledger `tokens`, cached counted); window share stays a feasibility gate ("expected share per round at this effort"), never the score.
+- **Two designs the brief does not list.** (a) **epsilon-exploration**: track-record routing starves itself - a tier that starts unlucky never gathers evidence; route ~10 % of low-stakes purposes (chore, checkpoint, framing) to the less-proven tier; the roster policy is a prior, not a rule. (b) **Escalation ladder**: reading passes go out at medium and re-send at high only when the reply is unusable or findings=0 on an acceptance purpose - cheaper than always-high and it manufactures the medium-vs-high pairs the score needs.
+
+## Q1
+
+gpt-6-astra: chore low; framing/decision/checkpoint medium; diff-review high (nine rounds, one real defect each, 10-15 % of a window); acceptance high; core-contract/stuck xhigh. glm-5.3 (real tiers: low/high/max): chore low; checkpoint/framing/review high; stuck max. Score: confirmed findings (alternative 3, once the join exists) per million run-input tokens; usefulness marks as the interim numerator. "Is medium enough" is answered in weeks by epsilon-exploration plus RC2, not by months of passive events.
+
+## Q2
+
+SubagentStop is the right point - per worker, zero model tokens - with caveats: it fires per stop and SendMessage continuations re-stop one agent (dedupe on a minted `worker_ref`, consult_ref-shaped, and count resumes); the payload likely lacks model/effort (RC1) - take the model from the transcript's init events (closed list), effort from the transcript when present, else from `workers rate --effort`, and record `effort_source` so the rated-only subset's bias is visible; duration from transcript timestamps, not a start hook.
+
+Must stay out: anything not a class or a count - transcript/session ids and paths, agent names as typed (closed tier list only), briefs, prompts, tool outputs, file contents, edit diffs, environment values, and the state.md sketch's `--note` (free text; keep it in the local findings store).
+
+Attribution under rework: never infer it - the coordinator marks a closed `disposition` at wave close (kept | reworked | discarded | superseded) against `worker_ref`; "useful" then means "the wave kept part of this worker's output", which survives rework.
+
+## Q3
+
+Publish now, all closed: `effort` (tier sent), `effort_requested` (the PRE-mapping tier of the same vocabulary - the preset name alone loses it, and zai-v1 collapses medium to high), `effort_source` (preset|policy|flag|native), `tokens_cached` (cached input counts against the window), `panel_role` (solo|scout|judge|shadow - a scout's "useful" is not a judge's). Worker event: `worker_ref`, tier, model (closed list), effort, effort_source, outcome, duration class, resumes, edits (read-only|writes), verified, disposition. Caveat: `close_event` rejects every event_type but consultation|rating (classes.rs:869) - allowlist, constructors and intake must learn `worker` in the same wave as the hook ships.
+
+## Q4
+
+It fails three ways: the digest is lossy compression tuned to the obvious (it drops the one-line defect inside a big hunk); scout and judge of one model family share blind spots (GLM low to GLM max); a judge that cannot see omissions cannot audit the digest. Caps: the judge ALWAYS receives the complete diff stat (cheap, makes omissions detectable); cap the summary (~300 words), never the evidence - verbatim hunks up to a byte budget, each omitted hunk listed by path and size, truncation marked, the scout's hypotheses separated from quoted lines.
+
+## Requested checks
+
+- **RC1** Temporarily register a `SubagentStop` hook that writes stdin to a file (Claude Code settings), spawn and continue one subagent, inspect the payload's keys. Any directory; workspace-write; 15 min; settles finding #5.
+- **RC2** Two consultations, same pinned brief and range, `-Effort medium` vs `high` on gpt-6-astra; compare findings and ledger tokens/quota. Working dir: repository root; workspace-write; budget ~2 x 15 % of one 5-hour window; settles Q1's medium question.
+- **RC3** `curl -s <z.ai OpenAPI/docs URL for glm-5.3>` and read the reasoning-effort enumeration. Read-only; 10 min; settles whether z.ai exposes more than three tiers.
+
+### Findings
+
+- **F11-1** [major] `crates/c3/src/telemetry/event.rs:58`, `crates/c3/src/consult/orchestrate.rs:1193` - No telemetry event carries the effort or the cached-token count today, and the sketch's two fields (effort = tier SENT, effort_requested = preset name) cannot recover the requested tier: zai-v1 maps medium to high, and a roster effort policy or -Effort override changes the tier without changing the preset name - so the planned per reviewer x effort table would merge two populations on the z.ai side and hide the policy's effect everywhere. Trigger: A glm-5.3 run requested at medium (preset, policy or flag) and one requested at high: both leave as effort=high with identical effort_requested, forever indistinguishable in the intake. Evidence: read-code: Details and RatingDetails have no effort or cached-tokens field; the allowlist is the plugin's 0.6.1 shape.; read-code: vocabulary_map zai: low/high/high/max - medium and xhigh both collapse.; read-code: -Effort (low..xhigh) overrides the purpose preset, so the preset name does not determine the requested tier. Verify: Run one z.ai consultation at -Effort medium and one at high and inspect the two spooled events: today both lack effort entirely; under the sketch both would read effort=high with no distinguishing field. Remedy: Publish three closed fields now - effort (sent tier), effort_requested (the pre-mapping tier in the same none|low|medium|high|xhigh|max vocabulary), effort_source (preset|policy|flag|native) - plus tokens_cached as the cost side.
+- **F11-2** [major] `.collab/parity-0.6.1-2026-10-08/state.md:208`, `crates/c3-core/src/quota.rs:797` - Scoring a tier by usefulness per 5-hour-window share attributes other consumers' spend to the reviewer: the window is account-wide, moves without any C3 run, and is nonlinear in the run's own tokens. Trigger: Any scoring interval that overlaps another consumer of the ChatGPT account (observed 8->72 % between 11:18 and 11:55 with no C3 runs; 30->65 % inside one 260k-token run). Evidence: read-code: The 11:57 entry records the window moving 8->72 % without our runs; the 09:02 entry records 30->65 % inside one run for 260k tokens, nonlinear.; read-code: RunQuota.tokens carries the run's OWN input/cached/output (baseline-subtracted), while quota is the account-level window observation - the clean and the polluted cost measures are already separate. Verify: Diff two consecutive ledger entries' quota.used_percent against their own tokens deltas on a day another Codex session ran: the share moved while the run's tokens did not. Remedy: Use the run's own input tokens (cached counted) from RunQuota.tokens as the denominator; keep window share only as a feasibility gate (median share consumed per round at each effort tier).
+- **F11-3** [major] `crates/c3/src/telemetry/classes.rs:869` - close_event discards any event whose event_type is not consultation or rating, so a worker event queued before the allowlist, the typed constructors and the intake learn the third type is silently dropped (one local diagnostic line) - the hook must not ship in the same release that does not extend all three. Trigger: A build ships the SubagentStop hook while its sender still runs the current closer: every event_type=worker body returns None and is counted as rejected. Evidence: read-code: close_event returns None for any event_type other than consultation and rating; the doc comment says such a body is discarded with a local diagnostic. Verify: Spool a minimal event_type=worker body and run the sender against a loopback test intake: the event is rejected/dropped and counted in the flush report. Remedy: Extend close_event, the Event constructors and the intake schema for event_type=worker in the same wave as the hook, and gate the hook's installation on the bridge version.
+- **F11-4** [major] `.collab/parity-0.6.1-2026-10-08/state.md:131` - The state.md worker-rate sketch carries `--note` (free text), contradicting the closed-class contract the same file states at line 149 (the intake's agent_report free text must NOT be reused); the handoff's cleaner `useful yes|partly|no` mark must win and the note must never reach the event. Trigger: A user types a note naming a file, a path or a person: the closed-class event has nowhere to put it, so it either leaks or the field exists dead in the schema. Evidence: read-code: Line 131 designs `c3 worker rate <id> yes|partly|no --note`; line 149 records the operator's own rule that free text breaks the closed-class contract and must not be reused. Verify: Read the two sketches side by side (handoff 01 section B vs state.md:131): the note appears in one only. Remedy: Keep the note in the local findings store only; the event carries the mark, rating_rev and judge exactly as the reviewer rating event does.
+- **F11-5** [minor] `.collab/parity-0.6.1-2026-10-08/state.md:123` - SubagentStop fires per stop and SendMessage continuations re-stop the same agent, so per-worker counts double without a per-worker pseudonymous id plus a resume count; and the effort is probably not in the hook payload or the subagent transcript, making effort-bearing rows a coordinator-rated (biased) subset. Trigger: One logical worker continued twice: three SubagentStop events counted as three workers; effort rows exist only for workers the coordinator bothered to rate. Evidence: read-code: The sketch has a resumes class but no per-worker id, and names the effort visibility in the transcript an open question with the rate command as fallback. Verify: Register the dump-to-file hook of RC1, continue one agent twice, and observe repeated stop events plus which keys the payload carries. Remedy: Mint worker_ref (a guid, consult_ref-shaped) at first stop, count resumes on it, and record effort_source: transcript|operator|none so the bias of the operator-supplied subset is visible in the table.
+- **F11-6** [major] `.collab/parity-0.6.1-2026-10-08/state.md:200` - Scout-and-judge fails on lossy digests and correlated blind spots: a summary tuned to the obvious drops the one-line defect inside a large hunk; a scout and judge of one model family share blind spots (GLM low digest, GLM max judge); and a judge that cannot see what was omitted cannot audit the digest. Trigger: A past range whose real defect (e.g. the wave-8i/8j instant-ordering bugs) lives in one line of a big hunk the scout paraphrased instead of quoting. Evidence: read-code: The sketch gives the judge the digest plus a call cap and nothing else; no omission audit.; read-code: The reading discipline exists for exactly this failure mode (stat first, then hunks one path at a time) - the digest must not bypass it.; inferred: Same-family scout and judge correlate errors; the brief's own quota lesson (a cold cache) is why the digest, not the diff, reaches the judge. Verify: Run the scout-and-judge pair on a past range whose real defect is known (F62-1's wave) and check whether the digest carries the defective hunk verbatim or only a paraphrase. Remedy: The judge always receives the complete diff stat; cap the summary (~300 words), never the evidence - verbatim hunks up to a byte budget with each omitted hunk listed by path and size, truncation marked, hypotheses separated from quoted lines; prefer a different model family for the judge than the scout.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+This is a framing consultation on two measurement designs, not an acceptance or diff review, so the verdict is advice only.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether z.ai exposes more than three effort tiers on glm-5.3 (docs not checked; RC3).
+- What the installed Claude Code version's SubagentStop payload actually carries (model, effort, agent_transcript_path); RC1.
+- Whether gpt-6-astra at medium finds the defect classes that high finds - needs the RC2 A-B run.
+- Whether the intake's published tables and the t-hub client contract can gain a third event_type and new detail keys without breaking the published schema (the server-side contract was not read here).
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 10 of 12: gemini :: gemini-3.8-flash-high [agy] (roster #4) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - gemini :: gemini-3.8-flash-high [agy], mode new, thread eea5ab20-5d3a-4a0d-8678-3fdb7cda8198 (source: events), wall 636.5 s
+verdict    : ADVISE - Scoring must decouple subscription window congestion from API token costs, replace prose scout digests with structural slices, and validate worker telemetry through git survival metrics before publishing the closed schema.
+findings   : 0 blocker, 1 major, 1 minor, 1 note -> F12-1..F12-3 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\12-agy-panel-a-measure-gemini.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\12-agy-panel-a-measure-gemini.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\12-agy-panel-a-measure-gemini.events.jsonl
+
+## Framing Review: Measuring Reviewers and Workers
+
+The brief assumes reviewer tiers can be scored under a common denominator and that scouts can reliably summarize diffs for judges. Both assumptions break under operational reality.
+
+### Framing Challenges & Unlisted Options
+1. **Asymmetric Currency Fallacy**: Astra is bottlenecked by a non-linear 5-hour rolling quota window under fixed subscription cost; GLM is bottlenecked by linear API credits without rolling limits. Dividing GLM by window share is undefined; dividing Astra by fiat cost yields zero marginal cost until abrupt 98% lockout.
+2. **The Summarization Blindspot**: Subtle bugs (e.g. F46–F62 timestamp precision and byte-slicing) look like ordinary code. A cheap scout compresses away the exact edge case, blinding the judge.
+3. **Unlisted Option: Deterministic AST Slicing**: Instead of prose digests, the scout produces structured slice manifests (call-chains, touched invariants, hunk boundaries).
+4. **Unlisted Option: Code-Survival Attribution**: Instead of subjective coordinator marks, measure worker quality by git hunk survival rate in the final merge.
+
+---
+
+### Q1. Effort Tiers and Scoring Denominator
+**Effort per purpose**:
+- **gpt-6-astra**: 
+  - *Chore*: **Never route to Astra** (burns 10–23% window for trivial queries; route to GLM low or local grep). If forced: `low`.
+  - *Checkpoint*: `medium`.
+  - *Framing / Decision / Diff-review*: `high` (wave 8 proved `high` is necessary to detect subtle invariants).
+  - *Acceptance / Core-contract / Stuck*: `xhigh` (or `high` with strict reading discipline).
+- **glm-5.3**:
+  - *Chore*: `low`.
+  - *Checkpoint / Framing / Decision*: `high` (caps-v1 maps medium -> high).
+  - *Diff-review / Acceptance / Core-contract / Stuck*: `max` (GLM is cheap per token; reducing effort saves pennies while sacrificing defect discovery).
+
+**Denominator**:
+Use **Dual-Currency Cost per Verified Finding (CPF)**:
+- Astra: Verified Findings / (Δ 5h-window share % × congestion factor).
+- GLM: Verified Findings / Dollar spent.
+Wall-time must act as an SLA timeout filter, not an efficiency denominator.
+
+**Unlisted Design**: **Two-Pass Escalation Ladder**. Run GLM at `low` (or Astra `medium`) first; escalate to Astra `high`/`xhigh` only if diff-review yields an unverified `ACCEPT` or ambiguous warnings.
+
+### Q2. Worker Telemetry & Attribution
+- **Capture Point**: `SubagentStop` is necessary but insufficient: it misses context thrashing, mid-flight stall loops, and unhandled crashes. It must pair with `SubagentStart` to track orphaned workers.
+- **Privacy Constraints**: Strictly exclude task slugs, prompt text, file paths, branch names, bash strings, diffs, and error logs. Emit only closed enums: `worker_tier`, `model_token`, `duration_bucket`, `tokens_bucket`, `outcome_class`, `edits_class`.
+- **Attribution on Rework**: Replace subjective `c3 workers rate` with **Git Hunk Survival Ratio**:
+  - *Clean*: ≥ 80% hunks survive in coordinator commit.
+  - *Assisted*: 20–79% hunks survive.
+  - *Discarded*: < 20% hunks survive (docking worker tier score).
+  Correlate with subsequent reviewer findings on touched hunks.
+
+### Q3. Closed Vocabulary Additions
+Add immediately:
+1. `Event` (consultation): `effort_sent` (`none|low|medium|high|xhigh|max`), `effort_requested`, `quota_window_bucket` (`none|0-25|25-50|50-80|80-98|98-100`), `cache_ratio_bucket` (`0-25|25-50|50-75|75-100`).
+2. `RatingEvent`: `effort_sent` (enables rating analysis without joining).
+3. `WorkerEvent`: `worker_tier` (`haiku|sonnet|opus|fable|other`), `worker_model`, `effort` (`none|low|medium|high|xhigh|max|unknown`), `task_purpose` (`chore|fix|feature|test|refactor|other`), `outcome` (`completed|stopped_coordinator|failed:timeout|failed:quota|failed:context|failed:other`), `rework_class` (`none|minor|major|discarded`), `verification_status` (`clean|failed|unrun`).
+
+### Q4. Scout-and-Judge Routing
+- **Failure Modes**: (1) *Compression loss*: scout omits subtle edge cases. (2) *Confirmation bias*: judge audits the scout's narrative rather than raw code.
+- **Caps & Safeguards**:
+  - Scout emits **structured AST index/slice maps only**, capped at 1,500 tokens / 100 lines.
+  - **Judge Evidence Invariant**: Judge must read code via direct tool calls (`READING_DISCIPLINE`, max 200 lines/call); citing the digest as primary evidence fails validation.
+
+## Requested checks
+
+- **RC1**: Run `cargo test -p c3 telemetry::classes::tests::worker_event_dropped` from repo root (permission: read-only; budget: 30s) testing whether `close_event_body` drops `"event_type":"worker"` (finding #1). Settle when test confirms rejection.
+- **RC2**: Run `cargo test -p c3-core roster::tests::reject_effort_key` from repo root (permission: read-only; budget: 30s) validating a roster entry with an `"effort"` key fails `validate_roster` with "unknown key 'effort'" (finding #2). Settle when refusal message is confirmed.
+
+### Findings
+
+- **F12-1** [major] `crates/c3/src/telemetry/classes.rs:870` - close_event in telemetry/classes.rs hardcodes an event_type check for consultation and rating only, silently discarding any queued worker event. Trigger: An event with event_type: "worker" is enqueued and processed by close_event_body during telemetry dispatch. Evidence: read-code: close_event returns None if event_type != "consultation" && event_type != "rating". Verify: Pass a valid JSON object with event_type: "worker" to close_event_body; verify that None is returned. Remedy: Add "worker" to the recognized event_type list and implement a dedicated closed-vocabulary classifier for worker telemetry events.
+- **F12-2** [minor] `crates/c3-core/src/roster.rs:483` - validate_roster enforces a fail-closed allowlist of reviewer entry keys that rejects any effort or effort_policy property. Trigger: A reviewer entry in codex-consult-roster.json includes an "effort" or "effort_policy" key as proposed in the sketch. Evidence: read-code: iobj.keys() is strictly validated against an exact 14-string allowlist that does not include effort. Verify: Invoke validate_roster with a roster containing an "effort" dictionary on an entry; verify that an unknown key refusal is emitted. Remedy: Add "effort" to the allowed reviewer keys in validate_roster and define its schema parser.
+- **F12-3** [note] `crates/c3-core/src/effort.rs:94` - Caps-v1 capability table defines static vocabulary identifiers without supporting per-purpose effort policies or fallback mappings. Trigger: Consultation orchestration attempts to resolve a per-purpose effort policy from caps-v1. Evidence: read-code: Caps struct only exposes vocabulary, models, and schema_transport without purpose-to-tier mappings. Verify: Inspect Caps definition in c3-core/src/effort.rs; verify absence of purpose-to-tier mappings. Remedy: Introduce purpose-aware effort resolution and fallback tables in c3_core::effort.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Scoring must decouple subscription window congestion from API token costs, replace prose scout digests with structural slices, and validate worker telemetry through git survival metrics before publishing the closed schema.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+_(none)_
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 11 of 12: ZAI :: glm-5.3 (roster #2) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - ZAI :: glm-5.3, mode new, thread 01a13b82-9ec4-7220-96db-d27c885f98b8 (source: events), wall 235.9 s
+quota      : no window in the rollout; this run 577363 input tokens (476992 cached) in 8 calls, max 90081 per call of 996147; sub-agents 0
+verdict    : ADVISE - This is a framing consultation on measurement designs not yet implemented, so advice rather than acceptance.
+findings   : 0 blocker, 3 major, 3 minor, 0 note -> F13-1..F13-6 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\13-codex-panel-a-measure-zai.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\13-codex-panel-a-measure-zai.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\13-codex-panel-a-measure-zai.events.jsonl
+
+## Framing first
+
+Three designs the brief does not list:
+
+1. **Assignment, not just effort, in the event.** Without a field saying how the tier was chosen (`routed|preset|alternate|random`), the data is observational and confounded: the routed panel already seats strong reviewers on hard tasks, so high effort will look inefficient per unit cost. Alternating two efforts inside one purpose is the only causal design.
+2. **Marginal, paired value.** A panel already puts several reviewers on the same brief — free natural pairs. Score the *increment* of high over medium on the same brief, not absolute usefulness per cost.
+3. **Recall ground truth.** Your own waves show one escaped defect per round (F46-1…F62-1). An "escaped defect" — found by a later round after an accept — is the false-negative signal; usefulness marks cannot measure recall.
+
+To choose I need: z.ai's real tier surface; the exact SubagentStop payload; whether astra `medium` survives a reading pass (only a paired run answers); expected event volume per install.
+
+## Q1 — tiers and denominator
+
+- **gpt-6-astra**: chore `low`; checkpoint/reading pass `medium` (until paired data says otherwise); diff-review and acceptance `high`; core-contract/stuck `xhigh`.
+- **glm-5.3**: chore `low` (or a flash model — cheaper than any effort knob); checkpoint `high` (z.ai has no medium, the mapping makes "medium" meaningless there); diff-review `high`; acceptance and stuck `max`.
+- Roster entries should **override** the existing purpose presets, never duplicate them, or two sources of truth drift.
+- **Denominator**: there is no single one. Window share exists only for the ChatGPT endpoint; GLM's scarce resource is money; workers' is coordinator wall time and quota. Record the raw components per event (window-share delta, tokens, wall seconds — money is not observable client-side) and compute ratios at the intake. Numerator: confirmed findings (implemented/verified), severity-weighted, plus escapes as recall. Window share is a routing constraint, not a universal score.
+
+## Q2 — worker capture, privacy, attribution
+
+SubagentStop is the right primary point — the only zero-token, host-native one — but it fires per stop (dedupe by agent id; count resumes) and never fires on process kill or crash, so the worst outcomes vanish unless a SessionStart backfill sweeps interrupted agents and emits `outcome: unknown`. Privacy: never the brief, transcript/session ids, paths, cwd, repo or agent names as typed, tool outputs, free-text notes (drop `--note` from the event), or unbucketed token counts. Effort must carry its source (`definition|override|coordinator|unknown`) — the agent file's `effort:` may not be what was sent; `unknown` is data, not failure. Attribution under rework: never binary. Closed classes `first-attempt accepted | accepted after rework | findings survived | superseded`, the coordinator's mark, and `rating_rev` (already in the rating event) for revisions; join to the findings store to measure survival of the worker's own findings.
+
+## Q3 — schema fields to add now
+
+Consult/rating: `effort_sent` (none|low|medium|high|xhigh|max|unknown), `effort_requested`, `effort_source`, `assignment`, a pseudonymous `cohort_ref` (random, consult_ref-style) grouping same-brief panel members, and the quota delta components. Worker event: `host` (claude-code|codex-cli|other), `tier`, `model` (closed list), `effort`+source, `task_class` (closed), `outcome`, duration/token/tool buckets, `resumes`, `rework`, `verified`, mark+`rating_rev`. Principles: components not ratios; every enum ships with `unknown`/`other` from day one; version the vocabularies.
+
+## Q4 — scout and judge
+
+It fails when the digest is semantic: a summary states what code "does" and drops line-level facts — precision, ordering, error-to-absence — exactly where your real defects lived (F58/F60/F62 were ordering and sub-second precision details a summary flattens). The scout is also a correlated single point of failure: its blind spot becomes the judge's. Cap the structure, not just words: fixed slots per file (path, hunk ranges, stat deltas, "what I did not read"), a token cap that drops prose before it drops hunk references, and the judge always keeps read access to the raw diff — the digest prioritizes, it must never replace the code.
+
+## Requested checks
+
+- **RC1** (repo root, read-only, 5 min): `curl -s https://docs.z.ai/api | Select-String -Pattern "thinking|effort" -Context 0,2` — whether glm-5.3 exposes more than low/high/max (Q1).
+- **RC2** (repo root, read-only, 5 min): `curl -s https://docs.claude.com/en/docs/claude-code/hooks | Select-String -Pattern "SubagentStop" -Context 2,12` — the exact stdin fields, effort visibility (Q2, finding #5).
+- **RC3** (repo root, read-only, 2 min): `c3 findings` — per-finding status/rating availability for the confirmed-findings join (finding #2).
+- **RC4** (repo root, read-only, 2 min): `Get-ChildItem .collab -Recurse -Filter sessions.json | Select-String -Pattern '"quota"|"tokens"' | Select-Object -First 10` — which cost components are already recorded (finding #2).
+
+### Findings
+
+- **F13-1** [major] `crates/c3/src/telemetry/event.rs:58`, `crates/c3/src/telemetry/classes.rs:323` - Adding effort to the events without an assignment field yields confounded observational data: the routed panel assigns harder briefs to stronger reviewers, so tier-versus-cost comparisons will systematically penalize the higher effort. Trigger: Any intake table computed from effort-tagged events once the routed panel is the default seating. Evidence: read-code: Details carries engine/provider/model/purpose/outcome/tokens but no assignment or routing-provenance field.; read-code: The panel seats reviewers by track record, so task difficulty and reviewer/tier choice are correlated by construction. Verify: Compare two same-brief panel members at different efforts via cohort_ref over ~20 rounds; without an assignment field the intake cannot distinguish routed from randomized pairs. Remedy: Add a closed `assignment` field (routed|preset|alternate|random|unknown) now, and run alternating-effort pairs inside one purpose for the first months.
+- **F13-2** [major] `crates/c3/src/telemetry/event.rs:58`, `crates/c3-core/src/quota.rs:45` - No single cost denominator exists: window share applies only to the ChatGPT/codex endpoint, money is not observable client-side, and workers consume wall time and coordinator quota; baking any one ratio into the schema or score is wrong for the other classes. Trigger: Scoring GLM (no 5-hour window) or Claude workers with the window-share denominator. Evidence: read-code: Quota constants and rollout reading model the ChatGPT 5-hour/weekly windows only.; read-code: The event already carries raw tokens and wall seconds — components, not ratios. Verify: Attempt to compute one comparable score for one astra and one glm consultation from the current ledger fields; the GLM row has no window component. Remedy: Record components per event (primary/secondary window-share delta, tokens, wall seconds) and compute per-vendor ratios only at the intake.
+- **F13-3** [major] `crates/c3-core/src/quota.rs`, `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md` - A semantic scout digest structurally hides the defects this project actually produces: the wave's confirmed findings were ordering, precision and error-to-absence details that live at hunk level and are flattened by any summary. Trigger: A scout digest written as prose about what the diff does, fed to a judge with no raw-diff access. Evidence: read-code: The bridge's own reading discipline mandates hunk-by-hunk reading precisely because whole-file/summary reading misses such defects.; read-code: Confirmed defects F58-1/F60-1/F62-1 were sub-second-instant and ordering details a summary would drop. Verify: Feed one past wave's digest-only summary of the 8i bug to a judge without the diff; it cannot reproduce F62-1. Remedy: Cap the digest's structure (path, hunk ranges, stat deltas, unread list) with prose dropped before hunk references; the judge keeps read access to the raw diff.
+- **F13-4** [minor] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md` - SubagentStop alone undercounts the worst worker outcomes: it never fires on process kill, crash or host exit, so error/abandoned runs are silently missing unless a later SessionStart backfill emits them as outcome unknown. Trigger: A host crash or forced tree kill while workers run. Evidence: read-code: The sketch records one event per subagent end via the hook but specifies no backfill for missed stops.; inferred: Stop-type hooks fire on normal subagent completion, not on host process death. Verify: Kill the host mid-worker-run, restart, and check that a backfilled unknown-outcome event exists. Remedy: Ship a SessionStart sweep of unreported agent ids that emits a closed `outcome: unknown` event before new work starts.
+- **F13-5** [minor] `.collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md` - The agent definition's effort frontmatter may not equal the effort actually sent (a call-site override can win and may not reach the transcript), so a bare effort field would silently mislabel rows; the sketch's coordinator-side --effort fallback is post-hoc and unverifiable. Trigger: A worker spawned with an explicit effort override differing from its agent definition. Evidence: read-code: The plan itself flags 'an explicit effort override of the Agent call may not be in the subagent transcript' as an open question. Verify: Run one subagent with a call-site effort override and diff the hook's inferred effort against the CLI's resolved effort line. Remedy: Record `effort` plus a closed `effort_source` (definition|override|coordinator|unknown); treat unknown as a valid dimension value, never coerce it.
+- **F13-6** [minor] `README.md` - Per-purpose effort policies on roster entries duplicate the existing purpose presets, creating two sources of truth that will drift (e.g. a preset raised to high while a roster entry still says medium). Trigger: Any later change to the purpose presets after roster entries carry their own per-purpose effort maps. Evidence: read-code: Purpose presets and per-entry effort both exist as separate configuration surfaces today. Verify: Change one preset and grep the roster file for stale per-entry values that now disagree. Remedy: Roster entries may only override a preset for a named purpose, with the preset as the single default and the override surfaced in `c3 providers`.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+This is a framing consultation on measurement designs not yet implemented, so advice rather than acceptance.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- z.ai's exposed effort tier surface for glm-5.3 beyond low/high/max
+- the exact Claude Code SubagentStop stdin payload and whether it exposes tier/effort reliably
+- whether astra medium is sufficient for reading passes (needs paired runs, not read-only inspection)
+- intake-side capacity and retention for the proposed worker-event volume
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel b694a074 member 12 of 12: mimo :: mimo-v2.6-pro (roster #3) ===
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: failed: transport - Reconnecting... 1/5 (stream disconnected before completion: idle timeout waiting for SSE) (wall 0 s)
+quota      : no window in the rollout; this run 601184 input tokens (134912 cached) in 7 calls, max 103480 per call of 996147; sub-agents 0
+partial    : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\14-codex-panel-a-measure-mimo.partial.md (the run ended: transport - Reconnecting... 1/5 (stream disconnected before completion: idle timeout waiting for SSE); thread 01a13b86-3fd6-7831-9335-27d6010b0a91 replays 1223 KB on every tool call (over CODEX_CONSULT_FORK_MAX_KB 512) - continue in a new thread with `-Task consilium-2026-10-14 -CollabDir C:\Users\Dmytro\C3\.collab -Mode new -Provider mimo -Model mimo-v2.6-pro -Purpose framing -ReplyName panel-a-measure-mimo -Brief .collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md -Prompt "the previous run was stopped; its partial reply is handoffs/14-codex-panel-a-measure-mimo.partial.md - finish the review"`)
+resume     : -Task consilium-2026-10-14 -CollabDir C:\Users\Dmytro\C3\.collab -Mode new -Provider mimo -Model mimo-v2.6-pro -Purpose framing -ReplyName panel-a-measure-mimo -Brief .collab/consilium-2026-10-14/handoffs/01-claude-measure-reviewers-and-workers.md -Prompt "the previous run was stopped; its partial reply is handoffs/14-codex-panel-a-measure-mimo.partial.md - finish the review"
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\14-codex-panel-a-measure-mimo.md
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-14\handoffs\14-codex-panel-a-measure-mimo.events.jsonl
+
+Panel b694a074: 12 of 12 entries ran (asked 12, started 12, usable 9; wall clock 2195.5 s; at most 8 at a time)
+  openai :: gpt-6-astra                      ADVISE   0 blocker, 6 major, 1 minor          prior: none  251.7 s  handoffs/05-codex-panel-a-measure-openai.md
+  ZAI :: glm-5.3                             ADVISE   0 blocker, 3 major, 3 minor          prior: none  235.9 s  handoffs/13-codex-panel-a-measure-zai.md
+  mimo :: mimo-v2.6-pro                      failed: transport - Reconnecting... 1/5 (stream disconnected before completion: idle timeout waiti...  0 s  handoffs/14-codex-panel-a-measure-mimo.md  partial handoffs/14-codex-panel-a-measure-mimo.partial.md
+  gemini :: gemini-3.8-flash-high [agy]      ADVISE   0 blocker, 1 major, 1 minor, 1 note  prior: none  636.5 s  handoffs/12-agy-panel-a-measure-gemini.md
+  gemini :: gemini-3.1-pro-high [agy]        failed: agy exit 1 - invalid model selection (--model "gemini-3.1-pro-high" --effort ""): model ge...  0 s  handoffs/09-agy-panel-a-measure-gemini.md
+  byteplus :: deepseek-v4.1-flash            ADVISE   0 blocker, 8 major, 0 minor          prior: none  421.9 s  handoffs/08-codex-panel-a-measure-byteplus.md
+  byteplus :: dola-seed-2.0-pro              ADVISE   0 blocker, 0 major, 1 minor, 1 note  prior: none  128.3 s  handoffs/10-codex-panel-a-measure-byteplus.md
+  kimi :: k3                                 ADVISE   0 blocker, 2 major, 2 minor, 1 note  prior: none  310.7 s  handoffs/03-codex-panel-a-measure-kimi.md
+  alibaba :: qwen3.8-max                     failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 357b0...  0 s  handoffs/06-codex-panel-a-measure-alibaba.md
+  meta :: muse-spark-1.3-contributor [muse]  ADVISE   0 blocker, 4 major, 1 minor          prior: none  117.8 s  handoffs/07-muse-panel-a-measure-meta.md
+  ZAI-claude :: glm-5.3 [claude]             ADVISE   0 blocker, 5 major, 1 minor          prior: none  306.4 s  handoffs/11-claudecode-panel-a-measure-zai-claude.md
+  mimo-claude :: mimo-v2.6-pro [claude]      ADVISE   0 blocker, 3 major, 2 minor, 3 note  prior: none  467.7 s  handoffs/04-claudecode-panel-a-measure-mimo-claude.md

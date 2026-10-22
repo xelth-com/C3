@@ -30,11 +30,36 @@ const CODEX_MISSING: &str =
 /// Compute the SessionStart lines, print them, and return 0. `collab_dir` is the value of
 /// `--collab-dir` (endpoint health is read from every task ledger under it; no network,
 /// no lock, nothing written); `explain_command` the pointer line's command (`""`: this binary's
-/// own `consult --explain coordinate`).
-pub fn run(collab_dir: &str, explain_command: &str) -> i32 {
+/// own `consult --explain coordinate`). `source` is the SessionStart source (`startup`/`resume`/
+/// `compact`); only `compact` adds the (R30) re-hydration line, so startup/resume stay unchanged.
+pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     println!("{}", line(collab_dir));
     println!("{}", pointer_line(explain_command));
+    // (R30 wave-boundary compaction) after a compaction the coordinator has lost the in-context
+    // memory of who it is coordinating; restore it from the record it would itself write
+    // (CODEX_CONSULT_COORDINATOR, resolved against the roster) so it can pick its detached runs
+    // (the first line already names them) back up. Printed ONLY for the `compact` source.
+    if source.eq_ignore_ascii_case("compact") {
+        if let Some(l) = compaction_line() {
+            println!("{l}");
+        }
+    }
     0
+}
+
+/// (R30) The re-hydration line for the `compact` SessionStart source: the coordinator identity the
+/// bridge records, resolved from the environment against the roster exactly as a real run resolves
+/// it (no network, nothing written). `None` when no coordinator identity is on record
+/// (CODEX_CONSULT_COORDINATOR unset or host-only) or the value does not parse - nothing to restore.
+fn compaction_line() -> Option<String> {
+    let roster = crate::providers::read_reviewer_roster().ok();
+    let entries = roster.as_ref().filter(|r| r.exists).map(|r| &r.entries[..]);
+    let coord = crate::consult::orchestrate::resolve_coordinator(entries).ok()?;
+    coord.provider.as_ref()?;
+    let id = c3_core::host::format_coordinator_id(&coord);
+    Some(format!(
+        "codex-consult: after compaction - coordinator {id} recorded (CODEX_CONSULT_COORDINATOR); re-read the c3:coordinate skill, then `c3 consult --status` the detached runs above before the next wave"
+    ))
 }
 
 /// (wave 27, R13 D5 / 27c D13 / 28 R17) The pointer to the coordinator's rules: the skill, else a

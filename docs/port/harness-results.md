@@ -1414,3 +1414,19 @@ summary line (UTF-8 BOM stripped). "before" = the first run of this round agains
 
 - **harness-fixes** stopped at `harness-fixes.ps1:386` (`02-codex-eleven.md` missing): c3 numbered the consult **nn=03** because its handoff-number scan counted the blocked `02-codex-eleven.reply.json` **directory** the test created. Fixed: the scan counts files only (`Get-NextNumbers`'s `-File`), so nn=02, the copy fails on the blocked path, and the failure handoff `02-codex-eleven.md` is written.
 - **harness-pending** stopped at `harness-pending.ps1:251` (null `.sha256` on artifact `A.bin`): the ledger recorded the absolute artifact path; fixed to record the raw argument (`Resolve-ArtifactPaths` sets `path = $raw`), keeping the canonical form only in `full`.
+
+## Runs 18 and later — recorded per release gate, not here
+
+From the 0.2.x release gates on, every harness run is recorded in the gate document of its
+verification pass instead of this file:
+
+- RC5 (2026-10-09): `rc5-verification-2026-10-09.md` — all 22 harnesses; fixes26b 51/0 on the
+  rerun (the 50/1 first run was the load-sensitive STALLTOOL cut), fixes27c **34/2** after KICK D2
+  (the 2: POINTER D15 and ZCODE D20/D21, by design / other host) — this closes the "re-run pending"
+  rows of Run 17.
+- RC6 (2026-10-09): `rc6-final-2026-10-09.md` — the expected counts for the 0.2.x line.
+- RC7 (2026-10-13): `rc7-final-2026-10-13.md` — 0.2.2, all 22 harnesses equal to RC6 (claude and
+  0.3 against the v0.6.1 tests), harness-roster 125/0 at 298ed07.
+
+Host rule for those runs: Windows PowerShell 5.1 (pwsh 7 fakes three TIMEONLY failures), one
+harness at a time under HARNESS.lock, fake-claude binaries single-threaded.

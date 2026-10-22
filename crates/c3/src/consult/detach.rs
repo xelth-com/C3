@@ -596,6 +596,16 @@ pub fn start_detached_run(
     if warnings.iter().any(|w| w == test_mode_line) {
         println!("WARNING: {test_mode_line}");
     }
+    // (R30 wave-boundary compaction) one stderr hint so a Claude Code coordinator compacts its
+    // context right here, at the wave boundary, instead of mid-review. The background is already
+    // spawned; nothing below depends on it. Only the foreground reaches this (the `--detach-id`
+    // background and `--panel-spec` members take other paths; `--dry-run --detach` is refused).
+    eprintln!(
+        "compact now (wave boundary): /compact keep the task {}, the detach id {} and the coordinator record; then `{}` on wake",
+        o.task,
+        paths.id8,
+        c3_core::spelling::status_cmd(&o.task, collab_for_cmd.as_deref(), &paths.id8),
+    );
     0
 }
 

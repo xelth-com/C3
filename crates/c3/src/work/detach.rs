@@ -24,6 +24,18 @@ fn iso_now() -> String {
         .to_string()
 }
 
+/// An RFC3339 instant as a local wall-clock time for a status line (the string unchanged when it
+/// does not parse).
+fn local_of(rfc3339: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(rfc3339) {
+        Ok(t) => t
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S %Z")
+            .to_string(),
+        Err(_) => rfc3339.to_string(),
+    }
+}
+
 fn refuse(msg: &str) -> i32 {
     eprintln!("{TOOL}: {msg}");
     1
@@ -54,6 +66,10 @@ struct WorkWire {
     allow: Vec<String>,
     #[serde(default)]
     collab_dir: String,
+    #[serde(default)]
+    quota_window_sec: i64,
+    #[serde(default)]
+    max_resumes: i64,
 }
 
 fn eighty() -> i64 {
@@ -77,6 +93,8 @@ impl WorkWire {
             timeout_sec: o.timeout_sec,
             allow: o.allow.clone(),
             collab_dir: collab_abs.to_string(),
+            quota_window_sec: o.quota_window_sec,
+            max_resumes: o.max_resumes,
         }
     }
 
@@ -92,6 +110,8 @@ impl WorkWire {
             timeout_sec: self.timeout_sec,
             allow: self.allow,
             collab_dir: self.collab_dir,
+            quota_window_sec: self.quota_window_sec,
+            max_resumes: self.max_resumes,
             ..Default::default()
         }
     }
@@ -125,8 +145,10 @@ pub fn start_detached(o: &Options, pre: &Prepared, id: &str, rec_dir: &Path) -> 
     }
     let collab_for_cmd = (o.collab_dir != ".collab").then(|| collab_abs.clone());
     println!(
-        "Detached work run {id}: it runs in the background ({} :: {} [claude]).",
-        pre.provider, pre.model
+        "Detached work run {id}: it runs in the background ({} :: {} [{}]).",
+        pre.provider,
+        pre.model,
+        pre.engine.as_str()
     );
     println!("record dir : {}", rec_dir.display());
     println!("console log: {}", log.display());
@@ -260,7 +282,7 @@ pub fn background(o: &Options) -> i32 {
         c3_core::host::machine_name(),
         iso_now()
     );
-    super::run_prepared(&opts, &rec_dir, &rec.id, rec.seq)
+    super::run_prepared(&opts, &rec_dir, &rec.id, rec.seq, true)
 }
 
 // ------------------------------------------------------------------ --status / --wait
@@ -291,8 +313,10 @@ fn read_runs(work_root: &Path) -> Vec<WorkRun> {
         .collect()
 }
 
-/// The exit code of a status listing: 2 while any run is running, else 1 when one
-/// died/timed out/was refused/unreadable, else 0 (an empty task is 0 too).
+/// The exit code of a status listing: 2 while any run is running (or `waiting_quota`, a detached
+/// run whose alarm sleeps until the quota window resets - the background is alive), else 1 when
+/// one died/timed out/was refused/unreadable or is parked on `quota` (it needs a hand - a
+/// `--resume`/`--kick`, exhausted or not), else 0 (an empty task is 0 too).
 fn exit_of(runs: &[WorkRun]) -> i32 {
     for r in runs {
         let st = r
@@ -300,7 +324,7 @@ fn exit_of(runs: &[WorkRun]) -> i32 {
             .as_ref()
             .map(|x| x.status.as_str())
             .unwrap_or("unreadable");
-        if st == "running" {
+        if super::record::is_pending(st) {
             return 2;
         }
     }
@@ -360,7 +384,7 @@ pub fn query(o: &Options) -> i32 {
                 .filter(|r| {
                     r.record
                         .as_ref()
-                        .map(|x| x.status == "running")
+                        .map(|x| super::record::is_pending(&x.status))
                         .unwrap_or(false)
                 })
                 .filter_map(|r| r.record.as_ref().map(|x| x.timeout_sec))
@@ -381,7 +405,7 @@ pub fn query(o: &Options) -> i32 {
             let still = runs.iter().any(|r| {
                 r.record
                     .as_ref()
-                    .map(|x| x.status == "running")
+                    .map(|x| super::record::is_pending(&x.status))
                     .unwrap_or(false)
             });
             if !still || watch.elapsed().as_secs() >= limit as u64 {
@@ -409,10 +433,11 @@ pub fn query(o: &Options) -> i32 {
             continue;
         };
         println!(
-            "work {} ({}/{}): {} (started {}{}, exit {})",
+            "work {} ({}/{} [{}]): {} (started {}{}, exit {})",
             rec.id,
             rec.provider,
             rec.model,
+            rec.engine,
             rec.status,
             rec.started,
             rec.ended
@@ -444,6 +469,28 @@ pub fn query(o: &Options) -> i32 {
             println!("  files changed: (none)");
         } else {
             println!("  files changed: {}", rec.files_changed.join(", "));
+        }
+        if let Some(q) = &rec.quota {
+            if rec.status == "waiting_quota" {
+                let max = if o.max_resumes > 0 {
+                    o.max_resumes
+                } else {
+                    super::MAX_RESUMES_DEFAULT
+                };
+                println!(
+                    "  waiting_quota until {} (resume {}/{})",
+                    local_of(&q.resume_at),
+                    q.resumes,
+                    max
+                );
+            }
+            println!(
+                "  quota: {} (resumes {}{}; resume_at {})",
+                q.text,
+                q.resumes,
+                if q.exhausted { ", exhausted" } else { "" },
+                q.resume_at
+            );
         }
     }
     exit_of(&runs)
@@ -572,6 +619,8 @@ mod tests {
             timeout_sec: 120,
             allow: vec!["Bash(cargo test:*)".into()],
             collab_dir: "C:/r/.collab".into(),
+            quota_window_sec: 900,
+            max_resumes: 2,
         };
         let text = serde_json::to_string(&w).unwrap();
         let back: WorkWire = serde_json::from_str(&text).unwrap();
@@ -580,6 +629,8 @@ mod tests {
         assert_eq!(o.model, "glm-5.3");
         assert_eq!(o.max_turns, 40);
         assert_eq!(o.timeout_sec, 120);
+        assert_eq!(o.quota_window_sec, 900);
+        assert_eq!(o.max_resumes, 2);
         assert_eq!(o.allow, vec!["Bash(cargo test:*)".to_string()]);
         assert!(!o.detach && !o.status && !o.wait && o.detach_id.is_empty());
         // the defaults of the wire are the CLI's defaults

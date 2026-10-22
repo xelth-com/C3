@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "74f89a68-69ab-4476-a925-66e75d315996",
+    "id8":  "74f89a68",
+    "task":  "parity-0.6.1-2026-10-08",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-15T11:08:45+02:00",
+    "updated":  "2026-10-15T11:13:56+02:00",
+    "finished":  "2026-10-15T11:13:56+02:00",
+    "wall_seconds":  311.1,
+    "pid":  13884,
+    "start_time":  "2026-10-15T09:08:45.2263321Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  5100,
+    "purpose":  "acceptance",
+    "reply_name":  "codex-wave9-acceptance-5",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/parity-0.6.1-2026-10-08/handoffs/81-claude-wave9-acceptance-5.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  305.9,
+                        "n":  46,
+                        "handoff":  "82",
+                        "reply":  "handoffs/82-codex-codex-wave9-acceptance-5.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13ed2-4f7b-7551-99ce-7af49a1430ba (source: events), wall 305.9 s\u000aquota      : 5h 49% until 14:18; wk 8% until Oct 22; this run 385891 input tokens (320768 cached) in 8 calls, max 63969 per call of 258400; sub-agents 0\u000averdict    : HOLD - The supersede drop handles evidence already merged with a success, but a skipped journal can introduce older cap evidence after that success has been evicted.\u000afindings   : 1 blocker, 0 major, 0 minor, 0 note -\u003e F82-1 in findings.json\u000aprior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 not-checked, F66-2 not-checked, F66-3 not-checked, F66-4 not-checked, F66-5 not-checked, F66-6 not-checked, F68-1 not-checked, F68-2 not-checked, F70-1 not-checked, F72-1 not-checked, F72-2 not-checked, F74-1 not-checked, F74-2 not-checked, F76-1 not-checked, F78-1 not-checked, F78-2 not-checked, F80-1 still-open\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\82-codex-codex-wave9-acceptance-5.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\82-codex-codex-wave9-acceptance-5.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\handoffs\\82-codex-codex-wave9-acceptance-5.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\parity-0.6.1-2026-10-08\\.consult.detached-74f89a68.log",
+    "args":  null
+}

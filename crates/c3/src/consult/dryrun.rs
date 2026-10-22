@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use c3_core::ps_json;
 
-use super::orchestrate::{fmt_wall, Context};
+use super::orchestrate::Context;
 
 /// Print the whole dry-run block for `ctx` (writes nothing).
 pub(crate) fn render(ctx: &Context) {
@@ -844,11 +844,4 @@ fn model_label(ctx: &Context) -> String {
     } else {
         ctx.identity.model.clone()
     }
-}
-
-// Keep fmt_wall referenced (used by summary/orchestrate); silences an unused import if the
-// dry-run ever needs the wall formatting.
-#[allow(dead_code)]
-fn _wall(w: f64) -> String {
-    fmt_wall(w)
 }

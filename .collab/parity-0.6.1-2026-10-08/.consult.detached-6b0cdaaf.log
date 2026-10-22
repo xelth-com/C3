@@ -1,0 +1,138 @@
+codex-consult: detached run 6b0cdaaf (detach id 6b0cdaaf-6796-480d-87c2-77cf248c5dc5) - pid 12732 on LAPTOP-9SGIHQ03, started 2026-10-15T09:29:43+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-6b0cdaaf.status.json
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - entry 1 of 10 for -Provider openai (model applied)
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)
+codex-consult: usable reply - openai :: gpt-6-astra, mode new, thread 01a13e77-9f41-7e30-ac1e-358797c0fc71 (source: events), wall 373.7 s
+quota      : 5h 15% until 14:18; wk 2% until Oct 22; this run 440748 input tokens (380672 cached) in 10 calls, max 58625 per call of 258400; sub-agents 0
+verdict    : HOLD - The unconditional 24-hour filter releases hinted capped endpoints before their advertised reset, contradicting the documented monthly-cap behavior.
+findings   : 1 blocker, 0 major, 0 minor, 0 note -> F76-1 in findings.json
+prior      : F02-1 not-checked, F02-3 not-checked, F02-4 not-checked, F02-5 not-checked, F02-6 not-checked, F02-7 not-checked, F02-8 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F06-1 not-checked, F09-1 not-checked, F09-2 not-checked, F09-3 not-checked, F09-4 not-checked, F09-5 not-checked, F09-6 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F14-1 not-checked, F19-1 not-checked, F19-2 not-checked, F19-3 not-checked, F22-1 not-checked, F23-1 not-checked, F23-2 not-checked, F23-3 not-checked, F23-4 not-checked, F23-5 not-checked, F24-1 not-checked, F24-2 not-checked, F24-3 not-checked, F24-4 not-checked, F24-5 not-checked, F24-6 not-checked, F25-2 not-checked, F25-3 not-checked, F25-4 not-checked, F30-1 not-checked, F30-2 not-checked, F30-3 not-checked, F31-1 not-checked, F36-1 not-checked, F36-2 not-checked, F38-1 not-checked, F40-1 not-checked, F40-2 not-checked, F42-1 not-checked, F46-1 not-checked, F48-1 not-checked, F50-1 not-checked, F52-1 not-checked, F52-2 not-checked, F55-1 not-checked, F55-2 not-checked, F58-1 not-checked, F60-1 not-checked, F62-1 not-checked, F66-1 not-checked, F66-2 not-checked, F66-3 fixed, F66-4 fixed, F66-5 not-checked, F66-6 still-open, F68-1 fixed, F68-2 not-checked, F70-1 fixed, F72-1 fixed, F72-2 fixed, F74-1 still-open, F74-2 fixed
+reply file : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\76-codex-wave9-acceptance-2.md
+reply json : C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\76-codex-wave9-acceptance-2.reply.json
+events file: C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\handoffs\76-codex-wave9-acceptance-2.events.jsonl
+
+1. F72-1/F72-2 are fixed in the reviewed code: unidentified rows cannot complete a pair, and text no longer determines identity. However, finding #1 is a new regression: the age bound also expires identified pairs with valid monthly hints. An exhausted endpoint becomes eligible after roughly 24 hours despite a later advertised reset. F74-1 remains documented policy; F74-2’s malformed-hint trigger is rejected by validation.
+
+2. **HOLD** on finding #1; do not tag v0.2.2 yet. Reviewed all three source diffs, three documentation diffs, and targeted surrounding code. Skipped `.collab/` except brief 75, unrelated source, and older finding implementations. Reported test/harness results were not independently rerun.
+
+## Requested checks
+
+- **RC1:** Repository root; workspace-write; extend `plan::the_cap_policy_is_inferred_exhaustion_with_a_24_hour_probe` to assert the hinted entry remains unavailable at `2026-10-16T20:30:00Z`, then run that test. Expected: unavailable until October 26 at 16:00Z. Budget: 10 minutes.
+
+### Findings
+
+- **F76-1** [blocker] `crates/c3-core/src/health.rs:1143`, `crates/c3-core/src/plan.rs:344`, `crates/c3-core/src/plan.rs:361`, `crates/c3-core/src/plan.rs:575`, `docs/port/wave9-consilium-defects.md:101` - The new read-time age limit discards identified cap-pair evidence after approximately 24 hours even when a valid reset_hint declares a later weekly or monthly reset. plan_cap_verdict then returns the underlying verdict without enforcing that reset. This makes an exhausted endpoint eligible before the retry time previously displayed and contradicts the documented policy that hinted entries remain unavailable until their reset. Trigger: Use the existing policy fixture: two distinct identified instant 429s at 2026-10-14T20:00:00Z and 20:20:00Z, plan_caps=['monthly'], and reset_hint='monthly:27T00:00+08:00'. Read health at 2026-10-16T20:30:00Z with no later success or independent blocking evidence. Both hits are discarded although the declared reset is 2026-10-26T16:00:00Z. Evidence: read-code: Candidate selection unconditionally requires age_minutes <= CAP_PAIR_MAX_AGE_MINUTES before constructing instant_429s; it has no distinction for hinted plans.; read-code: Fewer than two retained hits returns the supplied verdict immediately, before next_cap_reset is consulted.; read-code: The policy test supplies the stated monthly hint but checks hinted availability only shortly after the failures and after the reset. Its intermediate 24-hour checks cover only the unhinted entry.; read-code: The documented policy distinguishes waiting until a declared reset from the 24-hour probe used without a hint.; inferred: At the stated intermediate instant, the fixture produces no qualifying hits and therefore returns available despite the future monthly reset. This was established by source inspection, not an executed regression test. Verify: Run RC1, requiring the identified hinted pair to remain unavailable after 48 hours and to become eligible at its declared reset. Remedy: Keep legacy no-ID rows excluded, but apply the expiration policy where the roster entry's hint is available: preserve identified pair evidence through a valid declared reset and use first-hit plus 24 hours for unhinted entries. Add an intermediate-time assertion for hinted plans.
+
+### Prior findings
+
+- F02-1 - not-checked - Telemetry spool implementation is outside this scoped review.
+- F02-3 - not-checked - Deletion retry implementation was not inspected.
+- F02-4 - not-checked - Harness implementation coverage map was not inspected.
+- F02-5 - not-checked - Rating transaction ordering was not inspected.
+- F02-6 - not-checked - Prompt anchor implementation was not inspected.
+- F02-7 - not-checked - Cross-engine shared-plan behavior was not reviewed.
+- F02-8 - not-checked - No comparative route benchmark was reviewed.
+- F04-1 - not-checked - Process-name classification was not inspected.
+- F04-2 - not-checked - Windows local-zone transition behavior was not tested.
+- F04-3 - not-checked - Required-light panel metadata was not inspected.
+- F06-1 - not-checked - Historical Samoa offset handling was not inspected.
+- F09-1 - not-checked - Context configuration Unicode handling was not inspected.
+- F09-2 - not-checked - Flush/deletion lock ordering was not inspected.
+- F09-3 - not-checked - Recoverable deletion cleanup was not inspected.
+- F09-4 - not-checked - Spool reread failure behavior was not inspected.
+- F09-5 - not-checked - Legacy telemetry sanitization was not inspected.
+- F09-6 - not-checked - Rating actor inference was not inspected.
+- F11-1 - not-checked - Health journal I/O handling was not inspected.
+- F11-2 - not-checked - Required-reviewer executable propagation was not inspected.
+- F11-3 - not-checked - Required-reviewer shared-plan roster context was not inspected.
+- F11-4 - not-checked - PowerShell hook command execution was not checked.
+- F11-5 - not-checked - AGY tool stall allowance was not inspected.
+- F14-1 - not-checked - Local-only deletion transaction persistence was not inspected.
+- F19-1 - not-checked - Complaint/deletion synchronization was not inspected.
+- F19-2 - not-checked - Unreadable-salt cleanup behavior was not inspected.
+- F19-3 - not-checked - Duplicate-key telemetry sanitization was not inspected.
+- F22-1 - not-checked - Journal replay deduplication durability was not inspected.
+- F23-1 - not-checked - Process metadata failure classification was not inspected.
+- F23-2 - not-checked - Unknown creation-time recovery behavior was not inspected.
+- F23-3 - not-checked - Kill evidence persistence was not inspected.
+- F23-4 - not-checked - Recovery fixture strength was not reviewed.
+- F23-5 - not-checked - Production Windows Samoa behavior was not tested.
+- F24-1 - not-checked - Not-spooled fallback accounting was not inspected.
+- F24-2 - not-checked - Unterminated suffix folding was not inspected.
+- F24-3 - not-checked - Not-spooled creation during cleanup was not inspected.
+- F24-4 - not-checked - Unseen-suffix status reporting was not inspected.
+- F24-5 - not-checked - Plugin-home marker and shared lock coverage was not reviewed.
+- F24-6 - not-checked - Post-fold record rewrite failures were not inspected.
+- F25-2 - not-checked - Endpoint transcript-location checks were not inspected.
+- F25-3 - not-checked - Claude model case handling was not inspected.
+- F25-4 - not-checked - Child environment debug redaction was not inspected.
+- F30-1 - not-checked - Generic-helper unknown-tree recovery was not inspected.
+- F30-2 - not-checked - Pre-kill persistence and write-failure handling were not inspected.
+- F30-3 - not-checked - Continuation and repair kill fixtures were not reviewed.
+- F31-1 - not-checked - Live-producer fallback accounting was not inspected.
+- F36-1 - not-checked - Transcript guard Unicode slicing was not inspected.
+- F36-2 - not-checked - Transcript path NFC normalization was not inspected.
+- F38-1 - not-checked - Recovery after multiple persistence failures was not inspected.
+- F40-1 - not-checked - Kill-copy enumeration error handling was not inspected.
+- F40-2 - not-checked - Kick acknowledgement under persistence failure was not inspected.
+- F42-1 - not-checked - Recovery-copy metadata failure handling was not inspected.
+- F46-1 - not-checked - Equal-time quota aggregation was not inspected.
+- F48-1 - not-checked - Secondary-window quota selection was not inspected.
+- F50-1 - not-checked - Quota reset-completeness tie breaking was not inspected.
+- F52-1 - not-checked - Quota aggregation comparison-clock behavior was not inspected.
+- F52-2 - not-checked - NaN quota comparison handling was not inspected.
+- F55-1 - not-checked - Account quota cache behavior across resets was not inspected.
+- F55-2 - not-checked - Invalid newer quota observation selection was not inspected.
+- F58-1 - not-checked - Per-window observation timestamp aggregation was not inspected.
+- F60-1 - not-checked - Quota timestamp persistence was not inspected.
+- F62-1 - not-checked - Fractional-second quota timestamp persistence was not inspected.
+- F66-1 - not-checked - Documented admission fix was read, but recovery implementation was not checked.
+- F66-2 - not-checked - Documented reservation fix was read, but persistence implementation was not checked.
+- F66-3 - fixed - Reviewed candidate selection counts matching nonempty consultation IDs once and excludes unidentified rows; production ID propagation was not rerun.
+- F66-4 - fixed - Reviewed split_clock rejects non-ASCII input before byte slicing, and roster validation rejects unresolved hints.
+- F66-5 - not-checked - Documented shim restoration was read, but shim implementations were not inspected.
+- F66-6 - still-open - Inference from transient pairs and eligibility without proof of restored capacity remain documented policy limitations. Finding #1 identifies a separate regression affecting valid hints.
+- F68-1 - fixed - Reviewed deduplication uses exact nonempty consultation IDs; different IDs survive equal timestamps, and legacy rows cannot complete a pair.
+- F68-2 - not-checked - Portable test replacement is documented, but its implementation and non-Windows execution were not checked.
+- F70-1 - fixed - Removing unidentified rows from cap-pair construction eliminates the legacy text/time merge and split mechanism.
+- F72-1 - fixed - Legacy rows cannot enter the pair, and the read-time candidate filter excludes aged identified rows. Its broader hinted-plan consequence is finding #1.
+- F72-2 - fixed - Cap-pair deduplication no longer compares failure text; nonempty consultation ID is the identity.
+- F74-1 - still-open - Same-ID attempts intentionally count once; single-consultation exhaustion remains on ordinary burst handling, as documented.
+- F74-2 - fixed - The proposed monthly:99 trigger is rejected: next_cap_reset accepts days 1–31, and roster loading requires successful resolution.
+
+## Verdict: HOLD
+
+The unconditional 24-hour filter releases hinted capped endpoints before their advertised reset, contradicting the documented monthly-cap behavior.
+
+### Blockers
+
+- **F76-1** `crates/c3-core/src/health.rs:1143`, `crates/c3-core/src/plan.rs:344`, `crates/c3-core/src/plan.rs:361`, `crates/c3-core/src/plan.rs:575`, `docs/port/wave9-consilium-defects.md:101` - The new read-time age limit discards identified cap-pair evidence after approximately 24 hours even when a valid reset_hint declares a later weekly or monthly reset. plan_cap_verdict then returns the underlying verdict without enforcing that reset. This makes an exhausted endpoint eligible before the retry time previously displayed and contradicts the documented policy that hinted entries remain unavailable until their reset. Verify: Run RC1, requiring the identified hinted pair to remain unavailable after 48 hours and to become eligible at its declared reset. Remedy: Keep legacy no-ID rows excluded, but apply the expiration policy where the roster entry's hint is available: preserve identified pair evidence through a valid declared reset and use first-hit plus 24 hours for unhinted entries. Add an intermediate-time assertion for hinted plans.
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending').
+- **F22-1** (prior, not-checked) `crates/c3-core/src/health.rs:1563` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs.
+- **F23-3** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:5105` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree.
+- **F24-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:640` - The spool-lock fallback marks all non-legacy not-spooled lines as seen without folding or retaining per-file provenance; a later fold counts the same gone-producer files again, so the accounting can double-count and temporarily hide the count.
+- **F25-2** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:357` - Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process.
+- **F30-2** (prior, not-checked) `crates/c3/src/engines/subprocess.rs:536` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues.
+- **F31-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:668` - The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history.
+- **F36-1** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:425` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary.
+- **F38-1** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:687` - The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge.
+- **F40-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:170` - Recovery silently treats failure to enumerate the Codex-home kill-copy directory, or errors while iterating it, as absence of recovery copies. A durable copy naming a live helper can therefore be omitted and the task released.
+- **F42-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:306` - A metadata inspection error on an enumerated recovery copy is treated as absence. read_pending_file uses Path::exists(), which converts metadata errors to false, and returns exists=false with no error. Recovery and findings checks then skip the copy, potentially releasing a task while a helper named only in that durable copy remains alive.
+- **F66-1** (prior, not-checked) `crates/c3/src/consult/recovery.rs:129` - Detached admission treats active recovery records as harmless concurrency without establishing that their owning bridge is still alive. Records retained because an interrupted run left surviving or unverified processes are therefore bypassed, allowing a new engine turn while recovery still considers the previous tree active.
+
+### Unproven scenarios
+
+- The hinted-plan intermediate-time regression is source-proven but was not executed; RC1 supplies the missing regression check.
+- The brief's reported 828 passing tests, clean clippy/fmt, and 125/0 shim harness result were not independently verified.
+- The remaining .collab files, earlier wave implementations, and source outside the specified diffs and targeted surrounding ranges were not read.
+- Live provider behavior, detached concurrency, shim environment restoration, and cross-platform recovery were not exercised in this consultation.
+
+### First-run checklist (observable)
+
+- [ ] On a task with previous panel threads, native output must show mode: new, and resulting member records must identify newly created threads unless fork was explicitly requested.
+- [ ] Two detached runs of one task must show overlapping execution intervals, distinct reserved and committed numbers, intact records, and native c3 status/wait commands.
+- [ ] A genuine ledger/machine mirror must produce one qualifying consultation; two distinct identified instant failures within an hour must produce a plan-quota refusal, even at identical timestamps.
+- [ ] After fixing finding #1, controlled-time output must retain the hinted plan-quota refusal beyond 24 hours, show the declared reset time, and become eligible at that reset; the unhinted case must become eligible at first-hit plus 24 hours.
+- [ ] Legacy no-ID rows must not complete a cap pair, and a later usable reply must clear the inferred cap refusal.

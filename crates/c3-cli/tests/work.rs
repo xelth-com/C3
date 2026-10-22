@@ -21,7 +21,7 @@ use serde_json::Value;
 const TOKEN: &str = "wb-fake-token-1106-do-not-leak";
 const ENV_KEY: &str = "WB_FAKE_ZAI_TOKEN";
 /// The roster's one worker entry: engine claude, role worker, the endpoint route.
-const ROSTER: &str = r#"{"roster_version":1,"reviewers":[{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"WB_FAKE_ZAI_TOKEN"},"plan":"zai","roles":["worker"]},{"provider":"anthropic","engine":"claude","model":"claude-opus-5-5[1m]","auth":"subscription"}]}"#;
+const ROSTER: &str = r#"{"roster_version":1,"reviewers":[{"provider":"ZAI-claude","engine":"claude","model":"glm-5.3","auth":"endpoint","endpoint":{"base_url":"https://api.z.ai/api/anthropic","env_key":"WB_FAKE_ZAI_TOKEN"},"plan":"zai","roles":["worker"]},{"provider":"anthropic","engine":"claude","model":"claude-opus-5-5[1m]","auth":"subscription"},{"provider":"openai","engine":"codex","model":"gpt-6.1-sol","roles":["worker"]},{"provider":"meta","engine":"muse","model":"muse-spark-1.3-contributor","roles":["worker"]}]}"#;
 /// The preamble every work run's prompt starts with (a contract with the worker).
 const PREAMBLE: &str = "You are a coding worker inside this repository. Do only what the brief asks, touch only the files it names or clearly implies, never run git, never leave the repository, and never commit. Finish with a final report: what you changed (file list), the exact test commands you ran and their result counts, any deviation from the brief and why, and what you could not do.";
 const BRIEF_TEXT: &str = "Create the file worker-touched.txt with the text touched. Run nothing.";
@@ -62,6 +62,180 @@ fn write_fake_launcher(work: &Path) -> PathBuf {
             "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"11111111-1111-1111-1111-111111111111\",\"model\":\"glm-5.3\"}'\n",
             "echo '{\"type\":\"assistant\",\"message\":{\"model\":\"glm-5.3\",\"content\":[{\"type\":\"text\",\"text\":\"I read the brief and did the work.\"}]}}'\n",
             "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":3,\"result\":\"Changed one file; cargo test: 12 passed.\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// A quota launcher: the first launch (no `--resume`) emits a rejecting rate_limit_event (with a
+/// far-future `resetsAt`) and an is_error "usage limit reached" result, exit 1; a `--resume` launch
+/// emits a normal successful result. Used for the foreground quota -> `--resume`/`--kick` -> done
+/// flow.
+#[cfg(windows)]
+fn write_quota_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-quota-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "echo %*| findstr /C:\"--resume\" >nul && goto resume\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"22222222-2222-2222-2222-222222222222\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"resetsAt\":4102444800,\"rateLimitType\":\"five_hour\"},\"session_id\":\"22222222-2222-2222-2222-222222222222\"}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"error\",\"is_error\":true,\"num_turns\":1,\"result\":\"Claude AI usage limit reached\"}\r\n",
+            "@exit /b 1\r\n",
+            ":resume\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"22222222-2222-2222-2222-222222222222\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"assistant\",\"message\":{\"model\":\"glm-5.3\",\"content\":[{\"type\":\"text\",\"text\":\"Resumed.\"}]}}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2,\"result\":\"Resumed and finished; cargo test: 12 passed.\",\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_quota_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-quota-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "if echo \"$@\" | grep -q -- --resume; then\n",
+            "  echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"22222222-2222-2222-2222-222222222222\",\"model\":\"glm-5.3\"}'\n",
+            "  echo '{\"type\":\"assistant\",\"message\":{\"model\":\"glm-5.3\",\"content\":[{\"type\":\"text\",\"text\":\"Resumed.\"}]}}'\n",
+            "  echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":2,\"result\":\"Resumed and finished; cargo test: 12 passed.\",\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}'\n",
+            "  exit 0\n",
+            "fi\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"22222222-2222-2222-2222-222222222222\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"resetsAt\":4102444800,\"rateLimitType\":\"five_hour\"},\"session_id\":\"22222222-2222-2222-2222-222222222222\"}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"error\",\"is_error\":true,\"num_turns\":1,\"result\":\"Claude AI usage limit reached\"}'\n",
+            "exit 1\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// An always-quota launcher: every launch (resume or not) hits the limit. Used for the resume cap.
+#[cfg(windows)]
+fn write_always_quota_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-always-quota-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"33333333-3333-3333-3333-333333333333\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"resetsAt\":4102444800,\"rateLimitType\":\"five_hour\"},\"session_id\":\"33333333-3333-3333-3333-333333333333\"}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"error\",\"is_error\":true,\"num_turns\":1,\"result\":\"Claude AI usage limit reached\"}\r\n",
+            "@exit /b 1\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_always_quota_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-always-quota-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"33333333-3333-3333-3333-333333333333\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"rate_limit_event\",\"rate_limit_info\":{\"status\":\"rejected\",\"resetsAt\":4102444800,\"rateLimitType\":\"five_hour\"},\"session_id\":\"33333333-3333-3333-3333-333333333333\"}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"error\",\"is_error\":true,\"num_turns\":1,\"result\":\"Claude AI usage limit reached\"}'\n",
+            "exit 1\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// A fake codex worker launcher: writes `worker-codex.txt` in the cwd, echoes a codex JSON stream
+/// (thread started, one command_execution tool call, an agent_message, turn completed) and exits 0.
+#[cfg(windows)]
+fn write_fake_codex(work: &Path) -> PathBuf {
+    let p = work.join("fake-work-codex.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "echo touched>worker-codex.txt\r\n",
+            "@echo {\"type\":\"thread.started\",\"thread_id\":\"aaaaaaaa-1111-4111-8111-111111111111\"}\r\n",
+            "@echo {\"type\":\"item.started\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"cargo test\"}}\r\n",
+            "@echo {\"type\":\"item.completed\",\"item\":{\"id\":\"a1\",\"type\":\"agent_message\",\"text\":\"codex worker done; cargo test: 7 passed.\"}}\r\n",
+            "@echo {\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":20,\"output_tokens\":6}}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_fake_codex(work: &Path) -> PathBuf {
+    let p = work.join("fake-work-codex.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo touched >worker-codex.txt\n",
+            "echo '{\"type\":\"thread.started\",\"thread_id\":\"aaaaaaaa-1111-4111-8111-111111111111\"}'\n",
+            "echo '{\"type\":\"item.started\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"cargo test\"}}'\n",
+            "echo '{\"type\":\"item.completed\",\"item\":{\"id\":\"a1\",\"type\":\"agent_message\",\"text\":\"codex worker done; cargo test: 7 passed.\"}}'\n",
+            "echo '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":20,\"output_tokens\":6}}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// A fake muse worker launcher: writes `worker-muse.txt` in the cwd, echoes a provenance-valid MSP
+/// stream (one session, one linked run, the model and the completed terminal bound to it, plus one
+/// `tool.*` task) and exits 0.
+#[cfg(windows)]
+fn write_fake_muse(work: &Path) -> PathBuf {
+    let p = work.join("fake-work-muse.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "echo touched>worker-muse.txt\r\n",
+            "@echo {\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"session.run.linked\",\"payload\":{\"run_stream\":{\"kind\":\"run\",\"id\":\"cccccccc-3333-4333-8333-333333333333\"}}}\r\n",
+            "@echo {\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"run.model.configured\",\"payload\":{\"run_stream\":{\"kind\":\"run\",\"id\":\"cccccccc-3333-4333-8333-333333333333\"},\"model_id\":\"muse-spark-1.3-contributor\"}}\r\n",
+            "@echo {\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"task.lifecycle.proposed\",\"payload\":{\"event\":{\"task_kind\":\"tool.write_file\"}}}\r\n",
+            "@echo {\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"run.terminal.completed\",\"payload\":{\"run_stream\":{\"kind\":\"run\",\"id\":\"cccccccc-3333-4333-8333-333333333333\"},\"terminal\":\"completed\",\"text\":\"muse worker done; wrote worker-muse.txt\"}}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+#[cfg(unix)]
+fn write_fake_muse(work: &Path) -> PathBuf {
+    let p = work.join("fake-work-muse.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo touched >worker-muse.txt\n",
+            "echo '{\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"session.run.linked\",\"payload\":{\"run_stream\":{\"kind\":\"run\",\"id\":\"cccccccc-3333-4333-8333-333333333333\"}}}'\n",
+            "echo '{\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"run.model.configured\",\"payload\":{\"run_stream\":{\"kind\":\"run\",\"id\":\"cccccccc-3333-4333-8333-333333333333\"},\"model_id\":\"muse-spark-1.3-contributor\"}}'\n",
+            "echo '{\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"task.lifecycle.proposed\",\"payload\":{\"event\":{\"task_kind\":\"tool.write_file\"}}}'\n",
+            "echo '{\"schema_version\":1,\"stream\":{\"kind\":\"session\",\"id\":\"bbbbbbbb-2222-4222-8222-222222222222\"},\"payload_type\":\"run.terminal.completed\",\"payload\":{\"run_stream\":{\"kind\":\"run\",\"id\":\"cccccccc-3333-4333-8333-333333333333\"},\"terminal\":\"completed\",\"text\":\"muse worker done; wrote worker-muse.txt\"}}'\n",
             "exit 0\n",
         ),
     )
@@ -230,6 +404,34 @@ impl Env {
             status = status,
         );
         if status == "running" {
+            json.push_str(&format!(",\"pid\":{}", std::process::id()));
+        }
+        json.push('}');
+        std::fs::write(dir.join("run.json"), json).unwrap();
+    }
+
+    /// One synthetic quota/waiting_quota `run.json` with a quota block (a live pid when
+    /// `waiting_quota`, so its background reads as alive).
+    fn synthetic_quota(&self, id: &str, status: &str, exhausted: bool) {
+        let dir = self.work_root().join(id);
+        std::fs::create_dir_all(&dir).unwrap();
+        let seq: i64 = id.split('-').next().unwrap().parse().unwrap();
+        let mut json = format!(
+            concat!(
+                "{{\"id\":\"{id}\",\"task\":\"t\",\"seq\":{seq},\"provider\":\"ZAI-claude\",",
+                "\"model\":\"glm-5.3\",\"engine\":\"claude\",\"argv\":[\"-p\",\"--session-id\",\"s\"],",
+                "\"child_env_scrubbed\":[],\"started\":\"2026-10-21T10:00:00+00:00\",",
+                "\"status\":\"{status}\",\"session_id\":\"s\",",
+                "\"quota\":{{\"text\":\"usage limit reached\",\"reset_at\":null,",
+                "\"resume_at\":\"2100-01-01T00:01:00+00:00\",\"resumes\":1,\"exhausted\":{exhausted}}},",
+                "\"timeout_sec\":3600"
+            ),
+            id = id,
+            seq = seq,
+            status = status,
+            exhausted = exhausted,
+        );
+        if status == "waiting_quota" {
             json.push_str(&format!(",\"pid\":{}", std::process::id()));
         }
         json.push('}');
@@ -444,7 +646,10 @@ fn status_reads_synthetic_records_and_narrows_by_id() {
     e.synthetic_run("01-a-m", "done");
     let out = e.c3(&["work", "--task", "t", "--status"], &[]);
     let t = text(&out);
-    assert!(t.contains("work 01-a-m (ZAI-claude/glm-5.3): done"), "{t}");
+    assert!(
+        t.contains("work 01-a-m (ZAI-claude/glm-5.3 [claude]): done"),
+        "{t}"
+    );
     assert_eq!(out.status.code(), Some(0), "{t}");
 
     // two done runs: still 0
@@ -456,7 +661,10 @@ fn status_reads_synthetic_records_and_narrows_by_id() {
     e.synthetic_run("03-c-m", "died");
     let out = e.c3(&["work", "--task", "t", "--status"], &[]);
     let t = text(&out);
-    assert!(t.contains("work 03-c-m (ZAI-claude/glm-5.3): died"), "{t}");
+    assert!(
+        t.contains("work 03-c-m (ZAI-claude/glm-5.3 [claude]): died"),
+        "{t}"
+    );
     assert_eq!(out.status.code(), Some(1), "{t}");
 
     // one running (a live pid): 2, and --id narrows away from it
@@ -464,7 +672,7 @@ fn status_reads_synthetic_records_and_narrows_by_id() {
     let out = e.c3(&["work", "--task", "t", "--status"], &[]);
     let t = text(&out);
     assert!(
-        t.contains("work 04-d-m (ZAI-claude/glm-5.3): running"),
+        t.contains("work 04-d-m (ZAI-claude/glm-5.3 [claude]): running"),
         "{t}"
     );
     assert_eq!(out.status.code(), Some(2), "{t}");
@@ -502,4 +710,294 @@ fn a_second_work_on_a_task_with_a_live_run_is_refused() {
         "{t}"
     );
     assert!(!e.work_root().join("02-ZAI-claude-glm-5.3").exists());
+}
+
+// ------------------------------------------------------------------ QUOTA / RESUME / KICK
+
+/// A foreground run that hits the limit parks on `quota` (exit 3) with `resume_at` = reset + 60 s;
+/// `--resume` then continues the SAME session, the record goes `done`, events.jsonl gains the
+/// resume separator, and `quota.resumes` is 1.
+#[test]
+fn a_quota_hit_parks_the_run_and_resume_finishes_it() {
+    let e = setup("quota");
+    let fake = write_quota_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let qenv: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    // the foreground run hits the limit: exit 3, status quota, resume_at = reset + 60 s
+    let out = e.work("ZAI-claude", &[], &qenv);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(3), "{t}");
+    assert!(t.contains("hit a usage limit"), "{t}");
+    assert!(t.contains("--resume 01-ZAI-claude-glm-5.3"), "{t}");
+
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "quota", "{run}");
+    let reset = run["quota"]["reset_at"].as_str().unwrap();
+    let resume_at = run["quota"]["resume_at"].as_str().unwrap();
+    let reset_t = chrono::DateTime::parse_from_rfc3339(reset).unwrap();
+    let resume_t = chrono::DateTime::parse_from_rfc3339(resume_at).unwrap();
+    assert_eq!(
+        (resume_t - reset_t).num_seconds(),
+        60,
+        "resume_at = reset + 60 s"
+    );
+    assert_eq!(run["quota"]["resumes"], 0);
+
+    // --resume continues the same session (argv carries --resume): status done, resumes 1
+    let out = e.c3(&["work", "--task", "t", "--resume", "01"], &qenv);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "done", "{run}");
+    assert_eq!(run["quota"]["resumes"], 1, "{run}");
+    assert_eq!(
+        read(&rec.join("report.md")),
+        "Resumed and finished; cargo test: 12 passed."
+    );
+    let events = read(&rec.join("events.jsonl"));
+    assert!(
+        events.contains("\"type\":\"c3\",\"subtype\":\"resume\",\"n\":1"),
+        "the resume separator is in events.jsonl: {events}"
+    );
+}
+
+/// `--kick` on a foreground quota run resumes it directly (no sleeper); `--kick` on a done run
+/// refuses with its state.
+#[test]
+fn kick_resumes_a_quota_run_and_refuses_a_done_run() {
+    let e = setup("kick");
+    let fake = write_quota_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let qenv: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    let out = e.work("ZAI-claude", &[], &qenv);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+
+    // --kick resumes the parked quota run (there is no sleeper): status done
+    let out = e.c3(&["work", "--task", "t", "--kick", "--id", "01"], &qenv);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "done", "{run}");
+
+    // --kick on the now-done run refuses with the state
+    let out = e.c3(&["work", "--task", "t", "--kick", "--id", "01"], &qenv);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("is in state done"), "{t}");
+}
+
+/// A run that keeps hitting the limit exhausts its resume cap: after `--max-resumes` resumes the
+/// record has `quota.exhausted = true` and the resume count equals the cap.
+#[test]
+fn the_resume_cap_exhausts() {
+    let e = setup("cap");
+    let fake = write_always_quota_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let qenv: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    // initial run -> quota (exit 3)
+    let out = e.work("ZAI-claude", &["--max-resumes", "3"], &qenv);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    // resume 1 and 2 stay quota (exit 3), resume 3 exhausts the cap (exit 1)
+    for n in 1..=3 {
+        let out = e.c3(
+            &[
+                "work",
+                "--task",
+                "t",
+                "--resume",
+                "01",
+                "--max-resumes",
+                "3",
+            ],
+            &qenv,
+        );
+        let code = out.status.code();
+        let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+        assert_eq!(run["quota"]["resumes"], n, "resume {n}: {run}");
+        if n < 3 {
+            assert_eq!(code, Some(3), "resume {n} stays quota: {}", text(&out));
+            assert_eq!(run["quota"]["exhausted"], false);
+        } else {
+            assert_eq!(code, Some(1), "resume {n} exhausts: {}", text(&out));
+            assert_eq!(run["quota"]["exhausted"], true, "{run}");
+        }
+    }
+
+    // a further --resume is refused: the cap is spent
+    let out = e.c3(
+        &[
+            "work",
+            "--task",
+            "t",
+            "--resume",
+            "01",
+            "--max-resumes",
+            "3",
+        ],
+        &qenv,
+    );
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("spent its resume cap"), "{t}");
+}
+
+/// `--status` exit codes over synthetic quota records: `waiting_quota` reads as running (2);
+/// `quota` and quota-exhausted need a hand (1).
+#[test]
+fn status_exit_codes_for_quota_states() {
+    let e = setup("quota-status");
+
+    // waiting_quota (a live pid): the background is alive -> exit 2
+    e.synthetic_quota("01-ZAI-claude-glm-5.3", "waiting_quota", false);
+    let out = e.c3(&["work", "--task", "t", "--status", "--id", "01"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(2), "{t}");
+    assert!(t.contains("waiting_quota until"), "{t}");
+
+    // quota, not exhausted -> exit 1 (needs a --resume/--kick)
+    e.synthetic_quota("02-ZAI-claude-glm-5.3", "quota", false);
+    let out = e.c3(&["work", "--task", "t", "--status", "--id", "02"], &[]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+
+    // quota exhausted -> exit 1
+    e.synthetic_quota("03-ZAI-claude-glm-5.3", "quota", true);
+    let out = e.c3(&["work", "--task", "t", "--status", "--id", "03"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("exhausted"), "{t}");
+}
+
+// ------------------------------------------------------------------ CODEX / MUSE ENGINES
+
+/// A work run on the CODEX engine against a fake codex launcher: the record lands, status done,
+/// the engine is codex, the codex thread id is recorded as the session, `report.md` is the
+/// agent_message, `files_changed` and the tool call come from the codex stream.
+#[test]
+fn a_codex_work_run_lands_its_record() {
+    let e = setup("codex");
+    let fake = write_fake_codex(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e.work("openai", &[], &[("CODEX_CONSULT_EXE", fakep.as_str())]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    assert!(e.repo.join("worker-codex.txt").is_file(), "{t}");
+
+    let rec = e.work_root().join("01-openai-gpt-6.1-sol");
+    for f in [
+        "brief.md",
+        "events.jsonl",
+        "report.md",
+        "diff.txt",
+        "run.json",
+    ] {
+        assert!(rec.join(f).is_file(), "{} missing", rec.join(f).display());
+    }
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "done", "{run}");
+    assert_eq!(run["engine"], "codex");
+    assert_eq!(run["session_id"], "aaaaaaaa-1111-4111-8111-111111111111");
+    assert_eq!(
+        run["files_changed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>(),
+        vec!["worker-codex.txt"]
+    );
+    assert_eq!(run["tool_calls"]["command_execution"], 1);
+    assert_eq!(
+        read(&rec.join("report.md")),
+        "codex worker done; cargo test: 7 passed."
+    );
+    // the codex worker argv: workspace-write sandbox, -C the repo root, the model, prompt on `-`
+    let argv = run["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(argv.contains("exec --sandbox workspace-write"), "{argv}");
+    assert!(argv.contains("-m gpt-6.1-sol"), "{argv}");
+    assert!(argv.ends_with(" -"), "{argv}");
+}
+
+/// A work run on the MUSE engine against a fake muse launcher (a planted oauth `auth.json` so the
+/// per-token-billing guard passes): the record lands, status done, the engine is muse, the minted
+/// session id is recorded, `report.md` is the terminal text, the tool task is counted.
+#[test]
+fn a_muse_work_run_lands_its_record() {
+    let e = setup("muse");
+    let fake = write_fake_muse(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    // plant an oauth auth.json under the scratch home so get_muse_launch_block passes
+    let auth = e
+        .work
+        .join("userhome")
+        .join(".config")
+        .join("muse")
+        .join("auth.json");
+    std::fs::create_dir_all(auth.parent().unwrap()).unwrap();
+    std::fs::write(&auth, r#"{"providers":{"meta":{"mechanism":"oauth"}}}"#).unwrap();
+    let env: Vec<(&str, &str)> = vec![
+        ("CODEX_CONSULT_MUSE_EXE", fakep.as_str()),
+        ("TBH_CREDENTIAL_BACKEND", "file"),
+        ("META_API_KEY", ""),
+        ("MODEL_API_KEY", ""),
+    ];
+    let out = e.work("meta", &[], &env);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    assert!(e.repo.join("worker-muse.txt").is_file(), "{t}");
+
+    let rec = e.work_root().join("01-meta-muse-spark-1.3-contributor");
+    for f in [
+        "brief.md",
+        "events.jsonl",
+        "report.md",
+        "diff.txt",
+        "run.json",
+    ] {
+        assert!(rec.join(f).is_file(), "{} missing", rec.join(f).display());
+    }
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "done", "{run}");
+    assert_eq!(run["engine"], "muse");
+    // the minted session id is a uuid (muse mints it up front, so a resume continues it)
+    let sid = run["session_id"].as_str().unwrap();
+    assert_eq!(sid.len(), 36, "minted uuid: {sid}");
+    assert_eq!(
+        run["files_changed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>(),
+        vec!["worker-muse.txt"]
+    );
+    assert_eq!(run["tool_calls"]["write_file"], 1);
+    assert_eq!(
+        read(&rec.join("report.md")),
+        "muse worker done; wrote worker-muse.txt"
+    );
+    // the muse worker argv: writes/shell ON, approvals withheld, sandbox off, the minted session
+    let argv = run["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(argv.contains("exec --json --prompt-file"), "{argv}");
+    assert!(argv.contains("--approval-mode never"), "{argv}");
+    assert!(argv.contains("--disable-sandbox"), "{argv}");
+    assert!(argv.contains(&format!("--session-id {sid}")), "{argv}");
 }

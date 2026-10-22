@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "b8e2a8ac-777d-40c4-9ae1-e4755e5a46d2",
+    "id8":  "b8e2a8ac",
+    "task":  "consilium-2026-10-14",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-14T20:45:23+02:00",
+    "updated":  "2026-10-14T20:56:53+02:00",
+    "finished":  "2026-10-14T20:56:53+02:00",
+    "wall_seconds":  690.7,
+    "pid":  30756,
+    "start_time":  "2026-10-14T18:45:23.9563935Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3300,
+    "purpose":  "framing",
+    "reply_name":  "panel-b-ZAI-2",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "ZAI :: glm-5.3",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  602.2,
+                        "n":  26,
+                        "handoff":  "28",
+                        "reply":  "handoffs/28-codex-panel-b-ZAI-2.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - ZAI :: glm-5.3, mode new, thread 01a13bbb-d37f-7020-acc1-48f484b11a41 (source: events), wall 602.2 s\u000aquota      : no window in the rollout; this run 2284196 input tokens (1960832 cached) in 14 calls, max 845018 per call of 996147; sub-agents 0\u000aformat repair: succeeded in 83.4 s; drift: 2 note(s)\u000a  drift: numbered answers differ: prose 0, reply_markdown 4\u000a  drift: 14 of the 18 prose sentences (\u003e= 60 chars) are not in reply_markdown (first: \u0027a table keyed only by adapter name plus vendor also re-label...\u0027)\u000averdict    : ADVISE - The framing is useful, but both designs need corrected event, trust and interactive-lifecycle contracts before implementation.\u000afindings   : 4 blocker, 5 major, 0 minor, 0 note -\u003e F28-1..F28-9 in findings.json\u000aprior      : F03-1 still-open, F03-2 still-open, F03-3 still-open, F03-4 still-open, F03-5 still-open, F04-1 still-open, F04-2 still-open, F04-3 still-open, F04-4 still-open, F04-5 still-open, F04-6 still-open, F04-7 still-open, F04-8 still-open, F05-1 still-open, F05-2 still-open, F05-3 still-open, F05-4 still-open, F05-5 still-open, F05-6 still-open, F05-7 still-open, F07-1 still-open, F07-2 still-open, F07-3 still-open, F07-4 still-open, F07-5 still-open, F08-1 still-open, F08-2 still-open, F08-3 still-open, F08-4 still-open, F08-5 still-open, F08-6 still-open, F08-7 still-open, F08-8 still-open, F10-1 still-open, F10-2 still-open, F11-1 still-open, F11-2 still-open, F11-3 still-open, F11-4 still-open, F11-5 still-open, F11-6 still-open, F12-1 still-open, F12-2 still-open, F12-3 still-open, F13-1 still-open, F13-2 still-open, F13-3 still-open, F13-4 still-open, F13-5 still-open, F13-6 still-open, F19-1 still-open, F19-2 still-open, F19-3 still-open, F19-4 still-open, F19-5 still-open, F19-6 still-open, F20-1 still-open, F20-2 still-open, F20-3 still-open, F20-4 still-open, F20-5 still-open, F20-6 still-open, F20-7 still-open, F20-8 still-open, F20-9 still-open, F21-1 still-open, F21-2 still-open, F21-3 still-open, F21-4 still-open, F23-1 still-open, F23-2 still-open, F23-3 still-open, F24-1 still-open, F24-2 still-open, F24-3 still-open, F24-4 still-open, F24-5 still-open, F24-6 still-open, F24-7 still-open, F24-8 still-open, F24-9 still-open, F25-1 still-open, F25-2 still-open, F25-3 still-open, F25-4 still-open, F27-1 still-open, F27-2 still-open, F27-3 still-open, F27-4 still-open, F27-5 still-open, F27-6 still-open, F27-7 still-open, F27-8 still-open, F27-9 still-open\u000aunknown ids: F20-8, F20-9 (not in findings.json; ignored)\u000asupersedes : F20-9 not in findings.json (kept on the new finding only)\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\28-codex-panel-b-ZAI-2.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\28-codex-panel-b-ZAI-2.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\28-codex-panel-b-ZAI-2.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.detached-b8e2a8ac.log",
+    "args":  null
+}

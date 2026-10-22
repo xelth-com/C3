@@ -1,0 +1,145 @@
+{
+    "status_version":  1,
+    "id":  "37b31a52-fcb6-47ad-8d9e-777af29125a7",
+    "id8":  "37b31a52",
+    "task":  "consilium-2026-10-14",
+    "kind":  "panel",
+    "state":  "done",
+    "exit":  1,
+    "started":  "2026-10-14T19:29:06+02:00",
+    "updated":  "2026-10-14T20:05:46+02:00",
+    "finished":  "2026-10-14T20:05:46+02:00",
+    "wall_seconds":  2200.5,
+    "pid":  7612,
+    "start_time":  "2026-10-14T17:29:06.8322597Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  14040,
+    "purpose":  "framing",
+    "reply_name":  "panel-a-measure",
+    "brief":  "",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "openai :: gpt-6-astra",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  259.9,
+                        "n":  3,
+                        "handoff":  "05",
+                        "reply":  "handoffs/05-codex-panel-a-measure-openai.md"
+                    },
+                    {
+                        "position":  2,
+                        "lineage":  "ZAI :: glm-5.3",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  238.2,
+                        "n":  11,
+                        "handoff":  "13",
+                        "reply":  "handoffs/13-codex-panel-a-measure-zai.md"
+                    },
+                    {
+                        "position":  3,
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "state":  "failed",
+                        "outcome":  "failed: transport - Reconnecting... 1/5 (stream disconnected before completion: idle timeout waiting for SSE)",
+                        "wall_seconds":  1132.5,
+                        "n":  12,
+                        "handoff":  "14",
+                        "reply":  "handoffs/14-codex-panel-a-measure-mimo.md"
+                    },
+                    {
+                        "position":  4,
+                        "lineage":  "gemini :: gemini-3.8-flash-high [agy]",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  661.8,
+                        "n":  10,
+                        "handoff":  "12",
+                        "reply":  "handoffs/12-agy-panel-a-measure-gemini.md"
+                    },
+                    {
+                        "position":  5,
+                        "lineage":  "gemini :: gemini-3.1-pro-high [agy]",
+                        "state":  "failed",
+                        "outcome":  "failed: agy exit 1 - invalid model selection (--model \"gemini-3.1-pro-high\" --effort \"\"): model gemini-3.1-pro-high is not recognized as a known model or custom model in settings Available models: Gemini 3.8 Flash (High) Gemini 3.8 Flash (Medium) Gemini 3.8 Flash (Low) Claude Sonnet 4.6 (Thinking) Claude Opus 4.6 (Thinking) GPT-OSS 120B (Medium)",
+                        "wall_seconds":  65.4,
+                        "n":  7,
+                        "handoff":  "09",
+                        "reply":  "handoffs/09-agy-panel-a-measure-gemini.md"
+                    },
+                    {
+                        "position":  6,
+                        "lineage":  "byteplus :: deepseek-v4.1-flash",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  482.2,
+                        "n":  6,
+                        "handoff":  "08",
+                        "reply":  "handoffs/08-codex-panel-a-measure-byteplus.md"
+                    },
+                    {
+                        "position":  7,
+                        "lineage":  "byteplus :: dola-seed-2.0-pro",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  135.4,
+                        "n":  8,
+                        "handoff":  "10",
+                        "reply":  "handoffs/10-codex-panel-a-measure-byteplus.md"
+                    },
+                    {
+                        "position":  8,
+                        "lineage":  "kimi :: k3",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  423.4,
+                        "n":  1,
+                        "handoff":  "03",
+                        "reply":  "handoffs/03-codex-panel-a-measure-kimi.md"
+                    },
+                    {
+                        "position":  9,
+                        "lineage":  "alibaba :: qwen3.8-max",
+                        "state":  "failed",
+                        "outcome":  "failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 357b0e28-e6dd-4322-8579-26b60de2963c",
+                        "wall_seconds":  44.9,
+                        "n":  4,
+                        "handoff":  "06",
+                        "reply":  "handoffs/06-codex-panel-a-measure-alibaba.md"
+                    },
+                    {
+                        "position":  10,
+                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  167.1,
+                        "n":  5,
+                        "handoff":  "07",
+                        "reply":  "handoffs/07-muse-panel-a-measure-meta.md"
+                    },
+                    {
+                        "position":  11,
+                        "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  309.3,
+                        "n":  9,
+                        "handoff":  "11",
+                        "reply":  "handoffs/11-claudecode-panel-a-measure-zai-claude.md"
+                    },
+                    {
+                        "position":  12,
+                        "lineage":  "mimo-claude :: mimo-v2.6-pro [claude]",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  515.3,
+                        "n":  2,
+                        "handoff":  "04",
+                        "reply":  "handoffs/04-claudecode-panel-a-measure-mimo-claude.md"
+                    }
+                ],
+    "summary":  "Panel b694a074: 12 of 12 entries ran (asked 12, started 12, usable 9; wall clock 2195.5 s; at most 8 at a time)\u000a  openai :: gpt-6-astra                      ADVISE   0 blocker, 6 major, 1 minor          prior: none  251.7 s  handoffs/05-codex-panel-a-measure-openai.md\u000a  ZAI :: glm-5.3                             ADVISE   0 blocker, 3 major, 3 minor          prior: none  235.9 s  handoffs/13-codex-panel-a-measure-zai.md\u000a  mimo :: mimo-v2.6-pro                      failed: transport - Reconnecting... 1/5 (stream disconnected before completion: idle timeout waiti...  0 s  handoffs/14-codex-panel-a-measure-mimo.md  partial handoffs/14-codex-panel-a-measure-mimo.partial.md\u000a  gemini :: gemini-3.8-flash-high [agy]      ADVISE   0 blocker, 1 major, 1 minor, 1 note  prior: none  636.5 s  handoffs/12-agy-panel-a-measure-gemini.md\u000a  gemini :: gemini-3.1-pro-high [agy]        failed: agy exit 1 - invalid model selection (--model \"gemini-3.1-pro-high\" --effort \"\"): model ge...  0 s  handoffs/09-agy-panel-a-measure-gemini.md\u000a  byteplus :: deepseek-v4.1-flash            ADVISE   0 blocker, 8 major, 0 minor          prior: none  421.9 s  handoffs/08-codex-panel-a-measure-byteplus.md\u000a  byteplus :: dola-seed-2.0-pro              ADVISE   0 blocker, 0 major, 1 minor, 1 note  prior: none  128.3 s  handoffs/10-codex-panel-a-measure-byteplus.md\u000a  kimi :: k3                                 ADVISE   0 blocker, 2 major, 2 minor, 1 note  prior: none  310.7 s  handoffs/03-codex-panel-a-measure-kimi.md\u000a  alibaba :: qwen3.8-max                     failed: codex exit 1 - exceeded retry limit, last status: 429 Too Many Requests, request id: 357b0...  0 s  handoffs/06-codex-panel-a-measure-alibaba.md\u000a  meta :: muse-spark-1.3-contributor [muse]  ADVISE   0 blocker, 4 major, 1 minor          prior: none  117.8 s  handoffs/07-muse-panel-a-measure-meta.md\u000a  ZAI-claude :: glm-5.3 [claude]             ADVISE   0 blocker, 5 major, 1 minor          prior: none  306.4 s  handoffs/11-claudecode-panel-a-measure-zai-claude.md\u000a  mimo-claude :: mimo-v2.6-pro [claude]      ADVISE   0 blocker, 3 major, 2 minor, 3 note  prior: none  467.7 s  handoffs/04-claudecode-panel-a-measure-mimo-claude.md",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.detached-37b31a52.log",
+    "args":  null
+}

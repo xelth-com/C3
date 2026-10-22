@@ -735,8 +735,11 @@ pub struct ClaudeWorkArgs {
     pub max_turns: u32,
     /// The `--allowedTools` patterns, joined by ','.
     pub allowed_tools: Vec<String>,
-    /// The minted session id (`--session-id`).
+    /// The minted session id (`--session-id`), or the session to continue when `resume`.
     pub session_id: String,
+    /// (work mode, quota resume) Continue `session_id` with `--resume` instead of minting it
+    /// with `--session-id` - the same tools and flags, the same child session.
+    pub resume: bool,
 }
 
 /// The argv of one worker run after the launcher: the review argv WITHOUT `--restricted` (it
@@ -768,7 +771,11 @@ pub fn work_args(t: &ClaudeWorkArgs) -> Vec<String> {
     }
     a.push("--max-turns".into());
     a.push(t.max_turns.to_string());
-    a.push("--session-id".into());
+    if t.resume {
+        a.push("--resume".into());
+    } else {
+        a.push("--session-id".into());
+    }
     a.push(t.session_id.clone());
     a
 }
@@ -1201,6 +1208,7 @@ mod tests {
             max_turns: WORK_MAX_TURNS_DEFAULT,
             allowed_tools: allows,
             session_id: "u".into(),
+            resume: false,
         });
         assert_eq!(
             a.join(" "),
@@ -1213,6 +1221,7 @@ mod tests {
             max_turns: 12,
             allowed_tools: vec!["Bash(cargo test:*)".into()],
             session_id: "v".into(),
+            resume: false,
         });
         assert_eq!(
             b.join(" "),
@@ -1221,6 +1230,20 @@ mod tests {
         // `--restricted` (which would remove the write tools) is never on a worker's argv
         assert!(!a.iter().any(|x| x == "--restricted"));
         assert!(!b.iter().any(|x| x == "--restricted"));
+        // resume: the same argv but `--resume <session>` instead of `--session-id <session>`
+        let r = work_args(&ClaudeWorkArgs {
+            model: "m".into(),
+            effort: None,
+            max_turns: 12,
+            allowed_tools: vec!["Bash(cargo test:*)".into()],
+            session_id: "sess-1".into(),
+            resume: true,
+        });
+        assert!(
+            r.join(" ").ends_with("--max-turns 12 --resume sess-1"),
+            "{r:?}"
+        );
+        assert!(!r.iter().any(|x| x == "--session-id"));
         // the preamble is a contract: it is tested verbatim
         assert_eq!(
             WORK_PREAMBLE,

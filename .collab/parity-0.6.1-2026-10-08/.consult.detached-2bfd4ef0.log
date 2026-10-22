@@ -1,0 +1,3 @@
+codex-consult: detached run 2bfd4ef0 (detach id 2bfd4ef0-cb9f-422b-ba97-2fa0a422c775) - pid 6164 on LAPTOP-9SGIHQ03, started 2026-10-15T11:46:06+02:00; status file C:\Users\Dmytro\C3\.collab\parity-0.6.1-2026-10-08\.consult.detached-2bfd4ef0.status.json
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - entry 1 of 10 for -Provider openai (model applied)
+coordinator: anthropic :: claude-fable-5-1 (not in the roster - no reviewer can match it)

@@ -1,0 +1,35 @@
+{
+    "status_version":  1,
+    "id":  "6d9ec977-56b9-439f-9b37-efca013aaaf7",
+    "id8":  "6d9ec977",
+    "task":  "consilium-2026-10-14",
+    "kind":  "run",
+    "state":  "done",
+    "exit":  0,
+    "started":  "2026-10-14T20:20:09+02:00",
+    "updated":  "2026-10-14T20:35:29+02:00",
+    "finished":  "2026-10-14T20:35:29+02:00",
+    "wall_seconds":  920.6,
+    "pid":  33580,
+    "start_time":  "2026-10-14T18:20:09.3287133Z",
+    "host":  "LAPTOP-9SGIHQ03",
+    "budget_sec":  3300,
+    "purpose":  "framing",
+    "reply_name":  "panel-b-mimo",
+    "brief":  "C:\\Users\\Dmytro\\C3\\.collab/consilium-2026-10-14/handoffs/02-claude-watch-and-browser-engine.md",
+    "members":  [
+                    {
+                        "position":  1,
+                        "lineage":  "mimo :: mimo-v2.6-pro",
+                        "state":  "usable",
+                        "outcome":  "usable reply",
+                        "wall_seconds":  916.9,
+                        "n":  25,
+                        "handoff":  "27",
+                        "reply":  "handoffs/27-codex-panel-b-mimo.md"
+                    }
+                ],
+    "summary":  "codex-consult: usable reply - mimo :: mimo-v2.6-pro, mode new, thread 01a13ba4-b3a7-7ad0-b47f-e4ed77dfe39e (source: events), wall 916.9 s\u000aquota      : no window in the rollout; this run 693769 input tokens (190976 cached) in 7 calls, max 122944 per call of 996147; sub-agents 0\u000averdict    : ADVISE - The architecture is promising, but the watch liveness and cache contract and the browser CSP, recovery and trust model must be resolved before implementation.\u000afindings   : 0 blocker, 5 major, 4 minor, 0 note -\u003e F27-1..F27-9 in findings.json\u000aprior      : F03-1 not-checked, F03-2 not-checked, F03-3 not-checked, F03-4 not-checked, F03-5 not-checked, F04-1 not-checked, F04-2 not-checked, F04-3 not-checked, F04-4 not-checked, F04-5 not-checked, F04-6 not-checked, F04-7 not-checked, F04-8 not-checked, F05-1 not-checked, F05-2 not-checked, F05-3 not-checked, F05-4 not-checked, F05-5 not-checked, F05-6 not-checked, F05-7 not-checked, F07-1 not-checked, F07-2 not-checked, F07-3 not-checked, F07-4 not-checked, F07-5 not-checked, F08-1 not-checked, F08-2 not-checked, F08-3 not-checked, F08-4 not-checked, F08-5 not-checked, F08-6 not-checked, F08-7 not-checked, F08-8 not-checked, F10-1 not-checked, F10-2 not-checked, F11-1 not-checked, F11-2 not-checked, F11-3 not-checked, F11-4 not-checked, F11-5 not-checked, F11-6 not-checked, F12-1 not-checked, F12-2 not-checked, F12-3 not-checked, F13-1 not-checked, F13-2 not-checked, F13-3 not-checked, F13-4 not-checked, F13-5 not-checked, F13-6 not-checked, F19-1 still-open, F19-2 still-open, F19-3 still-open, F19-4 still-open, F19-5 still-open, F19-6 still-open, F20-1 still-open, F20-2 still-open, F20-3 still-open, F20-4 still-open, F20-5 still-open, F20-6 still-open, F20-7 still-open, F21-1 still-open, F21-2 still-open, F21-3 still-open, F21-4 still-open, F23-1 still-open, F23-2 still-open, F23-3 still-open, F24-1 still-open, F24-2 still-open, F24-3 still-open, F24-4 still-open, F24-5 still-open, F24-6 still-open, F24-7 still-open, F24-8 still-open, F24-9 still-open, F25-1 still-open, F25-2 still-open, F25-3 still-open, F25-4 still-open\u000areply file : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\27-codex-panel-b-mimo.md\u000areply json : C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\27-codex-panel-b-mimo.reply.json\u000aevents file: C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\handoffs\\27-codex-panel-b-mimo.events.jsonl",
+    "log":  "C:\\Users\\Dmytro\\C3\\.collab\\consilium-2026-10-14\\.consult.detached-6d9ec977.log",
+    "args":  null
+}

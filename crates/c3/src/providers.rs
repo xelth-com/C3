@@ -81,7 +81,6 @@ struct Row {
     engine: String,
     kind: String,
     endpoint: String,
-    #[allow(dead_code)]
     wire_api: String,
     table: String,
     credentials: String,
