@@ -442,6 +442,12 @@ release is the highest `v<major>.<minor>.<patch>` tag, compared with the running
   `<codex home>/c3/config.json`, to silence the automatic hook check. `c3 update` run by hand still
   checks. Nothing here is ever written outside `<codex home>/c3/`, no redirect is ever followed, and
   nothing but the plain GET is ever sent.
+- **Throttle and stale-offer policy.** The cache records the last successful check (`checked_at`)
+  separately from the last attempt (`attempted_at`). The automatic hook does not attempt a refresh
+  within 24 h of a success or within 1 h of a failed attempt, and it offers only from a success
+  younger than 7 days — an older answer is dropped silently, since the release it names may no
+  longer exist. A forced `c3 update` whose refresh fails still prints the cached data, annotated
+  `(checked <time>, refresh failed: <reason>)`.
 - **Unsigned-tag limitation.** `cargo install --git --tag` fetches the tagged source over HTTPS from
   GitHub and builds it locally; there is **no release signature** to verify yet. The trust you are
   extending is to GitHub's transport and to the `xelth-com/C3` tag, exactly as for a manual

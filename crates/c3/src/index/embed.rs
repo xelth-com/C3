@@ -32,6 +32,10 @@ fn resolve_loopback_addrs(raw_url: &str) -> Result<Vec<SocketAddr>, String> {
     if out.is_empty() {
         return Err(CLOUD_EMBEDDER_MSG.to_string());
     }
+    // IPv4 loopback first: `localhost` often resolves to `::1` ahead of `127.0.0.1`, while local
+    // embedders (Ollama by default) listen on 127.0.0.1 only and an IPv6 loopback connect can hang
+    // until the timeout on some hosts - trying 127.0.0.1 first never costs a reachable ::1 anything.
+    out.sort_by_key(|a| a.is_ipv6());
     Ok(out)
 }
 
@@ -184,7 +188,11 @@ impl Embedder {
             Err(ureq::Error::Status(code, _)) => {
                 return Err(format!("the embedder returned status {code}"));
             }
-            Err(ureq::Error::Transport(_)) => {
+            Err(ureq::Error::Transport(t)) => {
+                #[cfg(test)]
+                eprintln!("embed transport error: {t:?}");
+                #[cfg(not(test))]
+                let _ = t;
                 return Err("the embedder is unavailable".to_string());
             }
         };
@@ -327,13 +335,46 @@ mod tests {
         if let Ok(l) = TcpListener::bind(("::1", port)) {
             listeners.push(l);
         }
+        let n_listeners = listeners.len();
         let handles: Vec<_> = listeners
             .into_iter()
             .map(|listener| {
                 std::thread::spawn(move || {
-                    if let Ok((mut stream, _)) = listener.accept() {
-                        let mut buf = [0u8; 4096];
-                        let _ = stream.read(&mut buf);
+                    // Keep accepting until the test's final empty "stop" connection arrives (it
+                    // sends nothing and closes), so a diagnostic probe or a client retry is
+                    // answered too and the join at the end still returns.
+                    while let Ok((mut stream, _)) = listener.accept() {
+                        // Read the WHOLE request (headers + Content-Length body) before answering:
+                        // answering and closing while the client is still sending the body makes
+                        // Windows reset the connection and the client loses the response (the
+                        // former flake of this test under a loaded suite).
+                        let mut req = Vec::new();
+                        let mut chunk = [0u8; 4096];
+                        loop {
+                            let n = match stream.read(&mut chunk) {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => n,
+                            };
+                            req.extend_from_slice(&chunk[..n]);
+                            let text = String::from_utf8_lossy(&req);
+                            if let Some(end) = text.find("\r\n\r\n") {
+                                let len = text[..end]
+                                    .lines()
+                                    .find_map(|l| {
+                                        let (k, v) = l.split_once(':')?;
+                                        k.eq_ignore_ascii_case("content-length")
+                                            .then(|| v.trim().parse::<usize>().ok())
+                                            .flatten()
+                                    })
+                                    .unwrap_or(0);
+                                if req.len() >= end + 4 + len {
+                                    break;
+                                }
+                            }
+                        }
+                        if req.is_empty() {
+                            break; // the stop connection
+                        }
                         let body = r#"{"data":[{"index":0,"embedding":[1.0,2.0,3.0]}]}"#;
                         let resp = format!(
                             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -347,9 +388,37 @@ mod tests {
             })
             .collect();
         let e = Embedder::new(format!("http://localhost:{port}/v1/embeddings"), "m", 3);
+        let diag = || {
+            let pinned = resolve_loopback_addrs(&format!("http://localhost:{port}/v1/embeddings"));
+            let probes: Vec<String> = ["127.0.0.1", "::1"]
+                .iter()
+                .map(|a| {
+                    format!(
+                        "{a}: {:?}",
+                        std::net::TcpStream::connect_timeout(
+                            &format!("{}:{port}", if *a == "::1" { "[::1]" } else { a })
+                                .parse()
+                                .unwrap(),
+                            Duration::from_secs(1)
+                        )
+                        .map(|_| "ok")
+                        .map_err(|e| e.to_string())
+                    )
+                })
+                .collect();
+            format!(
+                "pinned={pinned:?} listeners={} probes={probes:?}",
+                n_listeners
+            )
+        };
         let v = e
             .embed_batch(&["hi".to_string()], Duration::from_secs(5))
-            .expect("the request reaches the loopback fake via localhost");
+            .unwrap_or_else(|err| {
+                panic!(
+                    "the request reaches the loopback fake via localhost: {err}; {}",
+                    diag()
+                )
+            });
         assert_eq!(v.len(), 1);
         assert_eq!(v[0], vec![1.0, 2.0, 3.0]);
         // A listener that never got a connection blocks in accept(); unblock it by connecting.

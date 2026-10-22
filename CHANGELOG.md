@@ -25,15 +25,33 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   (`--check`) forces a check and reports installed vs latest, whether an update exists, the
   changelog URL, the detected install kind and the exact commands `--apply` would run, changing
   nothing (exit 0 up to date, 3 an update exists, 1 on a fetch failure). `c3 update --apply` runs
-  them, stopping at the first failure: `cargo install --git … --tag v<latest> --locked c3-cli`
+  them, stopping at the first failure: `cargo install --git … --rev <latest_sha> --locked c3-cli`
   (+ `--features index-surreal` when built with the indexed bundle); then, if a **clean** source
   checkout on a branch is known (config `source_checkout`, env `C3_SOURCE_CHECKOUT`, or the git work
-  tree around `CLAUDE_PLUGIN_ROOT`), `git fetch --tags origin` + `git merge --ff-only v<latest>`
-  (a dirty tree / detached HEAD / non-fast-forward is printed and skipped, never failing the install);
-  then `claude plugin update c3@c3` when `claude` is on PATH, else the command is printed. The
-  automatic check is ON by default and silenced with `C3_UPDATE_CHECK=off` or `"update_check": false`
-  in the C3 config; in `CODEX_CONSULT_TEST_MODE=1` no network is ever touched. There is no release
-  signature yet: `cargo install --git --tag` trusts GitHub's HTTPS transport and the tag.
+  tree around `CLAUDE_PLUGIN_ROOT`), the release tag is fetched from the canonical URL, verified
+  against the API commit and fast-forwarded to it (a dirty tree / detached HEAD / mismatch /
+  non-fast-forward is printed and skipped, never failing the install); then
+  `claude plugin update c3@c3` when `claude` is on PATH, else the command is printed. The automatic
+  check is ON by default and silenced with `C3_UPDATE_CHECK=off` or `"update_check": false` in the
+  C3 config; in `CODEX_CONSULT_TEST_MODE=1` no network is ever touched. There is no release
+  signature yet: the install trusts GitHub's HTTPS transport and the API's release commit.
+
+### Fixed
+
+- **Wave 11b (`c3 update` hardening, Astra handoff 97)** — the self-update now binds to the GitHub
+  tags API's release **commit**, not the tag name: `--apply` installs with
+  `cargo install --git … --rev <latest_sha>` and synchronises a source checkout by fetching the
+  release tag from the canonical `https://github.com/xelth-com/C3.git` into a dedicated ref (never
+  the checkout's `origin`), verifying its peeled commit equals `latest_sha` before any merge and
+  fast-forwarding to that sha — a fork or stale local tag with the release's name can no longer move
+  the checkout (F97-2). The checkout's identity (work-tree root, branch, HEAD, cleanliness) is
+  captured in the plan and **revalidated immediately before the merge**, after the fetch, so a
+  branch switch, a detached HEAD or a tree that became dirty during the lengthy `cargo install`
+  skips the sync instead of fast-forwarding the wrong thing (F97-1). The cache now records
+  `attempted_at` (every attempt) separately from `checked_at` (last success): the hook backs off for
+  1 h after a failed attempt and 24 h after a success, offers only from a success younger than 7
+  days (a stale answer that may name a deleted release is dropped silently), and `c3 update` prints
+  the cached data with a `refresh failed` note when a forced refresh fails (F97-3).
 
 ## [0.2.3] - 2026-10-22
 

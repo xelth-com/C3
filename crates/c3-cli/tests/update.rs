@@ -123,12 +123,12 @@ fn update_exit_3_when_newer() {
         t.contains("https://github.com/xelth-com/C3/blob/v99.0.0/CHANGELOG.md"),
         "{t}"
     );
+    // (11b F97-2) the cargo step pins the API commit, never the tag name.
     assert!(
-        t.contains(
-            "cargo install --git https://github.com/xelth-com/C3.git --tag v99.0.0 --locked"
-        ),
+        t.contains("cargo install --git https://github.com/xelth-com/C3.git --rev abc123 --locked"),
         "{t}"
     );
+    assert!(!t.contains("--tag v99.0.0"), "{t}");
     assert!(t.contains("nothing was changed."), "{t}");
     // the cache was written
     assert!(home.join("c3").join("update-check.json").exists());
@@ -181,5 +181,103 @@ fn apply_refused_on_fetch_failure() {
     let home = scratch("apply-offline");
     let o = run(&home, None, &["update", "--apply"]);
     assert_eq!(o.status.code(), Some(1), "{}", stdout(&o));
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+// ---------------------------------------------------------------- 11b F97-3: attempt state / offer
+
+/// Seed `<home>/c3/update-check.json` with a success `age_days` old advertising v99.0.0.
+fn seed_cache(home: &std::path::Path, age_days: i64) -> String {
+    let stamp = (chrono::Utc::now() - chrono::Duration::days(age_days))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let dir = home.join("c3");
+    std::fs::create_dir_all(&dir).unwrap();
+    let body = format!(
+        r#"{{"checked_at":"{stamp}","attempted_at":"{stamp}","latest":"99.0.0","latest_sha":"abc123","installed":"0.0.1","source":"github-tags"}}"#
+    );
+    std::fs::write(dir.join("update-check.json"), body).unwrap();
+    stamp
+}
+
+fn cache_field(home: &std::path::Path, key: &str) -> String {
+    let s = std::fs::read_to_string(home.join("c3").join("update-check.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+#[test]
+fn hook_suppresses_a_stale_offer_on_fetch_failure() {
+    // a success 8 days old (> the 7-day offer window) + an offline refresh: no line, and the
+    // failed attempt is recorded (attempted_at advances) while the stale success is kept.
+    let home = scratch("stale-offer");
+    let seeded = seed_cache(&home, 8);
+    let o = run(&home, None, &["hook"]);
+    assert_eq!(o.status.code(), Some(0));
+    assert!(
+        !stdout(&o)
+            .lines()
+            .any(|l| l.starts_with("c3: update available ")),
+        "a > 7-day-old success must not be offered:\n{}",
+        stdout(&o)
+    );
+    assert_eq!(cache_field(&home, "checked_at"), seeded, "success kept");
+    assert_ne!(
+        cache_field(&home, "attempted_at"),
+        seeded,
+        "attempt recorded"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn hook_still_offers_from_a_fresh_success_on_fetch_failure() {
+    // a success 2 days old (< 7 days) + an offline refresh: the cached offer still prints.
+    let home = scratch("fresh-offer");
+    seed_cache(&home, 2);
+    let o = run(&home, None, &["hook"]);
+    assert_eq!(o.status.code(), Some(0));
+    assert!(
+        stdout(&o)
+            .lines()
+            .any(|l| l.starts_with("c3: update available v99.0.0 (installed ")),
+        "a fresh cached success must still be offered:\n{}",
+        stdout(&o)
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn hook_backs_off_after_a_failed_attempt() {
+    // no cache, offline: the first hook attempts and records attempted_at; the immediate second
+    // call is within the 1 h failure backoff, so it does not attempt again (attempted_at unchanged).
+    let home = scratch("backoff");
+    let o1 = run(&home, None, &["hook"]);
+    assert_eq!(o1.status.code(), Some(0));
+    let first = cache_field(&home, "attempted_at");
+    assert!(!first.is_empty(), "the first failed attempt is recorded");
+    let o2 = run(&home, None, &["hook"]);
+    assert_eq!(o2.status.code(), Some(0));
+    assert_eq!(
+        cache_field(&home, "attempted_at"),
+        first,
+        "a second call within 1 h must not attempt again"
+    );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+#[test]
+fn update_prints_cached_data_when_a_forced_refresh_fails() {
+    // `c3 update` offline WITH a prior cache: prints the cached data annotated "refresh failed",
+    // exit 1.
+    let home = scratch("forced-fail");
+    seed_cache(&home, 2);
+    let o = run(&home, None, &["update"]);
+    assert_eq!(o.status.code(), Some(1), "{}", stdout(&o));
+    let t = stdout(&o);
+    assert!(t.contains("refresh failed: offline"), "{t}");
+    assert!(t.contains("v99.0.0"), "the cached latest is shown: {t}");
     let _ = std::fs::remove_dir_all(&home);
 }

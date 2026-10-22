@@ -1,0 +1,199 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Checkout synchronization does not bind the target to the checked release or revalidate checkout state after installation, and failed automatic checks bypass the advertised daily limit.",
+  "reply_markdown": "1. **Q1:** Explicit unsigned HTTPS installation is acceptable with the disclosed trust model. SHA pinning provides consistency, not independent authenticity; `cargo install --git … --rev <validated-sha>` avoids needing access to Cargo’s checkout. However, checkout synchronization can update a different branch after installation and merge an unrelated local tag: findings #1–2 block acceptance.\n\n2. **Q2:** Stable installed versions ahead of the latest tag are protected against downgrade; prerelease tags are ignored. Deleted tags can remain advertised indefinitely during outages. Failed checks repeat on every hook invocation, contradicting the daily limit. Default-on with a three-second network timeout is reasonable only with failure backoff and honest stale-cache messaging.\n\n3. **Q3:** **HOLD** for findings #1–2; also fix #3. Tests were inspected, not executed. Reading omissions are listed in `unproven`. F95-1 remains open.\n\n## Requested checks\n\n- **RC1:** Repository root; workspace-write; pause a mocked Cargo install, switch branches and dirty the checkout, then resume apply. Require checkout skip. Budget: 10 minutes.\n- **RC2:** Repository root; workspace-write; apply against a scratch fork with a conflicting release-tag SHA. Require rejection before merge. Budget: 10 minutes.\n- **RC3:** Repository root; workspace-write; invoke two hooks with an expired cache and counting failing fetcher. Require backoff and no unqualified stale offer. Budget: 5 minutes.",
+  "findings": [
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/update/mod.rs", "line": 764},
+        {"path": "crates/c3/src/update/mod.rs", "line": 513},
+        {"path": "crates/c3/src/update/mod.rs", "line": 650}
+      ],
+      "claim": "Checkout safety is checked before the potentially lengthy Cargo installation and never rechecked before synchronization. The plan discards the inspected branch identity, so apply can fast-forward a different branch, a detached HEAD, or a checkout that has become dirty.",
+      "trigger": "The checkout is initially clean on main. While cargo install runs, the operator switches to another branch whose HEAD is an ancestor of the release, detaches HEAD, or introduces nonconflicting edits. GitSync subsequently fetches and merges without reinspection.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:502-523,745-780",
+          "observation": "run_apply resolves checkout state before executing the plan; CargoInstall precedes GitSync, whose stored fields contain only path and tag."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:650-666",
+          "observation": "GitSync performs fetch and merge directly, without checking cleanliness, symbolic HEAD, or whether HEAD changed since planning."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:954-1018",
+          "observation": "Tests cover static checkout inspection and isolated fast-forward behavior, not changes between inspection and execution."
+        }
+      ],
+      "verification": "Run RC1, including a branch switch to another ancestor of the release, and assert that neither that branch nor its working tree is updated.",
+      "remedy": "Carry expected branch and HEAD into the plan, then revalidate repository identity, branch, HEAD, and cleanliness immediately before merge after fetching; skip synchronization when any precondition changed.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/update/mod.rs", "line": 419},
+        {"path": "crates/c3/src/update/mod.rs", "line": 575},
+        {"path": "crates/c3/src/update/mod.rs", "line": 652},
+        {"path": "crates/c3/src/update/mod.rs", "line": 764}
+      ],
+      "claim": "Source synchronization is not bound to the release identified by the official tags API. It fetches an unchecked origin and merges a local tag by name without comparing its commit to latest_sha, so a fork or stale local tag can update the checkout to different code while reporting the advertised release.",
+      "trigger": "A configured clean checkout points origin at a fork whose v<latest> tag names a different descendant commit from the API's latest_sha. Alternatively, origin lacks that tag while an unrelated local tag with that name already exists. Fetch succeeds and the local tag fast-forwards HEAD.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:377-451",
+          "observation": "Explicit checkout paths are accepted based on Git work-tree, cleanliness, and branch checks; origin and release identity are not validated."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:575-576,650-658,763-770",
+          "observation": "Apply passes only the tag name into the plan, fetches origin, and merges that name. latest_sha is not part of execution."
+        }
+      ],
+      "verification": "Run RC2 with two distinct descendant commits sharing the release tag spelling in the official fixture and scratch fork; verify that the checkout cannot move to the fork's commit.",
+      "remedy": "Fetch the selected release from the canonical repository into a dedicated ref, validate its peeled commit against the API SHA, and merge the verified commit. Pin Cargo installation to that same validated commit for consistent installation and checkout contents.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3/src/update/mod.rs", "line": 328},
+        {"path": "crates/c3/src/update/mod.rs", "line": 341},
+        {"path": "docs/port/wave11-update.md", "line": 32}
+      ],
+      "claim": "Failed automatic checks neither record an attempt time nor suppress stale offers. Consequently, an outage causes a network attempt on every hook invocation and can keep advertising a deleted release indefinitely, contrary to the documented daily-attempt and silent-on-error behavior.",
+      "trigger": "The cache is absent or older than 24 hours and the fetch fails repeatedly. If the expired cache contains a newer release, that release continues to be advertised without a stale qualifier.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/update/mod.rs:328-347",
+          "observation": "Only successful fetches write the cache. The error branch reconstructs status from the old cache and then prints an update offer whenever its version is newer."
+        },
+        {
+          "kind": "read-code",
+          "reference": "docs/port/wave11-update.md:32-35,45-46",
+          "observation": "Documentation promises attempts at most once per 24 hours and no hook line on errors."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/update.rs:93-117",
+          "observation": "The offline hook test uses a fresh home; it does not exercise an expired newer-version cache or repeated failures."
+        }
+      ],
+      "verification": "Run RC3 with an expired newer-version cache and two failing fetch attempts scheduled within one day; observe request count and emitted hook lines.",
+      "remedy": "Persist last-attempt/backoff state separately from the last successful response, preserving useful cached data while throttling failures. Suppress expired offers on fetch failure or explicitly label them stale and document that policy.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F02-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F02-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F02-5","status":"not-checked","note":"Outside this update review."},
+    {"id":"F02-6","status":"not-checked","note":"Outside this update review."},
+    {"id":"F02-7","status":"not-checked","note":"Outside this update review."},
+    {"id":"F02-8","status":"not-checked","note":"Outside this update review."},
+    {"id":"F04-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F04-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F04-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F06-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F09-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F09-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F09-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F09-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F09-5","status":"not-checked","note":"Outside this update review."},
+    {"id":"F09-6","status":"not-checked","note":"Outside this update review."},
+    {"id":"F11-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F11-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F11-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F11-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F11-5","status":"not-checked","note":"Outside this update review."},
+    {"id":"F14-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F19-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F19-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F19-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F22-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F23-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F23-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F23-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F23-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F23-5","status":"not-checked","note":"Outside this update review."},
+    {"id":"F24-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F24-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F24-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F24-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F24-5","status":"not-checked","note":"Outside this update review."},
+    {"id":"F24-6","status":"not-checked","note":"Outside this update review."},
+    {"id":"F25-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F25-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F25-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F30-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F30-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F30-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F31-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F36-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F36-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F38-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F40-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F40-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F42-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F46-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F48-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F50-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F52-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F52-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F55-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F55-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F58-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F60-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F62-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F66-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F66-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F66-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F66-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F66-5","status":"not-checked","note":"Outside this update review."},
+    {"id":"F66-6","status":"not-checked","note":"Outside this update review."},
+    {"id":"F68-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F68-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F70-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F72-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F72-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F74-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F74-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F76-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F78-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F78-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F80-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F82-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F84-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-5","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-6","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-7","status":"not-checked","note":"Outside this update review."},
+    {"id":"F89-8","status":"not-checked","note":"Outside this update review."},
+    {"id":"F91-1","status":"not-checked","note":"Outside this update review."},
+    {"id":"F91-2","status":"not-checked","note":"Outside this update review."},
+    {"id":"F91-3","status":"not-checked","note":"Outside this update review."},
+    {"id":"F91-4","status":"not-checked","note":"Outside this update review."},
+    {"id":"F93-1","status":"fixed","note":"Static inspection of record.rs:185-215 shows recovery acquires the admission lock, rereads the current record, and checks generation, pending state, and liveness before writing. Runtime race proof remains limited by F95-1."},
+    {"id":"F95-1","status":"still-open","note":"work.rs:1850 still waits a fixed 1500 ms; record.rs:168-179 provides no barrier-entry acknowledgement. The regression can still miss the intended stale snapshot schedule."}
+  ],
+  "unproven": [
+    "No builds, tests, network requests, or apply operations were executed; the brief's reported passing checks were not independently reproduced.",
+    "Within the five-call reading budget, omitted wiring diffs in crates/c3-cli/src/main.rs, crates/c3/src/lib.rs, and crates/c3/src/cli/mod.rs; omitted compat_wave2b.rs and the formatting-only work diffs apart from targeted recovery excerpts.",
+    "Did not read the final update-module fetch/cache unit tests around lines 1048-1117 or the small TestFetcher implementation gap; read the relevant production cache and runner paths.",
+    "No successful end-to-end apply test was observed. Inspected CLI tests exercise checking and refusal; unit tests exercise plan values, static checkout inspection, and isolated Git merges.",
+    "Concurrent cache writers, production timeout behavior, tag-list completeness, Windows executable replacement, and actual Claude plugin launcher behavior remain unverified.",
+    "Historical findings other than F93-1 and F95-1 were not re-audited."
+  ],
+  "first_run_checklist": []
+}

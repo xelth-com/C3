@@ -2,7 +2,7 @@ Write in English.
 
 # Handoff 96 - claude: diff review of wave 11 - `c3 update` (self-update check, offer, explicit apply)
 
-Date: 2026-10-22. Base commit: `HEAD_PLACEHOLDER` on `main` (0.2.4-dev). The range under review is `191cc15..HEAD_PLACEHOLDER`;
+Date: 2026-10-22. Base commit: `3e8763e` on `main` (0.2.4-dev). The range under review is `191cc15..3e8763e`;
 skip `.collab/`. New: `crates/c3/src/update/mod.rs`, `crates/c3/src/cli/update.rs`, `crates/c3-cli/tests/update.rs`,
 `docs/port/wave11-update.md`; changed: `c3config.rs` (`update_check`, `source_checkout`), `hook/mod.rs` (one more line),
 the plugin hook wrappers, `c3-cli/src/main.rs`, `cli/mod.rs`, README "Updating C3", `plugin/README.md`, CHANGELOG
