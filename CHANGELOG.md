@@ -55,14 +55,6 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `run.json`'s `engine` and the `--status` line's `[engine]` suffix name the engine. A second
   byteplus worker entry (`deepseek-v4-1-flash-261017`) was added to the roster.
 
-### Fixed
-
-- **muse-wonder-1.0 refused before reaching Meta**: the caps-v1 muse catalog (`c3-core` effort
-  table, telemetry classes) declared only the two spark ids, so every `--model muse-wonder-1.0`
-  run (and the weighty roster seat) failed with "no effort vocabulary declared for model" while
-  the muse CLI itself answered. The id is declared now. The consult reference documents the Muse
-  priority: spark-contributor by default, spark-1.3 only when the contributor is down, wonder only
-  for hard reviews and consilia.
 
 ### Changed
 
@@ -75,7 +67,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - Phase 2 switch done on the operator's machine (`docs/port/phase2-switch.md`): the `c3` plugin is
   the only enabled reviewer bridge; the operator's `astra`/`workers` skills name `c3:*`.
 
+
 ### Fixed
+
+- **muse-wonder-1.0 refused before reaching Meta**: the caps-v1 muse catalog (`c3-core` effort
+  table, telemetry classes) declared only the two spark ids, so every `--model muse-wonder-1.0`
+  run (and the weighty roster seat) failed with "no effort vocabulary declared for model" while
+  the muse CLI itself answered. The id is declared now. The consult reference documents the Muse
+  priority: spark-contributor by default, spark-1.3 only when the contributor is down, wonder only
+  for hard reviews and consilia.
+
 
 - **`c3 work` wave 10c — Astra acceptance pass 3 (handoff 93, F93-1)** (`docs/port/wave10a-work-acceptance.md`):
   - **F93-1 (blocker)** the status/`--wait` reader no longer performs an unlocked recovery write:

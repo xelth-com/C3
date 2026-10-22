@@ -5,23 +5,22 @@ Detailed state: `.collab/parity-0.6.1-2026-10-08/state.md`, section "Where thing
 Memory of the old session lives in `~/.claude/projects/C--Users-Dmytro-claude-codex-consult/memory/` (MEMORY.md index;
 read `project-c3-parity.md` and `reference-roster-0.6-claude-first.md`) - a session here has its own, empty memory.
 
-## Where things stand (updated 2026-10-15 14:05)
-- **main = 7416e04, v0.2.2 tagged and pushed** (wave 9a-9i). Astra ACCEPT at pass 7 (n=49, handoff 87; F84-1 closed, no new
-  findings), conditional gate met: four fake-claude c3-cli binaries single-threaded one at a time 15/17/5/12 + c3-core 201/0,
-  harness-roster 125/0 on Windows PowerShell 5.1 (pwsh 7 shows 3 TIMEONLY shape-only failures - `ConvertFrom-Json` datetime
-  conversion - always run that harness with powershell 5.1). Details: state.md entries 11:50-14:05.
-- Binary 0.2.1 still at ~/.cargo/bin/c3 (a 298ed07 debug copy at %TEMP%\c3-rc2\c3-298ed07.exe); `cargo install --path crates/c3-cli`
-  (release, -j 2, machine otherwise idle) brings 0.2.2 when wanted. Plugin c3@c3 updated to 0.2.2 (restart applies it).
-- xelth.com /C3/ page strings -> 0.2.2 (nine locales, commit 7d1ad5d) deployed 2026-10-15 14:09 (deploy.sh, health ok).
-- Carry for 0.2.3: harness-detach F11-2 (fails on base); fake-claude binaries need a serialized single-threaded gate
-  (they starve each other under parallel spawn - not a product bug); the 500-anchor capacity limit of the shared health file.
-- Next waves (plugin repo ROADMAP R25-R29, week of 2026-10-19): R25 telemetry prerequisites, R26 worker telemetry, R27 the
-  watch, R28 usage tiers (incl. the 10 % muse-wonder guard), R29 browser engine; R30 compaction rule; R31 cloud workers
-  (opt-in, measured 2026-10-15: a cloud probe costs ~2 USD from the cloud credit, not the weekly quota; `claude --cloud` needs
-  an operator TTY). Candidate wave after the tag: the muse engine records tokens (`muse export`).
-- Tag procedure (for 0.2.3): bump `Cargo.toml` line 6, `plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`;
-  `cargo metadata --offline` refreshes Cargo.lock; CHANGELOG `[x] - <date>` from `[Unreleased]`; commit, tag, push; xelth.com
-  locales `c3p.chip_rust|cta_rust|install_rust_note|rust_status` in nine files; `claude plugin update c3@c3`.
+## Where things stand (updated 2026-10-22 10:50)
+- **main = a680564 (+ the CHANGELOG tidy), v0.2.3 tagged locally, NOT pushed.** 0.2.3 = c3 work v1.1 (codex + muse worker
+  engines, quota resume/alarm), R30 compaction pieces, tech-debt audit, Phase 2 switch, waves 10a-10c (Astra F89-1..8,
+  F91-1..4, F93-1). Astra ACCEPT at pass 4 (n=53, handoff 95; one minor F95-1 carried to 0.2.4). Suite 883/0 (30 sets).
+- Binary: `cargo install --path crates/c3-cli --locked --force` (the binary crate is c3-cli; `--path crates/c3` finds no
+  binary) - 0.2.3 release install from a680564 started 10:50. Plugin c3@c3 reads `plugin/` of this checkout (0.2.3).
+- Phase 2 switched 2026-10-22: `codex-consult` disabled, `astra`/`workers` skills -> `c3:*`; rollback `docs/port/phase2-switch.md` (e).
+- xelth.com /C3/ page strings -> 0.2.3 (nine locales, xelth.com commit f87fcdd) deployed 2026-10-22 08:03, health ok.
+- Consilium consilium-2026-10-22 (10 of 13 usable): remedy proposals by other reviewers - reshaped (test as verifier,
+  finder's frozen acceptance criteria + closing test first, remedy panel second, solver router dimension credited only on
+  verified); `.collab/consilium-2026-10-22/notes-decisions.md`; ROADMAP "Next".
+- Carry for 0.2.4: F95-1 (barrier-entry signal in the F93-1 regression); harness-detach F11-2; the 500-anchor limit of the
+  shared health file; the muse engine records tokens (`muse export`).
+- Tag procedure (for 0.2.4): bump `Cargo.toml` line 6, `plugin/.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json`;
+  `cargo update -w --offline` refreshes Cargo.lock; CHANGELOG `[x] - <date>` from `[Unreleased]`; commit, tag, push; xelth.com
+  locales `c3p.chip_rust|install_rust_note|rust_status` in nine files (`crates/server/locales/`), `deploy.sh`.
 
 ## Roster (10 entries, claude-first, `~/.codex/codex-consult-roster-0.6.json`; `codex-consult-roster.json` must stay its copy)
 Astra (codex, weighty), glm-5.3, mimo-v2.6-pro, gemini-3.8-flash-high (agy), deepseek-v4-1-flash, dola-seed-2-0-pro,
