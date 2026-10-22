@@ -1217,27 +1217,43 @@ fn a_muse_work_run_lands_its_record() {
 fn the_allow_grammar_and_muse_opt_in_refuse_before_any_record() {
     let e = setup("grammar");
 
+    // Grammar misses: the refusal is generic and NEVER echoes the pattern (it could carry a
+    // secret). A path separator (C:\x\node.exe) is a grammar miss too.
     for pat in [
         "Bash(*)",
         "*",
         "Bash(python -c:*)",
-        "Bash(sh:*)",
         "Bash(cargo test && git push:*)",
         "Bash(cargo  test:*)",
         "Bash(npm run \"lint\":*)",
+        "Bash(C:\\x\\node.exe:*)",
     ] {
         let out = e.work("ZAI-claude", &["--allow", pat], &[]);
         let t = text(&out);
         assert_eq!(out.status.code(), Some(1), "{pat}: {t}");
         assert!(
-            t.contains("not a valid restricted tool pattern")
-                || t.contains("shell or git")
-                || t.contains("names git"),
+            t.contains("not a valid restricted tool pattern") || t.contains("names git"),
             "{pat}: {t}"
         );
-        if pat.len() > 3 {
+        // A distinctive (>2 char) pattern is never echoed wholesale (a bare `*` appears in the
+        // help text itself, so it is exempt from this check).
+        if pat.len() > 2 {
             assert!(!t.contains(pat), "{pat}: the refusal must never echo the pattern: {t}");
         }
+        assert!(!e.work_root().exists(), "{pat}: no record may exist");
+    }
+
+    // (F89-4 remainder) A bare shell/exec tool, and shells/interpreters/git by exe basename (even
+    // with a .exe suffix), are refused — naming the safe keyword is allowed.
+    for pat in ["Bash", "Bash(sh:*)", "Bash(python:*)", "Bash(powershell.exe:*)"] {
+        let out = e.work("ZAI-claude", &["--allow", pat], &[]);
+        let t = text(&out);
+        assert_eq!(out.status.code(), Some(1), "{pat}: {t}");
+        assert!(
+            t.contains("not allowed in restricted mode")
+                || t.contains("shell, interpreter or git"),
+            "{pat}: {t}"
+        );
         assert!(!e.work_root().exists(), "{pat}: no record may exist");
     }
 
@@ -1460,4 +1476,251 @@ fn a_live_foreground_run_refuses_a_second_launch() {
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
     let run: Value = serde_json::from_str(&read(&run_json)).unwrap();
     assert_eq!(run["status"], "done", "{run}");
+}
+
+// ------------------------------------------------------------------ WAVE 10b (F91-1..F91-4, F89-4/5)
+
+/// (F91-4) A claude launcher whose result MISSES is_error, exit 0: not affirmative success -> died.
+#[cfg(windows)]
+fn write_result_no_iserror_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-noiserr-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"99999999-9999-9999-9999-999999999999\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"result\",\"result\":\"no is_error field here\"}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+#[cfg(unix)]
+fn write_result_no_iserror_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-noiserr-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"99999999-9999-9999-9999-999999999999\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"result\",\"result\":\"no is_error field here\"}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// (F91-4) A codex launcher that emits an agent_message item but NO turn.completed, exit 0 -> died.
+#[cfg(windows)]
+fn write_codex_no_turn_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-noturn-codex.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "@echo {\"type\":\"thread.started\",\"thread_id\":\"abababab-1111-4111-8111-111111111111\"}\r\n",
+            "@echo {\"type\":\"item.completed\",\"item\":{\"id\":\"a1\",\"type\":\"agent_message\",\"text\":\"message but no turn terminal\"}}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+#[cfg(unix)]
+fn write_codex_no_turn_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-noturn-codex.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo '{\"type\":\"thread.started\",\"thread_id\":\"abababab-1111-4111-8111-111111111111\"}'\n",
+            "echo '{\"type\":\"item.completed\",\"item\":{\"id\":\"a1\",\"type\":\"agent_message\",\"text\":\"message but no turn terminal\"}}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// (F89-5) A launcher whose RESULT TEXT embeds a sanitizer-fixture AWS key sentinel.
+#[cfg(windows)]
+fn write_secret_report_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-secret-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "echo touched>worker-touched.txt\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abcabcab-0000-0000-0000-00000000abcd\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"Done. The key was AKIAIOSFODNN7EXAMPLE in the log.\"}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+#[cfg(unix)]
+fn write_secret_report_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-secret-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo touched >worker-touched.txt\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abcabcab-0000-0000-0000-00000000abcd\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"Done. The key was AKIAIOSFODNN7EXAMPLE in the log.\"}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
+/// (F91-4) exit 0 with an INCOMPLETE terminal stream is not success: a claude result missing
+/// is_error, and a codex agent_message with no turn.completed -> died, naming the missing terminal.
+#[test]
+fn exit_zero_with_incomplete_terminal_is_not_done() {
+    let e = setup("noiserr");
+    let fake = write_result_no_iserror_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "died", "claude result without is_error -> died: {run}");
+
+    let e2 = setup("noturn");
+    let fake = write_codex_no_turn_launcher(&e2.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e2.work("openai", &[], &[("CODEX_CONSULT_EXE", fakep.as_str())]);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    let rec = e2.work_root().join("01-openai-gpt-6.1-sol");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "died", "codex agent_message without turn.completed -> died: {run}");
+    assert_eq!(run["error"], "no terminal event", "{run}");
+}
+
+/// (F89-5) report.md passes the sanitizer: a secret sentinel in the worker's report text is
+/// redacted in report.md, absent from run.json, and the raw stream in events.jsonl keeps it.
+#[test]
+fn report_md_and_run_json_pass_the_sanitizer() {
+    let e = setup("sanitize");
+    let fake = write_secret_report_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e.work("ZAI-claude", &[], &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let report = read(&rec.join("report.md"));
+    assert!(report.contains("[REDACTED:aws-key]"), "report redacted: {report}");
+    assert!(!report.contains("AKIAIOSFODNN7EXAMPLE"), "secret survived in report: {report}");
+    let run = read(&rec.join("run.json"));
+    assert!(!run.contains("AKIAIOSFODNN7EXAMPLE"), "secret survived in run.json");
+    // events.jsonl is the raw stream, retained verbatim (keeps the secret by contract)
+    let events = read(&rec.join("events.jsonl"));
+    assert!(events.contains("AKIAIOSFODNN7EXAMPLE"), "events.jsonl is raw: {events}");
+}
+
+/// (F91-2) A live worker whose run.json cannot be inspected makes a second same-task command FAIL
+/// CLOSED: admission refuses before any launch, and no second record appears.
+#[test]
+fn an_unreadable_live_record_refuses_a_second_launch() {
+    let e = setup("unreadable");
+    let fake = write_blocking_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let env: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    let brief = e.brief.to_string_lossy().to_string();
+    let child = e
+        .cmd(
+            &["work", "--task", "t", "--brief", &brief, "--provider", "ZAI-claude"],
+            &env,
+        )
+        .spawn()
+        .expect("spawn c3");
+
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run_json = rec.join("run.json");
+    let mut ok = false;
+    for _ in 0..200 {
+        if run_json.is_file() {
+            if let Ok(v) = serde_json::from_str::<Value>(&read(&run_json)) {
+                if v["status"] == "running" && v["pid"].as_i64().unwrap_or(0) > 0 {
+                    ok = true;
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(ok, "the run never reported running");
+
+    // make the live run's record UNREADABLE: replace run.json with a directory
+    std::fs::remove_file(&run_json).unwrap();
+    std::fs::create_dir(&run_json).unwrap();
+
+    // a second start must refuse (fail closed), naming no contents, with no second record
+    let second = e.work("ZAI-claude", &[], &env);
+    let t = text(&second);
+    assert_eq!(second.status.code(), Some(1), "{t}");
+    assert!(t.contains("cannot admit") || t.contains("could not be read"), "{t}");
+    assert!(!e.work_root().join("02-ZAI-claude-glm-5.3").exists());
+
+    std::fs::write(e.repo.join("release.txt"), b"1").unwrap();
+    let _ = child.wait_with_output();
+}
+
+/// (F91-1) The locked claim rejects a STALE resume: a delayed resume that passed its unlocked
+/// checks refuses after a competing resume completes the run, with no launch marker.
+#[test]
+fn a_stale_resume_refuses_under_the_lock() {
+    let e = setup("stale");
+    let fake = write_quota_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let qenv: Vec<(&str, &str)> = vec![("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())];
+
+    // first run -> quota (resumes 0)
+    let out = e.work("ZAI-claude", &[], &qenv);
+    assert_eq!(out.status.code(), Some(3), "{}", text(&out));
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+
+    // start the DELAYED resume B, paused at the claim barrier (test mode + a gate file)
+    let gate = e.work.join("claim-gate.txt");
+    let gates = gate.to_string_lossy().to_string();
+    let benv: Vec<(&str, &str)> = vec![
+        ("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str()),
+        ("CODEX_CONSULT_TEST_MODE", "1"),
+        ("CODEX_CONSULT_TEST_WORK_CLAIM_BARRIER", gates.as_str()),
+    ];
+    let b = e
+        .cmd(&["work", "--task", "t", "--resume", "01"], &benv)
+        .spawn()
+        .expect("spawn B");
+
+    // let B reach the barrier (it read the quota record, resumes=0)
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    // meanwhile resume A finishes the run (done, resumes 1)
+    let a = e.c3(&["work", "--task", "t", "--resume", "01"], &qenv);
+    assert_eq!(a.status.code(), Some(0), "A should finish: {}", text(&a));
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "done", "{run}");
+
+    // release B: its locked re-read now sees a terminal record -> refuse, no launch marker
+    std::fs::write(&gate, b"1").unwrap();
+    let out = b.wait_with_output().expect("wait B");
+    let t = text(&out);
+    assert_ne!(out.status.code(), Some(0), "B must refuse: {t}");
+    assert!(!t.contains("resuming work run"), "B must not launch a resume: {t}");
+    // the record is still A's done result, resumes unchanged at 1
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "done", "{run}");
+    assert_eq!(run["quota"]["resumes"], 1, "{run}");
 }

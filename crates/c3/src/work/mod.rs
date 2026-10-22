@@ -390,23 +390,58 @@ fn prepare(o: &mut Options) -> Result<Prepared, String> {
 /// why it is invalid (never echoing the pattern, which could carry a credential; the forbidden
 /// shell/git keyword is safe to name).
 fn validate_allow_pattern(p: &str) -> Result<(), String> {
-    const FORBIDDEN: &[&str] = &["git", "sh", "bash", "zsh", "pwsh", "powershell", "cmd"];
+    // (0.2.4, F89-4 remainder) The tools that may appear BARE (no executable): read/write tools
+    // that run no shell. A bare shell/exec tool (e.g. `Bash`) is refused — it must name an exe.
+    const BARE_OK: &[&str] = &[
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "MultiEdit",
+        "NotebookEdit",
+        "WebFetch",
+        "WebSearch",
+    ];
+    // Shells AND interpreters AND git: compared against the exe BASENAME, lowercased, with a
+    // trailing .exe/.cmd/.bat/.ps1 stripped.
+    const DENY: &[&str] = &[
+        "sh", "bash", "zsh", "fish", "dash", "pwsh", "powershell", "cmd", "wsl", "python",
+        "python3", "py", "node", "deno", "bun", "perl", "ruby", "php", "git",
+    ];
     // `<exe>` is a plain executable name, optionally followed by plain subcommand words
     // (`cargo test`, `npm run lint`): single spaces only, a word never starts with `-` (flags such
-    // as `python -c` / `node -e` are where shell escapes hide), no wildcards, no shell operators.
+    // as `python -c` / `node -e` are where shell escapes hide), no wildcards, no shell operators,
+    // and — because the class excludes `/` and `\` — no path separators.
     let re = regex::Regex::new(
         r"^([A-Za-z][A-Za-z0-9_]*)(?:\(([A-Za-z0-9_.+-]+)((?: [A-Za-z0-9][A-Za-z0-9_.+-]*)*)(?::\*)?\))?$",
     )
     .expect("valid regex");
     let caps = re.captures(p.trim()).ok_or_else(|| {
-        "expected <Tool>, <Tool>(<exe>) or <Tool>(<exe>:*) with <exe> a plain executable name (letters, digits, '.', '_', '+', '-') optionally followed by plain subcommand words (never flags); no wildcards, quotes or shell operators".to_string()
+        "expected <Tool>, <Tool>(<exe>) or <Tool>(<exe>:*) with <exe> a plain executable name (letters, digits, '.', '_', '+', '-') optionally followed by plain subcommand words (never flags); no wildcards, quotes, shell operators or path separators".to_string()
     })?;
-    if let Some(exe) = caps.get(2) {
-        if FORBIDDEN.contains(&exe.as_str().to_lowercase().as_str()) {
-            return Err(format!(
-                "the '{}' executable is a shell or git, which a worker may not be granted",
-                exe.as_str()
-            ));
+    let tool = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+    match caps.get(2) {
+        None => {
+            // A bare tool is allowed only for the non-shell whitelist.
+            if !BARE_OK.contains(&tool) {
+                return Err(format!(
+                    "a bare '{tool}' is not allowed in restricted mode; name an executable, e.g. {tool}(cargo:*)"
+                ));
+            }
+        }
+        Some(exe) => {
+            let lower = exe.as_str().to_lowercase();
+            let base = [".exe", ".cmd", ".bat", ".ps1"]
+                .iter()
+                .find_map(|s| lower.strip_suffix(s))
+                .unwrap_or(lower.as_str());
+            if DENY.contains(&base) {
+                return Err(format!(
+                    "the '{}' executable is a shell, interpreter or git, which a worker may not be granted",
+                    exe.as_str()
+                ));
+            }
         }
     }
     Ok(())
@@ -547,7 +582,9 @@ pub fn run_prepared(o: &Options, rec_dir: &Path, _id: &str, _seq: i64, detached:
     let before = status_short(&pre.repo_root);
     let before_hashes = record::baseline_hashes(&pre.repo_root, &before);
     if let Ok(Some(mut rec)) = read_record(rec_dir) {
-        rec.argv = argv.clone();
+        // (0.2.4, F89-5) the persisted argv passes the sanitizer (flags/uuids/grammar-safe allow
+        // values are untouched; a secret-shaped value would be redacted).
+        rec.argv = sanitize_argv(&argv);
         rec.child_env_scrubbed = scrubbed;
         rec.timeout_sec = o.timeout_sec;
         rec.session_id = session_id.clone();
@@ -739,18 +776,81 @@ fn eff_window_rec(o: &Options, rec: &RunRecord, entry_window: i64) -> i64 {
     }
 }
 
-/// (0.2.4, F89-2) Claim `rec_dir` for a spawn under the task admission lock: refuse if any OTHER
-/// run of the task is live, or if THIS record is already live under a different process (a
-/// concurrent resume). Then write it `running` with this process's pid + start time and `attempt`,
-/// durably, BEFORE the caller spawns. The lock is released on return (the live owning record is
-/// the exclusion for the run's duration).
-fn claim_for_spawn(work_root: &Path, rec_dir: &Path, attempt: i64) -> Result<RunRecord, String> {
+/// (0.2.4, F89-2) Claim a DETACHED run's placeholder record for its first spawn under the task
+/// admission lock: refuse if any other run is live or the inspection fails; the record must still
+/// be the `running` placeholder this process owns. Writes pid + start + attempt 0 durably before
+/// the caller spawns.
+fn claim_start(work_root: &Path, rec_dir: &Path) -> Result<RunRecord, String> {
     let _lock = record::admission_lock(work_root)?;
-    if let Some(other) = record::other_live_run(work_root, rec_dir) {
+    if let Some(other) = record::other_live_run(work_root, rec_dir)? {
         return Err(format!("task already has a live work run ({other})"));
     }
     let mut rec = read_record(rec_dir)?
         .ok_or_else(|| "the work record vanished before it could be claimed".to_string())?;
+    if rec.status != "running" {
+        return Err(format!(
+            "work run {} is in state {}, not the fresh placeholder; refusing to launch",
+            rec.id, rec.status
+        ));
+    }
+    let (pid, start) = record::self_owner();
+    if record::is_live(&rec) && rec.pid.is_some() && rec.pid != Some(pid) {
+        return Err(format!(
+            "work run {} is already live under pid {}; refusing a second launch",
+            rec.id,
+            rec.pid.unwrap_or(0)
+        ));
+    }
+    rec.pid = Some(pid);
+    rec.pid_start = start;
+    rec.attempt = 0;
+    rec.ended = None;
+    rec.error = String::new();
+    rec.args = None;
+    write_record(rec_dir, &rec)?;
+    Ok(rec)
+}
+
+/// (0.2.4, F91-1) Claim a run for a RESUME spawn under the task admission lock, validating
+/// EVERYTHING against the locked re-read, not the caller's earlier unlocked read: no other run is
+/// live, this record is still in a resumable state (`quota`/`timeout`), it is NOT exhausted, it is
+/// not already live under another owner, and the attempt generation the caller expected still
+/// holds. The next attempt number is computed from THIS locked record, so a stale claim (now
+/// `done`/`exhausted`/already advanced by a concurrent resume) refuses before any spawn. Returns
+/// the claimed record and the attempt number `n`.
+fn claim_resume(
+    work_root: &Path,
+    rec_dir: &Path,
+    expected_resumes: i64,
+) -> Result<(RunRecord, i64), String> {
+    let _lock = record::admission_lock(work_root)?;
+    if let Some(other) = record::other_live_run(work_root, rec_dir)? {
+        return Err(format!("task already has a live work run ({other})"));
+    }
+    let mut rec = read_record(rec_dir)?
+        .ok_or_else(|| "the work record vanished before it could be claimed".to_string())?;
+    // Resumable states: `quota`/`timeout` for a foreground --resume, and `waiting_quota` for the
+    // detached alarm (which parked the record before it resumes in-process). A terminal state
+    // (done/died/exhausted) means a concurrent resume/completion won: refuse the stale claim.
+    if !matches!(rec.status.as_str(), "quota" | "timeout" | "waiting_quota") {
+        return Err(format!(
+            "work run {} is in state {}, not resumable; nothing to resume (it may have been completed or resumed concurrently)",
+            rec.id, rec.status
+        ));
+    }
+    if rec.quota.as_ref().map(|q| q.exhausted).unwrap_or(false) {
+        return Err(format!(
+            "work run {} has spent its resume cap; it needs a human",
+            rec.id
+        ));
+    }
+    let resumes = rec.quota.as_ref().map(|q| q.resumes).unwrap_or(0);
+    if resumes != expected_resumes {
+        return Err(format!(
+            "work run {} changed since it was read (resume {} now, {} expected); refusing a stale claim",
+            rec.id, resumes, expected_resumes
+        ));
+    }
     let (pid, start) = record::self_owner();
     if record::is_pending(&rec.status) && record::is_live(&rec) && rec.pid != Some(pid) {
         return Err(format!(
@@ -759,15 +859,16 @@ fn claim_for_spawn(work_root: &Path, rec_dir: &Path, attempt: i64) -> Result<Run
             rec.pid.unwrap_or(0)
         ));
     }
+    let n = resumes + 1;
     rec.status = "running".into();
     rec.pid = Some(pid);
     rec.pid_start = start;
-    rec.attempt = attempt;
+    rec.attempt = n;
     rec.ended = None;
     rec.error = String::new();
     rec.args = None;
     write_record(rec_dir, &rec)?;
-    Ok(rec)
+    Ok((rec, n))
 }
 
 /// (0.2.4, F89-3) Make the record terminal `artifact_error` (an artifact write failed): the error
@@ -855,22 +956,67 @@ fn refresh_artifacts(
     before: &[String],
     before_hashes: &std::collections::BTreeMap<String, String>,
 ) -> Result<RunRecord, String> {
-    let events_text = std::fs::read_to_string(rec_dir.join("events.jsonl")).unwrap_or_default();
+    // (0.2.4, F91-3) Read the aggregate stream STRICTLY: a transient read failure must NOT become
+    // an empty report. report.md is never replaced when its source cannot be read.
+    let events_text = read_events_strict(&rec_dir.join("events.jsonl"))?;
     let sum = engines::summarize(engine, &events_text);
-    // (0.2.4, F89-3) report.md and diff.txt write failures are propagated, never swallowed: the
-    // caller makes the run `artifact_error`, so a lost report can never be reported `done`.
-    std::fs::write(rec_dir.join("report.md"), &sum.report)
+    // (0.2.4, F89-3/F89-5) report.md and diff.txt write failures are propagated (the caller makes
+    // the run `artifact_error`), and both pass the project's single sanitizer so no secret-shaped
+    // value survives in them.
+    std::fs::write(rec_dir.join("report.md"), sanitize(&sum.report))
         .map_err(|e| format!("could not write report.md ({e})"))?;
     let after = status_short(repo_root);
     let stat = diff_stat(repo_root);
-    std::fs::write(rec_dir.join("diff.txt"), diff_text(before, &after, &stat))
-        .map_err(|e| format!("could not write diff.txt ({e})"))?;
+    std::fs::write(
+        rec_dir.join("diff.txt"),
+        sanitize(&diff_text(before, &after, &stat)),
+    )
+    .map_err(|e| format!("could not write diff.txt ({e})"))?;
     let mut rec = read_record(rec_dir).ok().flatten().unwrap_or_default();
     rec.turns = sum.turns;
     rec.tool_calls = sum.tool_calls;
     rec.files_changed = files_changed(before_hashes, &after, repo_root);
     rec.usage = sum.usage;
     Ok(rec)
+}
+
+/// (0.2.4, F91-3) Read an event file STRICTLY: a genuinely absent file (`NotFound`) is an empty
+/// stream, but any other read error (permission, a path replaced by a directory) is propagated so
+/// the caller treats it as an artifact error rather than empty input.
+fn read_events_strict(path: &Path) -> Result<String, String> {
+    match std::fs::read(path) {
+        Ok(b) => Ok(String::from_utf8_lossy(&b).into_owned()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("could not read {} ({e})", path.display())),
+    }
+}
+
+/// (0.2.4, F89-5) The project's single outbound sanitizer: `run.json`, `report.md` and `diff.txt`
+/// pass through it (secret-shaped values redacted, the same rules as a pack). `events.jsonl` does
+/// NOT — it is the child's raw stream, retained verbatim.
+fn sanitize(text: &str) -> String {
+    crate::pack::redact::redact(text).0
+}
+
+/// (0.2.4, F91-1) TEST-ONLY claim barrier (honoured only in test mode via `test_hooks::hook`):
+/// when `CODEX_CONSULT_TEST_WORK_CLAIM_BARRIER` names a path, wait (bounded) until it exists, so a
+/// test can interpose a competing resume between an unlocked read and the locked claim.
+fn test_claim_barrier() {
+    if let Some(gate) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_WORK_CLAIM_BARRIER") {
+        let gate = PathBuf::from(gate);
+        for _ in 0..600 {
+            if gate.exists() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
+/// (0.2.4, F89-5) Sanitize each argv element persisted in `run.json` (flags, uuids and
+/// grammar-validated allow values pass through unchanged; a secret-shaped value is redacted).
+fn sanitize_argv(argv: &[String]) -> Vec<String> {
+    argv.iter().map(|a| sanitize(a)).collect()
 }
 
 /// The entry point: `--status`/`--wait` read the records only; `--detach-id` is the
@@ -901,17 +1047,22 @@ pub fn run(mut o: Options) -> i32 {
         Ok(l) => l,
         Err(e) => return refuse(&e),
     };
-    if let Some(id) = record::live_run(&pre.work_root) {
-        return refuse(&format!(
-            "task '{}' already has a live work run ({id}); c3 work --task {}{} --wait waits for it",
-            o.task,
-            o.task,
-            if o.collab_dir != ".collab" {
-                format!(" --collab-dir \"{}\"", o.collab_dir)
-            } else {
-                String::new()
-            }
-        ));
+    match record::live_run(&pre.work_root) {
+        Ok(Some(id)) => {
+            return refuse(&format!(
+                "task '{}' already has a live work run ({id}); c3 work --task {}{} --wait waits for it",
+                o.task,
+                o.task,
+                if o.collab_dir != ".collab" {
+                    format!(" --collab-dir \"{}\"", o.collab_dir)
+                } else {
+                    String::new()
+                }
+            ));
+        }
+        Ok(None) => {}
+        // (0.2.4, F91-2) fail closed: a record that cannot be inspected refuses admission.
+        Err(e) => return refuse(&format!("cannot admit a work run: {e}")),
     }
     let (id, seq, rec_dir) = match record::allocate(&pre.work_root, &pre.provider, &pre.model) {
         Ok(x) => x,
@@ -1135,15 +1286,19 @@ fn append_resume(rec_dir: &Path, n: i64, attempt_events: &str) -> Result<(), Str
 /// recompute every artifact over the whole record, bump `quota.resumes`, and make the record final
 /// again (quota, exhausted, done, died or timeout). Returns the new status.
 fn resume_once(renv: &ResumeEnv, rec_dir: &Path) -> Result<String, String> {
-    let rec = read_record(rec_dir)
-        .ok()
-        .flatten()
+    let pre = read_record(rec_dir)?
         .ok_or_else(|| "the work record vanished".to_string())?;
-    let n = rec.quota.as_ref().map(|q| q.resumes).unwrap_or(0) + 1;
-    // (0.2.4, F89-2) Claim the record under the task admission lock BEFORE spawning: two concurrent
-    // resumes of one record, or a fresh start racing a resume, find it already live and refuse.
+    let expected_resumes = pre.quota.as_ref().map(|q| q.resumes).unwrap_or(0);
+    // (0.2.4, F91-1) TEST-ONLY barrier (honoured only in test mode): pause here, AFTER the caller's
+    // unlocked read and BEFORE the locked claim, until the gate file appears — the acceptance test
+    // lets a competing resume finish/exhaust in this window, so the locked re-read below sees the
+    // stale state and refuses.
+    test_claim_barrier();
+    // (0.2.4, F89-2/F91-1) Claim under the task admission lock, validating the permitted state,
+    // exhaustion, owner and attempt generation against the LOCKED re-read; the attempt number `n`
+    // comes from that record, so a stale claim refuses before spawning.
     let work_root = rec_dir.parent().unwrap_or(rec_dir).to_path_buf();
-    let rec = claim_for_spawn(&work_root, rec_dir, n)?;
+    let (rec, n) = claim_resume(&work_root, rec_dir, expected_resumes)?;
     println!(
         "{TOOL}: resuming work run {} ({} :: {}) - resume {}/{}",
         rec.id, rec.provider, rec.model, n, renv.max_resumes
@@ -1172,7 +1327,16 @@ fn resume_once(renv: &ResumeEnv, rec_dir: &Path) -> Result<String, String> {
         budget: None,
     };
     let result = run_turn(&spawn);
-    let attempt_events = std::fs::read_to_string(&tmp_events).unwrap_or_default();
+    // (0.2.4, F91-3) Read the attempt stream STRICTLY: an unreadable attempt file is an artifact
+    // error, and the per-attempt temp files are PRESERVED (not deleted) so the bytes are
+    // recoverable — never append an empty attempt and then delete its source.
+    let attempt_events = match read_events_strict(&tmp_events) {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = finish_artifact_error(rec_dir, result.exit_code, &e);
+            return Ok("artifact_error".to_string());
+        }
+    };
     let attempt_stderr = std::fs::read_to_string(&tmp_stderr).unwrap_or_default();
 
     let (status, quota_text, reset_at, reason) = classify_attempt(
@@ -1419,8 +1583,9 @@ fn do_resume_foreground(o: &Options, rec_dir: &Path, rec: &RunRecord) -> i32 {
 fn pick_run(work_root: &Path, id: &str, want: &[&str]) -> Result<(PathBuf, RunRecord), String> {
     let id = id.trim().to_lowercase();
     let mut all: Vec<(PathBuf, RunRecord)> = Vec::new();
-    for (_, dir) in record::run_dirs(work_root) {
-        if let Ok(Some(rec)) = read_record(&dir) {
+    // (0.2.4, F91-2) fail closed: enumeration and per-record inspection errors propagate.
+    for (_, dir) in record::run_dirs(work_root)? {
+        if let Some(rec) = read_record(&dir)? {
             all.push((dir, rec));
         }
     }
@@ -1465,6 +1630,66 @@ fn pick_run(work_root: &Path, id: &str, want: &[&str]) -> Result<(PathBuf, RunRe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// (0.2.4, F91-3) refresh_artifacts fails closed when events.jsonl cannot be read and does NOT
+    /// replace report.md with empty content. The allow grammar accepts/refuses as F89-4 wants.
+    #[test]
+    fn refresh_artifacts_does_not_destroy_report_on_read_failure() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let rec_dir = std::env::temp_dir().join(format!("c3-refresh-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&rec_dir).unwrap();
+        std::fs::write(rec_dir.join("report.md"), "OLD REPORT").unwrap();
+        // make events.jsonl UNREADABLE by making it a directory
+        std::fs::create_dir_all(rec_dir.join("events.jsonl")).unwrap();
+        let before: Vec<String> = Vec::new();
+        let bh = std::collections::BTreeMap::new();
+        let r = refresh_artifacts(WorkerEngine::Claude, &rec_dir, &rec_dir, &before, &bh);
+        assert!(r.is_err(), "an unreadable events.jsonl must be an artifact error");
+        assert_eq!(
+            std::fs::read_to_string(rec_dir.join("report.md")).unwrap(),
+            "OLD REPORT",
+            "report.md must not be replaced when events.jsonl cannot be read"
+        );
+        let _ = std::fs::remove_dir_all(&rec_dir);
+    }
+
+    #[test]
+    fn read_events_strict_distinguishes_absent_from_unreadable() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("c3-strict-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // absent -> empty (Ok)
+        assert_eq!(read_events_strict(&dir.join("missing")).unwrap(), "");
+        // a directory in place of the file -> Err (unreadable)
+        std::fs::create_dir_all(dir.join("as-dir")).unwrap();
+        assert!(read_events_strict(&dir.join("as-dir")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (0.2.4, F89-4 remainder) the restricted allow grammar: bare shells and interpreters refused,
+    /// path separators and suffixed shells refused, plain exes and whitelisted bare tools allowed.
+    #[test]
+    fn validate_allow_pattern_grammar() {
+        for bad in [
+            "Bash",
+            "Bash(python:*)",
+            "Bash(powershell.exe:*)",
+            "Bash(C:\\x\\node.exe:*)",
+            "Bash(*)",
+            "Bash(python -c:*)",
+        ] {
+            assert!(validate_allow_pattern(bad).is_err(), "{bad} must be refused");
+        }
+        for ok in ["Read", "Bash(cargo:*)", "Bash(cargo test:*)", "Bash(npm run lint:*)"] {
+            assert!(validate_allow_pattern(ok).is_ok(), "{ok} must be allowed");
+        }
+    }
 
     fn entry(provider: &str, model: &str, engine: &str, roles: &[&str]) -> RosterEntry {
         RosterEntry {

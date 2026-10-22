@@ -11,6 +11,24 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **`c3 work` wave 10b — Astra acceptance pass 2 (handoff 91, F91-1..F91-4, F89-4/F89-5 remainders)** (`docs/port/wave10a-work-acceptance.md`):
+  - **F91-1 (blocker)** the resume claim now validates permitted status, exhaustion, owner and the
+    attempt generation under the admission lock and computes the attempt from the locked re-read;
+    a stale claim (now done/exhausted/advanced) refuses before any spawn.
+  - **F91-2 (blocker)** admission fails closed on inspection errors: `run_dirs`/`read_record`/
+    `live_run`/`other_live_run` return errors, only a confirmed `NotFound` is absence, and an
+    unreadable or replaced record refuses a second launch (naming the directory, not contents).
+  - **F91-3 (major)** event-stream READ failures are artifact errors: attempt temp files are kept
+    until read and durably appended; `refresh_artifacts` never replaces `report.md` when
+    `events.jsonl` cannot be read; the run becomes `artifact_error`.
+  - **F91-4 (major)** success needs affirmative terminal evidence: claude a `result` with
+    `is_error` present and false (subtype success/absent), codex a `turn.completed` (an
+    `agent_message` alone is not success), muse its completion event — extraction kept separate.
+  - **F89-4 remainder** the restricted grammar refuses a bare shell/exec tool (a bare tool is
+    allowed only for a read/write whitelist) and denies shells, interpreters and git by exe
+    basename (trailing `.exe`/`.cmd`/`.bat`/`.ps1` stripped); path separators are refused.
+  - **F89-5 remainder** `report.md`, `diff.txt` and the persisted argv pass the project's single
+    pack sanitizer (secret-shaped values redacted); `events.jsonl` stays raw; the doc says so.
 - **`c3 work` wave 10a — Astra acceptance pass (handoff 89, F89-1..F89-8)** (`docs/port/wave10a-work-acceptance.md`):
   - **F89-1 (blocker)** worker liveness: every `running`/`waiting_quota` record now carries the
     OWNING process's pid + start time (a foreground run writes its own pid BEFORE spawning the

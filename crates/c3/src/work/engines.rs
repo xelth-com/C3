@@ -479,10 +479,11 @@ pub fn terminal_outcome(engine: WorkerEngine, events_text: &str) -> Terminal {
             let s = summarize_events(events_text);
             if !s.has_result {
                 Terminal::None
-            } else if s.is_error {
-                Terminal::Error
-            } else {
+            } else if s.result_ok {
+                // (0.2.4, F91-4) affirmative: is_error present and false, subtype success/absent.
                 Terminal::Success
+            } else {
+                Terminal::Error
             }
         }
         WorkerEngine::Codex => {
@@ -498,18 +499,12 @@ pub fn terminal_outcome(engine: WorkerEngine, events_text: &str) -> Terminal {
                 let Ok(obj) = serde_json::from_str::<Value>(t) else {
                     continue;
                 };
+                // (0.2.4, F91-4) Only the successful turn terminal (`turn.completed`) counts as
+                // success; an `agent_message` item alone is NOT a completion (it is used for report
+                // extraction in `summarize_codex`, kept separate from classification here).
                 match obj.get("type").and_then(|v| v.as_str()).unwrap_or("") {
                     "turn.failed" => return Terminal::Error,
                     "turn.completed" => saw_completed = true,
-                    "item.completed"
-                        if obj
-                            .get("item")
-                            .and_then(|i| i.get("type"))
-                            .and_then(|v| v.as_str())
-                            == Some("agent_message") =>
-                    {
-                        saw_completed = true;
-                    }
                     _ => {}
                 }
             }
@@ -644,12 +639,18 @@ mod tests {
         assert_eq!(terminal_outcome(WorkerEngine::Claude, ok), Terminal::Success);
         let err = r#"{"type":"result","subtype":"error","is_error":true,"result":"boom"}"#;
         assert_eq!(terminal_outcome(WorkerEngine::Claude, err), Terminal::Error);
+        // (F91-4) a result MISSING is_error is not success
+        let bare = r#"{"type":"result","result":"done"}"#;
+        assert_eq!(terminal_outcome(WorkerEngine::Claude, bare), Terminal::Error);
         assert_eq!(
             terminal_outcome(WorkerEngine::Claude, "{\"type\":\"system\"}"),
             Terminal::None
         );
-        let cx = r#"{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}"#;
-        assert_eq!(terminal_outcome(WorkerEngine::Codex, cx), Terminal::Success);
+        // (F91-4) codex: an agent_message item alone is NOT success; turn.completed is
+        let msg = r#"{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}"#;
+        assert_eq!(terminal_outcome(WorkerEngine::Codex, msg), Terminal::None);
+        let done = r#"{"type":"turn.completed","usage":{}}"#;
+        assert_eq!(terminal_outcome(WorkerEngine::Codex, done), Terminal::Success);
         assert_eq!(terminal_outcome(WorkerEngine::Codex, ""), Terminal::None);
     }
 

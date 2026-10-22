@@ -273,7 +273,7 @@ pub fn background(o: &Options) -> i32 {
     // pid + start time (the liveness owner) and refuse if another run of the task went live in the
     // meantime, all BEFORE the child is spawned.
     let work_root = rec_dir.parent().map(Path::to_path_buf).unwrap_or_default();
-    if let Err(e) = super::claim_for_spawn(&work_root, &rec_dir, 0) {
+    if let Err(e) = super::claim_start(&work_root, &rec_dir) {
         rec.status = "refused".into();
         rec.ended = Some(iso_now());
         let _ = write_record(&rec_dir, &rec);
@@ -301,7 +301,10 @@ struct WorkRun {
 }
 
 fn read_runs(work_root: &Path) -> Vec<WorkRun> {
+    // Status/--wait is a read-only listing (not the admission boundary): an enumeration failure
+    // shows nothing, while a per-record inspection error is surfaced as that run's `error`.
     run_dirs(work_root)
+        .unwrap_or_default()
         .into_iter()
         .map(|(_, dir)| {
             let (record, error) = match read_record(&dir) {

@@ -2,7 +2,7 @@ Write in English.
 
 # Handoff 90 - claude: acceptance for C3 0.2.3, second pass (F89-1..F89-8 answered)
 
-Date: 2026-10-22. Base commit: `COMMIT_PLACEHOLDER` on `main` (wave 10a). The range under review is `59ea25a..HEAD`
+Date: 2026-10-22. Base commit: `23d49ad` on `main` (wave 10a). The range under review is `59ea25a..HEAD`
 (the answer to your HOLD, reply 89); skip `.collab/`. 13 files, about +2965/-110, all inside the `c3 work` feature
 (`crates/c3/src/work/{mod,record,engines,detach}.rs`, `cli/work.rs`, `c3-core/src/roster{,_ext}.rs`,
 `c3-cli/tests/work.rs`, `docs/work-mode.md`). Wave note: `docs/port/wave10a-work-acceptance.md` (one paragraph per
@@ -62,7 +62,7 @@ finding with the proving test). The local tag `v0.2.3` will be moved to the acce
 
 | check | command | exit | observation |
 |---|---|---|---|
-| workspace | `cargo test -j 2 --workspace` | 0 | SUITE_PLACEHOLDER |
+| workspace | `cargo test -j 2 --workspace` | 0 | 875 passed / 0 failed, 30 sets (`--no-fail-fast`) |
 | work integration | `cargo test -j 2 -p c3-cli --test work -- --test-threads=1` | 0 | 17 passed / 0 failed (6 new) |
 | work lib | `cargo test -j 2 -p c3 --lib work` | 0 | 22 passed |
 | clippy | `cargo clippy -j 2 -p c3 -p c3-core --all-targets` | 0 | 0 warnings |

@@ -57,10 +57,14 @@ in `engines/claude_auth.rs` rather than writing a second one. The prompt travels
 `<collab-dir>/<task>/work/<NN>-<provider>-<model>/` (NN = 2-digit sequence per task):
 
 - `brief.md` — the prompt as sent (preamble + brief + `--prompt`).
-- `events.jsonl` — the child's stream-json **retained verbatim**, exactly like a consult's events
-  file. It is the one record artifact that is NOT filtered: if the child's own output emits a
-  credential, it is here (as it is in any raw tool stream). `run.json`, `report.md` and `diff.txt`
-  carry no secret values.
+- `events.jsonl` — the child's raw stream, **retained verbatim**, and may contain whatever the
+  child printed (including a credential the child itself emitted), exactly like a consult's events
+  file. It is the one record artifact that is NOT sanitized.
+- **Secret contract (0.2.4, F89-5):** `run.json`, `report.md` and `diff.txt` pass the project's
+  single sanitizer (the pack redactor — 12 secret kinds plus an entropy pass); secret-shaped
+  values are redacted with `[REDACTED:<kind>]`, the same rules as a pack. `events.jsonl` is the
+  child's raw stream and is kept as-is. (The usage allow list and the argv grammar remove the most
+  likely leak paths; the sanitizer is the catch-all for the report text.)
 - `report.md` — the final assistant text (the `result` event's text; the last assistant text if
   the run died).
 - `diff.txt` — `git status --short` before the run (the baseline) and after, plus
@@ -86,27 +90,42 @@ start time is alive. The start grace (120 s) applies ONLY to a record that has n
 foreground run that lasts longer than the grace stays `running` for `--status` and still makes a
 second same-task launch refuse.
 
-### Success (0.2.4, F89-8)
+### Success (0.2.4, F89-8 / F91-4)
 
-`done` requires BOTH process exit 0 AND the engine's successful terminal event (claude `result`
-with `is_error:false`; codex a `turn.completed`/`agent_message`; muse a `completed` terminal). An
-error terminal or a rejecting rate-limit takes precedence over exit 0 (→ `died`/`quota`); an empty
-stream with exit 0 is `died` with reason `no terminal event`. Exit 0 alone never establishes
-success.
+`done` requires BOTH process exit 0 AND AFFIRMATIVE successful terminal evidence from the engine,
+kept separate from message extraction: claude a `result` event with `is_error` present AND false
+(and `subtype == "success"` when the stream carries a subtype) — a result missing `is_error` is
+NOT success; codex the successful turn terminal `turn.completed` — an `agent_message` item alone is
+NOT success; muse its explicit `completed` terminal. An error terminal or a rejecting rate-limit
+takes precedence over exit 0 (→ `died`/`quota`); an empty or incomplete stream with exit 0 is
+`died` with reason `no terminal event`. Exit 0 alone never establishes success.
 
-### Artifact durability (0.2.4, F89-3)
+### Artifact durability (0.2.4, F89-3 / F91-3)
 
-`report.md`/`diff.txt`/`events.jsonl` write failures are never swallowed: the run becomes
-`artifact_error` (exit non-zero) with the error text in `run.json`, never `done`. On a resume the
-attempt's per-run temp files (`.events-resume-<n>.jsonl`, never a fixed name) are deleted only
-after the attempt stream was durably appended to `events.jsonl` and flushed.
+Artifact write AND read failures are never swallowed: the run becomes `artifact_error` (exit
+non-zero) with the error text in `run.json`, never `done`. On a resume the attempt's per-run temp
+files (`.events-resume-<n>.jsonl`, never a fixed name) are preserved until their bytes were read
+AND durably appended to `events.jsonl` (flushed), then deleted. The aggregate stream is read
+strictly: `refresh_artifacts` never replaces `report.md` when `events.jsonl` cannot be read (a
+transient read failure is an artifact error, not an empty report); only a genuinely absent file is
+an empty stream.
 
-### Admission (0.2.4, F89-2)
+### Admission (0.2.4, F89-2 / F91-1 / F91-2)
 
-One task-level admission lock covers starts, resumes and the detached alarm: the claimer re-reads
-under the lock, refuses if any other run of the task is live, and durably claims the record
-(`running`, new pid/start, attempt number) BEFORE spawning. Two concurrent `--resume` of one
-record: exactly one spawns.
+One task-level admission lock covers starts, resumes and the detached alarm. Under the lock the
+claimer re-reads the record and validates EVERYTHING against that locked read — the permitted
+status (no record for a start; `quota`/`timeout`/`waiting_quota` for a resume), exhaustion, owner
+liveness, and the expected attempt generation (the resume count must be unchanged) — then computes
+the next attempt number from the locked record and writes `running` + new pid/start + attempt
+durably BEFORE spawning. A stale claim (the record went `done`/`exhausted` or advanced by a
+concurrent resume since the caller's unlocked read) refuses before any launch. Two concurrent
+`--resume` of one record: exactly one spawns.
+
+Admission **fails closed on inspection errors** (F91-2): `run_dirs`, `read_record`, `live_run` and
+`other_live_run` return errors; only a confirmed `NotFound` is absence. A directory with the `NN-`
+prefix whose `run.json` exists in any form (including a replaced or permission-denied file) is a
+candidate, so an unreadable record is never silently treated as an absent run — admission refuses,
+naming the directory, never the contents.
 
 No evidence check, no findings, no rating prompt: a work run is not a consultation. It does not
 touch the review ledger; `c3 consult --status` does not list it.

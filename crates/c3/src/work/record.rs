@@ -133,12 +133,16 @@ pub fn write_record(dir: &Path, rec: &RunRecord) -> Result<(), String> {
     c3_core::store::write_text_atomic(&dir.join("run.json"), &bytes).map_err(|e| e.to_string())
 }
 
-/// Read one `run.json` (`Err` says why when it exists but does not parse).
+/// Read one `run.json`. (0.2.4, F91-2) FAIL CLOSED: only a confirmed `NotFound` is absence
+/// (`Ok(None)`); any other read error, or a parse failure, is `Err` (the message names the
+/// directory, never the contents) so admission refuses rather than treats an unreadable record as
+/// an absent run.
 pub fn read_record(dir: &Path) -> Result<Option<RunRecord>, String> {
     let p = dir.join("run.json");
     let bytes = match std::fs::read(&p) {
         Ok(b) => b,
-        Err(_) => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("{} could not be read ({e})", p.display())),
     };
     let mut rec: RunRecord = serde_json::from_slice(&bytes)
         .map_err(|e| format!("{} does not parse: {e}", p.display()))?;
@@ -182,55 +186,83 @@ pub fn is_live(rec: &RunRecord) -> bool {
     }
 }
 
-/// Every work run directory of a task's `work/` root, by sequence (`[]` when none). A
-/// directory that holds no `run.json` is not a run.
-pub fn run_dirs(work_root: &Path) -> Vec<(i64, PathBuf)> {
+/// Every work run directory of a task's `work/` root, by sequence. (0.2.4, F91-2) FAIL CLOSED: a
+/// missing work root is `Ok([])`, but an enumeration or entry error is `Err`; a directory with the
+/// `NN-` prefix is a candidate when its `run.json` path EXISTS in any form (file, directory or
+/// otherwise), so an unreadable or replaced record is NOT silently dropped — `read_record` then
+/// reports the inspection error.
+pub fn run_dirs(work_root: &Path) -> Result<Vec<(i64, PathBuf)>, String> {
     let mut out: Vec<(i64, PathBuf)> = Vec::new();
     let rd = match std::fs::read_dir(work_root) {
         Ok(rd) => rd,
-        Err(_) => return out,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+        Err(e) => {
+            return Err(format!(
+                "could not enumerate the work directory {} ({e})",
+                work_root.display()
+            ))
+        }
     };
-    for entry in rd.flatten() {
+    for entry in rd {
+        let entry = entry.map_err(|e| {
+            format!(
+                "could not read an entry of the work directory {} ({e})",
+                work_root.display()
+            )
+        })?;
         let name = entry.file_name().to_string_lossy().to_string();
         let first = name.split('-').next().unwrap_or("");
         if first.is_empty() || !first.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
         let seq: i64 = first.parse().unwrap_or(0);
-        if seq <= 0 || !entry.path().join("run.json").is_file() {
+        if seq <= 0 {
             continue;
         }
-        out.push((seq, entry.path()));
+        let run_json = entry.path().join("run.json");
+        match run_json.try_exists() {
+            Ok(true) => out.push((seq, entry.path())),
+            Ok(false) => continue, // a directory with no run.json is not a run
+            Err(e) => {
+                return Err(format!(
+                    "could not inspect {} ({e})",
+                    run_json.display()
+                ))
+            }
+        }
     }
     out.sort_by_key(|(seq, _)| *seq);
-    out
+    Ok(out)
 }
 
 /// Whether a live work run exists for the task (a `running` or `waiting_quota` record): its id,
-/// or `None`.
-pub fn live_run(work_root: &Path) -> Option<String> {
-    run_dirs(work_root).into_iter().find_map(|(_, dir)| {
-        read_record(&dir)
-            .ok()
-            .flatten()
-            .filter(|r| is_pending(&r.status))
-            .map(|r| r.id)
-    })
+/// or `None`. (0.2.4, F91-2) `Err` when any candidate record cannot be inspected.
+pub fn live_run(work_root: &Path) -> Result<Option<String>, String> {
+    for (_, dir) in run_dirs(work_root)? {
+        if let Some(r) = read_record(&dir)? {
+            if is_pending(&r.status) {
+                return Ok(Some(r.id));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// (0.2.4, F89-2) The id of any LIVE run of the task other than the one at `exclude`, or `None`.
 /// Used under the admission lock so a start/resume/alarm refuses while another run is alive.
-pub fn other_live_run(work_root: &Path, exclude: &Path) -> Option<String> {
-    run_dirs(work_root).into_iter().find_map(|(_, dir)| {
+/// (0.2.4, F91-2) `Err` when any candidate record cannot be inspected.
+pub fn other_live_run(work_root: &Path, exclude: &Path) -> Result<Option<String>, String> {
+    for (_, dir) in run_dirs(work_root)? {
         if dir == exclude {
-            return None;
+            continue;
         }
-        read_record(&dir)
-            .ok()
-            .flatten()
-            .filter(|r| is_pending(&r.status) && is_live(r))
-            .map(|r| r.id)
-    })
+        if let Some(r) = read_record(&dir)? {
+            if is_pending(&r.status) && is_live(&r) {
+                return Ok(Some(r.id));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// (0.2.4, F89-1/F89-2) This c3 process's own pid and start time: the owner written into a
@@ -312,7 +344,7 @@ pub fn allocate(
     provider: &str,
     model: &str,
 ) -> Result<(String, i64, PathBuf), String> {
-    let next = run_dirs(work_root)
+    let next = run_dirs(work_root)?
         .iter()
         .map(|(seq, _)| *seq)
         .max()
@@ -455,6 +487,10 @@ pub struct EventSummary {
     /// The result event's `result` text (the report).
     pub result_text: String,
     pub is_error: bool,
+    /// (0.2.4, F91-4) Affirmative success: a `result` event with `is_error` present AND false, and
+    /// `subtype` either absent or `"success"`. A result that merely EXISTS (no `is_error`, or an
+    /// error subtype) is NOT success.
+    pub result_ok: bool,
     pub num_turns: Option<i64>,
     /// How many assistant events the stream holds (the `turns` fallback).
     pub assistant_count: i64,
@@ -548,7 +584,13 @@ pub fn summarize_events(text: &str) -> EventSummary {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            s.is_error = obj.get("is_error").and_then(|v| v.as_bool()) == Some(true);
+            let is_error_field = obj.get("is_error").and_then(|v| v.as_bool());
+            s.is_error = is_error_field == Some(true);
+            let subtype = obj.get("subtype").and_then(|v| v.as_str()).unwrap_or("");
+            // (0.2.4, F91-4) success needs affirmative evidence: is_error present and false, and
+            // subtype success (or absent). A missing is_error is NOT success.
+            s.result_ok =
+                is_error_field == Some(false) && (subtype.is_empty() || subtype == "success");
             s.num_turns = obj.get("num_turns").and_then(|v| {
                 v.as_i64()
                     .or_else(|| v.as_str().and_then(|x| x.parse().ok()))
@@ -712,24 +754,24 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         write_record(&dir, &rec).unwrap();
         assert_eq!(read_record(&dir).unwrap().unwrap().id, rec.id);
-        assert!(live_run(&work).is_none());
+        assert!(live_run(&work).unwrap().is_none());
         // a running record with a live pid (this process) is live; with a dead one it is
         // rewritten as died and never counts as live
         rec.status = "running".into();
         rec.pid = Some(std::process::id() as i64);
         write_record(&dir, &rec).unwrap();
-        assert_eq!(live_run(&work).as_deref(), Some("01-zai-claude-glm-5.3"));
+        assert_eq!(live_run(&work).unwrap().as_deref(), Some("01-zai-claude-glm-5.3"));
         rec.pid = None;
         write_record(&dir, &rec).unwrap();
         assert!(
-            live_run(&work).is_none(),
+            live_run(&work).unwrap().is_none(),
             "an old running record without a pid is dead"
         );
         assert_eq!(read_record(&dir).unwrap().unwrap().status, "died");
         rec.pid = Some(std::process::id() as i64);
         rec.status = "done".into();
         write_record(&dir, &rec).unwrap();
-        assert!(live_run(&work).is_none());
+        assert!(live_run(&work).unwrap().is_none());
         // the next sequence continues past it; the parts are sanitized
         let (id2, seq2, dir2) = allocate(&work, "byteplus-claude", "deepseek/v4.1 flash").unwrap();
         assert_eq!(seq2, 2);

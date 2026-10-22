@@ -1,0 +1,322 @@
+{
+  "schema_version": "1",
+  "verdict": "HOLD",
+  "verdict_reason": "Admission still permits stale or unreadable state to authorize another worker, and artifact and terminal-event handling retain acceptance defects.",
+  "reply_markdown": "1. **Q1:** F89-1 closes by inspection. F89-2 remains open: admission does not revalidate resume eligibility under its lock and skips unreadable records (findings #1–2). F89-3’s write-error handling improves, but ignored reads can still lose artifacts or produce `done` with an empty report (finding #3).\n\n2. **Q2:** No. The grammar accepts bare `Bash`, `Bash(python:*)`, and `Bash(powershell.exe:*)`; the last bypasses the shell-name check. Muse’s explicit unrestricted opt-in is acceptable by inspection. F89-5’s secret-free artifact claim also remains unsupported.\n\n3. **Q3: HOLD.** Blockers: findings #1–2. Finding #4 also prevents closing F89-8. Tests were inspected, not executed. Unread: CHANGELOG, roster/roster_ext, CLI, embedded index changes, remaining test hunks, and historical implementations. Documentation was read selectively; `.collab` changes were excluded.\n\n## Requested checks\n\n- **RC1:** Repository root; workspace-write; add barrier/denied-read fixtures for findings #1–2; require refusal before another launch marker. Budget: two schedules, 10 minutes.\n- **RC2:** Repository root; workspace-write; inject event-read failures before append and artifact refresh; require retained bytes, `artifact_error`, nonzero exit. Budget: two cases, 5 minutes.\n- **RC3:** Repository root; workspace-write; run exit-zero fake launchers with incomplete terminal streams from finding #4; require `died`. Budget: two cases, 5 minutes.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 747
+        },
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 1142
+        },
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 1386
+        }
+      ],
+      "claim": "Resume admission checks status and exhaustion before acquiring the admission lock, but the locked claim only rejects a live owner. A delayed resume can therefore restart an already completed or exhausted run, and can reuse an attempt number calculated from stale state.",
+      "trigger": "Two resume commands pass the quota/non-exhausted checks. Pause the second immediately before claim_for_spawn after it calculates n. Let the first resume finish successfully or exhaust the cap. Resume the second: the locked reread sees a terminal record, passes the live-owner check, and writes running with the stale attempt number.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/mod.rs:1386-1404",
+          "observation": "Allowed status and exhausted checks operate on the earlier RunRecord before resume_env and resume_once."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/mod.rs:1137-1146",
+          "observation": "The attempt number is calculated before acquiring the admission lock."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/mod.rs:747-770",
+          "observation": "The locked reread checks other live runs and a different live owner, then unconditionally sets running; it does not recheck terminal status, exhaustion, or the attempt generation."
+        }
+      ],
+      "verification": "Run RC1 with a barrier before the second claim; let the first attempt reach done and, separately, quota with exhausted=true. Require the delayed command to refuse without another child-launch marker.",
+      "remedy": "Validate the permitted state, exhaustion, owner, and expected attempt generation under the admission lock; calculate the next attempt from that same locked record and reject stale claims.",
+      "supersedes": [
+        "F89-2"
+      ]
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 137
+        },
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 187
+        },
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 211
+        },
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 221
+        }
+      ],
+      "claim": "The new admission lock does not enforce one live worker when recovery records cannot be inspected: record reads, directory enumeration failures, entry errors, and parse errors are treated as absent runs.",
+      "trigger": "A worker remains alive while another process can open the task admission lock and allocate a directory but cannot read the live worker's run.json, or encounters an enumeration/entry error. A second start or resume skips that live run.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/record.rs:137-144",
+          "observation": "Every std::fs::read error returns Ok(None), including access failures."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/record.rs:187-217",
+          "observation": "run_dirs returns an empty list on enumeration failure, flattens entry errors, and live_run discards record errors."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/record.rs:221-234",
+          "observation": "other_live_run also discards read/parse errors before determining whether another run is live."
+        }
+      ],
+      "verification": "Run RC1 with a live blocking worker and a temporary read-denying handle or injected PermissionDenied on its run.json; require a second same-task command to refuse before launch.",
+      "remedy": "Return inspection errors through run_dirs, read_record, live_run, and other_live_run. Treat only confirmed NotFound as absence and refuse admission when any candidate record cannot be inspected.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 858
+        },
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 1175
+        },
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 1192
+        },
+        {
+          "path": "crates/c3/src/work/mod.rs",
+          "line": 1207
+        }
+      ],
+      "claim": "Artifact read failures remain destructive despite the new write-error handling. An unreadable attempt stream becomes an empty string and its source file is subsequently deleted; an unreadable aggregate stream during refresh becomes an empty report while the previously classified successful attempt can still be recorded done.",
+      "trigger": "A resumed child writes a valid successful stream. Either reading its temporary events file fails while removal remains possible, or the attempt is read and appended successfully but reading events.jsonl in refresh_artifacts fails transiently.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/mod.rs:1174-1193",
+          "observation": "Attempt events and stderr use unwrap_or_default; append_resume can then successfully append no attempt data, after which both temporary files are removed."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/mod.rs:851-873",
+          "observation": "refresh_artifacts defaults an events.jsonl read failure to empty input and writes the resulting report without returning a read error."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/mod.rs:1197-1222",
+          "observation": "After refresh returns successfully, the record receives the status classified earlier from the attempt stream, including done."
+        }
+      ],
+      "verification": "Run RC2 with separate injected read failures for the attempt and aggregate event files; require preserved source bytes, artifact_error, and a nonzero result in both cases.",
+      "remedy": "Propagate event-file read errors as artifact errors. Preserve temporary attempt files until their contents have been read and durably incorporated, and do not replace a report when its source cannot be read.",
+      "supersedes": [
+        "F89-3"
+      ]
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 544
+        },
+        {
+          "path": "crates/c3/src/work/record.rs",
+          "line": 551
+        },
+        {
+          "path": "crates/c3/src/work/engines.rs",
+          "line": 481
+        },
+        {
+          "path": "crates/c3/src/work/engines.rs",
+          "line": 503
+        }
+      ],
+      "claim": "The new success detector still accepts streams without affirmative successful terminal evidence: Claude treats a result missing is_error as successful, and Codex treats an agent_message item as sufficient without turn.completed.",
+      "trigger": "An exit-zero launcher emits only {\"type\":\"result\"} for Claude, or only an item.completed event containing an agent_message for Codex, then ends without a successful turn terminal.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/record.rs:544-551",
+          "observation": "Any result sets has_result=true; is_error becomes false unless the field is exactly boolean true, including when absent."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/engines.rs:481-526",
+          "observation": "Claude maps has_result with false is_error to Success. Codex sets saw_completed for an agent_message item as well as turn.completed."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/work/engines.rs:636-655",
+          "observation": "The added unit test explicitly expects Success for a Codex agent_message-only stream."
+        }
+      ],
+      "verification": "Run RC3 using the two stated streams and process exit zero; require failure with missing or invalid terminal evidence, never done.",
+      "remedy": "Require an explicitly valid Claude success result and a successful Codex turn terminal. Keep assistant-message extraction separate from completion classification.",
+      "supersedes": [
+        "F89-8"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {"id":"F02-1","status":"not-checked","note":"Historical telemetry implementation outside this review."},
+    {"id":"F02-3","status":"not-checked","note":"Historical deletion implementation outside this review."},
+    {"id":"F02-4","status":"not-checked","note":"Harness coverage map and telemetry shim not reviewed."},
+    {"id":"F02-5","status":"not-checked","note":"Rating transaction implementation not reviewed."},
+    {"id":"F02-6","status":"not-checked","note":"Prompt anchor implementation not reviewed."},
+    {"id":"F02-7","status":"not-checked","note":"Cross-engine plan compatibility not reviewed."},
+    {"id":"F02-8","status":"not-checked","note":"No three-route benchmark examined or run."},
+    {"id":"F04-1","status":"not-checked","note":"Unicode process classifier fix not reviewed."},
+    {"id":"F04-2","status":"not-checked","note":"Windows local-zone boundary behavior not reviewed."},
+    {"id":"F04-3","status":"not-checked","note":"Required-light ledger behavior not reviewed."},
+    {"id":"F06-1","status":"not-checked","note":"Historical Samoa offset behavior not reviewed."},
+    {"id":"F09-1","status":"not-checked","note":"Context-window Unicode configuration fix not reviewed."},
+    {"id":"F09-2","status":"not-checked","note":"Flush/deletion synchronization not reviewed."},
+    {"id":"F09-3","status":"not-checked","note":"Recoverable deletion cleanup not reviewed."},
+    {"id":"F09-4","status":"not-checked","note":"Telemetry spool reread behavior not reviewed."},
+    {"id":"F09-5","status":"not-checked","note":"Upgrade-backlog sanitization not reviewed."},
+    {"id":"F09-6","status":"not-checked","note":"Rating actor inference not reviewed."},
+    {"id":"F11-1","status":"not-checked","note":"Health journal I/O recovery not reviewed."},
+    {"id":"F11-2","status":"not-checked","note":"Required-reviewer launcher propagation not reviewed."},
+    {"id":"F11-3","status":"not-checked","note":"Required-reviewer shared-plan evaluation not reviewed."},
+    {"id":"F11-4","status":"not-checked","note":"PowerShell hook pointer not reviewed or executed."},
+    {"id":"F11-5","status":"not-checked","note":"AGY tool stall handling not reviewed."},
+    {"id":"F14-1","status":"not-checked","note":"Local-only deletion transaction not reviewed."},
+    {"id":"F19-1","status":"not-checked","note":"Complaint/deletion synchronization not reviewed."},
+    {"id":"F19-2","status":"not-checked","note":"Unreadable-salt cleanup not reviewed."},
+    {"id":"F19-3","status":"not-checked","note":"Duplicate-key telemetry sanitization not reviewed."},
+    {"id":"F22-1","status":"not-checked","note":"Journal replay deduplication not reviewed."},
+    {"id":"F23-1","status":"not-checked","note":"Pending recovery metadata lookup behavior not reviewed."},
+    {"id":"F23-2","status":"not-checked","note":"Unknown creation-time recovery scans not reviewed."},
+    {"id":"F23-3","status":"not-checked","note":"Consultation kill evidence persistence not reviewed."},
+    {"id":"F23-4","status":"not-checked","note":"Recovery proof fixtures not reviewed."},
+    {"id":"F23-5","status":"not-checked","note":"Production Windows Samoa behavior not tested."},
+    {"id":"F24-1","status":"not-checked","note":"Not-spooled lock fallback accounting not reviewed."},
+    {"id":"F24-2","status":"not-checked","note":"Unterminated not-spooled suffix handling not reviewed."},
+    {"id":"F24-3","status":"not-checked","note":"Concurrent not-spooled cleanup not reviewed."},
+    {"id":"F24-4","status":"not-checked","note":"Not-spooled status baseline handling not reviewed."},
+    {"id":"F24-5","status":"not-checked","note":"Plugin-home telemetry compatibility not reviewed."},
+    {"id":"F24-6","status":"not-checked","note":"Post-fold record rewrite failure handling not reviewed."},
+    {"id":"F25-2","status":"not-checked","note":"Endpoint transcript-location guard not reviewed."},
+    {"id":"F25-3","status":"not-checked","note":"Claude model case normalization not reviewed."},
+    {"id":"F25-4","status":"not-checked","note":"ChildEnv debug redaction not reviewed."},
+    {"id":"F30-1","status":"not-checked","note":"Unknown-tree helper recovery not reviewed."},
+    {"id":"F30-2","status":"not-checked","note":"Consultation pre-kill persistence not reviewed."},
+    {"id":"F30-3","status":"not-checked","note":"Continuation/repair kill durability fixtures not reviewed."},
+    {"id":"F31-1","status":"not-checked","note":"Live-producer fallback accounting not reviewed."},
+    {"id":"F36-1","status":"not-checked","note":"Unicode transcript path guard not reviewed."},
+    {"id":"F36-2","status":"not-checked","note":"Transcript path NFC normalization not reviewed."},
+    {"id":"F38-1","status":"not-checked","note":"Multiple kill-record write failure recovery not reviewed."},
+    {"id":"F40-1","status":"not-checked","note":"Kill-copy enumeration failures not reviewed."},
+    {"id":"F40-2","status":"not-checked","note":"Consultation kick acknowledgement on persistence failure not reviewed."},
+    {"id":"F42-1","status":"not-checked","note":"Recovery-copy metadata failures not reviewed."},
+    {"id":"F46-1","status":"not-checked","note":"Equal-time quota aggregation not reviewed."},
+    {"id":"F48-1","status":"not-checked","note":"Secondary quota-window blocking not reviewed."},
+    {"id":"F50-1","status":"not-checked","note":"Quota reset-completeness tie handling not reviewed."},
+    {"id":"F52-1","status":"not-checked","note":"Quota comparison-clock consistency not reviewed."},
+    {"id":"F52-2","status":"not-checked","note":"NaN quota input rejection not reviewed."},
+    {"id":"F55-1","status":"not-checked","note":"Account quota cache reset-boundary behavior not reviewed."},
+    {"id":"F55-2","status":"not-checked","note":"Invalid newer quota observation handling not reviewed."},
+    {"id":"F58-1","status":"not-checked","note":"Per-window observation provenance not reviewed."},
+    {"id":"F60-1","status":"not-checked","note":"Quota provenance persistence not reviewed."},
+    {"id":"F62-1","status":"not-checked","note":"Fractional quota timestamp persistence not reviewed."},
+    {"id":"F66-1","status":"not-checked","note":"Detached consultation recovery admission not reviewed."},
+    {"id":"F66-2","status":"not-checked","note":"Detached consultation reservation durability not reviewed."},
+    {"id":"F66-3","status":"not-checked","note":"Ledger/machine cap-hit deduplication not reviewed."},
+    {"id":"F66-4","status":"not-checked","note":"Unicode reset-hint validation not reviewed."},
+    {"id":"F66-5","status":"not-checked","note":"Shim environment restoration not reviewed."},
+    {"id":"F66-6","status":"not-checked","note":"Declared-cap heuristic release policy not reassessed."},
+    {"id":"F68-1","status":"not-checked","note":"Distinct consultation cap-hit identity not reviewed."},
+    {"id":"F68-2","status":"not-checked","note":"Cross-platform recovery test launcher not reviewed."},
+    {"id":"F70-1","status":"not-checked","note":"Legacy health identity ambiguity not reviewed."},
+    {"id":"F72-1","status":"not-checked","note":"Legacy health read-time age limit not reviewed."},
+    {"id":"F72-2","status":"not-checked","note":"Legacy failure-text identity comparison not reviewed."},
+    {"id":"F74-1","status":"not-checked","note":"Single-consultation cap-pair policy not reviewed."},
+    {"id":"F74-2","status":"not-checked","note":"Unresolvable reset-hint refusal time not reviewed."},
+    {"id":"F76-1","status":"not-checked","note":"Hinted cap-pair retention beyond 24 hours not reviewed."},
+    {"id":"F78-1","status":"not-checked","note":"Established cap-pair preservation after isolated failures not reviewed."},
+    {"id":"F78-2","status":"not-checked","note":"Machine-health cap-evidence retention not reviewed."},
+    {"id":"F80-1","status":"not-checked","note":"Clearing-success retention under age/cap pressure not reviewed."},
+    {"id":"F82-1","status":"not-checked","note":"Delayed journal replay after success eviction not reviewed."},
+    {"id":"F84-1","status":"not-checked","note":"Tied-success clearing-anchor eviction not reviewed."},
+    {
+      "id": "F89-1",
+      "status": "fixed",
+      "note": "By code inspection: foreground allocation writes the owner PID/start before launch, and is_live checks that owner instead of the no-PID grace period. The blocking-launcher fixture was read, not run."
+    },
+    {
+      "id": "F89-2",
+      "status": "still-open",
+      "note": "The lock closes the straightforward simultaneous-live resume race, but the admission claim remains stale-state susceptible; finding #1 replaces that part of the claim. Finding #2 identifies an additional inspection-failure bypass."
+    },
+    {
+      "id": "F89-3",
+      "status": "still-open",
+      "note": "Append and report/diff write errors now propagate. Finding #3 replaces the remaining claim with the concrete ignored-read paths that can still lose artifacts or report done."
+    },
+    {
+      "id": "F89-4",
+      "status": "still-open",
+      "note": "Muse opt-in and Codex/Muse documentation improve. The restricted Claude grammar still accepts bare Bash, Bash(python:*), and Bash(powershell.exe:*). An in-memory PowerShell check of the exact regex and denylist accepted all three; this was not a live Claude execution."
+    },
+    {
+      "id": "F89-5",
+      "status": "still-open",
+      "note": "The numeric usage allow list fixes the extra usage-field leak. The broader secret-free claim remains false: report text is copied from child output, unrestricted allow strings can enter argv, and the raw stream is deliberately retained. Grammar validation is not secret detection."
+    },
+    {
+      "id": "F89-6",
+      "status": "fixed",
+      "note": "By inspection: initial records persist max_resumes/quota_window_sec, and resume_env reuses them unless explicitly overridden. The claimed integration result was not rerun."
+    },
+    {
+      "id": "F89-7",
+      "status": "fixed",
+      "note": "The stated pre-dirty tracked-file case is addressed by persisted baseline content hashes and post-run hash comparison. Broader path and reversion cases were not tested."
+    },
+    {
+      "id": "F89-8",
+      "status": "still-open",
+      "note": "Explicit Claude error results and empty streams now fail. Finding #4 replaces the remaining claim with incomplete terminal streams that are still accepted as success."
+    }
+  ],
+  "unproven": [
+    "No tests or builds were executed because this consultation prohibited writes; reported workspace, integration, library, and clippy passes were not independently verified.",
+    "The reviewed diff stat reported 12 non-.collab files and +1355/-116, differing from the brief's 13-file, approximately +2965/-110 description.",
+    "The five-call reading budget left CHANGELOG.md, roster.rs, roster_ext.rs, cli/work.rs, index/embed.rs, remaining test hunks, and historical implementations unread; documentation was read in selected excerpts.",
+    "Actual Claude permission enforcement for accepted bare-tool, interpreter, and executable-suffix patterns was not exercised.",
+    "Concurrent resume/completion, exhausted-cap admission, denied record reads, and event-read failures need deterministic fixtures.",
+    "Foreground ownership beyond 120 seconds, PID reuse/inspection failures, detached alarm races, and crash durability were not exercised.",
+    "Production Claude, Codex, and Muse terminal streams and unrestricted Muse behavior were not validated on a real run."
+  ],
+  "first_run_checklist": [
+    "Before the worker's first tool event, run.json shows running, the actual owning C3 PID and matching process start time, and the intended attempt number.",
+    "While the worker remains alive beyond 120 seconds, status still reports running; competing starts/resumes print a refusal and produce no second child-launch marker.",
+    "A resume records exactly one incremented attempt, preserves the original resume cap/window, appends its events once, and refuses further execution after done or exhausted.",
+    "The launched argv and recorded permission agree with the selected engine; Muse requires explicit unrestricted opt-in, and Claude restrictions are checked with a harmless out-of-policy command.",
+    "Before accepting exit zero, events.jsonl contains affirmative successful engine terminal evidence; run.json says done with exit_code 0, report.md contains the expected final result, and diff.txt reflects the observed working tree.",
+    "Injected artifact read/write failure produces nonzero exit and artifact_error, retains recoverable attempt bytes, and does not replace a valid report with empty content.",
+    "An extra usage sentinel is absent from run.json; review report text and unrestricted argv separately rather than treating the usage allow list as general secret redaction."
+  ]
+}

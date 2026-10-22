@@ -1,0 +1,183 @@
+# Handoff 91 - Codex: codex-0.2.3-acceptance-2
+
+Date: 2026-10-22 09:09 local. Author: Codex (model gpt-6-astra, effort high), Codex CLI 0.155.1.
+Reviewer: openai :: gpt-6-astra (provider from roster, model from roster; endpoint (default), wire_api: (default); provider fingerprint 56d97b6ece36; harness codex-cli 0.155.1).
+Preflight: ok: Logged in using ChatGPT.
+Roster: C:\Users\Dmytro\.codex\codex-consult-roster.json - position 1 of 13.
+Effort: high sent (requested high, mapping openai, by caps-v1: builtin:openai, any model; not confirmed by the provider). Consultation id: ac7eb7dd-4593-478b-95e6-d9614b67ee04.
+Invocation: `codex-consult.ps1` (mode: new, sandbox: read-only, purpose: acceptance). Argv: `codex exec --sandbox read-only --color never --json -m gpt-6-astra -c features.multi_agent=false -c model_reasoning_effort="high" -c model_provider="openai" -o C:\Users\Dmytro\AppData\Local\Temp\codex-consult-last-7ae17b059cd14f95917d30d70fda70a5.md --output-schema C:\Users\Dmytro\.codex\c3\schemas\consult-reply.v1.json -` (prompt on stdin).
+Parent thread: (none - new thread). Result thread: `01a1626d-8085-7052-b265-f305021a433c` (source: events).
+Brief: `.collab/parity-0.6.1-2026-10-08/handoffs/90-claude-0.2.3-acceptance-2.md` (sha256 07a0336ba235). Reviewed: 23d49ad, base 23d49adbb5ae6f0cd3cc2c651eba44352ef5869c, tree sha256 673507ea4b1f, 0 changed files.
+Bridge outcome: usable reply. Wall time: 277.9 s. Tokens: in 342256 (cached 261760), out 8177, reasoning 1470.
+Quota (rollout): 5h 25% until 12:59; wk 31% until Oct 27; this run 342256 input tokens (261760 cached) in 6 calls, max 79587 per call of 258400; sub-agents 0; sub-agents off (features.multi_agent=false); budget 90 % of the 5-hour window.
+Timeout: 3600 s (the default of purpose acceptance); continuation after a timeout kill: up to 900 s.
+Verdict: HOLD - Admission still permits stale or unreadable state to authorize another worker, and artifact and terminal-event handling retain acceptance defects. Findings: 2 blocker, 2 major, 0 minor, 0 note (F91-1..F91-4, tracked in `findings.json`). Structured reply: `handoffs/91-codex-codex-0.2.3-acceptance-2.reply.json`.
+Raw event stream: `handoffs/91-codex-codex-0.2.3-acceptance-2.events.jsonl`.
+Verbatim reply follows.
+
+---
+
+1. **Q1:** F89-1 closes by inspection. F89-2 remains open: admission does not revalidate resume eligibility under its lock and skips unreadable records (findings #1–2). F89-3’s write-error handling improves, but ignored reads can still lose artifacts or produce `done` with an empty report (finding #3).
+
+2. **Q2:** No. The grammar accepts bare `Bash`, `Bash(python:*)`, and `Bash(powershell.exe:*)`; the last bypasses the shell-name check. Muse’s explicit unrestricted opt-in is acceptable by inspection. F89-5’s secret-free artifact claim also remains unsupported.
+
+3. **Q3: HOLD.** Blockers: findings #1–2. Finding #4 also prevents closing F89-8. Tests were inspected, not executed. Unread: CHANGELOG, roster/roster_ext, CLI, embedded index changes, remaining test hunks, and historical implementations. Documentation was read selectively; `.collab` changes were excluded.
+
+## Requested checks
+
+- **RC1:** Repository root; workspace-write; add barrier/denied-read fixtures for findings #1–2; require refusal before another launch marker. Budget: two schedules, 10 minutes.
+- **RC2:** Repository root; workspace-write; inject event-read failures before append and artifact refresh; require retained bytes, `artifact_error`, nonzero exit. Budget: two cases, 5 minutes.
+- **RC3:** Repository root; workspace-write; run exit-zero fake launchers with incomplete terminal streams from finding #4; require `died`. Budget: two cases, 5 minutes.
+
+---
+
+### Findings
+
+- **F91-1** [blocker] `crates/c3/src/work/mod.rs:747`, `crates/c3/src/work/mod.rs:1142`, `crates/c3/src/work/mod.rs:1386` - Resume admission checks status and exhaustion before acquiring the admission lock, but the locked claim only rejects a live owner. A delayed resume can therefore restart an already completed or exhausted run, and can reuse an attempt number calculated from stale state. Trigger: Two resume commands pass the quota/non-exhausted checks. Pause the second immediately before claim_for_spawn after it calculates n. Let the first resume finish successfully or exhaust the cap. Resume the second: the locked reread sees a terminal record, passes the live-owner check, and writes running with the stale attempt number. Evidence: read-code: Allowed status and exhausted checks operate on the earlier RunRecord before resume_env and resume_once.; read-code: The attempt number is calculated before acquiring the admission lock.; read-code: The locked reread checks other live runs and a different live owner, then unconditionally sets running; it does not recheck terminal status, exhaustion, or the attempt generation. Verify: Run RC1 with a barrier before the second claim; let the first attempt reach done and, separately, quota with exhausted=true. Require the delayed command to refuse without another child-launch marker. Remedy: Validate the permitted state, exhaustion, owner, and expected attempt generation under the admission lock; calculate the next attempt from that same locked record and reject stale claims. Supersedes: F89-2.
+- **F91-2** [blocker] `crates/c3/src/work/record.rs:137`, `crates/c3/src/work/record.rs:187`, `crates/c3/src/work/record.rs:211`, `crates/c3/src/work/record.rs:221` - The new admission lock does not enforce one live worker when recovery records cannot be inspected: record reads, directory enumeration failures, entry errors, and parse errors are treated as absent runs. Trigger: A worker remains alive while another process can open the task admission lock and allocate a directory but cannot read the live worker's run.json, or encounters an enumeration/entry error. A second start or resume skips that live run. Evidence: read-code: Every std::fs::read error returns Ok(None), including access failures.; read-code: run_dirs returns an empty list on enumeration failure, flattens entry errors, and live_run discards record errors.; read-code: other_live_run also discards read/parse errors before determining whether another run is live. Verify: Run RC1 with a live blocking worker and a temporary read-denying handle or injected PermissionDenied on its run.json; require a second same-task command to refuse before launch. Remedy: Return inspection errors through run_dirs, read_record, live_run, and other_live_run. Treat only confirmed NotFound as absence and refuse admission when any candidate record cannot be inspected.
+- **F91-3** [major] `crates/c3/src/work/mod.rs:858`, `crates/c3/src/work/mod.rs:1175`, `crates/c3/src/work/mod.rs:1192`, `crates/c3/src/work/mod.rs:1207` - Artifact read failures remain destructive despite the new write-error handling. An unreadable attempt stream becomes an empty string and its source file is subsequently deleted; an unreadable aggregate stream during refresh becomes an empty report while the previously classified successful attempt can still be recorded done. Trigger: A resumed child writes a valid successful stream. Either reading its temporary events file fails while removal remains possible, or the attempt is read and appended successfully but reading events.jsonl in refresh_artifacts fails transiently. Evidence: read-code: Attempt events and stderr use unwrap_or_default; append_resume can then successfully append no attempt data, after which both temporary files are removed.; read-code: refresh_artifacts defaults an events.jsonl read failure to empty input and writes the resulting report without returning a read error.; read-code: After refresh returns successfully, the record receives the status classified earlier from the attempt stream, including done. Verify: Run RC2 with separate injected read failures for the attempt and aggregate event files; require preserved source bytes, artifact_error, and a nonzero result in both cases. Remedy: Propagate event-file read errors as artifact errors. Preserve temporary attempt files until their contents have been read and durably incorporated, and do not replace a report when its source cannot be read. Supersedes: F89-3.
+- **F91-4** [major] `crates/c3/src/work/record.rs:544`, `crates/c3/src/work/record.rs:551`, `crates/c3/src/work/engines.rs:481`, `crates/c3/src/work/engines.rs:503` - The new success detector still accepts streams without affirmative successful terminal evidence: Claude treats a result missing is_error as successful, and Codex treats an agent_message item as sufficient without turn.completed. Trigger: An exit-zero launcher emits only {"type":"result"} for Claude, or only an item.completed event containing an agent_message for Codex, then ends without a successful turn terminal. Evidence: read-code: Any result sets has_result=true; is_error becomes false unless the field is exactly boolean true, including when absent.; read-code: Claude maps has_result with false is_error to Success. Codex sets saw_completed for an agent_message item as well as turn.completed.; read-code: The added unit test explicitly expects Success for a Codex agent_message-only stream. Verify: Run RC3 using the two stated streams and process exit zero; require failure with missing or invalid terminal evidence, never done. Remedy: Require an explicitly valid Claude success result and a successful Codex turn terminal. Keep assistant-message extraction separate from completion classification. Supersedes: F89-8.
+
+### Prior findings
+
+- F02-1 - not-checked - Historical telemetry implementation outside this review.
+- F02-3 - not-checked - Historical deletion implementation outside this review.
+- F02-4 - not-checked - Harness coverage map and telemetry shim not reviewed.
+- F02-5 - not-checked - Rating transaction implementation not reviewed.
+- F02-6 - not-checked - Prompt anchor implementation not reviewed.
+- F02-7 - not-checked - Cross-engine plan compatibility not reviewed.
+- F02-8 - not-checked - No three-route benchmark examined or run.
+- F04-1 - not-checked - Unicode process classifier fix not reviewed.
+- F04-2 - not-checked - Windows local-zone boundary behavior not reviewed.
+- F04-3 - not-checked - Required-light ledger behavior not reviewed.
+- F06-1 - not-checked - Historical Samoa offset behavior not reviewed.
+- F09-1 - not-checked - Context-window Unicode configuration fix not reviewed.
+- F09-2 - not-checked - Flush/deletion synchronization not reviewed.
+- F09-3 - not-checked - Recoverable deletion cleanup not reviewed.
+- F09-4 - not-checked - Telemetry spool reread behavior not reviewed.
+- F09-5 - not-checked - Upgrade-backlog sanitization not reviewed.
+- F09-6 - not-checked - Rating actor inference not reviewed.
+- F11-1 - not-checked - Health journal I/O recovery not reviewed.
+- F11-2 - not-checked - Required-reviewer launcher propagation not reviewed.
+- F11-3 - not-checked - Required-reviewer shared-plan evaluation not reviewed.
+- F11-4 - not-checked - PowerShell hook pointer not reviewed or executed.
+- F11-5 - not-checked - AGY tool stall handling not reviewed.
+- F14-1 - not-checked - Local-only deletion transaction not reviewed.
+- F19-1 - not-checked - Complaint/deletion synchronization not reviewed.
+- F19-2 - not-checked - Unreadable-salt cleanup not reviewed.
+- F19-3 - not-checked - Duplicate-key telemetry sanitization not reviewed.
+- F22-1 - not-checked - Journal replay deduplication not reviewed.
+- F23-1 - not-checked - Pending recovery metadata lookup behavior not reviewed.
+- F23-2 - not-checked - Unknown creation-time recovery scans not reviewed.
+- F23-3 - not-checked - Consultation kill evidence persistence not reviewed.
+- F23-4 - not-checked - Recovery proof fixtures not reviewed.
+- F23-5 - not-checked - Production Windows Samoa behavior not tested.
+- F24-1 - not-checked - Not-spooled lock fallback accounting not reviewed.
+- F24-2 - not-checked - Unterminated not-spooled suffix handling not reviewed.
+- F24-3 - not-checked - Concurrent not-spooled cleanup not reviewed.
+- F24-4 - not-checked - Not-spooled status baseline handling not reviewed.
+- F24-5 - not-checked - Plugin-home telemetry compatibility not reviewed.
+- F24-6 - not-checked - Post-fold record rewrite failure handling not reviewed.
+- F25-2 - not-checked - Endpoint transcript-location guard not reviewed.
+- F25-3 - not-checked - Claude model case normalization not reviewed.
+- F25-4 - not-checked - ChildEnv debug redaction not reviewed.
+- F30-1 - not-checked - Unknown-tree helper recovery not reviewed.
+- F30-2 - not-checked - Consultation pre-kill persistence not reviewed.
+- F30-3 - not-checked - Continuation/repair kill durability fixtures not reviewed.
+- F31-1 - not-checked - Live-producer fallback accounting not reviewed.
+- F36-1 - not-checked - Unicode transcript path guard not reviewed.
+- F36-2 - not-checked - Transcript path NFC normalization not reviewed.
+- F38-1 - not-checked - Multiple kill-record write failure recovery not reviewed.
+- F40-1 - not-checked - Kill-copy enumeration failures not reviewed.
+- F40-2 - not-checked - Consultation kick acknowledgement on persistence failure not reviewed.
+- F42-1 - not-checked - Recovery-copy metadata failures not reviewed.
+- F46-1 - not-checked - Equal-time quota aggregation not reviewed.
+- F48-1 - not-checked - Secondary quota-window blocking not reviewed.
+- F50-1 - not-checked - Quota reset-completeness tie handling not reviewed.
+- F52-1 - not-checked - Quota comparison-clock consistency not reviewed.
+- F52-2 - not-checked - NaN quota input rejection not reviewed.
+- F55-1 - not-checked - Account quota cache reset-boundary behavior not reviewed.
+- F55-2 - not-checked - Invalid newer quota observation handling not reviewed.
+- F58-1 - not-checked - Per-window observation provenance not reviewed.
+- F60-1 - not-checked - Quota provenance persistence not reviewed.
+- F62-1 - not-checked - Fractional quota timestamp persistence not reviewed.
+- F66-1 - not-checked - Detached consultation recovery admission not reviewed.
+- F66-2 - not-checked - Detached consultation reservation durability not reviewed.
+- F66-3 - not-checked - Ledger/machine cap-hit deduplication not reviewed.
+- F66-4 - not-checked - Unicode reset-hint validation not reviewed.
+- F66-5 - not-checked - Shim environment restoration not reviewed.
+- F66-6 - not-checked - Declared-cap heuristic release policy not reassessed.
+- F68-1 - not-checked - Distinct consultation cap-hit identity not reviewed.
+- F68-2 - not-checked - Cross-platform recovery test launcher not reviewed.
+- F70-1 - not-checked - Legacy health identity ambiguity not reviewed.
+- F72-1 - not-checked - Legacy health read-time age limit not reviewed.
+- F72-2 - not-checked - Legacy failure-text identity comparison not reviewed.
+- F74-1 - not-checked - Single-consultation cap-pair policy not reviewed.
+- F74-2 - not-checked - Unresolvable reset-hint refusal time not reviewed.
+- F76-1 - not-checked - Hinted cap-pair retention beyond 24 hours not reviewed.
+- F78-1 - not-checked - Established cap-pair preservation after isolated failures not reviewed.
+- F78-2 - not-checked - Machine-health cap-evidence retention not reviewed.
+- F80-1 - not-checked - Clearing-success retention under age/cap pressure not reviewed.
+- F82-1 - not-checked - Delayed journal replay after success eviction not reviewed.
+- F84-1 - not-checked - Tied-success clearing-anchor eviction not reviewed.
+- F89-1 - fixed - By code inspection: foreground allocation writes the owner PID/start before launch, and is_live checks that owner instead of the no-PID grace period. The blocking-launcher fixture was read, not run.
+- F89-2 - still-open - The lock closes the straightforward simultaneous-live resume race, but the admission claim remains stale-state susceptible; finding #1 replaces that part of the claim. Finding #2 identifies an additional inspection-failure bypass.
+- F89-3 - still-open - Append and report/diff write errors now propagate. Finding #3 replaces the remaining claim with the concrete ignored-read paths that can still lose artifacts or report done.
+- F89-4 - still-open - Muse opt-in and Codex/Muse documentation improve. The restricted Claude grammar still accepts bare Bash, Bash(python:*), and Bash(powershell.exe:*). An in-memory PowerShell check of the exact regex and denylist accepted all three; this was not a live Claude execution.
+- F89-5 - still-open - The numeric usage allow list fixes the extra usage-field leak. The broader secret-free claim remains false: report text is copied from child output, unrestricted allow strings can enter argv, and the raw stream is deliberately retained. Grammar validation is not secret detection.
+- F89-6 - fixed - By inspection: initial records persist max_resumes/quota_window_sec, and resume_env reuses them unless explicitly overridden. The claimed integration result was not rerun.
+- F89-7 - fixed - The stated pre-dirty tracked-file case is addressed by persisted baseline content hashes and post-run hash comparison. Broader path and reversion cases were not tested.
+- F89-8 - still-open - Explicit Claude error results and empty streams now fail. Finding #4 replaces the remaining claim with incomplete terminal streams that are still accepted as success.
+
+## Verdict: HOLD
+
+Admission still permits stale or unreadable state to authorize another worker, and artifact and terminal-event handling retain acceptance defects.
+
+### Blockers
+
+- **F91-1** `crates/c3/src/work/mod.rs:747`, `crates/c3/src/work/mod.rs:1142`, `crates/c3/src/work/mod.rs:1386` - Resume admission checks status and exhaustion before acquiring the admission lock, but the locked claim only rejects a live owner. A delayed resume can therefore restart an already completed or exhausted run, and can reuse an attempt number calculated from stale state. Verify: Run RC1 with a barrier before the second claim; let the first attempt reach done and, separately, quota with exhausted=true. Require the delayed command to refuse without another child-launch marker. Remedy: Validate the permitted state, exhaustion, owner, and expected attempt generation under the admission lock; calculate the next attempt from that same locked record and reject stale claims.
+- **F91-2** `crates/c3/src/work/record.rs:137`, `crates/c3/src/work/record.rs:187`, `crates/c3/src/work/record.rs:211`, `crates/c3/src/work/record.rs:221` - The new admission lock does not enforce one live worker when recovery records cannot be inspected: record reads, directory enumeration failures, entry errors, and parse errors are treated as absent runs. Verify: Run RC1 with a live blocking worker and a temporary read-denying handle or injected PermissionDenied on its run.json; require a second same-task command to refuse before launch. Remedy: Return inspection errors through run_dirs, read_record, live_run, and other_live_run. Treat only confirmed NotFound as absence and refuse admission when any candidate record cannot be inspected.
+- **F14-1** (prior, not-checked) `crates/c3/src/telemetry/complaint.rs:542` - A local-only forget (no public_ref, no existing transaction record) never writes forget-pending.json: the transaction is constructed in memory with phase 'cleaning' and run_local_cleanup skips its write because its guard requires phase != cleaning. An interrupted local-only cleanup (crash or failed removal) therefore leaves no record: nothing blocks spooling or sending, nothing resumes the cleanup, identity files (salt, refs.ndjson) may survive, and the failure message falsely claims a deletion record keeps the instance and blocks telemetry until the next flush or forget finishes it - the next flush sends instead. This contradicts the wave's documented invariant ('a local-only deletion starts here', 'an interruption leaves a record that blocks spooling and sending').
+- **F22-1** (prior, not-checked) `crates/c3-core/src/health.rs:1563` - After failed `.bad` archival, the retained journal is replayed against mutable endpoint state whose record keys can be removed by the 24-hour or 500-record retention rules. A journal record can therefore be applied, evicted, and re-applied with a different final effect, while a record already stale on a replay is parsed but never becomes visible. The record-key dedup is not durable, so the documented harmless/once replay invariant is false.
+- **F23-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:97` - E19 can drop a live task process: `process_info` collapses a failed name/parent lookup to `None`, which the pending re-check treats as `gone`, even when `process_start_iso` proved the pid exists with a readable start time.
+- **F23-2** (prior, not-checked) `crates/c3/src/liveness/proc.rs:753` - The unknown-tree release rule is fail-open for live processes with unknown creation/start time: both by-parent and machine-wide scans skip `created: None`, so `kill_unconfirmed` can be released while such a process still runs.
+- **F23-3** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:5105` - The kept recovery evidence is not durable at the kill: C3 writes `survivors`, `unverified`, and `kill_unconfirmed` only once at the end of the run, so a crash or forced bridge termination in that interval leaves the pending record without the evidence describing the surviving tree.
+- **F24-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:640` - The spool-lock fallback marks all non-legacy not-spooled lines as seen without folding or retaining per-file provenance; a later fold counts the same gone-producer files again, so the accounting can double-count and temporarily hide the count.
+- **F25-2** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:357` - Endpoint mode cannot enforce the transcript-location safety guard because it never populates `projectsDirectory`; transcripts may land inside the repository and alter the tree being reviewed.
+- **F30-1** (prior, not-checked) `crates/c3/src/liveness/proc.rs:815` - Unknown-tree release remains fail-open for a live reviewer helper whose creation time is unreadable and whose name or command line does not match the codex rule, especially when it is a grandchild below an unrecorded intermediate process.
+- **F30-2** (prior, not-checked) `crates/c3/src/engines/subprocess.rs:536` - Kill evidence is not durable at the actual kill: the processes are killed before the kept record is written, and write failures are ignored while execution continues.
+- **F31-1** (prior, not-checked) `crates/c3/src/telemetry/spool.rs:668` - The lock-busy fallback records live producers' existing lines as seen without recording per-file provenance; when such a producer later exits, the next fold counts its entire file again as a gone producer, double-counting those lines across the record history.
+- **F36-1** (prior, not-checked) `crates/c3/src/engines/claude_auth.rs:425` - The new Claude transcript guard can panic on a valid Unicode configuration path because repo_relative slices the candidate string at the byte length of an unrelated repository prefix without checking a UTF-8 boundary.
+- **F38-1** (prior, not-checked) `crates/c3/src/consult/orchestrate.rs:687` - The fallback narrows but does not close the recovery durability failure: if both pre-kill writes fail and the bridge dies after killing an unrecorded intermediate, recovery can release the task while that intermediate's non-Codex helper remains alive. The surviving launch record contains insufficient ancestry, and the in-memory KillRecord::Lost result does not survive the bridge.
+- **F40-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:170` - Recovery silently treats failure to enumerate the Codex-home kill-copy directory, or errors while iterating it, as absence of recovery copies. A durable copy naming a live helper can therefore be omitted and the task released.
+- **F42-1** (prior, not-checked) `crates/c3/src/liveness/pending.rs:306` - A metadata inspection error on an enumerated recovery copy is treated as absence. read_pending_file uses Path::exists(), which converts metadata errors to false, and returns exists=false with no error. Recovery and findings checks then skip the copy, potentially releasing a task while a helper named only in that durable copy remains alive.
+- **F66-1** (prior, not-checked) `crates/c3/src/consult/recovery.rs:129` - Detached admission treats active recovery records as harmless concurrency without establishing that their owning bridge is still alive. Records retained because an interrupted run left surviving or unverified processes are therefore bypassed, allowing a new engine turn while recovery still considers the previous tree active.
+- **F76-1** (prior, not-checked) `crates/c3-core/src/health.rs:1143` - The new read-time age limit discards identified cap-pair evidence after approximately 24 hours even when a valid reset_hint declares a later weekly or monthly reset. plan_cap_verdict then returns the underlying verdict without enforcing that reset. This makes an exhausted endpoint eligible before the retry time previously displayed and contradicts the documented policy that hinted entries remain unavailable until their reset.
+- **F78-1** (prior, not-checked) `crates/c3-core/src/plan.rs:368` - The cap detector considers only pairs containing the newest qualifying hit. A later isolated instant 429 therefore suppresses an already established cap pair, allowing an exhausted endpoint to become eligible before its declared reset without any successful reply.
+- **F78-2** (prior, not-checked) `crates/c3-core/src/health.rs:100` - The 35-day cap-pair retention applies only to rows supplied to endpoint_health; machine-health writes still prune old rows unless their stored outage or quota window remains active. Consequently, cap evidence originating in another repository can disappear after roughly 24 hours, releasing a hinted exhausted endpoint before its declared reset.
+- **F80-1** (prior, not-checked) `crates/c3-core/src/health.rs:2177` - The new retention policy preserves cap-failure evidence longer and with higher eviction priority than the successful reply that clears it. Once that success disappears, machine-only readers reconstruct the old pair and falsely mark a usable endpoint unavailable until its declared reset.
+- **F82-1** (prior, not-checked) `crates/c3-core/src/health.rs:2288` - The supersede drop does not prevent an obsolete cap refusal when older evidence remains in a skipped journal until after the clearing success is evicted. Journal replay protection covers records actually read, not unread records in a busy journal, and no durable success watermark remains to reject their later application.
+- **F84-1** (prior, not-checked) `crates/c3-core/src/health.rs:2231` - The clearing-anchor protection is not durable under tied-success cap pressure. is_anchor protects every success row sharing an endpoint's newest timestamp, rather than one row. Those duplicates can force eviction of another endpoint's clearing anchor. A later success makes the duplicates unprotected, allowing delayed older evidence for the evicted endpoint to survive and restore a cleared cap refusal.
+- **F89-1** (prior, fixed) `crates/c3/src/work/mod.rs:730` - A foreground worker is treated as dead after 120 seconds because its running record never receives an owning PID. Reading status or admitting another run can then rewrite the still-active run as died and allow another worker on the same task.
+- **F89-2** (prior, still-open) `crates/c3/src/work/mod.rs:698` - Resume admission is not exclusive: it neither checks the task's other live runs nor atomically claims the selected run and marks it running before spawning. Two resume commands can execute the same session concurrently and overwrite the same temporary event files; a fresh worker can also start while a foreground resume still has status quota.
+- **F89-3** (prior, still-open) `crates/c3/src/work/mod.rs:676` - Artifact failures can silently destroy a resumed report while C3 records done and returns success. append_resume ignores open/write errors, after which resume_once deletes the attempt files; refresh_artifacts also ignores report.md and diff.txt write failures.
+
+### Unproven scenarios
+
+- No tests or builds were executed because this consultation prohibited writes; reported workspace, integration, library, and clippy passes were not independently verified.
+- The reviewed diff stat reported 12 non-.collab files and +1355/-116, differing from the brief's 13-file, approximately +2965/-110 description.
+- The five-call reading budget left CHANGELOG.md, roster.rs, roster_ext.rs, cli/work.rs, index/embed.rs, remaining test hunks, and historical implementations unread; documentation was read in selected excerpts.
+- Actual Claude permission enforcement for accepted bare-tool, interpreter, and executable-suffix patterns was not exercised.
+- Concurrent resume/completion, exhausted-cap admission, denied record reads, and event-read failures need deterministic fixtures.
+- Foreground ownership beyond 120 seconds, PID reuse/inspection failures, detached alarm races, and crash durability were not exercised.
+- Production Claude, Codex, and Muse terminal streams and unrestricted Muse behavior were not validated on a real run.
+
+### First-run checklist (observable)
+
+- [ ] Before the worker's first tool event, run.json shows running, the actual owning C3 PID and matching process start time, and the intended attempt number.
+- [ ] While the worker remains alive beyond 120 seconds, status still reports running; competing starts/resumes print a refusal and produce no second child-launch marker.
+- [ ] A resume records exactly one incremented attempt, preserves the original resume cap/window, appends its events once, and refuses further execution after done or exhausted.
+- [ ] The launched argv and recorded permission agree with the selected engine; Muse requires explicit unrestricted opt-in, and Claude restrictions are checked with a harmless out-of-policy command.
+- [ ] Before accepting exit zero, events.jsonl contains affirmative successful engine terminal evidence; run.json says done with exit_code 0, report.md contains the expected final result, and diff.txt reflects the observed working tree.
+- [ ] Injected artifact read/write failure produces nonzero exit and artifact_error, retains recoverable attempt bytes, and does not replace a valid report with empty content.
+- [ ] An extra usage sentinel is absent from run.json; review report text and unrestricted argv separately rather than treating the usage allow list as general secret redaction.
