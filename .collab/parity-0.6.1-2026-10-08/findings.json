@@ -27602,7 +27602,7 @@
                      },
                      {
                          "id":  "F99-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -27656,6 +27656,15 @@
                                              "evidence":  "",
                                              "base_commit":  "845a8161e998ad2b6f7e3569200083b57b0ebf93",
                                              "tree_sha256":  "194a657a9b8af2e4a333810366cd91c3cb101a5edb6ce506c323e22819333556"
+                                         },
+                                         {
+                                             "when":  "2026-10-22T14:01:34+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "2bcac940bc5d721b77681f4bf6eea34a52fe3456",
+                                             "tree_sha256":  "a65b35557c40ad9d93ea96ba7961e6dd54682a0210b4b300777b65964734b423"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -27664,7 +27673,7 @@
                      },
                      {
                          "id":  "F99-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -27723,6 +27732,15 @@
                                              "evidence":  "",
                                              "base_commit":  "845a8161e998ad2b6f7e3569200083b57b0ebf93",
                                              "tree_sha256":  "194a657a9b8af2e4a333810366cd91c3cb101a5edb6ce506c323e22819333556"
+                                         },
+                                         {
+                                             "when":  "2026-10-22T14:01:35+02:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "2bcac940bc5d721b77681f4bf6eea34a52fe3456",
+                                             "tree_sha256":  "a65b35557c40ad9d93ea96ba7961e6dd54682a0210b4b300777b65964734b423"
                                          }
                                      ],
                          "reviewer_checks":  [
