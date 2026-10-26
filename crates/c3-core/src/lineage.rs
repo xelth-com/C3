@@ -15,12 +15,12 @@ use crate::sha256_hex;
 /// deliberately the *subprocess* subset: `http` has no launcher, so it is not here (roster
 /// validation and launcher discovery iterate this list), but it does have a lineage row -
 /// see [`ALL_ENGINE_NAMES`] and [`engine_spec`], which know `http` too (F03-8, F08-7).
-pub const ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude"];
+pub const ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "grok"];
 
 /// Every engine kind that has an identity/lineage row, including the non-subprocess `http`
 /// engine. The single source that keeps `engine.rs`'s `EngineKind` (four) and the lineage
 /// table (previously three) in agreement (F08-7).
-pub const ALL_ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "http"];
+pub const ALL_ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "grok", "http"];
 
 /// A row of the engine table (the fields providers/preflight need).
 #[derive(Debug, Clone)]
@@ -120,6 +120,13 @@ pub fn launcher_names(engine: &str) -> Vec<&'static str> {
                 vec!["claude"]
             }
         }
+        "grok" => {
+            if win {
+                vec!["grok.exe", "grok.cmd", "grok"]
+            } else {
+                vec!["grok"]
+            }
+        }
         _ => vec![],
     }
 }
@@ -133,6 +140,10 @@ pub fn install_launchers(engine: &str) -> Vec<(&'static str, &'static str)> {
         "muse" if cfg!(windows) => vec![("LOCALAPPDATA", "Programs\\muse\\muse.cmd")],
         "claude" if cfg!(windows) => vec![("USERPROFILE", ".local\\bin\\claude.exe")],
         "claude" => vec![("HOME", ".local/bin/claude")],
+        // grok installs to `%USERPROFILE%\.grok\bin\grok.exe` (`$HOME/.grok/bin/grok` elsewhere); a
+        // shell open before the install may not have it on PATH yet.
+        "grok" if cfg!(windows) => vec![("USERPROFILE", ".grok\\bin\\grok.exe")],
+        "grok" => vec![("HOME", ".grok/bin/grok")],
         _ => vec![],
     }
 }
@@ -268,6 +279,41 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             max_prompt_bytes: crate::claude::MAX_PROMPT_BYTES,
             parallel_scope_engine: true,
             add_dirs: true,
+            crt_quote: true,
+        }),
+        // (C3) Grok Build CLI headless (`grok --prompt-file ... --output-format streaming-json`):
+        // read-only reviewer turns billed to the SuperGrok subscription (grok.com oauth), the reply
+        // is the concatenated `text` events, the thread id is READ from the `end` event (not minted).
+        "grok" => Some(EngineSpec {
+            name: "grok",
+            command: "grok",
+            exe_env: "CODEX_CONSULT_GROK_EXE",
+            host_name: "engine:grok",
+            compat_string: "cc-engine-v1|grok",
+            default_provider: "xai",
+            model_example: "grok-4.7",
+            local_sign_in: true,
+            label: "Grok (grok)",
+            prefix: "grok",
+            schema_flag: "--json-schema",
+            reply_source: "the concatenated text events of the streaming-json stream (type:text)",
+            thread_flag: "--resume",
+            thread_noun: "session",
+            read_only_note: "grok runs with --tools read_file,list_dir,grep --disallowed-tools write,run_terminal_command,use_tool,search_tool --permission-mode dontAsk --disable-web-search --no-subagents, and the bridge's tree check fails a run that changed anything",
+            sandbox_record: "read-only (requested; grok --tools read_file,list_dir,grep --disallowed-tools write,run_terminal_command,use_tool,search_tool --permission-mode dontAsk --disable-web-search --no-subagents; checked by evidence for tracked and untracked files and the collab directory, not for gitignored paths, submodules, files outside the repository or what the reviewer reads)",
+            tools_line: "Tools: you may read files of the repository (read_file, list_dir, grep); writing files, the shell, subagents and the web tools are disabled in this consultation - do not try them; make NO file changes; a check that needs a command belongs under `## Requested checks`.",
+            steps_flag: "--max-turns",
+            denial_retry: false,
+            has_usage: true,
+            prompt_by_file: true,
+            transports: &["native", "prompt-only"],
+            default_mode: "new",
+            fork: false,
+            auth_modes: &[],
+            mints_thread: false,
+            max_prompt_bytes: 0,
+            parallel_scope_engine: true,
+            add_dirs: false,
             crt_quote: true,
         }),
         // The `http` engine has a lineage row but no launcher: it sends an
@@ -702,7 +748,7 @@ fn resolve_engine_identity(
     // billing guard requires (oauth). The http engine keeps a null config (its endpoint is a
     // provider table). Built via an insertion-ordered map (serde_json preserve_order) so the
     // muse keys stay `engine, launcher, credential_mechanism`.
-    if engine == "agy" || engine == "muse" {
+    if engine == "agy" || engine == "muse" || engine == "grok" {
         let mut pc = serde_json::Map::new();
         pc.insert(
             "engine".into(),
@@ -716,6 +762,22 @@ fn resolve_engine_identity(
             pc.insert(
                 "credential_mechanism".into(),
                 serde_json::Value::String("oauth".into()),
+            );
+        }
+        // (C3) grok's credential route (the billing guard): `oauth` (the SuperGrok subscription) or
+        // `apikey` when the operator opted a child's xAI API key in (`C3_GROK_ALLOW_API_KEY=1`).
+        if engine == "grok" {
+            let api = crate::engine::GROK_API_KEY_VARS.iter().any(|k| {
+                std::env::var(k)
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false)
+            });
+            let allow = std::env::var(crate::engine::GROK_ALLOW_API_KEY_VAR)
+                .map(|v| v.trim() == "1")
+                .unwrap_or(false);
+            pc.insert(
+                "credential_mechanism".into(),
+                serde_json::Value::String(if api && allow { "apikey" } else { "oauth" }.into()),
             );
         }
         id.provider_config = serde_json::Value::Object(pc);

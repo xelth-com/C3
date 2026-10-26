@@ -181,9 +181,10 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
         engine_launchers.insert(engine, l);
     }
 
-    // The provider labels of the other engines: one row each, in roster order.
+    // The provider labels of the other engines: one row each, in roster order. (ext.c3.inactive)
+    // an inactive engine entry's label is hidden - `active_entries` drops it.
     let mut engine_labels: Vec<(String, String)> = Vec::new();
-    for e in &roster.entries {
+    for e in roster.active_entries() {
         if e.engine == "codex" {
             continue;
         }
@@ -191,6 +192,9 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
             engine_labels.push((e.provider.clone(), e.engine.clone()));
         }
     }
+    // (ext.c3.inactive) hide the codex-config provider rows named by an inactive item (a plan slug
+    // or label the operator listed); the roster-entry rows are already gone via `active_entries`.
+    names.retain(|n| !roster.is_item_inactive(n));
 
     if !opts.provider.is_empty() {
         let mut known: Vec<String> = names.clone();
@@ -437,7 +441,8 @@ impl Ctx {
         let mut skipped: Vec<(String, String, String, String)> = Vec::new();
         let mut listing: Vec<String> = Vec::new();
         let mut considered = 0usize;
-        for e in &self.roster.entries {
+        // (ext.c3.inactive) an inactive entry is never selected, never probed, never listed.
+        for e in self.roster.active_entries() {
             let entry_engine = if e.engine.is_empty() {
                 "codex"
             } else {
@@ -549,8 +554,7 @@ impl Ctx {
         if considered == 0 {
             let all = self
                 .roster
-                .entries
-                .iter()
+                .active_entries()
                 .map(|e| {
                     format!(
                         "#{} {}",
@@ -686,7 +690,8 @@ impl Ctx {
         let purpose_label = if purpose.is_empty() { "none" } else { purpose };
         let weighty_purpose = WEIGHTY_PURPOSES.contains(&purpose);
         let mut members: Vec<PanelMemberRow> = Vec::new();
-        for e in &self.roster.entries {
+        // (ext.c3.inactive) an inactive entry never joins a panel (any purpose / -PanelAll).
+        for e in self.roster.active_entries() {
             if positions.is_some_and(|p| !p.contains(&(e.position as i64))) {
                 continue;
             }
@@ -795,8 +800,7 @@ impl Ctx {
         if members.is_empty() {
             let all_list = self
                 .roster
-                .entries
-                .iter()
+                .active_entries()
                 .map(|e| {
                     format!(
                         "#{} {}",
@@ -1025,8 +1029,8 @@ impl Ctx {
             );
         }
         if spec.local_sign_in {
-            // muse: local auth.json check, cached is unnecessary (deterministic)
-            return get_muse_sign_in();
+            // muse/grok: a local auth-file check, deterministic (no cache needed)
+            return local_engine_sign_in(engine);
         }
         // agy: `agy models`, cached per launcher
         let key = format!("engine:{engine}|{launcher}");
@@ -1055,7 +1059,12 @@ impl Ctx {
             return c.clone();
         }
         let mut resolved: Vec<(String, String, String)> = Vec::new();
-        for e in self.roster.entries.iter().filter(|e| e.plan == plan) {
+        for e in self
+            .roster
+            .entries
+            .iter()
+            .filter(|e| e.plan == plan && !e.inactive)
+        {
             let eng = if e.engine.is_empty() {
                 "codex"
             } else {
@@ -1174,7 +1183,7 @@ impl Ctx {
 
     fn select_roster_reviewer(&self) -> Walk {
         let mut skipped: Vec<(String, String, String, String)> = Vec::new();
-        for e in &self.roster.entries {
+        for e in self.roster.active_entries() {
             let entry_engine = if e.engine.is_empty() {
                 "codex"
             } else {
@@ -1243,7 +1252,8 @@ impl Ctx {
             block: String,
         }
         let mut members: Vec<Member> = Vec::new();
-        for e in &self.roster.entries {
+        // (ext.c3.inactive) an inactive entry is not probed and not counted in availability.
+        for e in self.roster.active_entries() {
             let entry_engine = if e.engine.is_empty() {
                 "codex"
             } else {
@@ -2079,6 +2089,15 @@ fn print_table(
         .strip_prefix("codex-consult: ")
         .unwrap_or(availability_line);
     println!("availability: {av}");
+    // (ext.c3.inactive) the operator sees WHICH plans/labels are hidden (not their model names),
+    // so a missing reviewer is not a mystery; agents get no provider/model names from this.
+    if with_roster && !ctx.roster.inactive.is_empty() {
+        println!(
+            "inactive (hidden): {} - see ext.c3.inactive in {}",
+            ctx.roster.inactive.join(", "),
+            ctx.roster.path
+        );
+    }
 }
 
 fn pad_right(s: String, w: usize) -> String {
@@ -2446,6 +2465,9 @@ pub(crate) fn read_reviewer_roster() -> Result<Roster, String> {
             Err(why) => return Err(roster_refusal(&path, &why)),
         }
     }
+    // (ext.c3.inactive) Re-mark every entry now that the http reviewers are appended, so an
+    // inactive plan/label that names an http route carries the flag too.
+    validated.apply_inactive();
     Ok(validated)
 }
 
@@ -2933,6 +2955,105 @@ pub(crate) fn get_muse_launch_block() -> String {
     format!("the Muse sign-in is not established as oauth ({cause}): a muse run might bill per token instead of the Muse Code subscription; set TBH_CREDENTIAL_BACKEND=file and run `muse login`")
 }
 
+// ---- grok local sign-in
+
+/// A local engine's sign-in check, dispatched by engine (both deterministic file reads): grok
+/// reads `~/.grok/auth.json`, every other local-sign-in engine (muse) its own file.
+fn local_engine_sign_in(engine: &str) -> CredentialResult {
+    if engine == "grok" {
+        get_grok_sign_in()
+    } else {
+        get_muse_sign_in()
+    }
+}
+
+fn grok_auth_path() -> String {
+    let h = if cfg!(windows) {
+        std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty())
+    } else {
+        std::env::var("HOME").ok().filter(|s| !s.is_empty())
+    };
+    let h = h.or_else(|| std::env::var("HOME").ok().filter(|s| !s.is_empty()));
+    match h {
+        Some(h) => Path::new(&h)
+            .join(".grok")
+            .join("auth.json")
+            .to_string_lossy()
+            .to_string(),
+        None => String::new(),
+    }
+}
+
+/// The credential route a grok turn would use, as the providers row / dry-run reports it (D4): the
+/// SuperGrok subscription (grok.com oauth) by default, or the xAI API key when the operator opted
+/// one in (`C3_GROK_ALLOW_API_KEY=1` with `XAI_API_KEY`/`GROK_CODE_XAI_API_KEY` set). The token
+/// itself is never read or logged.
+pub(crate) fn grok_credential_route() -> &'static str {
+    let api = c3_core::engine::GROK_API_KEY_VARS.iter().any(|k| {
+        std::env::var(k)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false)
+    });
+    let allow = std::env::var(c3_core::engine::GROK_ALLOW_API_KEY_VAR)
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+    if api && allow {
+        "API key (XAI_API_KEY)"
+    } else {
+        "subscription (grok.com oauth)"
+    }
+}
+
+/// `Get-GrokSignIn`: a local file check of `~/.grok/auth.json` (never its contents) plus the
+/// billing route. The API-key route needs no oauth file; the subscription route needs the sign-in.
+fn get_grok_sign_in() -> CredentialResult {
+    const SHOWN: &str = "~/.grok/auth.json";
+    let route = grok_credential_route();
+    if route.starts_with("API key") {
+        return CredentialResult::ok(format!("signed in ({route}); C3_GROK_ALLOW_API_KEY=1"));
+    }
+    let path = grok_auth_path();
+    if path.is_empty() {
+        return CredentialResult::unknown(
+            "sign-in not checkable: no home directory (USERPROFILE / HOME)".to_string(),
+        );
+    }
+    if Path::new(&path).is_file() {
+        CredentialResult::ok(format!("signed in ({SHOWN}) - {route}"))
+    } else {
+        CredentialResult::missing(format!(
+            "not signed in: {SHOWN} does not exist (run `grok login`)"
+        ))
+    }
+}
+
+/// `Get-GrokHarness`: `grok-cli <version>` from `<launcher> --version` (15 s), else
+/// `grok-cli (version unknown)`.
+pub(crate) fn get_grok_harness(launcher: &str) -> String {
+    if launcher.trim().is_empty() {
+        return "grok-cli (version unknown)".to_string();
+    }
+    let mut ver = String::new();
+    if let Some((code, out, err)) =
+        run_with_timeout(launcher, &["--version"], Duration::from_secs(15))
+    {
+        if code == 0 {
+            let merged = format!("{out} {err}");
+            for tok in merged.split_whitespace() {
+                if muse_version_token(tok) {
+                    ver = tok.to_string();
+                    break;
+                }
+            }
+        }
+    }
+    if ver.is_empty() {
+        "grok-cli (version unknown)".to_string()
+    } else {
+        format!("grok-cli {}", ver.trim_start_matches('v'))
+    }
+}
+
 /// The engine credential for the CONSULT preflight (no `-NoNetwork`; the health short-circuit
 /// still applies): a recorded usable reply on this endpoint answers without a network check;
 /// muse reads `auth.json`; agy runs `agy models` (45 s, or `CODEX_CONSULT_TEST_LOGIN_TIMEOUT`).
@@ -2971,7 +3092,7 @@ pub(crate) fn engine_consult_credential(
         }
     }
     if spec.local_sign_in {
-        return get_muse_sign_in();
+        return local_engine_sign_in(engine);
     }
     let mut timeout = 45u64;
     if let Some(hook) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_LOGIN_TIMEOUT") {
@@ -2997,6 +3118,9 @@ pub(crate) fn engine_harness(
 ) -> String {
     if engine == "muse" {
         return get_muse_harness(launcher);
+    }
+    if engine == "grok" {
+        return get_grok_harness(launcher);
     }
     // (0.6.0, wave 29) claude: `<launcher> --version` in the child environment (`Get-ClaudeHarness`);
     // (wave 4g, F32-1) in the entry's probe environment - the endpoint preflight's probe
@@ -3168,6 +3292,45 @@ mod roster_walk_tests {
         let e = w.entry.expect("first entry taken");
         assert_eq!(e.position, 1);
         assert!(w.skipped.is_empty());
+    }
+
+    // (ext.c3.inactive) an inactive entry is excluded from every selecting/probing/listing surface
+    // while its position stays stable - the panel/providers listing never mentions it.
+    #[test]
+    fn an_inactive_entry_is_never_selected_probed_or_listed() {
+        let inactive = |pos: usize, p: &str| RosterEntry {
+            inactive: true,
+            ..entry(pos, p, "gpt-5.1")
+        };
+        let ctx = Ctx::for_consult(
+            scan_config_text("", ""),
+            vec![],
+            roster(vec![
+                inactive(1, "byteplus-claude"),
+                entry(2, "openai", "gpt-5.1"),
+            ]),
+            String::new(),
+            String::new(),
+            Utc::now(),
+        );
+        // the roster walk and the "would select" walk both skip the inactive entry entirely
+        // (not even as a skip record) and take the first ACTIVE entry.
+        let w = ctx.walk_full("", "", true);
+        assert_eq!(w.entry.as_ref().map(|e| e.position), Some(2));
+        assert!(w.skipped.iter().all(|s| s.0 != "byteplus-claude"));
+        // select_roster_reviewer probes for real (openai may or may not be "available" without a
+        // network), but it must never select the inactive entry nor list it as a skip.
+        let s = ctx.select_roster_reviewer();
+        assert_ne!(s.entry.as_ref().map(|e| e.position), Some(1));
+        assert!(s.skipped.iter().all(|sk| sk.0 != "byteplus-claude"));
+        // the panel never includes the inactive entry (any purpose / -PanelAll).
+        let sel = ctx.panel_members("", "", "checkpoint", true, true, 0);
+        assert_eq!(sel.members.len(), 1);
+        assert!(sel.members.iter().all(|m| m.entry.position != 1));
+        // availability (the 'N of M reviewers available' source) counts only the active one.
+        let recs = ctx.roster_availability();
+        assert_eq!(recs.len(), 1);
+        assert!(recs.iter().all(|r| r.provider != "byteplus-claude"));
     }
 
     /// (wave 1b, 0.6.0 E5) Two codex routes of plan zai on two endpoints (ZAI, ZAIB) and a third

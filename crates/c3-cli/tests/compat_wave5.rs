@@ -157,12 +157,12 @@ fn first(o: &Output) -> String {
 #[test]
 fn a_reply_prefix_or_a_non_slug_is_refused_as_the_brief_prefix() {
     let e = setup("prefix-refused");
-    for p in ["codex", "agy", "muse", "claudecode", "http"] {
+    for p in ["codex", "agy", "muse", "claudecode", "grok", "http"] {
         let o = e.consult(&["--dry-run", "--brief-prefix", p], &[]);
         assert_eq!(o.status.code(), Some(1), "{}", text(&o));
         assert!(
             first(&o).starts_with(&format!(
-                "codex-consult: the brief prefix '{p}' (-BriefPrefix) is a reply prefix: the bridge names its replies handoffs/<NN>-<codex|agy|muse|claudecode|http>-<slug>.*; give the coordinator's briefs a prefix of their own (the default: claude); nothing was started."
+                "codex-consult: the brief prefix '{p}' (-BriefPrefix) is a reply prefix: the bridge names its replies handoffs/<NN>-<codex|agy|muse|claudecode|grok|http>-<slug>.*; give the coordinator's briefs a prefix of their own (the default: claude); nothing was started."
             )),
             "{}",
             text(&o)

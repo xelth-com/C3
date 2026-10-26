@@ -160,6 +160,13 @@ pub fn caps(key: &str) -> Option<Caps> {
             models: Models::Any,
             schema_transport: "native",
         },
+        // (C3) the grok engine: vocabulary grok (mapping grok-v1) for any grok model, sent as
+        // `--reasoning-effort <v>`; the schema TEXT travels natively (`--json-schema`).
+        "engine:grok" => Caps {
+            vocabulary: "grok",
+            models: Models::Any,
+            schema_transport: "native",
+        },
         // (M7b-b) The http engine (OpenRouter / OpenAI-compatible): the OpenAI effort vocabulary
         // (low/medium/high/xhigh), any model, and prompt-only transport (the schema travels in the
         // pack; JSON mode is requested via `response_format`).

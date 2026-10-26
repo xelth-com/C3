@@ -18,7 +18,7 @@ use c3_core::ledger::{Coordinator, LedgerEntry};
 use c3_core::roster::Roster;
 
 /// One row of the vendor table: the class, the endpoint hosts that belong to it (the host equals
-/// one or ends with `.` + one), the engine whose runs belong to it (agy, muse, claude), the Codex
+/// one or ends with `.` + one), the engine whose runs belong to it (agy, muse, claude, grok), the Codex
 /// built-in provider it stands for, and the CLOSED list of the published model names it may send.
 #[derive(Debug)]
 pub(crate) struct Vendor {
@@ -50,7 +50,7 @@ pub(crate) const CLAUDE_MODELS: [&str; 16] = [
 ];
 
 /// THE vendor table, in the plugin's order and with its exact names and lists.
-pub(crate) static VENDORS: [Vendor; 10] = [
+pub(crate) static VENDORS: [Vendor; 11] = [
     Vendor {
         class: "openai",
         hosts: &["openai.com", "chatgpt.com"],
@@ -180,6 +180,15 @@ pub(crate) static VENDORS: [Vendor; 10] = [
         engine: "claude",
         builtin: "",
         models: &CLAUDE_MODELS,
+    },
+    // (C3) xAI / Grok: the grok engine's runs, and (a direct http reviewer would use) the xAI and
+    // grok.com hosts. The closed model list is the Grok Build catalog.
+    Vendor {
+        class: "xai",
+        hosts: &["api.x.ai", "grok.com", "x.ai"],
+        engine: "grok",
+        builtin: "",
+        models: &["grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"],
     },
 ];
 
@@ -321,7 +330,7 @@ pub(crate) fn vendor_of_reviewer(engine: &str, provider_config: &Value) -> Optio
 // --------------------------------------------------------------------------- the reviewer
 
 /// The engines an event may name (`$script:EngineNames` plus C3's `http`); anything else `other`.
-pub(crate) const ENGINES: [&str; 5] = ["codex", "agy", "muse", "claude", "http"];
+pub(crate) const ENGINES: [&str; 6] = ["codex", "agy", "muse", "claude", "grok", "http"];
 
 /// `$script:ConsultPurposes`: the purposes an event may name; anything else `other`, none `none`.
 pub(crate) const PURPOSES: [&str; 8] = [

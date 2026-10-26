@@ -4,7 +4,7 @@
 the pinned v0.6.1 harnesses through the shim - see `docs/port/harness-shim.md` and
 `docs/port/rc5-verification-2026-10-09.md` when it exists; the changes in `CHANGELOG.md`).
 The full surface runs. The parity port (milestones 1–6) is in the binary —
-`c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse`, `claude` and `http` engines),
+`c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse`, `claude`, `grok` and `http` engines),
 `c3 findings` (statuses and ratings), `c3 scoreboard`, `c3 hook`, `c3 telemetry`/`complain`/
 `forget-me`, the reviewer roster and the routed **panel** with detach/status/wait/prune/kick —
 and so are the heavy subsystems after it: **packs and the `http` engine** (milestone 7,
@@ -34,7 +34,8 @@ reconciles them. Reviewers are subscriptions the user already has: the ChatGPT p
 the Codex CLI, z.ai GLM, Xiaomi MiMo or any Responses-API provider through a
 `[model_providers.<name>]` table, Gemini through Google's Antigravity CLI `agy`, Meta Muse
 through the Muse Code CLI, Claude through Claude Code headless (`claude -p`; the subscription,
-an API key, or a coding plan's Anthropic-compatible endpoint). The bridge never creates, prints,
+an API key, or a coding plan's Anthropic-compatible endpoint), and Grok through the Grok Build
+CLI `grok` (a read-only reviewer on the SuperGrok subscription). The bridge never creates, prints,
 stores or commits a key. C3 adds
 one API path for people who will not juggle subscriptions - OpenRouter (or any
 OpenAI-compatible endpoint) through a native `http` engine that reads its key from the
@@ -83,7 +84,7 @@ dontAsk --model <m> [--effort <e>] [--json-schema <the schema TEXT>] [--max-turn
 the repository root, the prompt on stdin. Replies are `handoffs/NN-claudecode-<slug>.*` (the
 prefix `claude` stays the coordinator's default brief prefix: `--brief-prefix <slug>`, else
 `CODEX_CONSULT_BRIEF_PREFIX`, else `claude` - the coordinator's briefs are
-`handoffs/<NN>-<prefix>-<slug>.md`; a reply prefix (`codex`, `agy`, `muse`, `claudecode`, `http`)
+`handoffs/<NN>-<prefix>-<slug>.md`; a reply prefix (`codex`, `agy`, `muse`, `claudecode`, `grok`, `http`)
 or a value that is not a lowercase slug is refused before anything starts, and the dry run prints
 `brief prefix:`). Launcher: `--engine-exe`,
 `CODEX_CONSULT_CLAUDE_EXE`, `claude.exe` / `claude.cmd` / `claude` on PATH, then
@@ -138,6 +139,33 @@ The endpoint route stays where the plugin's comparison kept it: "**Decided 2026-
 MiMo (credits 0.17x, wall 1.16x - no faster than codex on that plan, structured 12/12 both, blind
 marks 5.0 vs 3.08).**" (plugin README, "Engines (wave 29)", "Endpoint mode"). Ported in
 `docs/port/wave4-claude.md`; setup text in `plugin/skills/setup-providers/SKILL.md` section 4c.
+
+## The `grok` engine (C3 reviewer, xAI Grok Build CLI)
+
+Grok Build CLI (`grok`) as a READ-ONLY reviewer on the user's SuperGrok subscription (reviewer
+use only; `c3 work` is out of scope). Spawned from the repository root, the prompt in a
+`--prompt-file` (stdin empty, like muse):
+`grok --prompt-file <f> --output-format streaming-json [--json-schema <the schema TEXT>] -m <model>
+[--reasoning-effort <e>] --disable-web-search --tools read_file,list_dir,grep --disallowed-tools
+use_tool,search_tool,write,run_terminal_command --permission-mode dontAsk --no-subagents
+[--max-turns <n>] [--resume <thread>]`. The reply is the concatenated `text` events of the
+streaming-json stream; token usage comes from the `end` event, and the conversation id is READ
+from that event (grok mints its own and ignores a caller-supplied one), resumed with `--resume`.
+Replies are `handoffs/NN-grok-<slug>.*`. Models: `grok-4.7` (default), `grok-4.7-build-fast`,
+`grok-4.6`, `grok-4.5`.
+
+- **Read-only.** The tool allowlist is `read_file,list_dir,grep`; `--disallowed-tools` also removes
+  grok's MCP gateways (`use_tool`, `search_tool`) and the write/shell tools, and `--permission-mode
+  dontAsk` denies anything else. The bridge's tree check WARNS (it never fails the reply) when the
+  working tree or collab directory changed during a run - grok's own tools cannot have written.
+- **Billing guard.** Grok bills the SuperGrok subscription through the grok.com oauth sign-in
+  (`~/.grok/auth.json`, read as a local file - never its contents). `XAI_API_KEY` /
+  `GROK_CODE_XAI_API_KEY` in the environment would bill the xAI API per token instead, so c3 STRIPS
+  them from the grok child unless the operator opts in with `C3_GROK_ALLOW_API_KEY=1`; `c3 providers`
+  and the dry run report the route (`subscription (grok.com oauth)` vs `API key (XAI_API_KEY)`).
+- **Concurrency and conduct.** One subscription is one scheduling group (parallel 1). Grok Build
+  advertises headless/CI use (x.ai/build), but its AUP bans "unauthorized" automated access, so run
+  it only on the user's own signed-in subscription, at parallel 1, and never spoof identity.
 
 ## Worker runs (`c3 work`, design `docs/work-mode.md`)
 
@@ -227,6 +255,18 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   again); a transient pair on a capped plan costs the time to the reset - clear it with a
   successful explicit run (`--skip-preflight`: the verdict is advisory for a direct run) or by
   editing the hint.
+- **Inactive plans/labels (`ext.c3.inactive`)**: a top-level `"ext": {"c3": {"inactive":
+  ["byteplus", ...]}}` lists plan slugs or provider labels (each matches an entry by its `plan`
+  OR its `provider`) to keep fully preconfigured but INVISIBLE. A matched entry keeps its roster
+  position (so `#n` of the others stays valid) and is never selected, scheduled, probed or listed:
+  it is dropped from panels (every purpose / `--panel-all`), `c3 work` worker roles, the router
+  scoreboard, coordinator-identity resolution, availability/health probes and the SessionStart
+  `N of M reviewers available` count, and `c3 providers` hides its rows and the codex-config
+  provider row an item names (with a footer `inactive (hidden): byteplus - see ext.c3.inactive in
+  <roster path>`). A direct request for one (`#7`, `byteplus-claude`, `byteplus-claude :: ...` in
+  `--require`, a matcher, `--provider`) fails with `reviewer '<x>' is inactive (ext.c3.inactive in
+  the roster)`. A `parallel` key that names an inactive plan/label stays valid. The plugin ignores
+  `ext`, so the roster still loads there unchanged.
 - **`--budget <percent>`** (env `CODEX_CONSULT_QUOTA_BUDGET`, default 90, 0 = off): the stall watch
   reads the run's rollout every 15 s and stops the main turn at the budget - the partial kept, no
   continuation, `failed: stopped at the quota budget: 5-hour window 91 % used, resets 18:32; the
@@ -270,7 +310,7 @@ from uses it. Everything collected is shown in the open, as counts, on <https://
 * **The classes** (the plugin's closed vendor table; `c3/src/telemetry/classes.rs`): the vendor
   class is derived from the HOST of the endpoint the reviewer talked to (`openai` - also Codex's
   built-in provider -, `zai`, `xiaomi`, `byteplus`, `moonshot`, `alibaba`, `minimax`), else from
-  the engine (`agy` google, `muse` meta, `claude` anthropic), else `other`; the model is sent only
+  the engine (`agy` google, `muse` meta, `claude` anthropic, `grok` xai), else `other`; the model is sent only
   when it EQUALS an entry of that class's closed list (after lower-casing, `[1m]` stripped),
   else `other` (`unknown` without a model). A roster label, a model or a purpose as typed - say
   `customer-acme` - never leaves the machine. **C3 extension (the `http` engine):** the host

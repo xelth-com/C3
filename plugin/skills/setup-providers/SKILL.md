@@ -10,9 +10,10 @@ disable-model-invocation: false
 
 This is the C3 port of the `codex-consult` plugin's `setup-providers` skill: the same
 procedure, verified with the `c3` binary instead of `codex-providers.ps1` /
-`codex-consult.ps1`. `c3` runs four engines — `codex` (`codex exec`, the default), `agy`
-(Gemini through Google's Antigravity CLI), `muse` (Meta's Muse Code CLI) and `http` (an
-OpenAI-compatible API request, section 4b). The subscription engines never make an HTTP call
+`codex-consult.ps1`. `c3` runs these engines — `codex` (`codex exec`, the default), `agy`
+(Gemini through Google's Antigravity CLI), `muse` (Meta's Muse Code CLI), `claude` (Claude Code
+headless, section 4c), `grok` (xAI's Grok Build CLI as a read-only reviewer, section 4d) and
+`http` (an OpenAI-compatible API request, section 4b). The subscription engines never make an HTTP call
 themselves; the `http` engine sends one request and reads its key from the environment.
 `<codex home>` is `$CODEX_HOME` when set, else `~/.codex`.
 
@@ -162,6 +163,18 @@ the z.ai route works without one).
   `profile` or `model_providers.*` (refused).
 - Another file: the user sets `CODEX_CONSULT_ROSTER=<path>` (it must exist).
   `CODEX_CONSULT_ROSTER=none` disables the roster.
+- Mark a plan or provider **inactive** to retire it without deleting it: a top-level
+  `"ext": {"c3": {"inactive": ["byteplus", ...]}}` lists plan slugs or provider labels (each
+  matches an entry by its `plan` OR its `provider`). A matched entry stays fully preconfigured —
+  its roster entries, the `~/.codex/config.toml` provider table and the env key are untouched —
+  but is invisible: it keeps its roster position (so `#n` of the others stays valid) and is never
+  selected, scheduled, probed or listed (panels, `c3 work`, the router scoreboard, coordinator
+  identity, availability, the SessionStart count). `c3 providers` hides its rows and the
+  codex-config provider row an item names, with a footer `inactive (hidden): <items> - see
+  ext.c3.inactive in <roster path>`. A direct request for an inactive reviewer (`--require`,
+  `--provider`, a matcher) fails with `reviewer '<x>' is inactive (ext.c3.inactive in the
+  roster)`. A `parallel` key that names an inactive plan/label stays valid. The plugin validates
+  `ext` as an object only, so the file still loads there unchanged.
 
 ## 4b. Add an OpenRouter reviewer (the `http` engine)
 
@@ -174,7 +187,7 @@ any endpoint that speaks the same wire shape.
 (e.g. `OPENROUTER_API_KEY`); you never ask for it, print it, echo it, log it, read it
 back, or write it to any file. You only ever confirm it is *set* through `c3 providers`.
 
-The plugin's roster validator knows only `codex`/`agy`/`muse`/`claude` and refuses the whole
+The plugin's roster validator knows only `codex`/`agy`/`muse`/`claude`/`grok` and refuses the whole
 file on any other engine, so an `http` reviewer does **not** go in `reviewers[]`. It goes under
 the top-level `ext.c3.reviewers` array, which the plugin validates as an object and
 ignores — C3 reads and validates it and appends the reviewer after the plugin's entries:
@@ -283,6 +296,41 @@ API itself for this engine. Full contract: the README, "The `claude` engine".
 8. **Read-only:** the reviewer has Read, Grep and Glob only; c3 FAILS a claude run when the
    working tree or the collab directory changed during it. Tell the user not to edit the
    repository while a claude consultation runs.
+
+## 4d. Grok through the `grok` engine (xAI Grok Build CLI)
+
+The `grok` engine drives xAI's Grok Build CLI (`grok`) as a READ-ONLY reviewer on the user's
+SuperGrok subscription. Reviewer use only - `c3 work` (write mode) is out of scope.
+
+1. **Install** (ask the user): Grok Build CLI - it puts `grok.exe` into `%USERPROFILE%\.grok\bin`
+   (`~/.grok/bin/grok` elsewhere). c3 finds it by itself (PATH names `grok.exe`, `grok.cmd`,
+   `grok`, then that location); otherwise `--engine-exe <path>` or `CODEX_CONSULT_GROK_EXE`.
+   Check: `grok --version`.
+2. **Sign in - the USER does it:** `grok login` in their own terminal (the grok.com OAuth that a
+   SuperGrok subscription uses). You never handle a login, a token or a credential. c3 checks the
+   sign-in as a LOCAL file (`~/.grok/auth.json` exists - never its contents).
+3. **The model - the USER decides:** required, one of `grok-4.7` (default), `grok-4.7-build-fast`,
+   `grok-4.6`, `grok-4.5`.
+4. **Roster entry:** `{ "provider": "grok", "engine": "grok", "model": "grok-4.7", "plan":
+   "supergrok", "panel": "weighty" }` - `auth` does not apply (the grok CLI keeps its own sign-in);
+   `codex_config` does not apply. The grok members of one panel run one at a time (one
+   subscription, one scheduling group); `"parallel": {"grok": 2}` would raise it but SHOULD NOT -
+   see conduct below.
+5. **Billing guard (automatic):** grok bills the subscription through the oauth sign-in. If
+   `XAI_API_KEY` or `GROK_CODE_XAI_API_KEY` is set, the xAI API would be billed per token instead,
+   so c3 STRIPS those variables from the grok child unless the operator opts in with
+   `C3_GROK_ALLOW_API_KEY=1`. You never set or read these variables. `c3 providers` reports the
+   route: `subscription (grok.com oauth)` or `API key (XAI_API_KEY)`.
+6. **Check:** `c3 providers` shows the grok row `engine grok` with `ok: signed in
+   (~/.grok/auth.json) - subscription (grok.com oauth)`. Then a dry run: `c3 consult --task
+   setup-check --prompt ping --dry-run --engine grok --model grok-4.7` - its `preflight :` and
+   `command :` lines.
+7. **Read-only:** the reviewer has `read_file`, `list_dir`, `grep` only (`--disallowed-tools`
+   removes the write, shell and MCP-gateway tools; `--permission-mode dontAsk` denies the rest).
+   c3's tree check WARNS, it does not fail, when the tree changed during a run.
+8. **Conduct:** Grok Build advertises headless/CI use (x.ai/build), but its Acceptable Use Policy
+   bans "unauthorized" automated access. Run it ONLY on the user's own signed-in SuperGrok
+   subscription, at parallel 1, and never spoof identity or evade rate limits.
 
 ## 5. Verify
 

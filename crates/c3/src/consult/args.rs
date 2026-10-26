@@ -749,11 +749,11 @@ mod tests {
             resolve_brief_prefix("lead-2", "codexhost").unwrap(),
             ("lead-2".to_string(), "-BriefPrefix".to_string())
         );
-        for p in ["codex", "agy", "muse", "claudecode", "http"] {
+        for p in ["codex", "agy", "muse", "claudecode", "grok", "http"] {
             let e = resolve_brief_prefix(p, "").unwrap_err();
             assert!(
                 e.starts_with(&format!(
-                    "the brief prefix '{p}' (-BriefPrefix) is a reply prefix: the bridge names its replies handoffs/<NN>-<codex|agy|muse|claudecode|http>-<slug>.*; give the coordinator's briefs a prefix of their own (the default: claude); nothing was started."
+                    "the brief prefix '{p}' (-BriefPrefix) is a reply prefix: the bridge names its replies handoffs/<NN>-<codex|agy|muse|claudecode|grok|http>-<slug>.*; give the coordinator's briefs a prefix of their own (the default: claude); nothing was started."
                 )),
                 "{e}"
             );

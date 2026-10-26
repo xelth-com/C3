@@ -254,7 +254,12 @@ pub fn resolve_coordinator_match(
                 unresolved: Some(format!("#{pos}")),
                 ..Default::default()
             },
-            Some(entries) => match entries.iter().find(|e| e.position as i64 == pos) {
+            // (ext.c3.inactive) an inactive entry is invisible here too: a position naming one
+            // resolves as "names no seat", not as the inactive reviewer.
+            Some(entries) => match entries
+                .iter()
+                .find(|e| e.position as i64 == pos && !e.inactive)
+            {
                 Some(e) => {
                     let m = model_of(e);
                     CoordinatorMatch {
@@ -280,7 +285,8 @@ pub fn resolve_coordinator_match(
         .unwrap_or(&[])
         .iter()
         .filter(|e| {
-            e.provider == provider
+            !e.inactive
+                && e.provider == provider
                 && g.model.as_ref().is_none_or(|m| &e.model == m)
                 && g.engine
                     .as_ref()
@@ -649,7 +655,7 @@ mod tests {
         assert_eq!(blank.model.as_deref(), Some("gpt 5"));
         assert_eq!(
             parse("openai :: gpt-5.1 [bad]", None).unwrap_err(),
-            "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse, claude)"
+            "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse, claude, grok)"
         );
         let ok = parse("openai :: gpt-5.1", None).unwrap();
         assert_eq!(ok.provider.as_deref(), Some("openai"));

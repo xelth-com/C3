@@ -1,0 +1,5 @@
+{"type": "thought", "data": "The user wants a single-word"}
+{"type": "thought", "data": " reply: OK."}
+{"type": "text", "data": "OK"}
+{"type": "usage", "usage": {"input_tokens": 17701, "output_tokens": 127, "cache_read_input_tokens": 1664, "cache_creation_input_tokens": 0, "reasoning_tokens": 126}, "signature": "<redacted>"}
+{"type": "end", "stopReason": "end_turn", "sessionId": "01a17951-89c2-7980-b6f3-4430e819e82d", "requestId": "edb380d5-483b-40ef-bf1a-2e219380e729", "cwd": "C:\\Users\\Dmytro\\AppData\\Local\\Temp\\claude\\C--Users-Dmytro-c3\\726dc9ab-cb84-4873-9b08-31e2004f073d\\scratchpad", "usage": {"input_tokens": 17701, "cache_read_input_tokens": 1664, "cache_creation_input_tokens": 0, "output_tokens": 127, "reasoning_tokens": 126, "total_tokens": 19492}, "num_turns": 1, "total_cost_usd": 0.036996, "total_cost_usd_ticks": 369960000, "modelUsage": {"grok-4.7-build": {"inputTokens": 17701, "outputTokens": 127, "cacheReadInputTokens": 1664, "cacheCreationInputTokens": 0, "modelCalls": 1, "costUSD": 0.036996}}}

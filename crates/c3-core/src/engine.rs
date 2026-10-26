@@ -43,6 +43,10 @@ pub enum EngineKind {
     /// (0.6.0, wave 29) Claude Code headless: `claude -p --output-format stream-json`, the prompt
     /// on stdin, the schema TEXT in `--json-schema`, a minted `--session-id` for a new thread.
     Claude,
+    /// (C3) Grok Build CLI headless (`grok --prompt-file ... --output-format streaming-json`): a
+    /// read-only reviewer turn, the schema TEXT in `--json-schema`, the thread id READ from the
+    /// `end` event (never minted), resumed with `--resume`.
+    Grok,
     Http,
 }
 
@@ -139,6 +143,19 @@ pub fn capabilities(kind: EngineKind) -> Capabilities {
             // check fails a run that changed anything (D1).
             sandbox: true,
             file_prefix: "claudecode",
+        },
+        EngineKind::Grok => Capabilities {
+            threads: true,
+            fork: false,
+            resume: true,
+            prompt_delivery: PromptDelivery::PromptFile,
+            schema_transport: vec![SchemaTransport::Native, SchemaTransport::PromptOnly],
+            effort_vocabulary: "grok",
+            // --tools read_file,list_dir,grep --disallowed-tools write,run_terminal_command,
+            // use_tool,search_tool --permission-mode dontAsk --disable-web-search --no-subagents;
+            // the bridge's tree check fails/warns a run that changed anything.
+            sandbox: true,
+            file_prefix: "grok",
         },
         EngineKind::Http => Capabilities {
             threads: false,
@@ -244,6 +261,7 @@ fn engine_token(kind: EngineKind) -> &'static str {
         EngineKind::Agy => "agy",
         EngineKind::Muse => "muse",
         EngineKind::Claude => "claude",
+        EngineKind::Grok => "grok",
         EngineKind::Http => "http",
     }
 }
@@ -984,6 +1002,15 @@ impl std::error::Error for EngineError {}
 /// launch guard refuses (`Get-MuseLaunchBlock`, `codex-consult-common.ps1:3838`).
 pub const MUSE_API_KEY_VARS: [&str; 2] = ["META_API_KEY", "MODEL_API_KEY"];
 
+/// (C3) Grok would bill the xAI API per token - instead of the SuperGrok subscription (the
+/// grok.com oauth sign-in) - if one of these variables is set in the child's environment; the grok
+/// adapter STRIPS them from the child unless the operator opts in with `C3_GROK_ALLOW_API_KEY=1`.
+pub const GROK_API_KEY_VARS: [&str; 2] = ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY"];
+
+/// (C3) The operator's opt-in to let a grok child keep an xAI API key (and bill it per token):
+/// `C3_GROK_ALLOW_API_KEY=1`. Off by default, so the subscription route is the norm.
+pub const GROK_ALLOW_API_KEY_VAR: &str = "C3_GROK_ALLOW_API_KEY";
+
 /// One attempt of one reviewer (DESIGN §4).
 pub trait Engine {
     /// The engine's capabilities.
@@ -1250,6 +1277,68 @@ impl SubprocessEngine {
         })
     }
 
+    /// (C3) `New-GrokArgv`: a read-only, single-turn grok reviewer turn - the prompt via
+    /// `--prompt-file` (stdin empty, like muse), `--output-format streaming-json`, the schema TEXT
+    /// in `--json-schema` (read from `schema_path`, like claude), `-m <model>`,
+    /// `--reasoning-effort`, the read-only tool allowlist with the MCP gateways (`use_tool`,
+    /// `search_tool`) and the write/shell tools explicitly disallowed, `--permission-mode dontAsk`,
+    /// `--no-subagents`, `--max-turns`, then `--resume <thread>` for a continuation. No fork.
+    fn plan_grok(&self, r: &Request) -> Result<Argv, EngineError> {
+        if let Mode::Fork { .. } = r.mode {
+            return Err(EngineError::UnsupportedMode {
+                engine: EngineKind::Grok,
+                mode: "fork",
+            });
+        }
+        let prompt_file = r
+            .prompt_file
+            .as_ref()
+            .ok_or(EngineError::MissingField("prompt_file"))?;
+        if r.model.is_empty() {
+            return Err(EngineError::MissingField("model"));
+        }
+        let mut a: Vec<String> = vec![
+            "--prompt-file".into(),
+            prompt_file.to_string_lossy().into_owned(),
+            "--output-format".into(),
+            "streaming-json".into(),
+        ];
+        if let Some(s) = &r.schema_path {
+            a.push("--json-schema".into());
+            a.push(crate::claude::schema_text_of_file(s));
+        }
+        a.push("-m".into());
+        a.push(r.model.clone());
+        if let Some(e) = &r.effort {
+            if !e.trim().is_empty() {
+                a.push("--reasoning-effort".into());
+                a.push(e.clone());
+            }
+        }
+        a.push("--disable-web-search".into());
+        a.push("--tools".into());
+        a.push("read_file,list_dir,grep".into());
+        a.push("--disallowed-tools".into());
+        a.push("use_tool,search_tool,write,run_terminal_command".into());
+        a.push("--permission-mode".into());
+        a.push("dontAsk".into());
+        a.push("--no-subagents".into());
+        if let Some(n) = r.max_model_steps {
+            if n > 0 {
+                a.push("--max-turns".into());
+                a.push(n.to_string());
+            }
+        }
+        if let Mode::Resume { thread, .. } = &r.mode {
+            a.push("--resume".into());
+            a.push(thread.clone());
+        }
+        Ok(Argv {
+            command: "grok".into(),
+            args: a,
+        })
+    }
+
     fn plan_http(&self, r: &Request) -> Result<HttpPlan, EngineError> {
         if r.model.is_empty() {
             return Err(EngineError::MissingField("model"));
@@ -1276,6 +1365,7 @@ impl Engine for SubprocessEngine {
             EngineKind::Agy => Ok(LaunchPlan::Subprocess(self.plan_agy(request)?)),
             EngineKind::Muse => Ok(LaunchPlan::Subprocess(self.plan_muse(request)?)),
             EngineKind::Claude => Ok(LaunchPlan::Subprocess(self.plan_claude(request)?)),
+            EngineKind::Grok => Ok(LaunchPlan::Subprocess(self.plan_grok(request)?)),
             EngineKind::Http => Ok(LaunchPlan::Http(self.plan_http(request)?)),
         }
     }

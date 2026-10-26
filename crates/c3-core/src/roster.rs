@@ -112,6 +112,12 @@ pub struct RosterEntry {
     /// (0.6.0, wave 29b E1) The claude entry's endpoint (auth `endpoint` only; its `plan` is the
     /// entry's).
     pub endpoint: Option<crate::claude::ClaudeEndpoint>,
+    /// (C3-only, `ext.c3.inactive`) The operator marked this entry's plan or provider label
+    /// inactive: it stays fully preconfigured but is invisible to selection, scheduling, probing
+    /// and listing. Computed after the entries are built (an item names `plan` OR `provider`), so
+    /// the roster positions stay stable - an inactive entry keeps its position. Invisible to the
+    /// plugin (`ext` is a free-form object there).
+    pub inactive: bool,
 }
 
 /// The roster (`Read-ReviewerRoster`'s result).
@@ -134,7 +140,36 @@ pub struct Roster {
     /// [`RosterEntry::position`]. Populated by the `c3` roster loader, never by
     /// [`validate_roster`] (which stays byte-parity with the plugin's validator).
     pub http_reviewers: Vec<crate::roster_ext::HttpReviewer>,
+    /// (C3-only, `ext.c3.inactive`) The plan slugs or provider labels the operator marked inactive
+    /// (trimmed, in file order). Each matches an entry by `entry.plan == item || entry.provider ==
+    /// item`; the matched entries carry [`RosterEntry::inactive`]. Invisible to the plugin (`ext`
+    /// is validated as an object only). Populated by [`validate_roster`].
+    pub inactive: Vec<String>,
     pub error: String,
+}
+
+impl Roster {
+    /// The entries that are NOT inactive, in roster order - the choke point every surface that
+    /// selects, schedules, probes or lists reviewers/workers iterates instead of `entries`, so an
+    /// inactive entry is invisible to it while its position stays stable (`entries` keeps it).
+    pub fn active_entries(&self) -> impl Iterator<Item = &RosterEntry> {
+        self.entries.iter().filter(|e| !e.inactive)
+    }
+
+    /// Whether `item` (a plan slug or a provider label) is on the inactive list.
+    pub fn is_item_inactive(&self, item: &str) -> bool {
+        self.inactive.iter().any(|i| i == item)
+    }
+
+    /// Mark every entry whose `plan` or `provider` is on [`Roster::inactive`]. Idempotent; called
+    /// after the plugin entries are built (in [`validate_roster`]) and again by the `c3` loader
+    /// after it appends the `ext.c3.reviewers` http entries, so both kinds carry the flag.
+    pub fn apply_inactive(&mut self) {
+        for e in self.entries.iter_mut() {
+            e.inactive = (!e.plan.is_empty() && self.inactive.iter().any(|i| i == &e.plan))
+                || self.inactive.iter().any(|i| i == &e.provider);
+        }
+    }
 }
 
 /// Every roster position of a `(provider, engine)` label, in roster order (`[]` when
@@ -917,6 +952,7 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 quota_window_sec,
                 unrestricted,
                 endpoint: entry_endpoint,
+                inactive: false,
             });
         }
     }
@@ -1010,11 +1046,47 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             }
         }
     }
+    // (C3-only, ext.c3.inactive) The plan slugs / provider labels the operator marked inactive.
+    // Parsed AFTER every plugin-visible refusal so those win first (the plugin ignores ext's
+    // content, so this is a C3-only stricter check in the style of the per-entry ext.c3.* ones).
+    if why.is_empty() {
+        if let Some(inactive) = obj
+            .get("ext")
+            .and_then(|e| e.get("c3"))
+            .and_then(|c| c.get("inactive"))
+        {
+            match inactive.as_array() {
+                Some(a) => {
+                    for v in a {
+                        match v.as_str() {
+                            Some(s) if !s.trim().is_empty() => {
+                                let item = s.trim().to_string();
+                                if !r.inactive.contains(&item) {
+                                    r.inactive.push(item);
+                                }
+                            }
+                            _ => {
+                                why = format!("ext.c3.inactive must be an array of non-empty plan or provider names (got {})", compact(inactive));
+                                break;
+                            }
+                        }
+                    }
+                }
+                None => {
+                    why = format!(
+                        "ext.c3.inactive must be an array of non-empty plan or provider names (got {})",
+                        compact(inactive)
+                    );
+                }
+            }
+        }
+    }
     if !why.is_empty() {
         r.error = roster_refusal(path, &why);
         return r;
     }
     r.entries = entries;
+    r.apply_inactive();
     r
 }
 
@@ -1429,6 +1501,86 @@ mod tests {
         assert_eq!(
             why(r##"{"roster_version":1,"reviewers":[{"provider":"gemini","engine":"agy","model":"gemini-3-pro","endpoint":{}}]}"##),
             "entry 1: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine agy)"
+        );
+    }
+
+    // (ext.c3.inactive) the operator marks a plan/label inactive: the matched entries carry the
+    // flag, positions stay stable, and the shared validator still accepts everything else.
+    #[test]
+    fn inactive_marks_entries_by_plan_or_label_keeping_positions() {
+        let r = ok(r##"{
+            "roster_version": 1,
+            "reviewers": [
+                {"provider": "openai", "model": "gpt-6"},
+                {"provider": "byteplus-claude", "model": "glm-5.3", "plan": "byteplus"},
+                {"provider": "byteplus-claude", "model": "glm-5.3-flash", "plan": "byteplus"},
+                {"provider": "ZAI", "model": "glm-5.3", "plan": "zai"}
+            ],
+            "ext": {"c3": {"inactive": ["byteplus", "ZAI"]}}
+        }"##);
+        assert_eq!(r.inactive, vec!["byteplus".to_string(), "ZAI".to_string()]);
+        // positions are never renumbered: #n of the others stays valid.
+        assert_eq!(
+            r.entries.iter().map(|e| e.position).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+        // entry 1 active; 2,3 inactive by plan byteplus; 4 inactive by provider label ZAI.
+        assert_eq!(
+            r.entries.iter().map(|e| e.inactive).collect::<Vec<_>>(),
+            vec![false, true, true, true]
+        );
+        assert_eq!(
+            r.active_entries().map(|e| e.position).collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert!(r.is_item_inactive("byteplus") && !r.is_item_inactive("openai"));
+    }
+
+    #[test]
+    fn inactive_bad_shapes_are_refused_and_empty_is_accepted() {
+        assert_eq!(
+            why(r##"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m"}],"ext":{"c3":{"inactive":"byteplus"}}}"##),
+            "ext.c3.inactive must be an array of non-empty plan or provider names (got \"byteplus\")"
+        );
+        assert_eq!(
+            why(
+                r##"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m"}],"ext":{"c3":{"inactive":[""]}}}"##
+            ),
+            "ext.c3.inactive must be an array of non-empty plan or provider names (got [\"\"])"
+        );
+        assert_eq!(
+            why(
+                r##"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m"}],"ext":{"c3":{"inactive":[5]}}}"##
+            ),
+            "ext.c3.inactive must be an array of non-empty plan or provider names (got [5])"
+        );
+        // an empty list is harmless (nothing inactive).
+        let r = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m"}],"ext":{"c3":{"inactive":[]}}}"##,
+        );
+        assert!(r.inactive.is_empty() && !r.entries[0].inactive);
+    }
+
+    #[test]
+    fn parallel_and_require_may_name_an_inactive_plan() {
+        // an inactive plan/label does not make the roster unusable: parallel and require still
+        // validate (require names an entry at load - an inactive entry is still an entry; the
+        // explicit-request refusal lives in the c3 layer, not this shared validator).
+        let r = ok(r##"{
+            "roster_version": 1,
+            "reviewers": [
+                {"provider": "bp", "model": "m", "plan": "byteplus"},
+                {"provider": "openai", "model": "gpt-6"}
+            ],
+            "parallel": {"byteplus": 2},
+            "require": {"framing": ["#1"]},
+            "ext": {"c3": {"inactive": ["byteplus"]}}
+        }"##);
+        assert!(r.entries[0].inactive);
+        assert_eq!(r.parallel, vec![("byteplus".to_string(), 2)]);
+        assert_eq!(
+            r.require,
+            vec![("framing".to_string(), vec!["#1".to_string()])]
         );
     }
 

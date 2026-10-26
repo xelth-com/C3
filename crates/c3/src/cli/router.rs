@@ -212,7 +212,8 @@ fn run_explain(args: ExplainArgs) -> i32 {
         "{:<40} {:>6} {:>16} {:>10} prior(mean/support/m)",
         "lineage", "score", "basis", "local n"
     );
-    for e in &roster.entries {
+    // (ext.c3.inactive) an inactive entry is not a routing candidate.
+    for e in roster.active_entries() {
         let engine = if e.engine.is_empty() {
             "codex"
         } else {

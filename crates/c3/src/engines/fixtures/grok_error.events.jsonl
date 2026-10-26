@@ -1,0 +1,1 @@
+{"type": "error", "message": "Couldn't set model 'grok-nonexistent-9': Invalid params: \"unknown model id\". Run 'grok models' to see available models.", "cwd": "C:\\Users\\Dmytro\\AppData\\Local\\Temp\\claude\\C--Users-Dmytro-c3\\726dc9ab-cb84-4873-9b08-31e2004f073d\\scratchpad\\probe"}

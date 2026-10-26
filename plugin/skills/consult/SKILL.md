@@ -14,7 +14,7 @@ default and **you keep the final word**. Every consultation leaves two files you
 (your brief and the verbatim reply) plus one ledger entry (`sessions.json`). A `<task-id>`
 groups one conversation: reuse the id and the thread continues.
 
-The full flag surface, the engines (codex / agy / muse / http), the panel, and detach/status/
+The full flag surface, the engines (codex / agy / muse / claude / grok / http), the panel, and detach/status/
 wait/kick mechanics are in **`${CLAUDE_PLUGIN_ROOT}/skills/consult/reference.md`** — read it
 before running a panel, a background run, or a non-codex engine. `c3 consult --help` is always
 the authoritative current list. Coordinator-wide rules (workers, waves, the live-member rule)

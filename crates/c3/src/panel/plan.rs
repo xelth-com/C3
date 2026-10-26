@@ -390,7 +390,26 @@ pub fn resolve_required_reviewers(
             r.error = format!("{}: {}", r.source, err);
             return r;
         }
-        for p in positions {
+        // (ext.c3.inactive) a matcher that names ONLY inactive entries is an explicit request for
+        // an inactive reviewer - it fails clearly rather than silently matching nothing.
+        let active: Vec<i64> = positions
+            .iter()
+            .copied()
+            .filter(|p| {
+                !roster
+                    .entries
+                    .iter()
+                    .any(|e| e.position as i64 == *p && e.inactive)
+            })
+            .collect();
+        if active.is_empty() {
+            r.error = format!(
+                "reviewer '{}' is inactive (ext.c3.inactive in the roster)",
+                m.trim()
+            );
+            return r;
+        }
+        for p in active {
             if !set.contains(&p) {
                 set.push(p);
             }

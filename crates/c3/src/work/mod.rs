@@ -173,7 +173,10 @@ fn worker_entries(roster: &Roster) -> Vec<&RosterEntry> {
         .entries
         .iter()
         .filter(|e| {
-            WorkerEngine::parse(&e.engine).is_some() && e.roles.iter().any(|r| r == "worker")
+            // (ext.c3.inactive) an inactive entry is never a worker candidate.
+            !e.inactive
+                && WorkerEngine::parse(&e.engine).is_some()
+                && e.roles.iter().any(|r| r == "worker")
         })
         .collect()
 }
@@ -200,6 +203,16 @@ fn select_worker(roster: &Roster, label: &str) -> Result<RosterEntry, String> {
     let workers = worker_entries(roster);
     if let Some(e) = workers.iter().find(|e| e.provider == label) {
         return Ok((*e).clone());
+    }
+    // (ext.c3.inactive) a direct request for an inactive worker label fails clearly.
+    if roster
+        .entries
+        .iter()
+        .any(|e| e.provider == label && e.inactive)
+    {
+        return Err(format!(
+            "reviewer '{label}' is inactive (ext.c3.inactive in the roster)"
+        ));
     }
     if let Some(e) = roster.entries.iter().find(|e| e.provider == label) {
         if WorkerEngine::parse(&e.engine).is_none() {

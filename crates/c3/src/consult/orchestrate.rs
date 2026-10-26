@@ -1197,6 +1197,8 @@ fn vocabulary_map(vocab: &str, requested: &str) -> Option<(&'static str, &'stati
         "alibaba" => ("alibaba-v1", "low", "medium", "high", "xhigh"),
         "muse" => ("muse-v1", "low", "medium", "high", "xhigh"),
         "claude" => ("claude-v1", "low", "medium", "high", "xhigh"),
+        // grok's --reasoning-effort takes low/medium/high; xhigh maps to high (sent verbatim).
+        "grok" => ("grok-v1", "low", "medium", "high", "high"),
         _ => return None,
     };
     let sent = match requested {
@@ -2457,6 +2459,17 @@ fn build_context(
         } else if !o.provider.is_empty() {
             roster_rule = "provider".into();
             roster_entry = providers::find_roster_entry(&roster, &o.provider, &o.model).cloned();
+            // (ext.c3.inactive) a direct request for an inactive reviewer fails clearly instead of
+            // running it or reporting "matches no roster entry".
+            if roster_entry.as_ref().is_some_and(|e| e.inactive) {
+                return Err((
+                    format!(
+                        "reviewer '{}' is inactive (ext.c3.inactive in the roster)",
+                        o.provider
+                    ),
+                    1,
+                ));
+            }
             if let Some(e) = &roster_entry {
                 let ee = entry_engine(e);
                 if !o.engine.is_empty() && ee != o.engine {
@@ -3884,6 +3897,7 @@ fn engine_kind_of(engine: &str) -> EngineKind {
         "agy" => EngineKind::Agy,
         "muse" => EngineKind::Muse,
         "claude" => EngineKind::Claude,
+        "grok" => EngineKind::Grok,
         "http" => EngineKind::Http,
         _ => EngineKind::Codex,
     }
@@ -4994,6 +5008,24 @@ fn run_primary_turn(
             d.msp_schema_version = msp;
             Ok((run.outcome, d))
         }
+        "grok" => {
+            let eng = crate::engines::grok::GrokEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary,
+                secondary: TurnFiles::default(),
+                stall_sec: ctx.stall_sec,
+                kick_path: Some(ctx.kick_path.clone()),
+                on_running,
+                on_kill,
+            };
+            let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
+            let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
+            let run = eng
+                .run_detailed(&turn)
+                .map_err(|e| format!("the grok run could not be planned: {e:?}"))?;
+            Ok((run.outcome, grok_detail(&run.turn)))
+        }
         "claude" => {
             let eng = claude_engine(
                 ctx,
@@ -5150,6 +5182,26 @@ fn claude_engine(
 }
 
 fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
+    EngineDetail {
+        turn_outcome: t.outcome.clone(),
+        forced_class: t.class.clone(),
+        denied_empty: false,
+        denial_line: String::new(),
+        permission: String::new(),
+        tool_name: String::new(),
+        denied_action: String::new(),
+        thread_candidate: t.thread_candidate.clone(),
+        thread: t.thread.clone(),
+        reply: t.reply.clone(),
+        warnings: t.warnings.clone(),
+        msp_schema_version: None,
+        http_provider_config: None,
+        http_secondary: None,
+        claude: None,
+    }
+}
+
+fn grok_detail(t: &crate::engines::grok::GrokTurn) -> EngineDetail {
     EngineDetail {
         turn_outcome: t.outcome.clone(),
         forced_class: t.class.clone(),
@@ -7341,6 +7393,22 @@ fn run_codex_secondary(
                 Err(e) => (plan_err(e), String::new()),
             }
         }
+        "grok" => {
+            let eng = crate::engines::grok::GrokEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                stall_sec: 0,
+                kick_path: secondary_kick.clone(),
+                on_running,
+                on_kill,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, r.turn.outcome),
+                Err(e) => (plan_err(e), String::new()),
+            }
+        }
         _ => {
             use c3_core::engine::Engine;
             let eng = CodexEngine {
@@ -8007,7 +8075,7 @@ fn repair_effort(ctx: &Context) -> Option<String> {
 fn engine_prompt_via(engine: &str) -> &'static str {
     match engine {
         "agy" => "prompt on stdin as one NDJSON line",
-        "muse" => "prompt from a file: --prompt-file",
+        "muse" | "grok" => "prompt from a file: --prompt-file",
         "http" => "reviewer pack sent as the request body",
         _ => "prompt on stdin",
     }
@@ -8018,6 +8086,10 @@ fn engine_tree_note(engine: &str) -> String {
     match engine {
         "muse" => {
             "muse ran with --disable-write --disable-shell (the check cannot tell who changed it)"
+                .to_string()
+        }
+        "grok" => {
+            "grok ran with the read-only tool allowlist (--disallowed-tools write,run_terminal_command,use_tool,search_tool) (the check cannot tell who changed it)"
                 .to_string()
         }
         "http" => {
@@ -8054,10 +8126,11 @@ fn cut_files(names: &[String]) -> String {
 /// Whether the engine ran write-disabled (muse `--disable-write --disable-shell`): its own tools
 /// cannot have made a change, so the tree check WARNS instead of failing (D9).
 fn engine_write_disabled(engine: &str) -> bool {
-    // muse runs with --disable-write --disable-shell; the http reviewer receives only a pack and
-    // never touches the machine at all — so any tree change during an http run is not the
-    // reviewer's, and the check WARNS instead of failing (D9).
-    engine == "muse" || engine == "http"
+    // muse runs with --disable-write --disable-shell; grok runs with the read-only tool allowlist
+    // (write/shell/MCP-gateway tools disallowed) so its own tools cannot have written; the http
+    // reviewer receives only a pack and never touches the machine at all — so any tree change
+    // during such a run is not the reviewer's, and the check WARNS instead of failing (D9).
+    engine == "muse" || engine == "grok" || engine == "http"
 }
 
 /// The structured read-only tree check (`Get-EngineTreeCheck`, wave 26b D9). Compares the working
@@ -8239,6 +8312,28 @@ fn run_engine_secondary(
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, agy_detail(&r.turn)),
+                Err(e) => (
+                    AttemptOutcome::LaunchFailed {
+                        child_exists: false,
+                        message: format!("{e:?}"),
+                    },
+                    EngineDetail::default(),
+                ),
+            }
+        }
+        "grok" => {
+            let eng = crate::engines::grok::GrokEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                stall_sec: 0,
+                kick_path: None,
+                on_running: None,
+                on_kill: None,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, grok_detail(&r.turn)),
                 Err(e) => (
                     AttemptOutcome::LaunchFailed {
                         child_exists: false,
@@ -9074,6 +9169,9 @@ fn render_handoff(
         if ctx.engine == "muse" {
             l.push_str(" (each one a Muse Code subscription prompt)");
         }
+        if ctx.engine == "grok" {
+            l.push_str(" (each one a SuperGrok subscription prompt)");
+        }
         if ctx.engine == "claude" {
             // (wave 29) the auth, the resolved model, the init tools and the denials
             let x = claude_engine_run_extra(ctx, sec);
@@ -9515,7 +9613,7 @@ pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
     // (<launcher>)`, `<command> CLI not found` without one - (wave 6) agy and muse as claude, not
     // the codex endpoint text - and (wave 29b, E5) a claude endpoint route's base URL and token
     // variable NAME. The http engine (C3's own) names its provider table's endpoint below.
-    if matches!(id.engine.as_str(), "agy" | "muse" | "claude") {
+    if matches!(id.engine.as_str(), "agy" | "muse" | "claude" | "grok") {
         let launcher = id
             .provider_config
             .get("launcher")

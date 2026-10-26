@@ -1172,7 +1172,7 @@ fn the_roster_validates_the_claude_keys() {
         (r#"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-opus-9"}]}"#, "entry 1: the claude model 'claude-opus-9' is not in the claude engine's model table"),
         (r#"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"sonnet","endpoint":{"base_url":"https://a.example/v","env_key":"ABC"}}]}"#, "entry 1: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine claude, auth subscription)"),
         (r#"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"sonnet","auth":"endpoint","endpoint":{"base_url":"https://a.example/v","env_key":"ABC"}}]}"#, "is an Anthropic model id, which the endpoint route cannot carry"),
-        (r#"{"roster_version":1,"reviewers":[{"provider":"g","engine":"gemini-cli","model":"m"}]}"#, "entry 1: engine must be one of: codex, agy, muse, claude (got \"gemini-cli\")"),
+        (r#"{"roster_version":1,"reviewers":[{"provider":"g","engine":"gemini-cli","model":"m"}]}"#, "entry 1: engine must be one of: codex, agy, muse, claude, grok (got \"gemini-cli\")"),
     ];
     for (json, want) in cases {
         let r = e.roster(json);
