@@ -82,6 +82,20 @@ reviewer: add `--provider <name> --model <id>`. Set `CODEX_CONSULT_COORDINATOR` 
 own model so the bridge warns when it seats it as a reviewer — keep the operator's value when
 set; do not guess your own.
 
+**Which reviewer.** Without `--provider` the roster's first entry answers, and on this
+operator's roster that is the standing partner (OpenAI Astra). Do not let one reviewer take every
+consultation: the track record that seats panels is built from marks, and a reviewer that is never
+asked never earns a seat. Spread the single consultations by purpose:
+
+- **diff-review, checkpoint, chore, a plain second opinion** — alternate `--provider grok` and
+  `--provider meta` (Muse contributor); take the standing partner only when the change is
+  security-, contract- or release-shaped.
+- **framing, decision, stuck** — a panel (below), so several labs answer the same brief.
+- **acceptance, core-contract** — the standing partner (or the reviewer who raised the findings).
+
+Before choosing, glance at `c3 scoreboard` (per-reviewer counts of this repository): if one
+reviewer holds well over a third of the consultations, give the next one to another.
+
 A panel (same brief to several roster reviewers, sized by purpose, seated by track record):
 
 ```

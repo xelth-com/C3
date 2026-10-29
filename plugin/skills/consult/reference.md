@@ -92,6 +92,13 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   `--max-model-steps <n>` caps its model steps. Refused while `META_API_KEY`/`MODEL_API_KEY`
   is set (would bill per token) and while no oauth sign-in is established — the user signs in
   themselves (`muse login`); never read `~/.config/muse/auth.json`.
+- **`grok`** — xAI's Grok Build CLI on the SuperGrok subscription, read-only (tool allowlist
+  `read_file,list_dir,grep`, MCP gateways and write/shell tools removed, `--permission-mode dontAsk`,
+  no web search). Models `grok-4.7` (default), `grok-4.7-build-fast`, `grok-4.6`, `grok-4.5`;
+  effort goes as `--reasoning-effort`; the thread id is read from grok's `end` event and resumed
+  with `--resume`; files `handoffs/<NN>-grok-<slug>.*`. The tree check only WARNS. `XAI_API_KEY` /
+  `GROK_CODE_XAI_API_KEY` are stripped from the child (they would bill the API per token) unless
+  `C3_GROK_ALLOW_API_KEY=1`; `c3 providers` names the billing route. Reviewer use only (no `c3 work`).
 - **`http`** — an OpenAI-compatible `chat/completions` request built from a reviewer pack; no
   CLI, no subscription, no tools (OpenRouter by default). Wired via `setup-providers` section
   4b (`ext.c3.reviewers`). The key is read from an environment variable the user sets, bound to
