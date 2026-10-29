@@ -86,6 +86,10 @@ pub struct EngineSpec {
     /// (wave 29) The argv is quoted by the C runtime rules (`ArgQuote 'crt'`: the schema TEXT
     /// travels in argv).
     pub crt_quote: bool,
+    /// (0.2.4) The brief's TEXT is inlined into the prompt after the "Read the brief at" line
+    /// (grok only): a grok `--json-schema` turn can answer in one model call without ever
+    /// calling `read_file`, and then invents the brief from its question numbers.
+    pub inline_brief: bool,
 }
 
 /// The engine's launcher basenames to look up on PATH, in order (platform-aware).
@@ -181,6 +185,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             parallel_scope_engine: false,
             add_dirs: false,
             crt_quote: false,
+            inline_brief: false,
         }),
         "agy" => Some(EngineSpec {
             name: "agy",
@@ -213,6 +218,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             parallel_scope_engine: false,
             add_dirs: false,
             crt_quote: false,
+            inline_brief: false,
         }),
         "muse" => Some(EngineSpec {
             name: "muse",
@@ -245,6 +251,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             parallel_scope_engine: false,
             add_dirs: false,
             crt_quote: false,
+            inline_brief: false,
         }),
         // (0.6.0, wave 29) Claude Code headless (`claude -p`): the subscription, an API key or a
         // third-party Anthropic-compatible endpoint (wave 29b). Its replies are
@@ -280,6 +287,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             parallel_scope_engine: true,
             add_dirs: true,
             crt_quote: true,
+            inline_brief: false,
         }),
         // (C3) Grok Build CLI headless (`grok --prompt-file ... --output-format streaming-json`):
         // read-only reviewer turns billed to the SuperGrok subscription (grok.com oauth), the reply
@@ -315,6 +323,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             parallel_scope_engine: true,
             add_dirs: false,
             crt_quote: true,
+            inline_brief: true,
         }),
         // The `http` engine has a lineage row but no launcher: it sends an
         // OpenAI-compatible request (M7), so `command`/`exe_env` are empty and it never
@@ -352,6 +361,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             parallel_scope_engine: false,
             add_dirs: false,
             crt_quote: false,
+            inline_brief: false,
         }),
         _ => None,
     }
@@ -856,4 +866,18 @@ fn resolve_engine_identity(
         id.fingerprint = sha256_hex(compat.as_bytes());
     }
     id
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Case 4: only the grok spec asks for the brief text to be inlined (0.2.4).
+    #[test]
+    fn inline_brief_is_grok_only() {
+        for name in ALL_ENGINE_NAMES {
+            let spec = engine_spec(name).unwrap();
+            assert_eq!(spec.inline_brief, *name == "grok", "engine {name}");
+        }
+    }
 }

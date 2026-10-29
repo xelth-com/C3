@@ -123,6 +123,9 @@ pub struct PromptInputs<'a> {
     pub prompt: &'a str,
     /// The repo-relative brief path (empty when none).
     pub brief_ref: &'a str,
+    /// (0.2.4) The brief's text, inlined after the "Read the brief at" line for an engine whose
+    /// spec says `inline_brief` (grok); empty otherwise.
+    pub brief_text: &'a str,
     pub range: Option<&'a Range>,
     pub open_findings: &'a [OpenFinding],
     /// `output-schema` | `native` | `prompt-only`.
@@ -176,6 +179,14 @@ pub fn assemble(inp: &PromptInputs) -> String {
             "Read the brief at `{}` (path relative to the repository root, which is your working directory) and answer every numbered question in it.",
             inp.brief_ref
         ));
+        // (0.2.4) a grok turn may answer without opening the file: the text travels too.
+        if !inp.brief_text.trim().is_empty() {
+            parts.push(format!(
+                "The brief's full text, the same file inlined so you have it even without a tool call (open the files it points to with your tools):{NL}<brief path=\"{}\">{NL}{}{NL}</brief>",
+                inp.brief_ref,
+                inp.brief_text.trim_end()
+            ));
+        }
     }
     if let Some(r) = inp.range {
         parts.push(format!(
@@ -309,6 +320,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         purpose,
         prompt: "",
         brief_ref: "",
+        brief_text: "",
         range: None,
         open_findings: if has_open { &one } else { &[] },
         schema_transport: if prompt_only {
@@ -374,6 +386,7 @@ mod tests {
             purpose: "framing",
             prompt: "x",
             brief_ref: ".collab/t/handoffs/01.md",
+            brief_text: "",
             range: None,
             open_findings: &[],
             schema_transport: "output-schema",
@@ -409,6 +422,70 @@ mod tests {
         assert!(p.contains("keep reply_markdown under 700 words"));
         // output-schema transport: the schema text is NOT inlined.
         assert!(!p.contains("JSON Schema of the reply:"));
+    }
+
+    // Case 1: a non-blank brief_text inlines the brief after the pointer, before the purpose.
+    #[test]
+    fn brief_text_inlined_after_read_line_before_purpose() {
+        let mut i = base();
+        i.brief_text = "1. Is the range real?\r\n2. What did the tests prove?";
+        let p = assemble(&i);
+        assert!(p.contains("<brief path=\".collab/t/handoffs/01.md\">"));
+        assert!(p.contains("1. Is the range real?\r\n2. What did the tests prove?"));
+        assert!(p.contains("</brief>"));
+        let read_at = p.find("Read the brief at").unwrap();
+        let open_at = p.find("<brief path=").unwrap();
+        let close_at = p.find("</brief>").unwrap();
+        let purpose_at = p.find("Review purpose:").unwrap();
+        assert!(read_at < open_at && open_at < close_at && close_at < purpose_at);
+    }
+
+    // Case 2: an empty or whitespace-only brief_text adds nothing.
+    #[test]
+    fn blank_brief_text_adds_nothing() {
+        let mut i = base();
+        i.brief_text = "";
+        assert!(!assemble(&i).contains("<brief"));
+        i.brief_text = "  \r\n \n\t";
+        let p = assemble(&i);
+        assert!(!p.contains("<brief"));
+        assert!(p.contains("Read the brief at `.collab/t/handoffs/01.md`"));
+    }
+
+    // Case 3: the text's trailing whitespace is trimmed before </brief>.
+    #[test]
+    fn brief_text_trailing_whitespace_trimmed() {
+        let mut i = base();
+        i.brief_text = "1. One.\r\n2. Two.\r\n\r\n   \r\n";
+        let p = assemble(&i);
+        assert!(p.contains(
+            "<brief path=\".collab/t/handoffs/01.md\">\r\n1. One.\r\n2. Two.\r\n</brief>"
+        ));
+    }
+
+    // Case 5: raw mode drops the scaffolding, not the inline: the block still follows the pointer.
+    #[test]
+    fn raw_mode_still_inlines_brief_text() {
+        let mut i = base();
+        i.raw = true;
+        i.purpose = "";
+        i.brief_text = "1. One.";
+        let p = assemble(&i);
+        assert!(!p.starts_with(FINAL_OUTPUT_CONTRACT));
+        assert!(p.find("Read the brief at").unwrap() < p.find("<brief path=").unwrap());
+        assert!(p.contains("1. One."));
+        assert!(p.contains("</brief>"));
+    }
+
+    // Case 6: the inline is nested under the pointer - no brief_ref, no inline, whatever the text.
+    #[test]
+    fn brief_text_without_brief_ref_adds_nothing() {
+        let mut i = base();
+        i.brief_ref = "";
+        i.brief_text = "1. Orphaned text.";
+        let p = assemble(&i);
+        assert!(!p.contains("<brief"));
+        assert!(!p.contains("Read the brief at"));
     }
 
     #[test]

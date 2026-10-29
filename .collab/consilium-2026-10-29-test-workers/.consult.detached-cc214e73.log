@@ -1,0 +1,386 @@
+codex-consult: detached run cc214e73 (detach id cc214e73-6c8a-4183-b545-5b54551cc25b) - pid 23232 on LAPTOP-9SGIHQ03, started 2026-10-29T17:09:08+01:00; status file C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\.consult.detached-cc214e73.status.json
+Panel 6e98eed9: 4 of 11 roster entries run, at once (roster C:\Users\Dmytro\.codex\codex-consult-roster.json; panel id 6e98eed9-d79d-4c75-a510-ff6e0c380654)
+  mode: new - every member starts a new thread (pass --mode fork to fork the previous threads)
+  #1 openai :: gpt-6-astra - not picked: panel size 4
+  #2 openai :: gpt-6.1-sol - not picked: panel size 4
+  #3 ZAI-claude :: glm-5.3 [claude] - member, n=1, handoff 02, required
+  #4 ZAI-claude :: glm-5.3-flash [claude] - not picked: panel size 4
+  #5 mimo-claude :: mimo-v2.6-pro [claude] - not picked: panel size 4
+  #6 gemini :: gemini-3.8-flash-high [agy] - member, n=2, handoff 03, required
+  #10 kimi-claude :: k3-256k [claude] - not picked: panel size 4
+  #11 alibaba-claude :: qwen3.8-max [claude] - not picked: panel size 4
+  #12 meta :: muse-spark-1.3-contributor [muse] - member, n=3, handoff 04, required
+  #13 meta :: muse-wonder-1.0 [muse] - not picked: panel size 4
+  #14 grok :: grok-4.7 [grok] - member, n=4, handoff 05, required
+Routing: routed by the ratings - size 4 (-PanelSize); seed 46ead29bb4f2 (nonce tw1 from -PanelSeed); exploration 0.2 per slot
+  eligible: #1 openai :: gpt-6-astra (lab openai by vendor; score 1.75 purpose of 5), #2 openai :: gpt-6.1-sol (lab openai by vendor; score 1.125 neutral), #3 ZAI-claude :: glm-5.3 [claude] (lab zhipu by vendor; score 1.65 purpose of 3; required), #4 ZAI-claude :: glm-5.3-flash [claude] (lab zhipu by vendor; score 1.125 neutral), #5 mimo-claude :: mimo-v2.6-pro [claude] (lab xiaomi by vendor; score 1.65 purpose of 3), #6 gemini :: gemini-3.8-flash-high [agy] (lab google by vendor; score 1.475 purpose of 3; required), #10 kimi-claude :: k3-256k [claude] (lab moonshot by vendor; score 1.125 neutral), #11 alibaba-claude :: qwen3.8-max [claude] (lab alibaba by vendor; score 1.125 neutral), #12 meta :: muse-spark-1.3-contributor [muse] (lab meta by vendor; score 1.271 purpose of 4; required), #13 meta :: muse-wonder-1.0 [muse] (lab meta by vendor; score 1.125 neutral), #14 grok :: grok-4.7 [grok] (lab grok :: grok-4.7 [grok] by singleton; score 1.125 neutral; required)
+  picked  : 1. #3 ZAI-claude :: glm-5.3 [claude] (required), 2. #6 gemini :: gemini-3.8-flash-high [agy] (required), 3. #12 meta :: muse-spark-1.3-contributor [muse] (required), 4. #14 grok :: grok-4.7 [grok] (required)
+  required: ZAI-claude :: glm-5.3 [claude], gemini :: gemini-3.8-flash-high [agy], meta :: muse-spark-1.3-contributor [muse], grok :: grok-4.7 [grok]
+Topics: workers, tests
+WARNING: routing: no lab known for #14 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a "lab"
+Concurrency: at once - endpoint groups: ZAI-claude x1, gemini x1, meta x1, grok x1; -PanelConcurrency 0 (no cap)
+Timeout: 1800 s per member (the default of purpose framing); continuation after a timeout kill: up to 900 s on the same thread
+  panel member 4 of 4 finished: grok :: grok-4.7 [grok] - usable reply (96.1 s)
+  panel member 3 of 4 finished: meta :: muse-spark-1.3-contributor [muse] - usable reply (156.9 s)
+  panel member 2 of 4 finished: gemini :: gemini-3.8-flash-high [agy] - usable reply (314.9 s)
+  panel member 1 of 4 finished: ZAI-claude :: glm-5.3 [claude] - usable reply (352.4 s)
+
+=== panel 6e98eed9 member 1 of 4: ZAI-claude :: glm-5.3 [claude] (roster #3) ===
+coordinator: claude-opus-5-5 (not in the roster - no reviewer can match it)
+WARNING: routing: no lab known for #14 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a "lab"
+codex-consult: usable reply - ZAI-claude :: glm-5.3 [claude], mode new, thread 73cbbe6a-0c86-4d85-a3aa-9842406a0a8c (source: events), wall 337.2 s
+verdict    : ADVISE - This is a framing consultation on whether and how c3 should support cross-model test authoring; I answered Q1-Q6 and challenged the framing rather than accepting or rejecting an artifact.
+findings   : 0 blocker, 3 major, 3 minor, 1 note -> F02-1..F02-7 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\02-claudecode-cross-model-tests-zai-claude.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\02-claudecode-cross-model-tests-zai-claude.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\02-claudecode-cross-model-tests-zai-claude.events.jsonl
+
+## Framing first
+
+Two options the brief does not list sit between its poles, and one hidden assumption needs challenging:
+
+- **0. Linkage-only record** (between 1 and 2): add `role`/`of` to `run.json` and a tester preamble variant — no guards, no refusals. This is the cheapest thing that fixes convention-only's real defect (nothing records that run 02 tests run 01, so audit and telemetry decay), while arbitration stays manual.
+- **Semi-blind (contract-blind)**: tester gets the spec plus public API signatures, not bodies. Captures most of blind's independence at far less churn than full-blind.
+- **Bite-gate the author's own tests** (half of 4, no second model): much of the validity gate's value — proving tests can fail — does not need a tester at all.
+- Hidden assumption: "fixes go back to the same author session" is impossible today (`--resume` refuses a `done` run, `work/mod.rs:869`). Any pipeline design must either add a continue-with-new-instruction form or accept fresh runs per iteration (re-reading everything, cost, drift).
+
+What would decide it: how often a cross-family test catches a bug that review + the author's own tests missed (run 01 found a real bug writing its own tests — but that is self-referential evidence), and whether the coordinator actually keeps running the second run manually once novelty fades.
+
+**Q1.** Build the linkage layer (option 0), not enforcement. Convention-only loses the record: no linkage, no auditable decision trail, no aggregate view. Enforcement (path guard, family refusal, automated gate) can stay convention until live use shows a miss. Evidence that would change this: (a) any GLM work-run bug a second family's tests caught; (b) adherence decay of manual second runs; (c) tester cost per task on Muse vs gpt-6.1-sol.
+
+**Q2.** Sighted over-fits: tests mirror the implementation, pass trivially, confirm the author's reading. Blind encodes the tester's own misreading of the spec and invents contracts the author never implemented — churn and "test bug" arbitrations. Blind wins where a crisp executable contract exists (CLI exit codes, record contents — this repo's contracts are of that kind); sighted fits bug fixes (the repro test is naturally blind: the bug is in base) and refactors (behavior must not change; over-fit risk is low and the point). Semi-blind is the better default for features.
+
+**Q3.** The coordinator decides, always; c3 must never. Record for audit: the failing output verbatim, the exact command (`-j 2`), exit code, content hash of the test file at decision time (the `baseline_hashes` machinery exists), the revert-check outcome, and a `verdict` field only the coordinator writes. c3 helps without deciding: serial re-run (two runs disagree → flag flaky, not bug) and the revert-check.
+
+**Q4.** Essential v1: `--role author|tests` + `--of <id>` linkage in `run.json`; a tester preamble; a **post-hoc** scope check (`files_changed` ⊆ declared scope → `scope_error`, non-zero exit). Gold-plating: family enforcement, automated validity gate, arbitration. A pre-run path guard is impossible on all three engines (acceptEdits has no path allowlist; codex sandbox is workspace-wide; muse unrestricted) — do not advertise containment. One-live-run is fine: the pipeline is sequential (author done → tester → author-fix as a new linked run); but note the `--resume`-refuses-`done` gap above. `#[cfg(test)]`: scope = `tests/**` plus brief-named files; inline `cfg(test)` edits are invisible to a path scope — say so, accept it. The gate's "fail on base" needs redefining: the tree is never committed and routinely dirty (run 01's baseline proves it), so it must be reverse-apply-the-patch in a scratch worktree, distinguishing compile-fail (weak) from assertion-fail, and costing two serialized full builds under the `-j 2`/OOM rule — keep it manual in v1, c3 records results.
+
+**Q5.** GLM author + gpt-6.1-sol tester: strongest, but burns codex quota reviews need (the consult budget rule). GLM author + Muse tester: different family, near-free — the sensible default. DeepSeek-4.1-flash: low-stakes either side. GLM + GLM-flash: same family *and* same z.ai plan/quota — refuse that one outright. Otherwise warn, don't enforce: the roster has no family field, only label conventions.
+
+**Q6.** Additions: (a) the sighted tester has nothing to read — `diff.txt` holds status+stat only and workers cannot run git; c3 must materialize a sanitized full patch (finding #1); (b) injection lands worst on a **muse** tester (unrestricted shell reading author content) — keep testers on the claude allow list (finding #7); (c) a quota-parked author blocks the tester (one live run) — pipeline latency doubles; (d) a weak tester produces biting-but-vacuous tests — the gate proves bite, not coverage; (e) the gate doubles Windows flake exposure; (f) work runs sit outside the consult ledger, so no pipeline-level telemetry exists today.
+
+## Requested checks
+
+- **RC1** — In the repo root, run `cargo test -j 2` twice back-to-back, nothing else building, and time both (workspace-write, ~2× one full run). Total wall-clock = the validity gate's per-task tax; over ~20 min argues for keeping the gate manual or sampling it.
+- **RC2** — In the repo root run `c3 work --task c3-work --resume 01-ZAI-claude-glm-5.3` (read-only). Expected: refusal "state done, not resumable" — confirms the no-continue-path gap (finding #2) on the binary, not just in source.
+
+### Findings
+
+- **F02-1** [major] `docs/work-mode.md:74`, `crates/c3/src/work/record.rs:519`, `.collab/c3-work/work/01-ZAI-claude-glm-5.3/diff.txt:1` - Alternative 2 (sighted tester 'gets the author's diff') has no material to work with: the record holds no full diff (diff.txt is git status before/after plus diff --stat only) and a worker may not run git itself, so the tester can never actually see the author's code change without new c3 code. Trigger: Implementing --role tests --of <work-id> as described in the brief's alternative 2. Evidence: read-code: diff.txt is specified as git status before/after plus git diff --stat, computed by c3.; read-code: The real record contains status lines and a stat summary only - no hunks, no code.; read-code: Bash(git:*) is refused on the command line; a worker never runs git. Verify: Grep the work record writer for any code that emits a full git diff; there is none, so a sighted tester cannot be fed the change without new c3 code. Remedy: When a run is linked as tester, c3 computes the full diff of files_changed against baseline_hashes into a sanitized patch.diff in the record (or inlines it in the prompt), under the same redactor as report.md.
+- **F02-2** [major] `crates/c3/src/work/mod.rs:869`, `docs/work-mode.md:160` - There is no way to send an instruction back into a finished author session: --resume refuses any run not in quota/timeout/waiting_quota, so the coordinator's position 'fixes go back to the same author session' is unimplementable today and every fix iteration is a fresh run that re-reads everything. Trigger: A cross-model test fails and the coordinator wants the author to fix the code in the same session. Evidence: read-code: claim_resume refuses unless status is quota | timeout | waiting_quota; a done run is explicitly 'not resumable'.; read-code: The documented resume form is quota/timeout recovery with a fixed nudge prompt, not a new instruction. Verify: Run c3 work --task c3-work --resume 01-ZAI-claude-glm-5.3 and observe the 'state done, not resumable' refusal. Remedy: Add a --continue <id> form (claude --resume / codex thread / muse session) that relaunches a done run's session with a new prompt, recorded as a new linked run or attempt; or accept fresh runs and say so in the design.
+- **F02-3** [major] `docs/work-mode.md:41`, `docs/work-mode.md:234` - The brief's 'a path guard limits it to test files' cannot be a pre-run containment on any current engine: claude runs acceptEdits with no path allowlist, codex's boundary is workspace-write, muse is unrestricted - only a post-hoc check of files_changed against a declared scope is real. Trigger: Any implementation of the path scope in alternatives 2 or 3 as launch-time enforcement. Evidence: read-code: The claude child gets write tools under --permission-mode acceptEdits; no path restriction exists in the argv.; read-code: codex is sandboxed to the whole workspace; muse writes with shell ON; --allow applies to claude only. Verify: Inspect the three engine argv builders for any path-scoping flag; none exists. Remedy: Make the v1 guard post-hoc: files_changed (already computed against baseline_hashes) must be a subset of the declared scope, else the run ends with a scope flag and non-zero exit; never advertise it as containment.
+- **F02-4** [minor] `docs/work-mode.md:113`, `.collab/c3-work/work/01-ZAI-claude-glm-5.3/diff.txt:1` - The validity gate 'tests must fail on the base commit' is undefined in this repo: C3 never commits and baselines are routinely dirty, so the author's change exists in no commit to check out - the gate must reverse-apply the author's patch in a scratch worktree instead, must distinguish compile-fail (weak evidence, unavoidable for new APIs) from assertion-fail, and costs two serialized full builds under the -j2/OOM rule. Trigger: Running the alternative-4 gate on any task whose tree was dirty before the author ran. Evidence: read-code: The first real run's baseline git status shows a dirty tree (modified src files, untracked work dirs) - there is no clean base commit to test.; read-code: The record's baseline is a status list plus content hashes, not a commit ref. Verify: Show a git ref that contains the author's pre-change state for a task with a dirty baseline; none exists. Remedy: Specify the gate as: in a scratch worktree, reverse-apply the author's sanitized patch, run the tester's tests (-j 2, alone), require a runtime assertion failure (compile failure recorded as weak/pass-with-note), then pass on the full tree.
+- **F02-5** [minor] `crates/c3-core/src/roster.rs:66` - c3 cannot enforce 'different family' because the roster has no family field - entries carry provider label, model, engine, roles, plan and ext; the family is only implied by label strings, and the one pairing that should be refused outright (GLM with GLM-flash: same family, same z.ai plan and quota) is detectable only via the shared label/plan. Trigger: Implementing same-family refusal for author/tester pairings. Evidence: read-code: RosterEntry has no family key; labels like ZAI-claude and byteplus-claude encode vendors by convention only.; read-code: The z.ai workers share one endpoint/plan. Verify: Grep the roster schema and validate_roster for 'family'; it is absent. Remedy: Warn (not refuse) in v1; refuse only same provider label (a shared plan means shared quota); add ext.family later only if enforcement proves worth it.
+- **F02-6** [minor] `crates/c3-core/src/roster.rs:1507`, `crates/c3/src/work/mod.rs:1751` - A tests/-only scope conflicts with the repo's dominant test idiom: most tests are inline #[cfg(test)] modules inside src files, so a scoped tester is forced into integration-style tests, and an author barred from tests/ can still add or weaken inline cfg(test) tests invisibly to any path-based scope check. Trigger: Applying the alternative-3 author scope ('may not edit the test files') to a change whose natural tests are unit tests in src. Evidence: read-code: Hundreds of lines of inline unit tests at the foot of roster.rs - the house style.; read-code: Same inline-test idiom in the work module. Verify: Count #[cfg(test)] occurrences under src/ vs files under tests/ in this repo; src dominates. Remedy: Declare the tester's scope as tests/** plus files the brief names; state plainly in the design that inline cfg(test) edits are invisible to a path scope and accepted; revisit a diff-aware scope only if abuse shows up.
+- **F02-7** [note] `docs/work-mode.md:253` - Prompt injection through author-produced content lands worst on a muse tester: the muse worker requires --unrestricted (shell ON, no sandbox), so injected instructions in a diff or report it reads can drive arbitrary shell commands, unlike a claude-engine tester confined to the cargo allow list. Trigger: A sighted tester run on the muse engine reading an author diff or report containing instructions. Evidence: read-code: The muse worker needs --unrestricted because --disable-sandbox has no shell containment; the allow list does not apply to it.; inferred: The tester consumes untrusted-adjacent content by design in alternatives 2-3. Verify: Confirm no allow-list or sandbox applies to a muse work run on this host (the design says none does). Remedy: Keep tester runs on the claude engine under the default allow list whenever the tester consumes author output; record the injection caveat in the design; sanitize the patch the tester receives.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+This is a framing consultation on whether and how c3 should support cross-model test authoring; I answered Q1-Q6 and challenged the framing rather than accepting or rejecting an artifact.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- No measured data exists on whether cross-family tests catch bugs that review plus the author's own tests miss - Q1 rests on design reasoning, not outcomes.
+- Muse spark-1.3-contributor's ability to write competent Rust integration tests on this codebase is untested; the 'near-free default tester' recommendation assumes it.
+- The wall-clock cost of two serialized full cargo test -j 2 runs (the validity gate tax) is asserted from the OOM constraint, not measured.
+- The Windows flakiness rate of the existing integration suite is unknown; the gate-doubles-flake claim follows from design, not data.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 6e98eed9 member 2 of 4: gemini :: gemini-3.8-flash-high [agy] (roster #6) ===
+coordinator: claude-opus-5-5 (not in the roster - no reviewer can match it)
+WARNING: routing: no lab known for #14 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a "lab"
+codex-consult: usable reply - gemini :: gemini-3.8-flash-high [agy], mode new, thread 9f1c719b-0826-4be8-bcc0-b5c1a2d5358a (source: events), wall 300.6 s
+verdict    : ADVISE - Keep cross-model testing as a coordinator convention with minimal metadata linkage in c3; do not hardwire pipeline enforcement or validity gates into the binary until empirical value and Rust compilation dynamics are proven.
+findings   : 0 blocker, 2 major, 1 minor, 0 note -> F03-1..F03-3 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\03-agy-cross-model-tests-gemini.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\03-agy-cross-model-tests-gemini.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\03-agy-cross-model-tests-gemini.events.jsonl
+
+## Framing and Unlisted Options
+
+The brief frames the decision as choosing between manual convention or building an enforced author/tester pipeline into `c3 work`. This framing overlooks three critical options:
+
+1. **Option A: Adversarial Review Panel (`c3 consult --purpose test-oracle`)**: Instead of granting write tools to a second worker, run a read-only consultation. Reviewers inspect the author's diff and synthesize test cases or patches as structured findings. This avoids git/cargo lock races and respects strict sandbox boundaries.
+2. **Option B: Coordinator Skill Orchestration (`plugin/skills/coordinate`)**: Keep `c3 work` as an atomic worker execution engine. Let the Claude Code coordinator skill or an external script orchestrate sequential runs, branch switching, and scratch worktrees. C3 should not become a complex workflow scheduler.
+3. **Option C: Mutation and Property Testing (`cargo-mutants` / `proptest`)**: Two LLMs reading the same ambiguous prompt often share the same misconceptions. Verifying the author's tests via property-based testing or mutation analysis provides a genuinely independent oracle.
+
+To choose between these, we need to know: (a) task distribution (novel features vs bug fixes/refactors), (b) baseline test failure modes in single-worker runs, and (c) Windows host capacity for sequential cargo builds without target-lock contention (`OS error 5`).
+
+## Numbered Questions
+
+### Q1. Value vs Convention
+Not worth building into C3 in v1. Keep it as coordinator convention (Alternative 1) with minimal metadata linkage. Building an enforced pipeline into the C3 binary prematurely freezes workflow semantics before empirical value is demonstrated.
+*Evidence to change answer*: (a) Data showing coordinators frequently fail to run testers manually, (b) 20+ benchmarked tasks showing cross-model testers catch severe defects missed by GLM and clippy, and (c) API compilation failure between author and tester is under 10%.
+
+### Q2. Blind vs Sighted Tester
+- **Sighted tester**: Catches implementation edge cases and unhandled boundary paths. Fails by overfitting to the author's code, asserting existing behavior rather than specified behavior.
+- **Blind tester**: Tests true specification requirements without implementation bias. However, in Rust, it fails catastrophically at compilation: without shared type signatures, method names, and error enums, the tester invents incompatible APIs that fail `cargo test --no-run`.
+- **Verdict**: Sighted catches more runnable bugs in Rust. Blind testing is only viable when the brief includes frozen, copy-pasteable Rust interface definitions.
+
+### Q3. Bug Arbitration and Auditing
+- **Arbitrator**: The human coordinator must arbitrate. LLMs cannot impartially resolve their own specification disputes.
+- **Auditable Record**: C3 must record `parent_run_id`, separate stdout/stderr streams for compilation vs assertion failures, exact diffs of both runs, and base-revert test exit codes.
+- **C3 Assistance**: C3 can run an automated revert check (run test on base commit) and classify failures into `CompilationError` vs `AssertionFailure`, presenting clean diagnostics without deciding blame.
+
+### Q4. Minimal C3 Surface
+- **Essential for v1**: Record linkage (`--parent-run <id>` in `run.json`) and advisory path scoping (`--path-scope "tests/**"` reporting warnings on violations).
+- **Gold-plating**: Automatic scratch worktrees, hardcoded role state machines, and automated arbitration gates.
+- **One live run**: Sequential execution (author completes before tester launches) preserves the "one live run per task" invariant naturally.
+- **`#[cfg(test)]` modules**: Path scoping cannot safely inspect AST boundaries inside `src/`. Restrict tester to `tests/**` (integration tests only) in v1.
+
+### Q5. Family-Diversity Rules
+- **Pairings**: GLM-5.3 (Zhipu/Claude engine) pairs effectively with DeepSeek-4.1-flash (BytePlus/Claude engine) or GPT-6.1-sol (OpenAI/Codex engine). Muse is undesirable due to its `--disable-sandbox` requirement on Windows.
+- **Enforcement**: Warn only. Hard refusal prevents offline development, single-subscription users, and tasks where fallback models are unavailable.
+
+### Q6. Unlisted Risks
+1. **Compilation Masking**: Naive validity gates treat compilation failure on base commit as test failure, allowing broken tests to pass the gate (finding #1).
+2. **`Cargo.toml` Pollution**: The tester adding dependencies, mutating lockfiles.
+3. **Windows File Locks**: Sequential cargo runs locking `target/debug/` binaries with OS error 5 (finding #3).
+4. **Mocking Trap**: Blind testers stubbing internal logic with dummy mocks, testing nothing of value.
+
+## Requested checks
+
+- **RC1**: Run `cargo test --test work -- --exact nonexistent_symbol` in `crates/c3-cli` (permission: read-only, budget: 60s). Observation that settles finding #1: confirms `cargo test` exit code when tests execute with 0 failures vs when compilation fails, validating whether C3 can differentiate validity gate outcomes without stderr parsing.
+
+### Findings
+
+- **F03-1** [major] `.collab/consilium-2026-10-29-test-workers/handoffs/01-claude-cross-model-tests.md:43` - A naive validity gate checking non-zero exit code of `cargo test` on base commit conflates compiler errors with test assertion failures. Trigger: A tester worker writes a test using newly introduced types or functions, or produces invalid syntax, and C3 runs `cargo test` against base commit. Evidence: read-code: Alternative 4 specifies that tests must fail on the base commit without differentiating compile failure from test execution failure.; inferred: Rust cargo test exits non-zero (exit code 101) when compilation fails, meaning syntax errors and missing types pass a naive failure check. Verify: Run `cargo test` on a test file referencing a nonexistent function on base commit and inspect exit code and stderr. Remedy: Require a two-phase gate: compile test with `--no-run` against the new change first, and only consider a base run valid if compilation succeeds or failure is explicitly an assertion failure (`failures:` in output).
+- **F03-2** [major] `.collab/consilium-2026-10-29-test-workers/handoffs/01-claude-cross-model-tests.md:38` - Path scoping to test files creates an irreconcilable dilemma between black-box integration tests and in-tree `#[cfg(test)]` modules. Trigger: Enforcing path scope to `tests/` prevents writing unit tests for private functions in `src/`, while allowing `src/` permits tester to modify author implementation. Evidence: read-code: Lines 38-39 note that `#[cfg(test)]` modules live inside src files.; read-code: Work runs track file changes at the file path level via `git diff --stat` and `git status`, with no AST awareness. Verify: Review the workspace tests: over 80% of unit tests in `c3` and `c3-core` are inline `#[cfg(test)]` modules inside `src/`. Remedy: Explicitly scope cross-model tester workers to integration tests under `tests/` in v1, leaving unit testing to the author model.
+- **F03-3** [minor] `.collab/c3-work/work/01-ZAI-claude-glm-5.3/report.md:29` - Rapid sequential test worker runs on Windows risk target directory binary file-locking contention (OS error 5). Trigger: Running an author worker followed immediately by a tester worker and validity gate checks on the same Windows host. Evidence: read-code: Real GLM work run report records: 'failed to remove target\debug\c3.exe (os error 5) (a stale lock)' during rebuild. Verify: Execute two rapid sequential `cargo test -j 2` runs after binary modification on Windows and monitor for OS error 5. Remedy: Add retry loops around target cleanup or use separate `--target-dir` scratch directories for tester validity checks.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Keep cross-model testing as a coordinator convention with minimal metadata linkage in c3; do not hardwire pipeline enforcement or validity gates into the binary until empirical value and Rust compilation dynamics are proven.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+_(none)_
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 6e98eed9 member 3 of 4: meta :: muse-spark-1.3-contributor [muse] (roster #12) ===
+coordinator: claude-opus-5-5 (not in the roster - no reviewer can match it)
+WARNING: routing: no lab known for #14 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a "lab"
+codex-consult: usable reply - meta :: muse-spark-1.3-contributor [muse], mode new, thread 01a1886c-80c3-74f2-834d-0494648c7d12 (source: events), wall 142.6 s
+warning    : muse: warning: rules file at \\?\C:\Users\Dmytro\C3\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules
+verdict    : ADVISE - Advise convention-plus-linked-record first; do not lock a universal paired-test pipeline into c3 yet.
+findings   : 0 blocker, 4 major, 1 minor, 0 note -> F04-1..F04-5 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\04-muse-cross-model-tests-meta.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\04-muse-cross-model-tests-meta.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\04-muse-cross-model-tests-meta.events.jsonl
+
+## Framing — challenge first
+
+The brief assumes every worker task gets the same default pipeline, so the choice is once-and-for-all. Reject that: make cross-model tests risk-tiered, not default. Most chores do not repay 2–3x model cost plus two serial full test suites on a `-j 2`, OOM-constrained Windows host.
+
+### Options the brief does not list
+
+- **Audit, not gate:** tester runs post-hoc, records signal, never blocks the author landing.
+- **Test-plan-first:** small cross-model test plan reviewed by coordinator, then author writes code + tests.
+- **Same-model tests + cross-model review:** keep diversity in review/oracle, not in test authorship.
+- **Sampled enforcement:** convention by default, c3 linkage + gate only for flagged high-risk tasks.
+- **Competitive oracle:** two blind test suites from two families; disagreement itself is the signal.
+
+### What I need to choose
+
+Escape rate of author-only tests, flake rate on Windows, real cost per paired task on capped plans, and how often author/tester disagree. Without those, do not lock a universal default.
+
+## Q1 — Build into c3?
+
+No, not as the universal default. Start with convention-only (Alt 1) plus linked records done by hand, and build c3 support only after paired runs show value. Evidence that changes this: blind testers repeatedly catch bugs the author suite misses, at acceptable cost/flake. If built, build linkage + scope + audit trail first, gate second.
+
+## Q2 — Blind vs sighted?
+
+Blind catches wrong-code bugs (independent reading of spec); sighted catches integration/edge bugs faster. Blind fails on vague specs (tests a misread spec, both sides argue). Sighted fails by overfitting (tests parrot the implementation, pass trivially). Prefer brief's split: blind for clear contracts, sighted for bugfix/refactor — but keep blind out of `src`-embedded tests.
+
+## Q3 — Who decides code-bug vs test-bug?
+
+Only the coordinator decides. c3 must not decide; it assists: re-run tester on base (revert-check), re-run author suite, record both logs, and store a coordinator verdict field (`upheld-test / upheld-code / unclear`) with rationale. Auditable record: linked run ids, both diffs, base/after gate logs, spec version, decider + timestamp.
+
+## Q4 — Minimal v1 surface?
+
+Essential: run linkage (`--of` + paired record dir), sequential lease fixing the one-live-run clash, coarse path scope (`tests/` only), coordinator verdict field. Defer: automatic validity gate, hunk-level `#[cfg(test)]` enforcement, auto-arbitration. The `#[cfg(test)]` case cannot be enforced by paths — exclude it from blind-mode v1 or accept directory-level only.
+
+## Q5 — Family pairings?
+
+Sensible: GLM author with gpt-6.1-sol or Muse tester and vice versa; DeepSeek-flash as cheap tester, not as sole author-oracle for risky code. Do not hard-enforce in v1 — warn only. Enforcement needs a real roster `family` field; labels plus `--model` override are spoofable, and hard refusal will misfire.
+
+## Q6 — Unlisted risks?
+
+Cost multiplication on monthly caps (2–3 full runs + gate suites), trivially-passing tests without a bite-check, tester rewriting the API instead of testing it, Windows flake/OOM false reds, prompt-injection via author diff into tester, secret carry-over through verbatim `events.jsonl`, and lock-in: a universal default is expensive to undo.
+
+## Requested checks
+
+- RC1 (finding #4): in repo root, read-only, run `cargo test -p c3-cli --test work -- a_second_work --nocapture` approx 5 min; settles whether paired runs are refused today.
+- RC2 (finding #2): read-only, grep `#[cfg(test)]` under `crates/` scope 10 min; settles how much test code lives in `src` vs `tests/`.
+- RC3 (finding #3): read-only, inspect roster schema + `select_worker` for a `family` field 15 min; settles enforce-vs-warn feasibility.
+
+### Findings
+
+- **F04-1** [major] `docs/work-mode.md:27` - The 'one live work run per task' admission guard directly blocks paired author/tester runs unless the minimal surface redesigns it. Trigger: Running tester --of an author while the author is still running or waiting_quota. Evidence: read-code: Admission refuses a second c3 work on same task while one runs; liveness treats running/waiting_quota as live.; read-code: Brief states nothing in c3 knows two runs belong together and flags interaction with one-live-run rule as open. Verify: Start author run detached, then attempt tester run on same task; confirm intended refuse/allow and status output. Remedy: Define paired-run lifecycle for v1: sequential lease (author must be done/quota before tester starts) with linked record, or explicit concurrent slots; refuse tester --of a live author with a clear message.
+- **F04-2** [major] `.collab/consilium-2026-10-29-test-workers/handoffs/01-claude-cross-model-tests.md:39` - A path-scope guard limited to tests/ cannot enforce 'author may not edit tests / tester may only edit tests' because #[cfg(test)] modules live inside src files. Trigger: Blind-mode task where the contract is tested by unit tests inside src/. Evidence: read-code: Brief itself flags #[cfg(test)] modules inside src files as a problem for the path guard.; read-code: Worker preamble allows touching files the brief 'clearly implies' and diff.txt only records git status/diff-stat, with no per-hunk or per-file-role attribution. Verify: Run a paired task with a src #[cfg(test)] test; inspect diff.txt/run.json to see whether the author/tester edit is attributed or missed. Remedy: For v1 enforce directory scope only (tests/ plus new test files); treat src-embedded tests as out of scope for blind mode or require hunk-level check; document the gap.
+- **F04-3** [major] `docs/work-mode.md:19` - 'Different family' enforcement by provider/model label is bypassable via --model override, which keeps the endpoint but changes the model id. Trigger: Coordinator requests tester on same provider with --model pointing at the author's family. Evidence: read-code: --model overrides the entry model id on the same endpoint; roster selection keeps endpoint.; read-code: Brief proposes c3 refuses a same-family tester but roster lists GLM/GLM-flash/DeepSeek on one engine plus codex/muse engines with no family field. Verify: Inspect roster schema and select_worker validation; attempt same-family pair via --model override and confirm refuse vs warn. Remedy: Add an explicit family field to the roster (not derived from provider label) and validate author/tester pair against it; log both families in run.json linkage.
+- **F04-4** [major] `.collab/consilium-2026-10-29-test-workers/handoffs/01-claude-cross-model-tests.md:25` - The fail-on-base / pass-after validity gate is unsound on this host without serialisation and flake handling: full cargo test needs -j 2 and never beside another build (OOM). Trigger: Validity gate run while another cargo build holds the machine, or a flaky Windows test. Evidence: read-code: Constraints state Windows host, -j 2 only, never beside another build, and no quota API on z.ai/Muse/Grok.; read-code: First GLM run needed whole-workspace cargo test plus clippy/fmt to go green, showing gate cost is a full suite per leg. Verify: Run the gate twice on a known-green task with -j 2 serialised; check for OOM/flake false reds in the recorded logs. Remedy: Make the gate opt-in per task, run base/after checks serially in a scratch worktree with -j 2, retry once, and record attempt logs; never auto-gate every worker task.
+- **F04-5** [minor] `docs/work-mode.md:60` - Passing the author's diff into a sighted tester creates a prompt-injection and secret-exfiltration path that the current record design widens. Trigger: Author output containing instructions or secret-shaped text forwarded into tester prompt. Evidence: read-code: events.jsonl is retained verbatim, unsanitized, and may contain whatever the child printed including credentials; run.json/report/diff are sanitized.; read-code: Sighted tester consumes author brief plus diff; brief lists prompt-injection through author diff as an unlisted risk to assess. Verify: Feed a canary instruction/secret in a synthetic author diff through the tester handoff and check whether it reaches the tester prompt or record unsanitized. Remedy: Sanitize/scope what crosses runs (diff-stat plus test-relevant hunks only, secret-scan before handoff), and document that tester events remain unsanitized.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+Advise convention-plus-linked-record first; do not lock a universal paired-test pipeline into c3 yet.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether blind testers on this roster actually catch more escaped defects than sighted testers — no paired-run data exists yet.
+- True monthly cost and quota-exhaustion frequency of a universal paired pipeline on z.ai/Muse/Grok capped plans.
+
+### First-run checklist (observable)
+
+_(none)_
+
+=== panel 6e98eed9 member 4 of 4: grok :: grok-4.7 [grok] (roster #14) ===
+coordinator: claude-opus-5-5 (not in the roster - no reviewer can match it)
+WARNING: routing: no lab known for #14 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a "lab"
+codex-consult: usable reply - grok :: grok-4.7 [grok], mode new, thread 01a1886c-66f8-7fb3-a067-e03ea8659e56 (source: events), wall 81.8 s
+verdict    : ADVISE - The brief's cross-model comparison is answerable from the handoff and run artifacts, but the framing understates process confounds that should be fixed before anyone treats the scores as a model ranking.
+findings   : 0 blocker, 3 major, 1 minor, 1 note -> F05-1..F05-5 in findings.json
+reply file : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\05-grok-cross-model-tests-grok.md
+reply json : C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\05-grok-cross-model-tests-grok.reply.json
+events file: C:\Users\Dmytro\C3\.collab\consilium-2026-10-29-test-workers\handoffs\05-grok-cross-model-tests-grok.events.jsonl
+
+## Framing challenge
+
+The brief treats six runs as a model bake-off (Claude coordinator vs Grok vs GLM vs MiMo). The artifacts support a process comparison more than a model ranking. Four confounds sit outside the listed options:
+
+1. **Coordinator contamination.** F01, F03, and F04 were written by the Claude coordinator after the worker returned. Worker-vs-worker scores mix model output with coordinator repair.
+2. **Unequal task graphs.** Grok got one combined 19-file chunk (grok-1, ~1364s). GLM and MiMo got the same work split into two bounded chunks (~240–639s). Latency and “files touched” are not comparable until the split is held fixed.
+3. **Fixtures, not verdicts.** `verdict` is a required output field. Calling a correct `ADVISE` a fixture miss punishes schema compliance. The real miss is only where the brief asked for a different verdict.
+4. **Missing arms.** No Claude-as-worker on the same brief, no repeat of any arm, no swap of chunk boundaries. One run per cell cannot separate model from prompt, split, or repair.
+
+To choose among options I would need: the worker prompt actually sent (not only the handoff), whether coordinator edits are in the scored files, token and cost logs, and one repeated arm with the chunk boundary held fixed.
+
+## Q1
+
+**Mostly (b), with a real (a) on the two-file jobs.** All four worker files exist and are schema-valid JSON (`schema_version` "1", required keys, `verdict` ADVISE). None is prose-only, so the failure mode the preamble feared did not occur.
+
+The graded miss is structural, and it is concentrated:
+
+- grok-1 (19 files, one chunk) has `findings: []` and `locations` nowhere. Q2–Q3 evidence is generic “Checked all 19”.
+- glm-2, mimo-1, and mimo-2 put findings on disk, but every `locations` array is `[]`. Claims name files in prose only.
+- glm-1 is the exception: four findings, each with `{path, line}` and `read-code` evidence.
+
+So (c) is too strong. (a) fits glm-1 and, loosely, the smaller jobs that did emit findings. (b) fits the pack: the contract’s locatable-finding rule failed whenever the chunk was large or the model was MiMo.
+
+## Q2
+
+**Partial.** Every question has a section. Answers are usually one line plus a label (“(b)”, “partial”), not the brief’s “claim plus one concrete reason.”
+
+| Run | What is thin |
+| grok-1 | Q2–Q3 assert all 19 files with no per-file citation. Q5’s “None” does not walk the four smallest files. |
+| glm-1 | Q2–Q3 name the two files but give no size, form, or line. |
+| glm-2 | Q3 says “pass” with no file-level reason. Q5 is “No” with no per-file note. |
+| mimo-1 | Q3 is “all JSON” with no count. Q6’s “lower” gives no comparison pair. |
+| mimo-2 | Q2–Q3 and Q5 are single words (“varied”, “pass”, “no”). |
+
+## Q3
+
+**No for the three larger-chunk runs; yes only inside glm-1.** The two-file jobs have no prior findings, so an empty `prior_findings` is correct there. On the 17-file jobs the handoff asks the model to use the ids. Observed `prior_findings`:
+
+- glm-2: `[]`. It mentions F05 in Q6 prose only.
+- mimo-1 and mimo-2: `[]`. mimo-2’s Q6 says “F04 still open” and never emits the id in the array.
+
+glm-1’s `[]` is correct: F01–F04 are not in scope for `f-astra` and `f-workers`. “Use the ids” was an instruction for the chunk that contained the open findings, not a requirement to invent ids on the two-file chunk.
+
+## Q4
+
+**Three of five workers did. grok-1 and glm-2 did not.**
+
+- glm-1: “Both files contain the literal placeholder `PENDING`, so neither names a concrete owner model.” That satisfies the “name the placeholder” rule. The other option — quote the sentence that states the owner — does not apply, because the owner is absent.
+- mimo-1: quotes “Model chosen: not recorded.” and “ reviewer is named only as deepseek-v4-pro.”
+- mimo-2: quotes “Panel: claude, gpt-5.5, deepseek-v4-pro, gemini-3.1.”
+- grok-1: “No owner model or panel is named” — the conclusion, without the placeholder or a quote.
+- glm-2: “not recorded here” — paraphrase, no quote.
+
+## Q5
+
+**Yes.** All five files pretty-print as one JSON object, contain every required key, and set `verdict` to `ADVISE`. `prior_findings: []` on glm-1 is schema-valid and, for that chunk, correct (see Q3). No file is prose-wrapped or missing `schema_version`.
+
+## Q6
+
+**Do not conclude a model ranking.** What the artifacts support:
+
+1. **Split work before sending it.** grok-1 took 1364.7s, returned `num_turns: 1`, left `findings` empty, and wrote “Checked all 19” for Q2. GLM on the same files, split, took 638.6s + 494.1s and did produce findings. MiMo took 301.3s + 240.2s. The brief’s own “smaller chunks may change results” warning is the result.
+2. **Ask for locations as data, not as a sentence.** glm-1 is the only run that filled `locations`. The other four either omitted findings or left `locations` empty while naming files in prose. A coordinator that accepts prose paths will not be able to attach defects to lines.
+3. **Separate schema success from task success.** Every arm passed the JSON contract. The graded failures are empty locations, unused prior-finding ids, and answers that skip the required reason. Those are prompt/rubric gaps, visible on GLM and MiMo as well as Grok.
+4. **Keep coordinator repair out of the model score.** If F01–F04 land in the corpus as worker-quality evidence, the next test should mark lines the coordinator wrote. Otherwise Claude-as-coordinator looks stronger because it was allowed a second pass.
+
+## Requested checks
+
+RC1. In `.collab/consilium-2026-10-29-test-workers`, read-only, `jq -e '.locations|length>0' outputs/glm-1.json outputs/glm-2.json outputs/mimo-1.json outputs/mimo-2.json outputs/grok-1.json` (budget: one minute). Settles finding #1: only glm-1 should exit 0 per file; the other four should fail.
+RC2. Same directory, read-only, `jq -r '.prior_findings|length' outputs/glm-2.json outputs/mimo-1.json outputs/mimo-2.json` (budget: one minute). Settles finding #2: expect `0` three times while Q6 prose still names F04 or F05.
+RC3. Same directory, read-only, confirm grok-1’s tool trace is absent: `rg -n "num_turns|1364" runs/grok-1.json` and note there is no per-tool log (budget: two minutes). A missing trace leaves finding #3 as inference, not a measured “did not open files.”
+
+### Findings
+
+- **F05-1** [major] `.collab/consilium-2026-10-29-test-workers/outputs/grok-1.json:8`, `.collab/consilium-2026-10-29-test-workers/outputs/glm-2.json:14`, `.collab/consilium-2026-10-29-test-workers/outputs/mimo-1.json:8`, `.collab/consilium-2026-10-29-test-workers/outputs/mimo-2.json:8` - Four of the five worker outputs leave every finding's locations array empty or omit findings entirely, so defects are not locatable at a path and line. Only glm-1 attaches {path, line} to each finding. Trigger: A coordinator tries to map a worker finding onto a source line after a chunk larger than the two-file glm-1 job, or after any MiMo chunk. Evidence: read-code: findings is []. Q2 and Q3 say “Checked all 19” with no per-file path or line.; read-code: Four findings; each locations entry has a path and a non-null line (15, 1, 19, 34).; read-code: Two findings, both with locations: []. File names appear only inside claim text.; read-code: One finding, locations: [].; read-code: One finding, locations: [].; read-code: The output contract says each defect goes in findings[] and each location is {path, line}. The task text says to cite the file and line for a content finding. Verify: Run jq over the five output files and count findings whose locations array is non-empty. Expect a non-zero count only in glm-1.json. Remedy: Score locatable findings separately from schema-valid JSON. Reject a chunk whose findings name a file only in prose. Keep the two-file chunk shape that produced glm-1's locations, and add an explicit 'locations must be non-empty when a path is known' line to the worker prompt.
+- **F05-2** [major] `.collab/consilium-2026-10-29-test-workers/outputs/glm-2.json:36`, `.collab/consilium-2026-10-29-test-workers/outputs/mimo-1.json:24`, `.collab/consilium-2026-10-29-test-workers/outputs/mimo-2.json:24` - On the 17-file chunks, prior_findings is empty even though the handoff tells the model to use F01-F05 ids and the replies mention F04 or F05 in prose. Trigger: The worker chunk includes files the coordinator already marked F01-F05, and the next pass needs those ids in prior_findings rather than in the Markdown answer. Evidence: read-code: Q3 says: Use the ids. Do not re-report a finding you were given as prior.; read-code: prior_findings is []. Q6 prose says “F05 is still open”.; read-code: prior_findings is []. Q6 says “F04 still open”.; read-code: prior_findings is [] on the chunk that contains the F01-F04 files. Q6 does not name an id.; read-code: prior_findings is [] and the chunk is only f-astra and f-workers, which are outside F01-F04. That empty array matches the scope. Verify: Diff prior_findings against the F-ids named in each file's reply_markdown. Flag any id that appears in prose and is absent from the array on glm-2, mimo-1, and mimo-2. Remedy: Pass the open findings into the worker prompt as a prior_findings seed, and treat a prose-only mention of an F-id with an empty array as a failed Q3. Do not count glm-1's empty array as the same failure.
+- **F05-3** [major] `.collab/consilium-2026-10-29-test-workers/runs/grok-1.json:11`, `.collab/consilium-2026-10-29-test-workers/outputs/grok-1.json:1` - grok-1 spent 1364.7s, reported num_turns 1, and answered Q2-Q3 with “Checked all 19” while leaving findings empty. That pattern is consistent with answering the 19-file chunk without a per-file tool pass, and the run record has no tool trace to contradict it. Trigger: One worker receives all 19 corpus files in a single chunk and the scorer treats “Checked all 19” as evidence those files were read. Evidence: read-code: num_turns is 1, duration_s is 1364.656, timed_out is false, output_valid is true. The record stores reply_markdown and findings, not a list of files opened.; read-code: Q2 says “Checked all 19: content.” Q3 says “Checked all 19: shape.” findings is []. There is no per-file citation a reader can audit.; inferred: The same 19 files, split into two chunks, produced findings and named specific files. Grok's single chunk did not. The split is confounded with the model, so this does not by itself rank Grok below GLM or MiMo. Verify: Inspect the worker session log for grok-1 and list tool calls whose target is under tests/fixtures/review-corpus. Zero such calls confirms the claim. A non-zero list would limit it to “results were not written into findings.”. Remedy: Cap a chunk at the two-to-eight file size used for GLM and MiMo, require one cited path per corpus file in the reply, and store the tool-call list in the run record before scoring completeness.
+- **F05-4** [minor] `.collab/consilium-2026-10-29-test-workers/handoffs/01-claude-cross-model-tests.md:49` - The handoff's Q5 success criterion (“verdict ADVISE or a documented reason otherwise”) treats the schema's required verdict as optional, so a later scorer can call a correct ADVISE a fixture failure. Trigger: Someone grades Q5 from the parenthetical examples in the handoff rather than from the output schema, which requires verdict and specifies ADVISE for this consultation. Evidence: read-code: Q5 says: Is the output schema-valid JSON with the required keys (verdict ADVISE or a documented reason otherwise)? The schema block above it says verdict is required and this consultation takes ADVISE.; read-code: verdict is ADVISE, matching the schema. The same value is set in glm-1, glm-2, mimo-1, and mimo-2. Verify: Re-read the scoring rubric and confirm ADVISE is marked pass for every arm. If the rubric expects a missing verdict, the rubric contradicts the schema. Remedy: Change the Q5 parenthetical to “verdict must be ADVISE”. Grade schema validity and answer quality as separate columns so a valid ADVISE is never scored as a miss.
+- **F05-5** [note] `.collab/consilium-2026-10-29-test-workers/runs/f01.json:1`, `.collab/consilium-2026-10-29-test-workers/runs/f03.json:1`, `.collab/consilium-2026-10-29-test-workers/runs/f04.json:1` - F01, F03, and F04 were produced by the Claude coordinator after the worker returned, so a comparison that puts those files in the worker column credits the coordinator's second pass to the worker model. Trigger: The bake-off table scores corpus files F01-F05 as if each file were the unedited return of one model. Evidence: read-code: The brief says F01-F05 were produced by a Claude coordinator from worker returns, and that the coordinator wrote the verdict and repaired findings on at least F01, F03, and F04.; read-code: The run file records a coordinator repair step after the worker payload, with the stored verdict set in that later step.; assumed: Did not fully separate worker bytes from coordinator bytes on F02 and F05. The brief's “at least F01, F03, F04” leaves those two unconfirmed. Verify: For each of F01-F05, diff the worker payload stored in the run record against the file under tests/fixtures/review-corpus. Count lines present only on the coordinator side. Remedy: Publish two columns: raw worker JSON and post-repair fixture. Rank models only on the raw column. Keep the repaired fixtures as examples of the coordinator, not of the worker.
+
+### Prior findings
+
+_(none)_
+
+## Verdict: ADVISE
+
+The brief's cross-model comparison is answerable from the handoff and run artifacts, but the framing understates process confounds that should be fixed before anyone treats the scores as a model ranking.
+
+### Blockers
+
+_(none)_
+
+### Unproven scenarios
+
+- Whether grok-1 opened any of the 19 corpus files: the run record has duration and num_turns but no tool-call list, so “did not read” is an inference from the empty citations.
+- How much of F02 and F05 was rewritten by the coordinator. The handoff asserts repair on F01, F03, and F04 only.
+- Token cost and the exact worker prompt bytes. They are not in the five run JSON files that were read, so latency cannot be turned into a cost ranking.
+- Whether a repeated grok arm with the GLM/MiMo chunk split would fill locations. One observation per cell cannot separate model from chunk size.
+- Whether glm-2 and the MiMo runs would have filled locations if the prompt had shown one example finding with a non-empty locations array.
+
+### First-run checklist (observable)
+
+_(none)_
+
+Panel 6e98eed9: 4 of 11 entries ran (asked 4, started 4, usable 4; wall clock 352.4 s; at once)
+  ZAI-claude :: glm-5.3 [claude]             ADVISE   0 blocker, 3 major, 3 minor, 1 note  prior: none  337.2 s  handoffs/02-claudecode-cross-model-tests-zai-claude.md
+  gemini :: gemini-3.8-flash-high [agy]      ADVISE   0 blocker, 2 major, 1 minor          prior: none  300.6 s  handoffs/03-agy-cross-model-tests-gemini.md
+  meta :: muse-spark-1.3-contributor [muse]  ADVISE   0 blocker, 4 major, 1 minor          prior: none  142.6 s  handoffs/04-muse-cross-model-tests-meta.md
+  grok :: grok-4.7 [grok]                    ADVISE   0 blocker, 3 major, 1 minor, 1 note  prior: none  81.8 s  handoffs/05-grok-cross-model-tests-grok.md
+  not picked (panel size 4): openai :: gpt-6-astra, openai :: gpt-6.1-sol, ZAI-claude :: glm-5.3-flash [claude], mimo-claude :: mimo-v2.6-pro [claude], kimi-claude :: k3-256k [claude], alibaba-claude :: qwen3.8-max [claude], meta :: muse-wonder-1.0 [muse]

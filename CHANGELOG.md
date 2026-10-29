@@ -38,6 +38,12 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **grok reviewer answered an invented brief** — a grok `--json-schema` turn can answer in one
+  model call without calling `read_file`; it then made up the brief from the question numbers
+  (panel 2026-10-29, handoff 05). The brief's text is now inlined into the prompt after the
+  "Read the brief at" line for engines whose spec sets the new `EngineSpec::inline_brief` (grok
+  only). Tests in `consult::prompt` and `lineage` written by a GLM worker run (`c3 work`).
+
 - **Wave 11b (`c3 update` hardening, Astra handoff 97)** — the self-update now binds to the GitHub
   tags API's release **commit**, not the tag name: `--apply` installs with
   `cargo install --git … --rev <latest_sha>` and synchronises a source checkout by fetching the

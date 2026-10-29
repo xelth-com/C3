@@ -3415,11 +3415,17 @@ fn build_context(
         }
     }
 
+    // (0.2.4) an engine whose spec says `inline_brief` (grok) gets the brief's text too.
+    let brief_text = match &brief_path {
+        Some(bp) if spec.inline_brief => std::fs::read_to_string(bp).unwrap_or_default(),
+        _ => String::new(),
+    };
     let prompt_text = prompt::assemble(&PromptInputs {
         raw: r.raw,
         purpose: &o.purpose,
         prompt: &o.prompt,
         brief_ref: &brief_ref,
+        brief_text: &brief_text,
         range: prompt_range.as_ref(),
         open_findings: &open_findings,
         schema_transport: &transport.transport,

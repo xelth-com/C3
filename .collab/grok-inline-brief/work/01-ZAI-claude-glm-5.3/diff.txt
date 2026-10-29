@@ -1,0 +1,19 @@
+git status --short (before the run):
+ M crates/c3-core/src/lineage.rs
+ M crates/c3/src/consult/orchestrate.rs
+ M crates/c3/src/consult/prompt.rs
+?? .collab/consilium-2026-10-29-test-workers/
+?? .collab/grok-inline-brief/
+
+git status --short (after the run):
+ M crates/c3-core/src/lineage.rs
+ M crates/c3/src/consult/orchestrate.rs
+ M crates/c3/src/consult/prompt.rs
+?? .collab/consilium-2026-10-29-test-workers/
+?? .collab/grok-inline-brief/
+
+git diff --stat (after the run):
+ crates/c3-core/src/lineage.rs        | 24 +++++++++++
+ crates/c3/src/consult/orchestrate.rs |  6 +++
+ crates/c3/src/consult/prompt.rs      | 77 ++++++++++++++++++++++++++++++++++++
+ 3 files changed, 107 insertions(+)
