@@ -82,19 +82,28 @@ reviewer: add `--provider <name> --model <id>`. Set `CODEX_CONSULT_COORDINATOR` 
 own model so the bridge warns when it seats it as a reviewer — keep the operator's value when
 set; do not guess your own.
 
-**Which reviewer.** Without `--provider` the roster's first entry answers, and on this
-operator's roster that is the standing partner (OpenAI Astra). Do not let one reviewer take every
-consultation: the track record that seats panels is built from marks, and a reviewer that is never
-asked never earns a seat. Spread the single consultations by purpose:
+**Which reviewer.** Without `--provider` the roster's first entry answers. Do not let one
+reviewer take every consultation: the track record that seats panels is built from marks, and a
+reviewer that is never asked never earns a seat. The operator's goal is to **drain every plan's
+allowance by the end of its window, not long before it** - a window spent on day one means days
+of waiting; one left half full is paid for nothing. So:
 
-- **diff-review, checkpoint, chore, a plain second opinion** — alternate `--provider grok` and
-  `--provider meta` (Muse contributor); take the standing partner only when the change is
-  security-, contract- or release-shaped.
-- **framing, decision, stuck** — a panel (below), so several labs answer the same brief.
-- **acceptance, core-contract** — the standing partner (or the reviewer who raised the findings).
+- A **cheap, near-free reviewer** (on this roster the Muse contributor, `--provider meta`) may be
+  asked on almost every consultation, as the constant second opinion.
+- A plan in a **trial or oversized month** (Grok until about 2026-11-29) is asked as readily as
+  the standing partner; afterwards back to its normal share.
+- **diff-review, checkpoint, chore, a plain second opinion** - alternate the cheap and the
+  generous reviewers (`--provider grok`, `--provider meta`); the standing partner only when the
+  change is security-, contract- or release-shaped.
+- **framing, decision, stuck** - a panel (below), so several labs answer the same brief.
+- **acceptance, core-contract** - the standing partner (or the reviewer who raised the findings).
+- A reviewer that **hits its limit** (Kimi: `failed: quota` on the scoreboard, `c3 providers`
+  QUOTA column for codex plans) keeps a small share; a plan the operator is **not renewing**
+  (MiMo: the subscription bills at its cheap API rate, no plan discount) is not planned on.
 
-Before choosing, glance at `c3 scoreboard` (per-reviewer counts of this repository): if one
-reviewer holds well over a third of the consultations, give the next one to another.
+Before choosing, glance at `c3 scoreboard` (per-reviewer counts of this repository) and
+`c3 providers` (quota windows where the bridge can read them: codex plans only; z.ai, Kimi,
+Muse and Grok expose none, so their limits are known only from `failed: quota` outcomes).
 
 A panel (same brief to several roster reviewers, sized by purpose, seated by track record):
 
