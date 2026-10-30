@@ -11,6 +11,17 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Added
 
+- **`c3 finish` / `c3 fail` / `c3 manifest` and the MCP tools `c3_finish_task`, `c3_fail_task`,
+  `c3_manifest_edit`** (eck port Part A, `docs/eck-port.md`): C3 now commits, but only through
+  `c3 finish` - `git add -A` minus a never-commit set (raw event streams, `.collab` locks and
+  pending files, work-run `.log`/`.stderr`), a secret gate on the staged content (path and kind
+  named, never the value; `--allow-secret`), the staged list printed, then the commit; the report
+  goes to `.eck/lastsnapshot/AnswerToSA.md` and newest-first into `.eck/JOURNAL.md`; a delta
+  snapshot (full when no anchor) lands in `.eck/snapshots/` and `.eck/lastsnapshot/` with the
+  report embedded, pruned beyond `--keep` (10), the never-commit set left out of its body.
+  `c3 fail` does the same without committing (`--fail` delta to the working tree). `c3 manifest`
+  edits `.eck/*.md` only (no path traversal; `append_to_section` appends at the section's end).
+  The MCP tools take eck's argument names.
 - **Cross-model tests in `c3 work`** (consilium 2026-10-29, `.collab/consilium-2026-10-29-test-workers`):
   every work record holds `patch.diff` (the run's own change from each file's start content;
   pre-dirty baselines kept as loose git objects); `--role tests` inlines another author's change

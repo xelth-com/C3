@@ -209,6 +209,7 @@ fn build_inner(
         &DiscoverOpts {
             max_file_size: opts.max_file_size,
             include_binary: false,
+            never_commit: false,
         },
     );
     let focus_set = build_set(&opts.focus);

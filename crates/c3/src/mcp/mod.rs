@@ -1,13 +1,15 @@
 //! Stdio MCP server: `c3 mcp`.
 //!
 //! A newline-delimited JSON-RPC 2.0 server over stdin/stdout (the MCP stdio
-//! transport) that exposes C3's *read-and-record* tools to a coordinator model
-//! (Claude Code, or any MCP client). It carries no commit or finish tool: no
-//! tool dispatched here runs a Git write command (design invariant 3, "C3
-//! never commits"). That is a statement about C3's own operations, not a
-//! sandbox around what a reviewer process a tool launches might do on its
-//! own; reviewers run in their own sandboxes/read-only modes, and the engine
-//! tree check reports any working-tree or HEAD change it observes.
+//! transport) that exposes C3's tools to a coordinator model (Claude Code, or
+//! any MCP client). All but one are *read-and-record*; the single exception is
+//! the supervisor-only `c3_finish_task`, which commits — the port's rule "C3
+//! commits only via `c3 finish`" (replacing the older "C3 never commits"). No
+//! OTHER tool dispatched here runs a Git write command. That is a statement
+//! about C3's own operations, not a sandbox around what a reviewer process a
+//! tool launches might do on its own; reviewers run in their own
+//! sandboxes/read-only modes, and the engine tree check reports any
+//! working-tree or HEAD change it observes.
 //!
 //! Every tool runs the *same code path* as the matching CLI subcommand: the
 //! server re-invokes its own executable (`std::env::current_exe()`) with the CLI
@@ -670,6 +672,41 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
             push_collab(&mut v, args)?;
             Ok((v, DEFAULT_TIMEOUT))
         }
+        "c3_finish_task" => {
+            v.push("finish".into());
+            v.push("--message".into());
+            v.push(req_str(args, "message")?);
+            v.push("--status".into());
+            v.push(req_str(args, "status")?);
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_fail_task" => {
+            v.push("fail".into());
+            v.push("--status".into());
+            v.push(req_str(args, "status")?);
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
+        "c3_manifest_edit" => {
+            v.push("manifest".into());
+            v.push("--file".into());
+            v.push(req_str(args, "file")?);
+            v.push("--action".into());
+            v.push(req_str(args, "action")?);
+            v.push("--content".into());
+            v.push(req_str(args, "content")?);
+            if let Some(s) = opt_str(args, "section_header") {
+                v.push("--section".into());
+                v.push(s);
+            }
+            if let Some(t) = opt_str(args, "target_text") {
+                v.push("--target".into());
+                v.push(t);
+            }
+            push_collab(&mut v, args)?;
+            Ok((v, DEFAULT_TIMEOUT))
+        }
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -1119,6 +1156,46 @@ fn tool_defs() -> Value {
                 },
                 "required": ["query"]
             }
+        },
+        {
+            "name": "c3_finish_task",
+            "description": "Supervisor-only: workers never call it. Finish the current task: write the agent report to .eck/lastsnapshot/AnswerToSA.md and prepend a journal entry, `git add -A` then unstage the machine-local never-commit set (consult/work event streams, lock files, a work run's .log/.stderr), gate on secrets in the STAGED content (a secret-shaped value refuses the commit, naming the file and KIND, never the value), commit with the message verbatim, then write a delta snapshot into .eck/snapshots/ and copy it into .eck/lastsnapshot/. Use ONLY once, when the task is complete and tested.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "description": "The agent report (written to AnswerToSA.md and the journal)." },
+                    "message": { "type": "string", "description": "The commit message (verbatim; the coordinator adds its own trailers)." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["status", "message"]
+            }
+        },
+        {
+            "name": "c3_fail_task",
+            "description": "Mark the current task BLOCKED/FAILED: write a '# Agent Report (BLOCKED/FAILED)' AnswerToSA.md, prepend a journal entry, and write an emergency delta snapshot of the working tree into .eck/snapshots/ (and .eck/lastsnapshot/). No staging, no commit. When nothing changed since the anchor it still writes the report and reports no snapshot.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "status": { "type": "string", "description": "The agent report (written to AnswerToSA.md and the journal)." },
+                    "collab_dir": { "type": "string", "description": "Where consultations are stored; inside the working directory." }
+                },
+                "required": ["status"]
+            }
+        },
+        {
+            "name": "c3_manifest_edit",
+            "description": "Atomically edit a project manifest under .eck/ (ROADMAP.md, TECH_DEBT.md, CONTEXT.md, ...). The file must be a plain NAME.md directly under .eck/ (no path separator, no '..'); a missing file starts as '# NAME'. action replace_text replaces the first occurrence of target_text; append_to_section inserts content at the END of the section headed by section_header (before the next header of the same or higher level); replace_file writes the whole content. No git, no snapshot.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "file": { "type": "string", "description": "A plain NAME.md directly under .eck/." },
+                    "action": { "type": "string", "description": "replace_text | append_to_section | replace_file." },
+                    "content": { "type": "string", "description": "The text to write / append / substitute." },
+                    "section_header": { "type": "string", "description": "The section header line (required by append_to_section)." },
+                    "target_text": { "type": "string", "description": "The text to replace (required by replace_text)." }
+                },
+                "required": ["file", "action", "content"]
+            }
         }
     ])
 }
@@ -1182,6 +1259,9 @@ mod tests {
             "c3_telemetry_status",
             "c3_index_stats",
             "c3_index_query",
+            "c3_finish_task",
+            "c3_fail_task",
+            "c3_manifest_edit",
         ] {
             assert!(names.contains(&expected), "missing tool {expected}");
         }
@@ -1607,5 +1687,78 @@ mod tests {
         let _ = std::fs::remove_dir_all(&link);
         let _ = std::fs::remove_dir_all(&base);
         let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn finish_task_builds_finish_argv() {
+        let (argv, _t) = build_argv(
+            "c3_finish_task",
+            &json!({ "status": "done", "message": "feat: x" }),
+        )
+        .unwrap();
+        assert_eq!(argv[0], "finish");
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--message" && w[1] == "feat: x"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--status" && w[1] == "done"));
+    }
+
+    #[test]
+    fn finish_task_requires_status_and_message() {
+        assert!(build_argv("c3_finish_task", &json!({ "status": "done" })).is_err());
+        assert!(build_argv("c3_finish_task", &json!({ "message": "m" })).is_err());
+    }
+
+    #[test]
+    fn fail_task_builds_fail_argv() {
+        let (argv, _t) = build_argv("c3_fail_task", &json!({ "status": "blocked" })).unwrap();
+        assert_eq!(argv[0], "fail");
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--status" && w[1] == "blocked"));
+    }
+
+    #[test]
+    fn manifest_edit_maps_eck_argument_names() {
+        let (argv, _t) = build_argv(
+            "c3_manifest_edit",
+            &json!({
+                "file": "ROADMAP.md",
+                "action": "append_to_section",
+                "content": "- new item",
+                "section_header": "## Backlog"
+            }),
+        )
+        .unwrap();
+        assert_eq!(argv[0], "manifest");
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--file" && w[1] == "ROADMAP.md"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--action" && w[1] == "append_to_section"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--content" && w[1] == "- new item"));
+        assert!(argv
+            .windows(2)
+            .any(|w| w[0] == "--section" && w[1] == "## Backlog"));
+    }
+
+    #[test]
+    fn manifest_edit_maps_target_text_to_target() {
+        let (argv, _t) = build_argv(
+            "c3_manifest_edit",
+            &json!({
+                "file": "CONTEXT.md",
+                "action": "replace_text",
+                "content": "new",
+                "target_text": "old"
+            }),
+        )
+        .unwrap();
+        assert!(argv.windows(2).any(|w| w[0] == "--target" && w[1] == "old"));
     }
 }

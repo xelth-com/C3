@@ -51,6 +51,10 @@ pub fn run(args: SnapshotArgs) -> i32 {
         focus: args.focus,
         tree: !args.no_tree,
         max_file_size: 2 * 1024 * 1024,
+        fail: false,
+        eck: false,
+        keep: 0,
+        embed_report: None,
     };
 
     match snapshot::run(&opts) {

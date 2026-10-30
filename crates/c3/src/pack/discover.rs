@@ -35,6 +35,11 @@ pub struct DiscoverOpts {
     pub max_file_size: u64,
     /// Keep binary files (they are dropped by default).
     pub include_binary: bool,
+    /// Also drop files in the finish never-commit set (raw event streams, lock files, a
+    /// work run's `.log`/`.stderr`). Used by the `.eck` hand-off snapshot so those
+    /// machine-local artifacts never reach the snapshot BODY either. Off by default, so a
+    /// plain `c3 snapshot` is unaffected.
+    pub never_commit: bool,
 }
 
 impl Default for DiscoverOpts {
@@ -42,6 +47,7 @@ impl Default for DiscoverOpts {
         DiscoverOpts {
             max_file_size: 2 * 1024 * 1024,
             include_binary: false,
+            never_commit: false,
         }
     }
 }
@@ -183,6 +189,10 @@ pub fn discover(repo_root: &Path, opts: &DiscoverOpts) -> Vec<FileEntry> {
         if path_set.is_match(&rel) {
             continue;
         }
+        // The `.eck` hand-off snapshot also drops the finish never-commit set.
+        if opts.never_commit && crate::finish::never_commit::is_never_commit(&rel) {
+            continue;
+        }
 
         let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
         if size > opts.max_file_size {
@@ -308,6 +318,39 @@ mod tests {
         assert!(rels.contains(&"text.rs"), "got {rels:?}");
         assert!(!rels.contains(&"nulls.bin"));
         assert!(!rels.contains(&"elf"));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn never_commit_filter_drops_event_streams_only_when_requested() {
+        let d = scratch("nevercommit");
+        fs::write(d.join("src.rs"), "fn a() {}\n").unwrap();
+        fs::create_dir_all(d.join(".collab/w/work/01")).unwrap();
+        fs::write(d.join(".collab/w/work/01/events.jsonl"), "{\"e\":1}\n").unwrap();
+        fs::write(d.join(".collab/w/work/01/.stderr"), "err\n").unwrap();
+        fs::write(d.join(".collab/w/.admission.lock"), "x\n").unwrap();
+
+        // Default discovery keeps them (events.jsonl/.stderr/.admission.lock are not in the
+        // base hard-ignore set).
+        let base = discover(&d, &DiscoverOpts::default());
+        let base_rels: Vec<&str> = base.iter().map(|f| f.rel.as_str()).collect();
+        assert!(base_rels.contains(&".collab/w/work/01/events.jsonl"));
+        assert!(base_rels.contains(&".collab/w/work/01/.stderr"));
+        assert!(base_rels.contains(&".collab/w/.admission.lock"));
+
+        // With never_commit on, they are dropped but ordinary files stay.
+        let filtered = discover(
+            &d,
+            &DiscoverOpts {
+                never_commit: true,
+                ..DiscoverOpts::default()
+            },
+        );
+        let rels: Vec<&str> = filtered.iter().map(|f| f.rel.as_str()).collect();
+        assert!(rels.contains(&"src.rs"), "got {rels:?}");
+        assert!(!rels.contains(&".collab/w/work/01/events.jsonl"));
+        assert!(!rels.contains(&".collab/w/work/01/.stderr"));
+        assert!(!rels.contains(&".collab/w/.admission.lock"));
         let _ = fs::remove_dir_all(&d);
     }
 

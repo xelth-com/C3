@@ -39,6 +39,19 @@ pub struct SnapshotOpts {
     pub tree: bool,
     /// Max file size for discovery (bytes).
     pub max_file_size: u64,
+    /// Fail-mode delta: the delta from the anchor to the WORKING TREE (uncommitted changes
+    /// included). Behaves like `delta` but, when nothing changed since the anchor, writes
+    /// no file (`wrote == false`) so the caller can report "nothing changed". (Part B)
+    pub fail: bool,
+    /// Write the snapshot under `.eck/snapshots/` (repo root) and copy it into
+    /// `.eck/lastsnapshot/`, pruning `.eck/snapshots/` beyond `keep`, instead of writing
+    /// under `<collab>/.c3/snapshots/`. The architect's hand-off location. (Part B)
+    pub eck: bool,
+    /// How many snapshots to keep in `.eck/snapshots/` (eck output only; 0 = keep all).
+    pub keep: usize,
+    /// Report text embedded at the very top of the snapshot as
+    /// `MESSAGE FROM THE EXECUTION AGENT`. (Part B)
+    pub embed_report: Option<String>,
 }
 
 /// The result of a snapshot run.
@@ -52,6 +65,10 @@ pub struct SnapshotResult {
     /// Number of changed entries in a delta (0 for a full snapshot).
     pub delta_entries: usize,
     pub anchor: Option<String>,
+    /// False only in fail-mode when nothing changed since the anchor: no file was written.
+    pub wrote: bool,
+    /// Snapshots deleted from `.eck/snapshots/` by the `keep` prune (eck output only).
+    pub pruned: usize,
 }
 
 fn build_focus_set(globs: &[String]) -> GlobSet {
@@ -168,18 +185,22 @@ fn render_body(entry: &FileEntry, depth: budget::Depth, focus: bool) -> Option<S
 pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     let depth = budget::depth(opts.depth);
     let focus_set = build_focus_set(&opts.focus);
+    // `fail` is a delta against the anchor like `delta`, differing only in the empty case.
+    let is_delta = opts.delta || opts.fail;
 
     let discovered = discover::discover(
         &opts.repo_root,
         &DiscoverOpts {
             max_file_size: opts.max_file_size,
             include_binary: false,
+            // The `.eck` hand-off snapshot drops the never-commit set from its body too.
+            never_commit: opts.eck,
         },
     );
 
     // Which files to include, and any deletions (delta only).
     let mut deletions: Vec<String> = Vec::new();
-    let anchor = if opts.delta {
+    let anchor = if is_delta {
         let a = read_anchor(&opts.collab_root)
             .ok_or_else(|| "no C3 anchor: run `c3 snapshot` (a full snapshot) first".to_string())?;
         Some(a)
@@ -209,6 +230,22 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     };
 
     let delta_entries = included.len() + deletions.len();
+
+    // Fail-mode with nothing changed since the anchor: write no file, let the caller
+    // report "nothing changed" (eck printed "undefined" here).
+    if opts.fail && delta_entries == 0 {
+        return Ok(SnapshotResult {
+            path: opts.out.clone().unwrap_or_default(),
+            size_bytes: 0,
+            tokens: 0,
+            redactions: 0,
+            files: 0,
+            delta_entries: 0,
+            anchor,
+            wrote: false,
+            pruned: 0,
+        });
+    }
 
     // Render bodies at depth, then let the budget cut trim periphery.
     let rendered: Vec<(FileEntry, String, bool)> = if depth.tree_only {
@@ -269,7 +306,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         .unwrap_or("repo")
         .to_string();
     let generated = chrono::Local::now().to_rfc3339();
-    let seq = if opts.delta {
+    let seq = if is_delta {
         Some(bump_seq(&opts.collab_root))
     } else {
         None
@@ -284,6 +321,11 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     header.push_str(&format!("# C3 snapshot — {project}\n\n"));
     header.push_str(INSTRUCTION);
     header.push_str("\n\n");
+    if let Some(report) = &opts.embed_report {
+        header.push_str("--- MESSAGE FROM THE EXECUTION AGENT ---\n\n");
+        header.push_str(report.trim_end());
+        header.push_str("\n\n--- END MESSAGE FROM THE EXECUTION AGENT ---\n\n");
+    }
     header.push_str(&format!("- Project: {project}\n"));
     header.push_str(&format!(
         "- Revision: {} ({dirty})\n",
@@ -337,19 +379,30 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         &format!("~{}", human_tokens(tokens)),
     );
 
-    // Output path.
+    // Output path. `--eck` writes under `.eck/snapshots/` (repo root), overriding `--out`.
     let size_kb = (full.len() / 1024).max(1);
-    let path = match &opts.out {
-        Some(p) => p.clone(),
-        None => default_path(&opts.collab_root, &project, &rev.short_sha, seq, size_kb),
+    let path = if opts.eck {
+        eck_snapshot_path(&opts.repo_root, &project, &rev.short_sha, seq, size_kb)
+    } else {
+        match &opts.out {
+            Some(p) => p.clone(),
+            None => default_path(&opts.collab_root, &project, &rev.short_sha, seq, size_kb),
+        }
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }
     std::fs::write(&path, full.as_bytes()).map_err(|e| format!("write {}: {e}", path.display()))?;
 
+    // eck output: copy into the hand-off folder and prune old snapshots.
+    let mut pruned = 0usize;
+    if opts.eck {
+        copy_to_lastsnapshot(&opts.repo_root, &path)?;
+        pruned = prune_snapshots(&opts.repo_root, opts.keep);
+    }
+
     // A full snapshot updates C3's anchor and resets the sequence.
-    if !opts.delta {
+    if !is_delta {
         if let Some(head) = git_line(&opts.repo_root, &["rev-parse", "HEAD"]) {
             write_anchor(&opts.collab_root, &head)?;
         }
@@ -364,7 +417,96 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         files: included_paths.len(),
         delta_entries,
         anchor,
+        wrote: true,
+        pruned,
     })
+}
+
+/// The output path for an eck snapshot: `<repo>/.eck/snapshots/<name>`.
+fn eck_snapshot_path(
+    repo_root: &Path,
+    project: &str,
+    short_sha: &str,
+    seq: Option<u32>,
+    size_kb: usize,
+) -> PathBuf {
+    let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let rev = if short_sha.is_empty() || short_sha == "unknown" {
+        String::new()
+    } else {
+        format!("_{}", short7(short_sha))
+    };
+    let up = match seq {
+        Some(n) => format!("_up{n}"),
+        None => String::new(),
+    };
+    let name = format!("{project}_{ts}{rev}{up}_{size_kb}kb.md");
+    repo_root.join(".eck").join("snapshots").join(name)
+}
+
+/// Copy the new snapshot into `.eck/lastsnapshot/`, removing the previous snapshot(s)
+/// there first (every `*.md` except `AnswerToSA.md`, which is the agent report the
+/// architect keeps).
+fn copy_to_lastsnapshot(repo_root: &Path, snapshot: &Path) -> Result<(), String> {
+    let dir = repo_root.join(".eck").join("lastsnapshot");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        for e in rd.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if name.eq_ignore_ascii_case("AnswerToSA.md") {
+                continue;
+            }
+            if name.to_lowercase().ends_with(".md") {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    let base = snapshot
+        .file_name()
+        .ok_or_else(|| "snapshot has no file name".to_string())?;
+    std::fs::copy(snapshot, dir.join(base)).map_err(|e| format!("copy to lastsnapshot: {e}"))?;
+    Ok(())
+}
+
+/// Delete snapshots in `.eck/snapshots/` beyond the newest `keep` (by modification time).
+/// `keep == 0` keeps everything. Returns the number deleted.
+fn prune_snapshots(repo_root: &Path, keep: usize) -> usize {
+    if keep == 0 {
+        return 0;
+    }
+    let dir = repo_root.join(".eck").join("snapshots");
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .ends_with(".md")
+            })
+            .map(|e| {
+                let mtime = e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                (mtime, e.path())
+            })
+            .collect(),
+        Err(_) => return 0,
+    };
+    if files.len() <= keep {
+        return 0;
+    }
+    // Newest first, then delete everything past `keep`.
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
+    let mut deleted = 0usize;
+    for (_, path) in files.into_iter().skip(keep) {
+        if std::fs::remove_file(&path).is_ok() {
+            deleted += 1;
+        }
+    }
+    deleted
 }
 
 fn short7(s: &str) -> String {
@@ -385,6 +527,11 @@ fn human_tokens(t: usize) -> String {
 
 fn c3_dir(collab_root: &Path) -> PathBuf {
     collab_root.join(".c3")
+}
+
+/// Whether C3 has recorded a full-snapshot anchor (so a delta is possible).
+pub fn anchor_exists(collab_root: &Path) -> bool {
+    read_anchor(collab_root).is_some()
 }
 
 fn read_anchor(collab_root: &Path) -> Option<String> {
@@ -484,6 +631,10 @@ mod tests {
             focus: vec![],
             tree: true,
             max_file_size: 2 * 1024 * 1024,
+            fail: false,
+            eck: false,
+            keep: 0,
+            embed_report: None,
         };
         let r = run(&opts).unwrap();
         let text = fs::read_to_string(&out).unwrap();
@@ -521,6 +672,10 @@ mod tests {
             focus: vec![],
             tree: false,
             max_file_size: 2 * 1024 * 1024,
+            fail: false,
+            eck: false,
+            keep: 0,
+            embed_report: None,
         };
         run(&base).unwrap();
 
@@ -569,6 +724,10 @@ mod tests {
             focus: vec![],
             tree: false,
             max_file_size: 2 * 1024 * 1024,
+            fail: false,
+            eck: false,
+            keep: 0,
+            embed_report: None,
         };
         let r = run(&opts).unwrap();
         let text = fs::read_to_string(&out).unwrap();

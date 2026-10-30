@@ -45,3 +45,5 @@ pub mod update;
 pub mod mcp;
 
 pub mod work;
+
+pub mod finish;

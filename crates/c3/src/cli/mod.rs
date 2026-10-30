@@ -4,9 +4,12 @@
 
 pub mod consult;
 pub mod explain;
+pub mod fail;
 pub mod findings;
+pub mod finish;
 pub mod hook;
 pub mod index;
+pub mod manifest;
 pub mod mcp;
 pub mod pack;
 pub mod router;

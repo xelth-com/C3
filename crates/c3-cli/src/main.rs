@@ -66,6 +66,12 @@ enum Commands {
     Mcp,
     /// Run a roster model as an ordinary coding worker (docs/work-mode.md).
     Work(c3::cli::work::WorkArgs),
+    /// Commit and hand off (supervisor-only: workers never call it).
+    Finish(c3::cli::finish::FinishArgs),
+    /// Mark a task BLOCKED/FAILED with an emergency snapshot; no commit.
+    Fail(c3::cli::fail::FailArgs),
+    /// Edit a `.eck/<NAME>.md` manifest; no git, no snapshot.
+    Manifest(c3::cli::manifest::ManifestArgs),
     /// Check for a newer C3 release and, only with `--apply`, install it (wave 11).
     Update(c3::cli::update::UpdateArgs),
 }
@@ -130,6 +136,9 @@ fn main() {
         Some(Commands::Router(a)) => c3::cli::router::run(a),
         Some(Commands::Mcp) => c3::cli::mcp::run(),
         Some(Commands::Work(a)) => c3::cli::work::run(a),
+        Some(Commands::Finish(a)) => c3::cli::finish::run(a),
+        Some(Commands::Fail(a)) => c3::cli::fail::run(a),
+        Some(Commands::Manifest(a)) => c3::cli::manifest::run(a),
         Some(Commands::Update(a)) => c3::cli::update::run(a),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).
