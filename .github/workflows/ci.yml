@@ -55,8 +55,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy (default features)
         run: cargo clippy -p c3 -p c3-core -p c3-cli --all-targets -- -D warnings
+      # Windows: one test thread - the fake claude/codex launchers each start Windows PowerShell,
+      # and a parallel cold start on the runner outlasts the bridge's 15 s `--version` probe.
       - name: Test (default features)
-        run: cargo test --workspace
+        run: cargo test --workspace ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
   index-surreal:
     name: ubuntu-latest / index-surreal
