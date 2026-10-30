@@ -91,6 +91,11 @@ impl std::fmt::Display for FinishError {
                 write!(f, "nothing to commit (use --allow-empty to commit anyway)")
             }
             FinishError::Secrets(hits) => {
+                // The unreadable-staged-LIST pseudo-hit is not a real file, so --allow-secret can
+                // never exempt it: the advice for that line is repair-only (GLM, review-2026-10-30).
+                let staged_list_unreadable = hits
+                    .iter()
+                    .any(|h| h.path == secret_gate::STAGED_LIST_PSEUDO_PATH);
                 writeln!(
                     f,
                     "refusing to commit: {} staged file(s) carry a secret-shaped value (nothing was unstaged so you can inspect them):",
@@ -99,10 +104,17 @@ impl std::fmt::Display for FinishError {
                 for h in hits {
                     writeln!(f, "  {}", h.line())?;
                 }
-                write!(
-                    f,
-                    "pass --allow-secret <path> for each file you have reviewed"
-                )
+                if staged_list_unreadable {
+                    write!(
+                        f,
+                        "git could not list the staged files - repair the repository (git status must work) and run c3 finish again; --allow-secret does not apply"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "pass --allow-secret <path> for each file you have reviewed"
+                    )
+                }
             }
             FinishError::MessageSecret(kinds) => write!(
                 f,
@@ -285,4 +297,48 @@ pub fn run_manifest(
     }
     std::fs::write(&path, updated).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use secret_gate::{STAGED_LIST_PSEUDO_PATH, UNREADABLE};
+
+    #[test]
+    fn staged_list_unreadable_refusal_says_allow_secret_does_not_apply() {
+        let err = FinishError::Secrets(vec![SecretHit {
+            path: STAGED_LIST_PSEUDO_PATH.into(),
+            kinds: UNREADABLE.into(),
+        }]);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("git could not list the staged files"),
+            "message: {msg}"
+        );
+        assert!(
+            msg.contains("--allow-secret does not apply"),
+            "message: {msg}"
+        );
+        assert!(
+            !msg.contains("pass --allow-secret <path>"),
+            "the repair-only advice must replace the per-file advice: {msg}"
+        );
+    }
+
+    #[test]
+    fn ordinary_secret_refusal_keeps_the_allow_secret_advice() {
+        let err = FinishError::Secrets(vec![SecretHit {
+            path: "config/app.toml".into(),
+            kinds: "openai-key".into(),
+        }]);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("pass --allow-secret <path> for each file you have reviewed"),
+            "message: {msg}"
+        );
+        assert!(
+            !msg.contains("--allow-secret does not apply"),
+            "message: {msg}"
+        );
+    }
 }

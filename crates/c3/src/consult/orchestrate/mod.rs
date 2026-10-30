@@ -372,6 +372,42 @@ struct Drift {
     artifacts_changed_paths: Vec<String>,
 }
 
+/// (Muse, review-2026-10-30) Re-hash the brief and every bound artifact against the baselines
+/// `ctx` recorded before the run, and return the brief/artifact half of [`Drift`]:
+/// `(brief_sha_after, brief_changed, artifact records, changed artifact paths)`. Called for the
+/// primary snapshot AND the authoritative post-last-turn re-take, so a write during a secondary
+/// turn is caught the same way the first computation catches a primary-turn write.
+fn brief_artifact_drift(ctx: &Context) -> (String, bool, Vec<serde_json::Value>, Vec<String>) {
+    let brief_sha_after = ctx
+        .brief_path
+        .as_ref()
+        .and_then(|p| std::fs::read(p).ok())
+        .map(|b| c3_core::sha256_hex(&b))
+        .unwrap_or_default();
+    let brief_changed = !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after;
+    let mut artifact_records: Vec<serde_json::Value> = Vec::new();
+    let mut artifacts_changed_paths: Vec<String> = Vec::new();
+    for a in &ctx.artifacts {
+        let after = std::fs::read(&a.full)
+            .map(|b| c3_core::sha256_hex(&b))
+            .unwrap_or_else(|_| "missing".into());
+        if after != a.sha256 {
+            artifacts_changed_paths.push(a.path.clone());
+        }
+        artifact_records.push(serde_json::json!({
+            "path": a.path,
+            "sha256": a.sha256,
+            "sha256_after": after,
+        }));
+    }
+    (
+        brief_sha_after,
+        brief_changed,
+        artifact_records,
+        artifacts_changed_paths,
+    )
+}
+
 /// One resolved artifact bound to the review (`Resolve-ArtifactPaths` + `Get-ArtifactHashes`):
 /// the path as given, the absolute path the after-run rehash reads, and the pre-run sha256.
 #[derive(Debug, Clone)]
@@ -2336,8 +2372,14 @@ fn build_context(
     // (0.2.4) an engine whose spec says `inline_brief` (grok) gets the brief's text too. A failed
     // read must refuse before anything starts (Muse, review-2026-10-30): silently inlining nothing
     // would send the reviewer a brief-less prompt that looks complete.
+    // NOT on a code-review purpose: with the brief inlined grok answered an acceptance prompt in
+    // one model call with 0 tool calls (2 of 2), without it the same prompt made 59 tool calls
+    // (probe 2026-10-30) - there it must open the brief and the code itself, and the zero-tool
+    // guard (`grok_review_tool_guard`) rejects an answer that did not.
+    let code_review =
+        crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES.contains(&o.purpose.as_str());
     let brief_text = match &brief_path {
-        Some(bp) if spec.inline_brief => match std::fs::read_to_string(bp) {
+        Some(bp) if spec.inline_brief && !code_review => match std::fs::read_to_string(bp) {
             Ok(t) => t,
             Err(e) => return Err((format!("the brief could not be read for inlining: {e}"), 1)),
         },
@@ -4461,36 +4503,17 @@ fn finish(args: Finish) -> i32 {
     // note. The brief changing during the review is a warning too.
     let rev_after = revision::revision_info(&ctx.repo_root, Some(&ctx.collab_root));
     let tree_cmp = revision::compare_tree_content(&ctx.revision, &rev_after);
-    let brief_sha_after = ctx
-        .brief_path
-        .as_ref()
-        .and_then(|p| std::fs::read(p).ok())
-        .map(|b| c3_core::sha256_hex(&b))
-        .unwrap_or_default();
     // Artifact drift: rehash each bound artifact from its absolute path and compare
     // (`codex-consult.ps1:4429`). A changed artifact is a WARNING and sets the ledger flag.
-    let mut artifact_records: Vec<serde_json::Value> = Vec::new();
-    let mut artifacts_changed_paths: Vec<String> = Vec::new();
-    for a in &ctx.artifacts {
-        let after = std::fs::read(&a.full)
-            .map(|b| c3_core::sha256_hex(&b))
-            .unwrap_or_else(|_| "missing".into());
-        if after != a.sha256 {
-            artifacts_changed_paths.push(a.path.clone());
-        }
-        artifact_records.push(serde_json::json!({
-            "path": a.path,
-            "sha256": a.sha256,
-            "sha256_after": after,
-        }));
-    }
+    let (brief_sha_after, brief_changed, artifact_records, artifacts_changed_paths) =
+        brief_artifact_drift(&ctx);
     let mut drift = Drift {
         tree_sha256_after: rev_after.tree_sha256.clone(),
         tree_changed: tree_cmp.changed,
         tree_changed_paths: tree_cmp.paths.clone(),
         revision_moved: tree_cmp.revision_moved.clone(),
-        brief_sha_after: brief_sha_after.clone(),
-        brief_changed: !ctx.brief_sha.is_empty() && ctx.brief_sha != brief_sha_after,
+        brief_sha_after,
+        brief_changed,
         artifacts: artifact_records,
         artifacts_changed_paths,
     };
@@ -4738,6 +4761,20 @@ fn finish(args: Finish) -> i32 {
         drift.tree_changed = tree_cmp_last.changed;
         drift.tree_changed_paths = tree_cmp_last.paths.clone();
         drift.revision_moved = tree_cmp_last.revision_moved.clone();
+        // (GLM, review-2026-10-30, finding #1) Re-hash the brief and every bound artifact the same
+        // way as the primary snapshot, so a write to either during a denial retry / timeout
+        // continuation / format repair is caught here too (the first computation ran before the
+        // secondary turns). `engine_tree_check` below reads `brief_changed`/`artifacts_changed_paths`.
+        let (
+            brief_sha_after_last,
+            brief_changed_last,
+            artifact_records_last,
+            artifacts_changed_last,
+        ) = brief_artifact_drift(&ctx);
+        drift.brief_sha_after = brief_sha_after_last;
+        drift.brief_changed = brief_changed_last;
+        drift.artifacts = artifact_records_last;
+        drift.artifacts_changed_paths = artifacts_changed_last;
         let collab_after = crate::engines::tree_check::collab_snapshot(&ctx.collab_root);
         let agy_all = aggregate_agy_tool_names(&ctx, &detail);
         let claude_init = claude_tree_init(&ctx, &main_events_text);

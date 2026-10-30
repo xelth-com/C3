@@ -76,7 +76,7 @@ pub fn scan_staged(repo_root: &Path, allow: &[String]) -> Vec<SecretHit> {
     // Fail closed: what cannot be read cannot be shown clean (Astra, review-2026-10-30).
     let Some(paths) = staged_text_paths(repo_root) else {
         hits.push(SecretHit {
-            path: "<the staged file list>".into(),
+            path: STAGED_LIST_PSEUDO_PATH.into(),
             kinds: UNREADABLE.into(),
         });
         return hits;
@@ -157,6 +157,11 @@ pub fn added_from_diff(diff: &str) -> String {
 /// The `kinds` of a staged file whose diff (or the staged list) could not be read: the gate
 /// refuses it like a secret, so a git failure never lets content through unscanned.
 pub const UNREADABLE: &str = "unreadable (git could not show the staged change)";
+
+/// The pseudo-path of the fail-closed hit raised when git cannot even LIST the staged files: not a
+/// real file, so `--allow-secret` can never exempt it (the finish refusal says so). Repairing the
+/// repository (so `git status` works) is the only way through.
+pub const STAGED_LIST_PSEUDO_PATH: &str = "<the staged file list>";
 
 /// The `kinds` of a staged key-container file, refused by extension regardless of content.
 pub const KEY_CONTAINER: &str = "key-container";

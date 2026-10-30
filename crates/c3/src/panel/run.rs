@@ -2355,7 +2355,17 @@ fn patch_routing_picked(
     };
     let mut sessions = match store.read_sessions(task) {
         Ok(Some(s)) => s,
-        _ => {
+        other => {
+            // (GLM, review-2026-10-30) sessions.json unreadable/unparsable/absent: warn (mirroring
+            // the lock-failure arm) instead of silently no-opping, so the stale build-time picks the
+            // re-seat was meant to rewrite do not pass unnoticed.
+            let reason = match other {
+                Err(e) => c3_core::one_line(&e.to_string()),
+                _ => "sessions.json is missing".to_string(),
+            };
+            println!(
+                "{TOOL}: could not rewrite routing.picked after the re-seat: {reason}; the ledger keeps the build-time picks"
+            );
             drop(lock);
             return;
         }

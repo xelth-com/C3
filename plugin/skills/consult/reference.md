@@ -101,7 +101,10 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   `C3_GROK_ALLOW_API_KEY=1`; `c3 providers` names the billing route. Reviewer use only (no `c3 work`).
   On a reviewing purpose (`acceptance`, `core-contract`, `diff-review`, `checkpoint`) a primary turn
   that answers with zero tool calls read no file, so it is failed (class `capability`, no provider
-  outage) with `ask again` rather than recorded as a usable reply.
+  outage) with `ask again` rather than recorded as a usable reply. The brief's text is inlined into
+  a grok prompt only on the OTHER purposes (framing, decision, ...): inlined, grok answered a code
+  review without opening a file (0 of 0 tool calls, 2 of 2 runs); pointed at the file, it read the
+  code (59 tool calls).
 - **`http`** — an OpenAI-compatible `chat/completions` request built from a reviewer pack; no
   CLI, no subscription, no tools (OpenRouter by default). Wired via `setup-providers` section
   4b (`ext.c3.reviewers`). The key is read from an environment variable the user sets, bound to

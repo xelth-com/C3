@@ -59,6 +59,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "staged_text_paths now uses --diff-filter=ACMRT (secret_gate.rs:195), typechange entries are scanned.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -120,6 +128,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A None staged list pushes an UNREADABLE hit and returns before any commit path (secret_gate.rs:77-83).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -181,6 +197,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "agy_tool_is_writing is an exact allow-list, empty/unknown names are writing (tree_check.rs:182-201).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -246,6 +270,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Relaxation unchanged (tree_check.rs:96-172) but accepted as a decided boundary (TECH_DEBT:44).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -311,6 +343,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "RULES stays test-documented with runtime on scalar predicates; accepted boundary (TECH_DEBT:46); health.rs now at least calls retention::model_unsupported_live (health.rs:1226).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -376,6 +416,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "hash-object -w with unwrap_or_default swallow remains (record.rs:577-586, 636-643); accepted boundary (TECH_DEBT:47).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -432,6 +480,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Wording-based is_preflight_refusal unchanged (run.rs:2061-2065); producers still emit the phrases verbatim (verdict.rs:89,117,219,230); accepted boundary (TECH_DEBT:45).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -488,6 +544,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "scan_staged_text is lossy UTF-8 (secret_gate.rs:38-40) and a NUL-bearing change scans the staged blob (109-117).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -548,6 +612,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Binary/NUL blobs scanned via staged_blob lossy; key-container extensions refused regardless of content (secret_gate.rs:92-98, 109-120, 168-182).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -604,6 +676,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Same exact allow-list fix as F03-3.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -664,6 +744,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "claude still warns on a tree change (tree.rs:53-62), now mitigated by the init proof: extra_tools fails (tree.rs:183-191), no_init still warns; accepted boundary (TECH_DEBT:43).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -729,6 +817,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Same accepted collab-scope boundary as F03-4.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -785,6 +881,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "scope_violations fails closed on an unbuildable glob set with a leading sentinel (record.rs:777-791, 796).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -850,6 +954,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Work reader death write is under the admission lock with a fresh re-read (record.rs:215-237); consult reader under the shared task lock (detach.rs:1304-1386).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -915,6 +1027,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A failed brief read for inline_brief refuses before anything starts (orchestrate/mod.rs:2339-2345).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -993,6 +1113,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "never_commit.rs:26-29 covers .events-resume-*, .stderr-resume-*, .consult.detached-*.prompt.txt and .status.json; .log stays committed by convention.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1058,6 +1186,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Binary staged changes scan the blob; the commit message is scanned before side effects (finish/mod.rs:188-190, secret_gate.rs:56-58).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1132,6 +1268,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A writing agy tool call fails BEFORE the clean early-return even when the compare is clean (tree.rs:239-259).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1206,6 +1350,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "extra_tools half fixed (tree.rs:183-198); a claude turn with no init event still only warns with a note (tree.rs:184-186) - inside the accepted boundary.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1280,6 +1432,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Tool names aggregated from all turn streams (mod.rs:4064-4080) and the compare retaken after the last turn (mod.rs:4729-4751); empty tool_name is writing.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1358,6 +1518,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Final-seat summary/exit (run.rs:1697-1761, 1808), new seat number beyond the planned seats (run.rs:1244-1247), routing.picked rewritten under the write lock (run.rs:2339-2410); residual: silent no-op on a sessions read failure (see finding #3).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1423,6 +1591,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A reserve joins the seated runner\u0027s endpoint group by fingerprint (run.rs:733-742); an unknown group defaults to limit 1 (run.rs:1310).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1506,6 +1682,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "reader_should_record_death requires !bridge_alive (detach.rs:1336-1340) and the re-read+write happen under the shared task lock (1346-1386); the Windows exit-FILETIME=None behavior is documented-intentional (proc.rs:1390-1396), not a defect.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1580,6 +1764,14 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Only a usable reply or a model-unsupported record decides the model mark; other failures are skipped (health.rs:1213-1230).",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
                                              ]
                      },
@@ -1640,7 +1832,185 @@
                                                      "note":  "Reading in progress.",
                                                      "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
                                                      "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 },
+                                                 {
+                                                     "consult":  8,
+                                                     "when":  "2026-10-30T16:56:14+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Baseline blobs stay loose/unreachable by design (accepted boundary, TECH_DEBT:47); the patch.diff content itself is now caught by the staged-lines gate when committed.",
+                                                     "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                                     "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
                                                  }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-1",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  4493
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  4735
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  163
+                                           }
+                                       ],
+                         "claim":  "The authoritative post-last-turn drift check re-takes only the working-tree and collab compares; drift.brief_changed and drift.artifacts_changed_paths keep the values computed BEFORE the secondary turns, so a write to the brief or a bound artifact made during a denial retry, timeout continuation or format repair is missed, contradicting the fix\u0027s own claim that the compare runs \u0027after the last engine turn\u0027.",
+                         "trigger":  "A reviewer (or anyone) modifies the brief file or a bound artifact during a secondary turn of a c3 consult run; the primary-turn snapshot at mod.rs:4462-4496 ran before the secondary turns (4512-4720) and the post-turn block (4729-4741) updates only the tree fields.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:4462-4496",
+                                              "observation":  "drift is built there (brief_sha_after, artifacts rehash) before the secondary-turn section at 4512+"
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:4729-4751",
+                                              "observation":  "the post-last-turn block re-assigns only tree_sha256_after/tree_changed/tree_changed_paths/revision_moved and retakes the collab snapshot; brief/artifacts fields are untouched"
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:163-177",
+                                              "observation":  "engine_tree_check still reads the stale drift.brief_changed and drift.artifacts_changed_paths"
+                                          }
+                                      ],
+                         "verification":  "In a scratch repo, snapshot the brief, run a consult whose timeout-continuation turn rewrites the brief file back to identical content later is invisible: instead, mutate the brief during the continuation turn only and confirm the recorded tree_check reports no brief change (expected: it should warn/fail on brief drift).",
+                         "remedy":  "In the post-last-turn block, also rehash the brief (ctx.brief_path) and each bound artifact and overwrite drift.brief_changed / drift.artifacts_changed_paths before calling engine_tree_check.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/10-claudecode-fix-verification-glm.md",
+                                        "thread":  "47775d09-6d69-4745-9de6-cc1963b0d6fe",
+                                        "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                        "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T16:56:14+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                             "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-2",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/finish/secret_gate.rs",
+                                               "line":  77
+                                           }
+                                       ],
+                         "claim":  "The fail-closed refusal for an unreadable staged LIST returns before the allow set is consulted, so no --allow-secret value can ever pass it; a persistent git listing failure hard-blocks c3 finish until the git state is repaired (acceptable fail-closed, but there is no override).",
+                         "trigger":  "git diff --cached --name-only --diff-filter=ACMRT -z fails persistently (corrupt index, lock) during c3 finish.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/secret_gate.rs:72-83",
+                                              "observation":  "staged_text_paths None pushes SecretHit{path:\"\u003cthe staged file list\u003e\"} and returns immediately, before the per-path allow.contains check at line 85"
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "crates/c3/src/finish/mod.rs:188-209",
+                                              "observation":  "FinishError::Secrets with this pseudo-path prints the --allow-secret advice, which cannot work for it"
+                                          }
+                                      ],
+                         "verification":  "Break the staged listing (e.g. GIT_INDEX_FILE at a corrupt index) in a scratch repo, run c3 finish, and try every --allow-secret spelling; confirm it still refuses.",
+                         "remedy":  "Either document that this refusal is repair-only (change the printed advice for the pseudo-path), or add an explicit --allow-unreadable-list escape hatch behind a loud warning.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/10-claudecode-fix-verification-glm.md",
+                                        "thread":  "47775d09-6d69-4745-9de6-cc1963b0d6fe",
+                                        "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                        "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T16:56:14+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                             "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-3",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  2356
+                                           }
+                                       ],
+                         "claim":  "patch_routing_picked silently no-ops when sessions.json cannot be read or parsed (it prints a message only on lock failure), after the panel already printed \u0027re-seating\u0027; the ledger then keeps the build-time routing.picked that the fix was meant to rewrite.",
+                         "trigger":  "A re-seat fires and store.read_sessions returns Err/None (transient IO or a parse error) at the final rewrite.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:2346-2362",
+                                              "observation":  "lock failure prints a message; the read_sessions failure arm drops the lock and returns without any report"
+                                          }
+                                      ],
+                         "verification":  "Make sessions.json unreadable in a harness after a forced re-seat and confirm whether any warning is printed while routing.picked stays stale.",
+                         "remedy":  "Print a warning in the read_sessions failure arm, mirroring the lock-failure arm.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  8,
+                                        "reply":  "handoffs/10-claudecode-fix-verification-glm.md",
+                                        "thread":  "47775d09-6d69-4745-9de6-cc1963b0d6fe",
+                                        "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                        "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T16:56:14+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
+                                             "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
                                              ]
                      }
                  ],
@@ -1739,6 +2109,52 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1793374283
+                    },
+                    {
+                        "n":  7,
+                        "consult_id":  "9667438f-6cb6-4156-9c68-e7a2b6ca28fd",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "acceptance",
+                        "topics":  [
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T16:46:43+01:00",
+                        "useful":  "no",
+                        "note":  "acceptance again with 0 tool calls - rejected by the new guard; grok with the brief inlined answered without reading twice in a row",
+                        "when":  "2026-10-30T16:48:19+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793375299
+                    },
+                    {
+                        "n":  8,
+                        "consult_id":  "e41ae2ce-d08e-48d7-ac26-c68f23d85460",
+                        "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                        "provider":  "ZAI-claude",
+                        "model":  "glm-5.3",
+                        "engine":  "claude",
+                        "purpose":  "acceptance",
+                        "topics":  [
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T16:48:23+01:00",
+                        "useful":  "yes",
+                        "note":  "GLM acceptance: ACCEPT with file:line evidence; found the brief/artifact drift not retaken after the last turn and two silent paths",
+                        "when":  "2026-10-30T16:56:28+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793375788
                     }
                 ]
 }
