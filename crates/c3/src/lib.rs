@@ -47,3 +47,5 @@ pub mod mcp;
 pub mod work;
 
 pub mod finish;
+
+pub mod setup;

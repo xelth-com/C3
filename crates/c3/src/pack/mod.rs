@@ -18,6 +18,7 @@ pub mod explain;
 pub mod profile;
 pub mod redact;
 pub mod reviewer;
+pub mod scout;
 pub mod snapshot;
 
 use std::collections::BTreeSet;

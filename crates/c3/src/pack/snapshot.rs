@@ -342,6 +342,15 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         body_out.push_str(&format!("{}\n\n[FILE DELETED]\n\n", file_marker(del)));
     }
 
+    // At a tree-only depth (0) no bodies are rendered, so `included_paths` is empty; the
+    // tree and the file count still reflect the discovered set.
+    let tree_source: Vec<String> = if depth.tree_only {
+        included.iter().map(|e| e.rel.clone()).collect()
+    } else {
+        included_paths.clone()
+    };
+    let file_count = tree_source.len();
+
     // Header.
     let rev = crate::consult::revision::revision_info(&opts.repo_root, Some(&opts.collab_root));
     let project = opts
@@ -395,8 +404,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         depth.level, depth.max_lines
     ));
     header.push_str(&format!(
-        "- Files: {} ({redactions} redaction(s) applied)\n",
-        included_paths.len()
+        "- Files: {file_count} ({redactions} redaction(s) applied)\n"
     ));
     if !deletions.is_empty() {
         header.push_str(&format!("- Deleted since anchor: {}\n", deletions.len()));
@@ -405,7 +413,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     // Tree (over included + deleted paths).
     let mut tree_block = String::new();
     if opts.tree {
-        let mut all_paths = included_paths.clone();
+        let mut all_paths = tree_source.clone();
         all_paths.extend(deletions.iter().cloned());
         all_paths.sort();
         tree_block = format!(
@@ -465,7 +473,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         size_bytes: full.len(),
         tokens,
         redactions,
-        files: included_paths.len(),
+        files: file_count,
         delta_entries,
         anchor,
         wrote: true,
@@ -781,6 +789,42 @@ mod tests {
         assert_eq!(r.files, 1);
         // Anchor written by the full snapshot.
         assert!(read_anchor(&opts.collab_root).is_some());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn tree_only_depth_lists_discovered_files_in_the_tree() {
+        let d = scratch_repo("treeonly");
+        fs::write(d.join("a.rs"), "pub fn a() {}\n").unwrap();
+        fs::create_dir_all(d.join("sub")).unwrap();
+        fs::write(d.join("sub/b.rs"), "pub fn b() {}\n").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-qm", "init"]);
+        let out = d.join("tree.md");
+        let opts = SnapshotOpts {
+            repo_root: d.clone(),
+            collab_root: d.join(".collab"),
+            out: Some(out.clone()),
+            delta: false,
+            depth: 0,
+            budget: 0,
+            focus: vec![],
+            tree: true,
+            max_file_size: 2 * 1024 * 1024,
+            fail: false,
+            eck: false,
+            keep: 0,
+            embed_report: None,
+            base: None,
+            profile: vec![],
+        };
+        let r = run(&opts).unwrap();
+        let text = fs::read_to_string(&out).unwrap();
+        // Tree-only: the tree lists the files, the file count reflects them, but no bodies.
+        assert!(text.contains("a.rs"), "tree should list a.rs: {text}");
+        assert!(text.contains("b.rs"), "tree should list sub/b.rs: {text}");
+        assert!(!text.contains("--- File: a.rs ---"), "no bodies at depth 0");
+        assert_eq!(r.files, 2, "file count reflects the discovered set");
         let _ = fs::remove_dir_all(&d);
     }
 

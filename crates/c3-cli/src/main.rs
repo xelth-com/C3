@@ -72,6 +72,14 @@ enum Commands {
     Fail(c3::cli::fail::FailArgs),
     /// Edit a `.eck/<NAME>.md` manifest; no git, no snapshot.
     Manifest(c3::cli::manifest::ManifestArgs),
+    /// Provision this repository for the C3 workflow (manifests, rules, agents, .mcp.json).
+    Init(c3::cli::init::InitArgs),
+    /// Report stubs, c3 mcp registration, eck leftovers and the snapshot folder size.
+    Doctor(c3::cli::doctor::DoctorArgs),
+    /// Snapshot an EXTERNAL directory into `.eck/scouts/` for context.
+    Scout(c3::cli::scout::ScoutArgs),
+    /// Write the full contents of matching files of THIS repo into `.eck/scouts/`.
+    Fetch(c3::cli::fetch::FetchArgs),
     /// Check for a newer C3 release and, only with `--apply`, install it (wave 11).
     Update(c3::cli::update::UpdateArgs),
 }
@@ -139,6 +147,10 @@ fn main() {
         Some(Commands::Finish(a)) => c3::cli::finish::run(a),
         Some(Commands::Fail(a)) => c3::cli::fail::run(a),
         Some(Commands::Manifest(a)) => c3::cli::manifest::run(a),
+        Some(Commands::Init(a)) => c3::cli::init::run(a),
+        Some(Commands::Doctor(a)) => c3::cli::doctor::run(a),
+        Some(Commands::Scout(a)) => c3::cli::scout::run(a),
+        Some(Commands::Fetch(a)) => c3::cli::fetch::run(a),
         Some(Commands::Update(a)) => c3::cli::update::run(a),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).

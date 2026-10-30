@@ -3,17 +3,21 @@
 //! exit code. The binary in `c3-cli` only parses and dispatches.
 
 pub mod consult;
+pub mod doctor;
 pub mod explain;
 pub mod fail;
+pub mod fetch;
 pub mod findings;
 pub mod finish;
 pub mod hook;
 pub mod index;
+pub mod init;
 pub mod manifest;
 pub mod mcp;
 pub mod pack;
 pub mod router;
 pub mod scoreboard;
+pub mod scout;
 pub mod snapshot;
 pub mod telemetry;
 pub mod update;

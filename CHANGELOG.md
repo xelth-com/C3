@@ -28,6 +28,14 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   from `.eck/profiles.json`; the `finish`/`fail` hand-off snapshot drops every hidden path
   except the `.eck/*.md` manifests (JOURNAL.md excluded) - the first full hand-off of this
   repository was 19.5 MB with every `.collab` brief inside.
+- **Project setup (eck port Part C):** `c3 init` creates the missing `.eck` manifests as
+  `[STUB]`s, adds `.eck/` to `.gitignore`, writes `CLAUDE.md`, `.claude/rules/01-c3-protocol.md`,
+  `02-delegation.md` and the sonnet/opus/haiku worker agents only when missing, and registers
+  `c3 mcp` in `.mcp.json` beside the other servers; `c3 doctor` reports leftover stubs, the MCP
+  registration, eck leftovers and the snapshot folder size; `c3 scout <dir> [--depth]` and
+  `c3 fetch <glob>...` write into `.eck/scouts/`; plugin skills `c3-scout` and `c3-fetch`. The
+  `finish` secret gate now scans only the ADDED lines (an old test fixture no longer re-blocks
+  every commit touching its file). Fixed: `c3 snapshot --depth 0` printed an empty tree.
 - **Dead detached runs leave a death record:** written by the background, or once by the next
   `--status`/`--wait` reader (which side vanished, child exit, elapsed, last engine event, a
   sanitized log tail); `--status`/`--wait` print it and the raw-stream path when it may hold a
