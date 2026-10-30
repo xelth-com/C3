@@ -1484,6 +1484,29 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
             .count() as i64;
         let usable = slots.iter().filter(|s| slot_usable(s)).count() as i64;
         patch_counts(&store, &b.task, &b.panel_id, started, usable);
+        // (Muse, review-2026-10-30, item 9c) a re-seat happened: rewrite `panel.routing.picked` in
+        // every member's committed entry so it reflects the FINAL seats - the lost seat drops out,
+        // the substitute joins. A final rewrite (not a live Arc/Mutex at launch) is the less
+        // invasive choice: it reuses the `patch_counts` pattern and fixes the entries each member's
+        // own child already wrote, with no change to the launch/args path.
+        if !replaced.is_empty() {
+            let lost_positions: Vec<i64> = replaced
+                .iter()
+                .map(|&(lost, _)| b.runners[slots[lost].runner].position)
+                .collect();
+            let substitutes: Vec<SubstitutePick> = replaced
+                .iter()
+                .map(|&(_, sub)| {
+                    let ru = &b.runners[slots[sub].runner];
+                    SubstitutePick {
+                        slot: slots[sub].k,
+                        position: ru.position,
+                        lineage: ru.shown.clone(),
+                    }
+                })
+                .collect();
+            patch_routing_picked(&store, &b.task, &b.panel_id, &lost_positions, &substitutes);
+        }
         // (wave 6, the plugin's wave 28 R17) every member put its event into the spool: ONE
         // detached sender for the panel (not waited for; silent)
         if started > 0
@@ -2300,6 +2323,93 @@ fn patch_counts(store: &FilesStore, task: &TaskSlug, panel_id: &str, started: i6
     drop(lock);
 }
 
+/// (Muse, review-2026-10-30, item 9c) A reserve member promoted into a lost seat: the data its
+/// `panel.routing.picked` row carries after the re-seat.
+struct SubstitutePick {
+    slot: i64,
+    position: i64,
+    lineage: String,
+}
+
+/// (Muse, review-2026-10-30, item 9c) After a re-seat, rewrite `panel.routing.picked` in every
+/// member's committed entry so it reflects the FINAL seats: drop the lost seats (by roster
+/// position) and add each substitute (its new seat number, position, lineage; lab read from the
+/// entry's own `eligible`, rule `reserve`). All members share one routing, so every entry gets the
+/// same final `picked`. A no-op when no substitution happened (byte-identity preserved).
+fn patch_routing_picked(
+    store: &FilesStore,
+    task: &TaskSlug,
+    panel_id: &str,
+    lost_positions: &[i64],
+    substitutes: &[SubstitutePick],
+) {
+    let lock = match store.take_write_lock(task) {
+        Ok(l) => l,
+        Err(e) => {
+            println!(
+                "{TOOL}: the panel's re-seat routing was not written to the ledger ({})",
+                c3_core::one_line(&e.to_string())
+            );
+            return;
+        }
+    };
+    let mut sessions = match store.read_sessions(task) {
+        Ok(Some(s)) => s,
+        _ => {
+            drop(lock);
+            return;
+        }
+    };
+    let mut changed = false;
+    for e in &mut sessions.codex.consults {
+        let Some(p) = &mut e.panel else { continue };
+        if p.id != panel_id {
+            continue;
+        }
+        let Some(routing) = &mut p.routing else {
+            continue;
+        };
+        // Drop the lost seats.
+        routing
+            .picked
+            .retain(|row| !lost_positions.contains(&row.position));
+        // Add each substitute not already present (its lab from this entry's eligible rows).
+        for sub in substitutes {
+            if routing
+                .picked
+                .iter()
+                .any(|row| row.position == sub.position)
+            {
+                continue;
+            }
+            let lab = routing
+                .eligible
+                .iter()
+                .find(|el| el.position == sub.position)
+                .map(|el| el.lab.clone())
+                .unwrap_or_default();
+            routing.picked.push(c3_core::ledger::RoutingPicked {
+                slot: sub.slot,
+                position: sub.position,
+                lineage: sub.lineage.clone(),
+                lab,
+                rule: "reserve".to_string(),
+                extra: Default::default(),
+            });
+        }
+        changed = true;
+    }
+    if changed {
+        if let Ok(bytes) = sessions.to_bytes() {
+            let _ = c3_core::store::write_text_atomic(
+                &store.task_dir(task).join("sessions.json"),
+                &bytes,
+            );
+        }
+    }
+    drop(lock);
+}
+
 /// `Get-PanelMemberGuard`: timeout + 60 + 120, plus one repair turn, one denial-retry turn
 /// (min(timeout, 300) each) and the continuation budget.
 fn panel_member_guard(timeout: i64, continue_sec: i64, repair: bool, denial: bool) -> f64 {
@@ -2657,6 +2767,73 @@ mod tests {
     fn pad_right_pads_and_never_truncates() {
         assert_eq!(pad_right("ab", 5), "ab   ");
         assert_eq!(pad_right("abcdef", 3), "abcdef");
+    }
+
+    // (Muse, review-2026-10-30, item 9c) After a re-seat, every member's committed
+    // `panel.routing.picked` is rewritten over the FINAL seats: the lost seat (roster position 2)
+    // drops out, the promoted reserve (position 3) joins at its new seat number with rule `reserve`
+    // and its lab from the entry's own `eligible`. Both started members carry the identical final
+    // picked. Drives [`patch_routing_picked`] directly over a built sessions.json (the re-seat path
+    // itself is a build-vs-launch availability race, not reachable from a simple roster).
+    #[test]
+    fn patch_routing_picked_reflects_the_live_substitution() {
+        let base = std::env::temp_dir().join(format!(
+            "c3-reseat-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let collab = base.join(".collab");
+        let task_dir = collab.join("t");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        // The build-time routing every member's child wrote: picked = seats 1 and 2 (the lost one),
+        // eligible also lists position 3 (the reserve, with its lab). Two started members have an
+        // entry: the survivor (position 1) and the substitute (position 3); the lost seat wrote none.
+        let routing = r#"{"mode":"routed","order":"rank","picked":[{"slot":1,"position":1,"lineage":"ZAI-a :: glm-5.3","lab":"zai","rule":"roster"},{"slot":2,"position":2,"lineage":"ZAI-b :: glm-5.3","lab":"zai","rule":"roster"}],"eligible":[{"position":1,"lineage":"ZAI-a :: glm-5.3","lab":"zai"},{"position":2,"lineage":"ZAI-b :: glm-5.3","lab":"zai"},{"position":3,"lineage":"ZAI-c :: glm-5.4","lab":"anthropic"}]}"#;
+        let entry = |pos: i64, model: &str| {
+            format!(
+                r#"{{"n":{pos},"bridge_outcome":"usable reply","reviewer":{{"provider":"ZAI","model":"{model}"}},"panel":{{"id":"pid","position":{pos},"of":2,"routing":{routing}}}}}"#
+            )
+        };
+        let sessions = format!(
+            r#"{{"codex":{{"consults":[{},{}]}}}}"#,
+            entry(1, "glm-5.3"),
+            entry(3, "glm-5.4")
+        );
+        std::fs::write(task_dir.join("sessions.json"), sessions).unwrap();
+
+        let store = FilesStore::new(&collab);
+        let task = TaskSlug::new("t".to_string()).unwrap();
+        patch_routing_picked(
+            &store,
+            &task,
+            "pid",
+            &[2],
+            &[SubstitutePick {
+                slot: 3,
+                position: 3,
+                lineage: "ZAI-c :: glm-5.4".to_string(),
+            }],
+        );
+
+        let back = store.read_sessions(&task).unwrap().unwrap();
+        assert_eq!(back.codex.consults.len(), 2);
+        for e in &back.codex.consults {
+            let picked = &e.panel.as_ref().unwrap().routing.as_ref().unwrap().picked;
+            let positions: Vec<i64> = picked.iter().map(|p| p.position).collect();
+            assert_eq!(positions, vec![1, 3], "final picked positions");
+            let sub = picked.iter().find(|p| p.position == 3).unwrap();
+            assert_eq!(sub.slot, 3, "the substitute's new seat number");
+            assert_eq!(sub.rule, "reserve");
+            assert_eq!(sub.lab, "anthropic", "lab resolved from eligible");
+            assert!(
+                !picked.iter().any(|p| p.position == 2),
+                "the lost seat is gone"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
