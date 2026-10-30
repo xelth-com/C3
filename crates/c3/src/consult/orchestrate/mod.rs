@@ -356,6 +356,7 @@ struct Secondary {
 }
 
 /// The after-run drift (`Compare-TreeContent`, the brief/artifact re-hash).
+#[derive(Clone)]
 struct Drift {
     tree_sha256_after: String,
     tree_changed: bool,
@@ -2332,9 +2333,14 @@ fn build_context(
         }
     }
 
-    // (0.2.4) an engine whose spec says `inline_brief` (grok) gets the brief's text too.
+    // (0.2.4) an engine whose spec says `inline_brief` (grok) gets the brief's text too. A failed
+    // read must refuse before anything starts (Muse, review-2026-10-30): silently inlining nothing
+    // would send the reviewer a brief-less prompt that looks complete.
     let brief_text = match &brief_path {
-        Some(bp) if spec.inline_brief => std::fs::read_to_string(bp).unwrap_or_default(),
+        Some(bp) if spec.inline_brief => match std::fs::read_to_string(bp) {
+            Ok(t) => t,
+            Err(e) => return Err((format!("the brief could not be read for inlining: {e}"), 1)),
+        },
         _ => String::new(),
     };
     let prompt_text = prompt::assemble(&PromptInputs {
@@ -4051,6 +4057,47 @@ fn store_pending_path(store: &FilesStore, pending: &PendingRef) -> PathBuf {
     store.task_dir(&pending.task).join(pending.file_name())
 }
 
+/// (Muse, review-2026-10-30) Every agy tool name of the whole run: the primary turn's (already in
+/// `detail`) plus each secondary turn's event stream that exists (the denial retry, the timeout
+/// continuation, the engine format repair). Empty / non-agy runs return the primary's unchanged.
+fn aggregate_agy_tool_names(ctx: &Context, detail: &EngineDetail) -> Vec<String> {
+    let mut names = detail.agy_tool_names.clone();
+    if ctx.engine == "agy" {
+        for rel in [
+            "denial-retry.events.jsonl",
+            "continue.events.jsonl",
+            "repair.events.jsonl",
+        ] {
+            let p = ctx.hpath(rel);
+            if p.is_file() {
+                let text = std::fs::read_to_string(&p).unwrap_or_default();
+                names.extend(crate::engines::agy::read_agy_events(&text, true).tool_names);
+            }
+        }
+    }
+    names
+}
+
+/// (Muse, review-2026-10-30) What a claude run's init event proves for the tree decision, read from
+/// the main turn's event stream: whether there was no init at all, and which listed tools fall
+/// outside the read-only allow-list. Default (ignored) for a non-claude run.
+fn claude_tree_init(ctx: &Context, main_events_text: &str) -> tree::ClaudeInit {
+    if ctx.engine != "claude" {
+        return tree::ClaudeInit::default();
+    }
+    let ev = crate::engines::claude::read_claude_events(main_events_text, true);
+    let extra_tools: Vec<String> = ev
+        .init_tools
+        .iter()
+        .filter(|t| !c3_core::claude::CLAUDE_TOOLS.contains(&t.as_str()))
+        .cloned()
+        .collect();
+    tree::ClaudeInit {
+        no_init: ev.init_count == 0,
+        extra_tools,
+    }
+}
+
 /// Ingest the outcome, render, commit and print the summary.
 /// Inputs to [`finish`]: the run context and its stores/records, the attempt outcome and engine
 /// detail, the pre-run collab snapshot, the commit timestamp and any registration failure / kill
@@ -4436,7 +4483,7 @@ fn finish(args: Finish) -> i32 {
             "sha256_after": after,
         }));
     }
-    let drift = Drift {
+    let mut drift = Drift {
         tree_sha256_after: rev_after.tree_sha256.clone(),
         tree_changed: tree_cmp.changed,
         tree_changed_paths: tree_cmp.paths.clone(),
@@ -4535,9 +4582,10 @@ fn finish(args: Finish) -> i32 {
     let mut engine_forced_class = detail.forced_class.clone();
     sec.msp_version = detail.msp_schema_version;
 
-    // Engine (agy/muse) read-only tree check + denial retry, after the main turn and before the
-    // secondary turns. A write to the working tree or the collab dir fails the run
-    // (`Get-EngineTreeProblem`, D12): forced class `permission`, the reply discarded.
+    // Engine (agy/muse/grok/http/claude) secondary setup + the agy denial retry, after the main
+    // turn. The AUTHORITATIVE read-only tree check moved to AFTER the last turn (Muse,
+    // review-2026-10-30): a write by a secondary turn must be caught too, so the compare and the
+    // agy tool-name collection run once everything has run (see below).
     if is_engine {
         sec.engine_turns = 1;
         // (STEP 2) The http seat runs its own secondary turn (a format-repair replay or a timeout
@@ -4556,37 +4604,13 @@ fn finish(args: Finish) -> i32 {
         if usable {
             sec.engine_warnings.extend(detail.warnings.clone());
         }
-        let collab_after = crate::engines::tree_check::collab_snapshot(&ctx.collab_root);
-        let check = engine_tree_check(
-            &ctx,
-            &drift,
-            &collab_before,
-            &collab_after,
-            &detail.agy_tool_names,
-        );
-        sec.tree_check_outcome = check.outcome.clone();
-        sec.tree_check_files = check.files.clone();
-        // A write-disabled engine (muse) WARNS: the reply stays usable, the change is recorded as
-        // a warning (D9). agy FAILS: forced class `permission`, the reply discarded (D12).
-        for w in &check.warnings {
-            sec.engine_warnings.push(w.clone());
-        }
-        let tree_problem = check.problem;
-        if !tree_problem.is_empty() {
-            engine_forced_class = "permission".to_string();
-            if bridge_outcome == "usable reply" {
-                bridge_outcome = format!("failed: {tree_problem}");
-                usable = false;
-                structured = None;
-            } else {
-                bridge_outcome = format!("{bridge_outcome}; also: {tree_problem}");
-            }
-        }
-        sec.tree_problem = tree_problem;
+        // The tree problem is not yet known (the check runs after the last turn), so the denial
+        // retry is no longer gated on it; if the tree did change, the post-turn check fails the run
+        // and discards the retry's reply anyway.
         run_engine_denial_retry(DenialRetry {
             ctx: &ctx,
             detail: &detail,
-            tree_problem: &sec.tree_problem.clone(),
+            tree_problem: "",
             sec: &mut sec,
             bridge_outcome: &mut bridge_outcome,
             raw_text: &mut raw_text,
@@ -4700,6 +4724,51 @@ fn finish(args: Finish) -> i32 {
     }
     // (0.6.0, wave 29, item 9) the coordinator rule again, with the model the run resolved
     claude_coordinator_recheck(&ctx, &mut sec);
+
+    // (Muse, review-2026-10-30) The AUTHORITATIVE read-only tree check, run AFTER the LAST engine
+    // turn (primary + denial retry + timeout continuation + format repair). The compare is retaken
+    // now and agy's tool names are aggregated from EVERY turn's event stream, so a write by a
+    // secondary turn is caught. `usable`/`structured` may be cleared here, before the reply.json
+    // preservation below reads them.
+    if is_engine {
+        let rev_after_last = revision::revision_info(&ctx.repo_root, Some(&ctx.collab_root));
+        let tree_cmp_last = revision::compare_tree_content(&ctx.revision, &rev_after_last);
+        drift.tree_sha256_after = rev_after_last.tree_sha256.clone();
+        drift.tree_changed = tree_cmp_last.changed;
+        drift.tree_changed_paths = tree_cmp_last.paths.clone();
+        drift.revision_moved = tree_cmp_last.revision_moved.clone();
+        let collab_after = crate::engines::tree_check::collab_snapshot(&ctx.collab_root);
+        let agy_all = aggregate_agy_tool_names(&ctx, &detail);
+        let claude_init = claude_tree_init(&ctx, &main_events_text);
+        let check = engine_tree_check(
+            &ctx,
+            &drift,
+            &collab_before,
+            &collab_after,
+            &agy_all,
+            &claude_init,
+        );
+        sec.tree_check_outcome = check.outcome.clone();
+        sec.tree_check_files = check.files.clone();
+        // A write-disabled engine (muse/grok/http, or a read-only-init claude) WARNS: the reply
+        // stays usable, the change is recorded as a warning (D9). agy and a write-capable claude
+        // FAIL: forced class `permission`, the reply discarded (D12).
+        for w in &check.warnings {
+            sec.engine_warnings.push(w.clone());
+        }
+        let tree_problem = check.problem;
+        if !tree_problem.is_empty() {
+            engine_forced_class = "permission".to_string();
+            if bridge_outcome == "usable reply" {
+                bridge_outcome = format!("failed: {tree_problem}");
+                usable = false;
+                structured = None;
+            } else {
+                bridge_outcome = format!("{bridge_outcome}; also: {tree_problem}");
+            }
+        }
+        sec.tree_problem = tree_problem;
+    }
 
     // (F04-11) Preserve the raw reply as `.reply.json` at the handoff path BEFORE the write lock
     // (README "Write order": `.reply.json` first), so a crash during the commit still leaves the
@@ -6132,13 +6201,24 @@ mod engine_tests {
         let why = vec!["the working tree changed during the run (1 file: a.rs)".to_string()];
         let warn = vec!["the working tree changed during the run (1 file: a.rs) - x".to_string()];
         let files = vec!["a.rs".to_string()];
+        // write-disabled engines (muse/grok/http/claude-with-read-only-init) warn; agy is not.
         let run = |engine: &str, tools: &[&str]| {
             let names: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
-            engine_tree_outcome(engine, &names, why.clone(), warn.clone(), files.clone())
+            let wd = matches!(engine, "muse" | "grok" | "http" | "claude");
+            engine_tree_outcome(
+                engine,
+                &names,
+                wd,
+                None,
+                why.clone(),
+                warn.clone(),
+                files.clone(),
+            )
         };
 
         // Nothing changed → clean, whatever the engine.
-        let clean = engine_tree_outcome("agy", &[], Vec::new(), Vec::new(), Vec::new());
+        let clean =
+            engine_tree_outcome("agy", &[], false, None, Vec::new(), Vec::new(), Vec::new());
         assert_eq!(clean.outcome, "clean");
 
         // (decision 1) a claude change WARNS (the reply stays usable); the warning is kept.
@@ -6168,6 +6248,57 @@ mod engine_tests {
         let n = run("agy", &[]);
         assert_eq!(n.outcome, "failed");
         assert!(n.problem.contains("its event stream named no tool call"));
+
+        // (BLOCKER, review-2026-10-30) agy that called a WRITING tool FAILS even when NOTHING
+        // monitored changed (a write into an ignored path must not pass the clean early return).
+        let b = engine_tree_outcome(
+            "agy",
+            &["view_file".into(), "write_file".into()],
+            false,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(b.outcome, "failed");
+        assert!(b.problem.contains("a writing tool was called: write_file"));
+        assert!(b.warnings.is_empty());
+        // A read-only-only agy stream with nothing changed is still clean (no false positive).
+        let ok = engine_tree_outcome(
+            "agy",
+            &["view_file".into()],
+            false,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        );
+        assert_eq!(ok.outcome, "clean");
+
+        // (Muse, review-2026-10-30) claude whose init listed a write-capable tool is NOT
+        // write-disabled: a tree change FAILS (with the caller's note), not warns.
+        let cf = engine_tree_outcome(
+            "claude",
+            &[],
+            false,
+            Some("claude's init event listed tool(s) outside Read,Grep,Glob: Bash - ..."),
+            why.clone(),
+            warn.clone(),
+            files.clone(),
+        );
+        assert_eq!(cf.outcome, "failed");
+        assert!(cf.problem.contains("Bash"));
+        // claude with a read-only init (write_disabled) still WARNS on a change.
+        let cw = engine_tree_outcome(
+            "claude",
+            &[],
+            true,
+            None,
+            why.clone(),
+            warn.clone(),
+            files.clone(),
+        );
+        assert_eq!(cw.outcome, "warned");
     }
 
     #[test]

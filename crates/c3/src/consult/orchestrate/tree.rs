@@ -76,12 +76,26 @@ pub(super) struct EngineTreeCheck {
     pub(super) files: Vec<String>,
 }
 
+/// What a claude turn's init event proves for the tree decision (Muse, review-2026-10-30). The init
+/// event names the tool set the CLI actually ran with; `--restricted --tools Read,Grep,Glob` is only
+/// trusted when the init confirms it.
+#[derive(Debug, Clone, Default)]
+pub(super) struct ClaudeInit {
+    /// No init event at all - the tool set could not be confirmed (keep WARN, add a note).
+    pub(super) no_init: bool,
+    /// Tools the init event listed that are outside the read-only allow-list (empty when confirmed
+    /// read-only, or when this is not a claude run). Non-empty ⟹ NOT write-disabled (fails like agy
+    /// on a tree change).
+    pub(super) extra_tools: Vec<String>,
+}
+
 pub(super) fn engine_tree_check(
     ctx: &Context,
     drift: &Drift,
     collab_before: &std::collections::HashMap<String, String>,
     collab_after: &std::collections::HashMap<String, String>,
     agy_tool_names: &[String],
+    claude_init: &ClaudeInit,
 ) -> EngineTreeCheck {
     let mut why: Vec<String> = Vec::new();
     let mut warn: Vec<String> = Vec::new();
@@ -161,7 +175,36 @@ pub(super) fn engine_tree_check(
             "artifact(s) changed during the run ({list}) - {not_mine}"
         ));
     }
-    engine_tree_outcome(&ctx.engine, agy_tool_names, why, warn, files)
+    // (Muse, review-2026-10-30) The claude tree decision turns on its init proof, not on the engine
+    // name: its own tools cannot have written ONLY when the init event confirms the read-only tool
+    // set. A claude turn whose init lists a tool outside Read/Grep/Glob is NOT write-disabled (a
+    // tree change then FAILS like agy); a turn with NO init event stays write-disabled (WARN) but
+    // the tool set could not be confirmed, so a note says so.
+    let claude_write_capable = ctx.engine == "claude" && !claude_init.extra_tools.is_empty();
+    if ctx.engine == "claude" && claude_init.no_init {
+        warn.push("no init event: the tool set could not be confirmed".to_string());
+    }
+    let write_disabled = if ctx.engine == "claude" {
+        !claude_write_capable
+    } else {
+        engine_write_disabled(&ctx.engine)
+    };
+    let claude_note = claude_write_capable.then(|| {
+        format!(
+            "claude's init event listed tool(s) outside {}: {} - its read-only capability is not proven",
+            c3_core::claude::CLAUDE_TOOLS_ARG,
+            claude_init.extra_tools.join(", ")
+        )
+    });
+    engine_tree_outcome(
+        &ctx.engine,
+        agy_tool_names,
+        write_disabled,
+        claude_note.as_deref(),
+        why,
+        warn,
+        files,
+    )
 }
 
 /// Decide the tree-check outcome from the collected change reasons (`why`), their warning form
@@ -177,10 +220,43 @@ pub(super) fn engine_tree_check(
 pub(super) fn engine_tree_outcome(
     engine: &str,
     agy_tool_names: &[String],
+    write_disabled: bool,
+    note_override: Option<&str>,
     why: Vec<String>,
     warn: Vec<String>,
     files: Vec<String>,
 ) -> EngineTreeCheck {
+    let agy_writing: Vec<String> = agy_tool_names
+        .iter()
+        .filter(|t| crate::engines::tree_check::agy_tool_is_writing(t))
+        .cloned()
+        .collect();
+    // (BLOCKER, Muse review-2026-10-30) A writing tool call by agy FAILS the run even when the
+    // monitored compare is clean: agy's write may have landed in a path the compare ignores (a
+    // sibling's handoff, this task's stores, an untracked scratch file), and a write that the check
+    // cannot attribute to someone else must not pass. Decided BEFORE the "nothing changed" early
+    // return below.
+    if engine == "agy" && !agy_writing.is_empty() {
+        let why = if why.is_empty() {
+            vec![format!(
+                "agy called a writing tool during the run ({}); its write may fall outside the monitored paths",
+                agy_writing.join(", ")
+            )]
+        } else {
+            why
+        };
+        return EngineTreeCheck {
+            outcome: "failed".into(),
+            problem: format!(
+                "{} - {} (a writing tool was called: {})",
+                why.join("; "),
+                engine_tree_note(engine),
+                agy_writing.join(", ")
+            ),
+            warnings: Vec::new(),
+            files,
+        };
+    }
     if why.is_empty() {
         return EngineTreeCheck {
             outcome: "clean".into(),
@@ -189,14 +265,9 @@ pub(super) fn engine_tree_outcome(
             files,
         };
     }
-    let agy_writing: Vec<String> = agy_tool_names
-        .iter()
-        .filter(|t| crate::engines::tree_check::agy_tool_is_writing(t))
-        .cloned()
-        .collect();
     let agy_no_tools = agy_tool_names.is_empty();
     let agy_warns = engine == "agy" && !agy_no_tools && agy_writing.is_empty();
-    if engine_write_disabled(engine) || agy_warns {
+    if write_disabled || agy_warns {
         EngineTreeCheck {
             outcome: "warned".into(),
             problem: String::new(),
@@ -204,9 +275,12 @@ pub(super) fn engine_tree_outcome(
             files,
         }
     } else {
-        // FAIL. For agy, name why the stream did not clear it: a writing tool call, or no tool call
-        // at all (the remedy of the TECH_DEBT fourth instance).
-        let note = if engine == "agy" {
+        // FAIL. A caller-supplied note (claude's init proof) wins; else, for agy, name why the
+        // stream did not clear it: a writing tool call, or no tool call at all (the remedy of the
+        // TECH_DEBT fourth instance).
+        let note = if let Some(n) = note_override {
+            n.to_string()
+        } else if engine == "agy" {
             if agy_no_tools {
                 format!(
                     "{} (its event stream named no tool call)",

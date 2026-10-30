@@ -207,7 +207,16 @@ fn spawn_background(
     let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
     // SAFETY: the consult detach's straight CreateProcessW (bInheritHandles=FALSE, its own
     // hidden console); every pointer is to a local, NUL-terminated buffer.
-    unsafe { crate::consult::detach::create_process_no_inherit(&comspec, &raw, cwd, None) }
+    let out =
+        unsafe { crate::consult::detach::create_process_no_inherit(&comspec, &raw, cwd, None) }?;
+    // The breakaway path is a launcher-side fact; it goes to the spawn-diagnostics channel (the run
+    // record is re-written by the background, which does not know this; C3_DEBUG=1 shows it).
+    crate::telemetry::debug_log(&format!(
+        "work --detach spawn: job breakaway = {} (background pid {})",
+        out.breakaway.as_str(),
+        out.pid
+    ));
+    Ok(())
 }
 
 #[cfg(not(windows))]

@@ -1203,22 +1203,27 @@ pub fn endpoint_health_set(
             .then(b.until.cmp(&a.until))
     });
 
-    // (C3 model-health) the per-MODEL "not supported on this login" mark: for each MODEL of this
-    // endpoint, its NEWEST record decides (records are newest-first). A model whose newest outcome
-    // is a model-unsupported failure within the retention window is marked; a later usable reply
-    // from that model is newer, so it is seen first and clears the mark. The provider's other
-    // models are untouched.
+    // (C3 model-health) the per-MODEL "not supported on this login" mark. Per the retention table
+    // ([`crate::retention`], `MarkKind::ModelUnsupported`) the mark is cleared ONLY by a later
+    // USABLE reply from the SAME model - never by a later quota/transport failure. So for each model
+    // the DECIDING record is the newest one that is either a usable reply (clears) or itself a
+    // model-unsupported failure (marks, if within the 24 h window); a newer failure of any other
+    // kind is transparent and must not drop the mark (Muse, review-2026-10-30: the old "newest
+    // record decides" dropped it). The provider's other models are untouched.
     {
         let mut seen_models: Vec<&str> = Vec::new();
         for r in &records {
             if r.model.is_empty() || seen_models.contains(&r.model.as_str()) {
                 continue;
             }
+            let is_unsupported = !r.ok && model_unsupported_message(&r.code, &r.message).is_some();
+            // Only a usable reply or a model-unsupported mark decides this model; skip any other
+            // failure and keep looking back for the deciding record.
+            if !r.ok && !is_unsupported {
+                continue;
+            }
             seen_models.push(r.model.as_str());
-            if !r.ok
-                && crate::retention::model_unsupported_live(r.age_minutes)
-                && model_unsupported_message(&r.code, &r.message).is_some()
-            {
+            if is_unsupported && crate::retention::model_unsupported_live(r.age_minutes) {
                 h.models_unsupported.push(r.clone());
             }
         }
@@ -6003,6 +6008,51 @@ mod model_unsupported_tests {
             true,
         );
         assert_eq!(v.state, "available", "{}", v.reason);
+    }
+
+    #[test]
+    fn a_later_quota_failure_does_not_clear_the_model_mark() {
+        // (Muse, review-2026-10-30) Per the retention table a model-unsupported mark is cleared
+        // ONLY by a later usable reply from the same model - a later quota/transport failure of
+        // that model must NOT drop it (the old "newest record decides" check did).
+        // model-unsupported at 10:30, then a reset-less quota failure at 10:50 (out 60 min, so it
+        // has expired by the 12:00 clock). The model mark must survive the quota failure so, once
+        // the quota window passes, the model is still correctly out.
+        let fp = "fp-openai";
+        let quota_failed = json!({
+            "n": 2,
+            "when": "2026-10-13T10:50:00+00:00",
+            "finished_at": "2026-10-13T10:50:00+00:00",
+            "bridge_outcome": "failed: quota (usage limit reached)",
+            "reviewer": {"provider": "openai", "model": "gpt-6.1-sol", "provider_fingerprint": fp},
+            "provider_failure": {
+                "class": "quota",
+                "code": "rate_limit_exceeded",
+                "message": "usage limit reached",
+                "when": "2026-10-13T10:50:00+00:00",
+                "retry_after": null
+            }
+        });
+        let h = endpoint_health(
+            &[
+                failed(fp, "gpt-6.1-sol", "2026-10-13T10:30:00+00:00", SOL),
+                quota_failed,
+            ],
+            fp,
+            clock(),
+        );
+        // the mark survives the newer quota failure
+        assert_eq!(h.models_unsupported.len(), 1, "{:?}", h.models_unsupported);
+        assert_eq!(h.models_unsupported[0].model, "gpt-6.1-sol");
+        // the quota failure has expired, so the model mark is what keeps the entry out.
+        let v = verdict_with_credential(
+            &ident_for("gpt-6.1-sol"),
+            Some(&h),
+            CredentialResult::ok("logged in"),
+            true,
+        );
+        assert_eq!(v.state, "unavailable", "{}", v.reason);
+        assert_eq!(v.kind, "model", "{}", v.reason);
     }
 
     #[test]

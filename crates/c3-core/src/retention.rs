@@ -487,6 +487,39 @@ mod tests {
     }
 
     #[test]
+    fn model_unsupported_is_cleared_only_by_a_same_model_usable_reply() {
+        // (Muse, review-2026-10-30) The table row: a model-unsupported mark is cleared ONLY by a
+        // later USABLE reply from the SAME model - never by any failure (usable_reply=false) and
+        // never by a usable reply from a DIFFERENT model.
+        let rule = rule(MarkKind::ModelUnsupported);
+        assert_eq!(rule.cleared_by, ClearedBy::UsableReplyOfModel);
+        assert_eq!(
+            rule.retention,
+            Retention::Minutes(MODEL_UNSUPPORTED_RETENTION_MINUTES)
+        );
+        // a later failure (no usable reply) - e.g. a quota/transport failure - does NOT clear.
+        assert!(!clears(MarkKind::ModelUnsupported, &LaterEvent::default()));
+        // a usable reply from a different model does NOT clear.
+        assert!(!clears(
+            MarkKind::ModelUnsupported,
+            &LaterEvent {
+                usable_reply: true,
+                same_model: false,
+                no_older_than_mark: true,
+            }
+        ));
+        // only a same-model usable reply clears.
+        assert!(clears(
+            MarkKind::ModelUnsupported,
+            &LaterEvent {
+                usable_reply: true,
+                same_model: true,
+                no_older_than_mark: false,
+            }
+        ));
+    }
+
+    #[test]
     fn out_minutes_and_instant_429_and_percent_helpers() {
         assert_eq!(out_minutes(true), BURST_OUT_MINUTES);
         assert_eq!(out_minutes(false), QUOTA_OUT_MINUTES);

@@ -712,8 +712,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     let seated_count = runners.len();
     // (C3 panel re-seat (c)) the reserve runners, appended after the seated ones (indices
     // >= seated_count), in draw order. The scheduler promotes them when a seat is lost to a
-    // before-start preflight failure. Each gets a group of its own (beyond the planned groups) so
-    // its endpoint parallel limit defaults to one and it never relaxes a seated group's limit.
+    // before-start preflight failure.
     for (j, p) in route.reserve.iter().enumerate() {
         let m = selection
             .members
@@ -728,6 +727,19 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                 }
             })
             .unwrap_or_else(|| "codex".into());
+        let fingerprint = m
+            .map(|m| m.identity.fingerprint.clone())
+            .unwrap_or_default();
+        // (Muse, review-2026-10-30) A reserve runner joins the SAME endpoint concurrency group as
+        // any SEATED runner on that endpoint (same fingerprint), so once promoted it respects the
+        // endpoint's parallel limit instead of running beside a seated seat on the same endpoint.
+        // Only when the endpoint is new to the panel does it get a group of its own (beyond the
+        // planned groups, parallel limit 1).
+        let group = runners[..seated_count]
+            .iter()
+            .find(|ru| !fingerprint.is_empty() && ru.fingerprint == fingerprint)
+            .map(|ru| ru.group)
+            .unwrap_or(concurrency.groups.len() + j);
         runners.push(RunnerInfo {
             position: p.position,
             entry: m.map(|m| m.entry.clone()).unwrap_or_default(),
@@ -735,10 +747,8 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
             shown: p.lineage.clone(),
             role: role_of.get(&p.position).cloned().unwrap_or_default(),
             required: false,
-            group: concurrency.groups.len() + j,
-            fingerprint: m
-                .map(|m| m.identity.fingerprint.clone())
-                .unwrap_or_default(),
+            group,
+            fingerprint,
         });
     }
 
@@ -1108,6 +1118,11 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     // keeps the panel at its planned size.
     let mut reserve_cursor = b.seated_count;
     let mut promoted = 0usize;
+    // (C3 panel re-seat, Muse review-2026-10-30) lost seat slot index -> its substitute's slot
+    // index, and the roster positions promoted from the reserve, so the summary/exit are computed
+    // over the FINAL seats and the not-picked line drops a promoted reserve.
+    let mut replaced: Vec<(usize, usize)> = Vec::new();
+    let mut promoted_positions: Vec<i64> = Vec::new();
     loop {
         let mut progress = false;
         // Reap finished/killed members.
@@ -1220,18 +1235,22 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                 && lost_before_start(&slots[i])
             {
                 let runner = reserve_cursor;
-                let seat_k = slots[i].k;
+                let lost_seat_k = slots[i].k;
                 let lost_shown = b.runners[slots[i].runner].shown.clone();
                 let lost_refusal = c3_core::one_line(&slots[i].refusal);
                 let used = b.seated_count + promoted;
                 let n = nn_n.n + used as i64;
                 let nn = nn_n.nn + used as u32;
+                // (Muse, review-2026-10-30) the substitute gets a NEW seat number (beyond the
+                // planned seats), never the lost seat's `k`, so a ledger lookup by seat cannot
+                // shadow the lost seat's reserved record with the substitute's (or vice versa).
+                let new_seat_k = used as i64 + 1;
                 let ns = build_slot(&SlotBuild {
                     b: &b,
                     o: &o,
                     r: &r,
                     runner,
-                    k: seat_k,
+                    k: new_seat_k,
                     n,
                     nn,
                     guard_hook,
@@ -1252,16 +1271,18 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                 match store.write_pending(&pref, &rec) {
                     Ok(()) => {
                         println!(
-                            "  re-seating seat {seat_k}: {} replaces {lost_shown} (lost before start: {lost_refusal})",
+                            "  re-seating as seat {new_seat_k}: {} replaces {lost_shown} (seat {lost_seat_k}, lost before start: {lost_refusal})",
                             b.runners[runner].shown
                         );
+                        replaced.push((i, slots.len()));
+                        promoted_positions.push(b.runners[runner].position);
                         reserve_cursor += 1;
                         promoted += 1;
                         slots.push(ns);
                     }
                     Err(e) => {
                         println!(
-                            "{TOOL}: could not re-seat seat {seat_k} from the reserve ({e}); the panel runs a member short."
+                            "{TOOL}: could not re-seat the lost seat {lost_seat_k} from the reserve ({e}); the panel runs a member short."
                         );
                     }
                 }
@@ -1444,7 +1465,16 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     }
 
     // -------------------------------------------------------------------- summary + counts
-    let exit = render_summary(&o, &b, &slots, short, panel_wall, dry);
+    let exit = render_summary(
+        &o,
+        &b,
+        &slots,
+        &replaced,
+        &promoted_positions,
+        short,
+        panel_wall,
+        dry,
+    );
 
     // Patch panel.started / panel.usable in every member's ledger entry (a real run).
     if !dry {
@@ -1539,112 +1569,171 @@ fn format_summary_rows(rows: &[SummaryRow]) -> Vec<String> {
 }
 
 /// Render the summary block and return the exit code.
+/// Build the summary row for a seat that reached the launch stage (a seated runner or a promoted
+/// reserve substitute) and report whether it counts as usable for the panel's exit code. The
+/// branches mirror the per-seat logic `render_summary` used inline before the re-seat work (Muse,
+/// review-2026-10-30) so a substitute is summarised exactly like any seat.
+fn seat_run_row(s: &Slot, lineage: &str, dry: bool) -> (SummaryRow, bool) {
+    let mut row = SummaryRow {
+        lineage: lineage.to_string(),
+        status: String::new(),
+        counts: String::new(),
+        prior: String::new(),
+        tail: String::new(),
+        wide: false,
+    };
+    let mut ok = true;
+    if matches!(s.state, SlotState::Waiting | SlotState::Blocked) {
+        row.status = "skipped".into();
+        row.counts = if s.not_started.is_empty() {
+            "not started".into()
+        } else {
+            s.not_started.clone()
+        };
+        row.wide = true;
+        ok = false;
+    } else if dry && s.state == SlotState::Done {
+        if s.exit == Some(0) {
+            row.status = "planned".into();
+        } else {
+            row.status = format!("refused: {}", c3_core::one_line(&s.refusal));
+            row.wide = true;
+            ok = false;
+        }
+    } else if let Some(me) = s.entry.as_ref() {
+        let outcome = me.bridge_outcome.clone();
+        let mut tail = format!("{} s  {}", me.wall_seconds, me.reply);
+        if outcome != "usable reply" && c3_core::health::is_usable_outcome(&outcome) {
+            tail += "  (after a timeout continuation)";
+        }
+        if !me.partial_reply.is_empty() {
+            tail += &format!("  partial {}", me.partial_reply);
+        }
+        if s.state == SlotState::Killed {
+            row.status = member_status(s, dry);
+            row.tail = tail;
+            row.wide = true;
+            ok = false;
+        } else if !c3_core::health::is_usable_outcome(&outcome) {
+            let short_o = outcome.strip_prefix("failed: ").unwrap_or(&outcome);
+            let chars: Vec<char> = short_o.chars().collect();
+            let short_o = if chars.len() > 90 {
+                chars[..90].iter().collect::<String>() + "..."
+            } else {
+                short_o.to_string()
+            };
+            row.status = format!("failed: {short_o}");
+            row.tail = tail;
+            row.wide = true;
+            ok = false;
+        } else if !me.verdict.is_empty() && me.structured {
+            row.status = me.verdict.clone();
+            row.counts = format!(
+                "{} blocker, {} major, {} minor",
+                me.findings.blocker, me.findings.major, me.findings.minor
+            );
+            if me.findings.note > 0 {
+                row.counts += &format!(", {} note", me.findings.note);
+            }
+            row.prior = format_prior_counts(&me.prior_findings);
+            row.tail = tail;
+        } else {
+            row.status = "prose (no verdict)".into();
+            row.tail = tail;
+        }
+    } else {
+        // No committed ledger entry (refused/failed before its commit).
+        row.status = member_status(s, dry);
+        if !dry && !s.record_kept {
+            row.status += &format!(" (n={} and handoff {:02} stay unused)", s.n, s.nn);
+        } else if !dry {
+            let file = s
+                .record_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            row.status += &format!(" ({file} kept, state {})", s.record_state);
+        }
+        row.wide = true;
+        ok = false;
+    }
+    (row, ok)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn render_summary(
     _o: &Options,
     b: &Built,
     slots: &[Slot],
+    replaced: &[(usize, usize)],
+    promoted_positions: &[i64],
     short: &str,
     panel_wall: f64,
     dry: bool,
 ) -> i32 {
+    // (Muse, review-2026-10-30) The summary and exit are computed over the FINAL seats: a seat lost
+    // before start that was replaced from the reserve is shown as "replaced by ..." and does NOT
+    // count as a failure (its substitute carries the outcome). `lost` maps a lost seat's slot index
+    // to its substitute's shown name; `sub_slots` are the substitute slots to append as their own
+    // rows; `promoted_positions` drop from the not-picked line.
+    let lost: std::collections::HashMap<usize, String> = replaced
+        .iter()
+        .map(|&(lost_slot, sub_slot)| (lost_slot, b.runners[slots[sub_slot].runner].shown.clone()))
+        .collect();
     let mut rows: Vec<SummaryRow> = Vec::new();
     let mut all_usable = b.seated_count > 0;
+    // A lost-and-replaced seat never started, so it is not counted among the started/usable seats;
+    // its substitute (a later slot) is counted normally.
     let started = slots
         .iter()
-        .filter(|s| matches!(s.state, SlotState::Done | SlotState::Killed))
+        .enumerate()
+        .filter(|(i, s)| {
+            !lost.contains_key(i) && matches!(s.state, SlotState::Done | SlotState::Killed)
+        })
         .count();
-    let usable_count = slots.iter().filter(|s| slot_usable(s)).count();
+    let usable_count = slots
+        .iter()
+        .enumerate()
+        .filter(|(i, s)| !lost.contains_key(i) && slot_usable(s))
+        .count();
 
     for dr in b.rows.iter().filter(|r| r.state != "not-picked") {
-        let mut row = SummaryRow {
-            lineage: dr.shown.clone(),
-            status: String::new(),
-            counts: String::new(),
-            prior: String::new(),
-            tail: String::new(),
-            wide: false,
-        };
         if dr.state != "run" {
-            row.status = "skipped".into();
-            row.counts = dr.reason.clone();
-            row.wide = true;
-        } else {
-            let s = &slots[dr.runner.unwrap()];
-            if matches!(s.state, SlotState::Waiting | SlotState::Blocked) {
-                row.status = "skipped".into();
-                row.counts = if s.not_started.is_empty() {
-                    "not started".into()
-                } else {
-                    s.not_started.clone()
-                };
-                row.wide = true;
-                all_usable = false;
-            } else if dry && s.state == SlotState::Done {
-                if s.exit == Some(0) {
-                    row.status = "planned".into();
-                } else {
-                    row.status = format!("refused: {}", c3_core::one_line(&s.refusal));
-                    row.wide = true;
-                    all_usable = false;
-                }
-            } else if let Some(me) = s.entry.as_ref() {
-                let outcome = me.bridge_outcome.clone();
-                let mut tail = format!("{} s  {}", me.wall_seconds, me.reply);
-                if outcome != "usable reply" && c3_core::health::is_usable_outcome(&outcome) {
-                    tail += "  (after a timeout continuation)";
-                }
-                if !me.partial_reply.is_empty() {
-                    tail += &format!("  partial {}", me.partial_reply);
-                }
-                if s.state == SlotState::Killed {
-                    row.status = member_status(s, dry);
-                    row.tail = tail;
-                    row.wide = true;
-                    all_usable = false;
-                } else if !c3_core::health::is_usable_outcome(&outcome) {
-                    let short_o = outcome.strip_prefix("failed: ").unwrap_or(&outcome);
-                    let chars: Vec<char> = short_o.chars().collect();
-                    let short_o = if chars.len() > 90 {
-                        chars[..90].iter().collect::<String>() + "..."
-                    } else {
-                        short_o.to_string()
-                    };
-                    row.status = format!("failed: {short_o}");
-                    row.tail = tail;
-                    row.wide = true;
-                    all_usable = false;
-                } else if !me.verdict.is_empty() && me.structured {
-                    row.status = me.verdict.clone();
-                    row.counts = format!(
-                        "{} blocker, {} major, {} minor",
-                        me.findings.blocker, me.findings.major, me.findings.minor
-                    );
-                    if me.findings.note > 0 {
-                        row.counts += &format!(", {} note", me.findings.note);
-                    }
-                    row.prior = format_prior_counts(&me.prior_findings);
-                    row.tail = tail;
-                } else {
-                    row.status = "prose (no verdict)".into();
-                    row.tail = tail;
-                }
-            } else {
-                // No committed ledger entry (refused/failed before its commit).
-                row.status = member_status(s, dry);
-                if !dry && !s.record_kept {
-                    row.status += &format!(" (n={} and handoff {:02} stay unused)", s.n, s.nn);
-                } else if !dry {
-                    let file = s
-                        .record_path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    row.status += &format!(" ({file} kept, state {})", s.record_state);
-                }
-                row.wide = true;
-                all_usable = false;
-            }
+            rows.push(SummaryRow {
+                lineage: dr.shown.clone(),
+                status: "skipped".into(),
+                counts: dr.reason.clone(),
+                prior: String::new(),
+                tail: String::new(),
+                wide: true,
+            });
+            continue;
         }
+        let slot_idx = dr.runner.unwrap();
+        // A seat lost before start and re-seated from the reserve: show the replacement, and do
+        // not count it against `all_usable` (the substitute's own row carries the verdict).
+        if let Some(sub_shown) = lost.get(&slot_idx) {
+            rows.push(SummaryRow {
+                lineage: dr.shown.clone(),
+                status: format!("replaced by {sub_shown}"),
+                counts: c3_core::one_line(&slots[slot_idx].refusal),
+                prior: String::new(),
+                tail: String::new(),
+                wide: true,
+            });
+            continue;
+        }
+        let (row, ok) = seat_run_row(&slots[slot_idx], &dr.shown, dry);
+        all_usable &= ok;
+        rows.push(row);
+    }
+
+    // (Muse, review-2026-10-30) the promoted reserve substitutes, as their own rows (seat order),
+    // reflected in the exit code like any seat.
+    for &(_, sub_slot) in replaced {
+        let shown = b.runners[slots[sub_slot].runner].shown.clone();
+        let (row, ok) = seat_run_row(&slots[sub_slot], &shown, dry);
+        all_usable &= ok;
         rows.push(row);
     }
 
@@ -1677,7 +1766,13 @@ fn render_summary(
         block.push(line);
     }
 
-    let not_picked: Vec<&DisplayRow> = b.rows.iter().filter(|r| r.state == "not-picked").collect();
+    // (Muse, review-2026-10-30) a reserve member promoted into a lost seat is no longer
+    // "not picked" - drop it from the line so it reflects the final seats.
+    let not_picked: Vec<&DisplayRow> = b
+        .rows
+        .iter()
+        .filter(|r| r.state == "not-picked" && !promoted_positions.contains(&r.position))
+        .collect();
     if !not_picked.is_empty() {
         let names: Vec<String> = not_picked.iter().map(|r| r.shown.clone()).collect();
         block.push(format!(

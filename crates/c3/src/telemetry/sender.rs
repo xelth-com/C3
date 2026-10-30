@@ -175,7 +175,7 @@ fn spawn(exe: &Path, env: &[(String, String)], cwd: &Path) -> Result<(), String>
     let program = exe.to_string_lossy().to_string();
     // SAFETY: a straight CreateProcessW with bInheritHandles=FALSE (the helper's contract); every
     // buffer it is given outlives the call.
-    unsafe {
+    let out = unsafe {
         crate::consult::detach::create_process_no_inherit(
             &program,
             "telemetry --flush --telemetry on",
@@ -183,7 +183,13 @@ fn spawn(exe: &Path, env: &[(String, String)], cwd: &Path) -> Result<(), String>
             Some(env),
         )
     }
-    .map_err(|e| e.replace("the background process", "the telemetry sender"))
+    .map_err(|e| e.replace("the background process", "the telemetry sender"))?;
+    super::debug_log(&format!(
+        "telemetry sender spawn: job breakaway = {} (sender pid {})",
+        out.breakaway.as_str(),
+        out.pid
+    ));
+    Ok(())
 }
 
 #[cfg(not(windows))]

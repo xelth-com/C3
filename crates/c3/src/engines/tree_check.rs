@@ -172,20 +172,33 @@ fn task_owned_ignores(task: &str) -> Vec<String> {
 }
 
 /// Whether an `agy` tool name is a writing/command-running tool. agy enforces no read-only sandbox,
-/// so the tree check treats EVERY tool that is not clearly read-only (a `read`/`view`/`list`/`grep`/
-/// `glob`/`search`/`find`/`cat`/`ls` family name) as able to write or run commands. An empty name is
-/// treated as writing (unknown). Example from the agy fixtures: `view_file` is read-only,
-/// `run_command` is writing.
+/// so the tree check must decide read-only vs writing from the tool name alone — and it does so with
+/// an EXACT allow-list, never a substring match (a substring match let writing tools pass: `ls`
+/// matched `tools`/`calls`, `find` matched `find_and_replace`, `read` matched `find_and_replace`'s
+/// neighbours). Only a name on [`AGY_READ_ONLY_TOOLS`] is read-only; EVERYTHING else — an unknown
+/// name, a writing/command tool, and an empty name — is writing (fail-safe: the tree check only
+/// consults this once the tree already changed, so classifying an unlisted tool as writing turns a
+/// `warned` into a `failed`, never the reverse).
 pub fn agy_tool_is_writing(tool: &str) -> bool {
     let t = tool.trim().to_ascii_lowercase();
-    if t.is_empty() {
-        return true;
-    }
-    const READ_ONLY: &[&str] = &[
-        "read", "view", "list", "grep", "glob", "search", "find", "cat", "ls",
-    ];
-    !READ_ONLY.iter().any(|ro| t.contains(ro))
+    !AGY_READ_ONLY_TOOLS.contains(&t.as_str())
 }
+
+/// agy's known read-only tool names. Only `read_file` and `view_file` are CONFIRMED by the agy
+/// fixtures (`crates/c3/src/engines/agy.rs`, `crates/c3-cli/tests/compat_wave2b.rs` — where
+/// `run_command` is the one writing tool shown); agy's full tool vocabulary is otherwise not pinned
+/// in this repo, so the remaining entries are the read-only file tools of agy's Gemini-CLI lineage,
+/// listed conservatively. Anything not on this list is treated as writing.
+pub const AGY_READ_ONLY_TOOLS: &[&str] = &[
+    // confirmed by the agy fixtures
+    "read_file",
+    "view_file",
+    // agy's Gemini-CLI read-only file tools (not fixture-confirmed in this repo)
+    "read_many_files",
+    "list_directory",
+    "glob",
+    "search_file_content",
+];
 
 /// `Get-PanelIgnorePrefixes` (D7, F04-1): the collab paths a panel member's siblings write while
 /// it runs — the task's two stores (each with its `Write-TextAtomic` temp) and every sibling's
@@ -321,15 +334,23 @@ mod tests {
 
     #[test]
     fn agy_tool_classifier_reads_vs_writes() {
-        // Read-only families warn; anything else (writing/command) fails.
-        assert!(!agy_tool_is_writing("view_file"));
-        assert!(!agy_tool_is_writing("read_file"));
-        assert!(!agy_tool_is_writing("list_dir"));
-        assert!(!agy_tool_is_writing("grep"));
-        assert!(!agy_tool_is_writing("glob_search"));
-        assert!(agy_tool_is_writing("run_command"));
+        // Every name on the exact allow-list is read-only (case/whitespace tolerant).
+        for ro in AGY_READ_ONLY_TOOLS {
+            assert!(!agy_tool_is_writing(ro), "{ro} should be read-only");
+        }
+        assert!(!agy_tool_is_writing(" View_File "));
+        // A substring of an allow-list name must NOT pass as read-only (the old `contains` bug):
+        // `find_and_replace` is writing even though read-only `search_file_content`/`read_file`
+        // share letters with it, `edit_tools` though `tools` is a substring of no allowed name,
+        // and `ls`/`find` on their own are not allowed names.
+        assert!(agy_tool_is_writing("find_and_replace"));
+        assert!(agy_tool_is_writing("edit_tools"));
+        assert!(agy_tool_is_writing("run_shell_command"));
         assert!(agy_tool_is_writing("write_file"));
+        assert!(agy_tool_is_writing("run_command"));
         assert!(agy_tool_is_writing("apply_patch"));
+        assert!(agy_tool_is_writing("ls"));
+        assert!(agy_tool_is_writing("find"));
         // An unknown/empty name is treated as writing.
         assert!(agy_tool_is_writing(""));
     }

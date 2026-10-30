@@ -1,5 +1,8 @@
-//! The git write/read commands `c3 finish` needs. `c3` only ever runs git from `finish`
-//! (the one exception to "C3 never commits"); every other code path reads git read-only.
+//! The git write/read commands `c3 finish` needs. `c3 finish` is the only path that writes git
+//! refs/commits (the one exception to "C3 never commits"). It is NOT the only path that touches
+//! git's object store: `c3 work` runs `git hash-object -w` to write loose objects for its
+//! `patch.diff` baseline (see `work::record`), which creates dangling objects but no ref and no
+//! commit. Every other code path reads git read-only.
 
 use std::path::Path;
 use std::process::Command;

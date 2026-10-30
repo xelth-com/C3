@@ -20,6 +20,13 @@ pub const NEVER_COMMIT: &[&str] = &[
     ".collab/**/.consult.pending*.json",
     ".collab/**/work/**/.log",
     ".collab/**/work/**/.stderr",
+    // (Muse, review-2026-10-30) a work run's per-resume scratch streams, and a detached consult
+    // run's reconstructed prompt and status file - machine-local, never committed. The detached
+    // run's `.consult.detached-*.log` stays committed (the repository's convention).
+    ".collab/**/work/**/.events-resume-*",
+    ".collab/**/work/**/.stderr-resume-*",
+    ".collab/**/.consult.detached-*.prompt.txt",
+    ".collab/**/.consult.detached-*.status.json",
 ];
 
 fn never_commit_set() -> &'static GlobSet {
@@ -127,6 +134,23 @@ mod tests {
         assert!(!is_never_commit("some/dir/.admission.lock"));
         // A non-work .log under .collab stays (only work/**/.log is in the set).
         assert!(!is_never_commit(".collab/wave1/run.log"));
+    }
+
+    #[test]
+    fn resume_scratch_and_detached_prompt_status_are_unstaged_log_is_kept() {
+        // The new machine-local artifacts are in the set...
+        assert!(is_never_commit(
+            ".collab/w/work/01-x/.events-resume-2.jsonl"
+        ));
+        assert!(is_never_commit(".collab/w/work/01-x/.stderr-resume-2"));
+        assert!(is_never_commit(
+            ".collab/w/.consult.detached-abcd1234.prompt.txt"
+        ));
+        assert!(is_never_commit(
+            ".collab/w/.consult.detached-abcd1234.status.json"
+        ));
+        // ...but the detached run's console log stays committed.
+        assert!(!is_never_commit(".collab/w/.consult.detached-abcd1234.log"));
     }
 
     #[test]

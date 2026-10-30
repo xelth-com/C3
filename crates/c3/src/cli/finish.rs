@@ -122,7 +122,10 @@ pub fn run(args: FinishArgs) -> i32 {
             // The refusal text names the files/kinds but never the values.
             eprintln!("c3 finish: {e}");
             match e {
-                FinishError::NothingToCommit | FinishError::Secrets(_) | FinishError::Other(_) => 1,
+                FinishError::NothingToCommit
+                | FinishError::Secrets(_)
+                | FinishError::MessageSecret(_)
+                | FinishError::Other(_) => 1,
             }
         }
     }

@@ -2,7 +2,9 @@
 //! that replaces eck's MCP server (port spec, Part A).
 //!
 //! The rule "C3 never commits" becomes "C3 commits only via `c3 finish`": [`run_finish`] is
-//! the one code path in C3 that runs a git write. It writes the agent report
+//! the only code path in C3 that writes a git ref/commit (`c3 work` also writes loose objects
+//! with `git hash-object -w` for its `patch.diff` baseline, but no ref or commit). It writes the
+//! agent report
 //! (`.eck/lastsnapshot/AnswerToSA.md`), prepends a journal entry, stages everything with
 //! `git add -A`, unstages the machine-local never-commit set ([`never_commit`]), runs the
 //! secret gate over the staged content ([`secret_gate`]), commits, and writes a delta
@@ -75,6 +77,9 @@ pub enum FinishError {
     NothingToCommit,
     /// Staged files carry secret-shaped values; nothing was unstaged.
     Secrets(Vec<SecretHit>),
+    /// The commit MESSAGE carries a secret-shaped value (the kinds). `--allow-secret` cannot
+    /// exempt it — the coordinator must rewrite the message.
+    MessageSecret(String),
     /// A git or I/O failure.
     Other(String),
 }
@@ -99,6 +104,10 @@ impl std::fmt::Display for FinishError {
                     "pass --allow-secret <path> for each file you have reviewed"
                 )
             }
+            FinishError::MessageSecret(kinds) => write!(
+                f,
+                "refusing to commit: the commit message carries a secret-shaped value ({kinds}); --allow-secret cannot exempt the message - rewrite the message and run finish again"
+            ),
             FinishError::Other(e) => write!(f, "{e}"),
         }
     }
@@ -172,6 +181,13 @@ fn hand_off_snapshot(
 /// secrets, commit, and write the hand-off snapshot.
 pub fn run_finish(opts: &FinishOpts) -> Result<FinishResult, FinishError> {
     let repo = &opts.repo_root;
+
+    // 0. The commit message is itself scanned for secrets, before any side effect; a hit refuses
+    //    (the kinds, never the value) and cannot be waved through with --allow-secret - the
+    //    coordinator rewrites the message (Muse, review-2026-10-30).
+    if let Some(kinds) = secret_gate::scan_message(&opts.message) {
+        return Err(FinishError::MessageSecret(kinds));
+    }
 
     // 1-2. Report + journal (before any git write, so they are part of the commit).
     write_answer(repo, &journal::answer_finish(&opts.status)).map_err(FinishError::Other)?;

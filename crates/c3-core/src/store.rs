@@ -746,6 +746,23 @@ fn write_lock_record(file: &mut File, record: &LockRecord) -> io::Result<()> {
     Ok(())
 }
 
+/// Take the task ownership lock (`.consult.lock`) directly in `task_dir`, fail-fast (one attempt):
+/// `Some(guard)` when taken, `None` when another handle holds it, released on drop. This is the
+/// same lock [`EvidenceStore::take_task_lock`] takes, addressed by directory rather than by store +
+/// `TaskSlug` — so a detached run's terminal status write and a `--status`/`--wait` reader's
+/// death-record write can serialize on it even where neither holds a store handle.
+pub fn take_task_lock_at(task_dir: &Path, record: &LockRecord) -> io::Result<Option<TaskLock>> {
+    fs::create_dir_all(task_dir)?;
+    let path = task_dir.join(OWNERSHIP_LOCK);
+    match try_open_exclusive(&path)? {
+        Some(mut file) => {
+            write_lock_record(&mut file, record)?;
+            Ok(Some(TaskLock { path, _file: file }))
+        }
+        None => Ok(None),
+    }
+}
+
 /// The write-lock wait ceiling in seconds (`Get-WriteLockTimeout`): the default, or the
 /// `CODEX_CONSULT_TEST_WRITE_LOCK_SEC` test override. The "commit blocked" message quotes it.
 pub fn write_lock_timeout_secs() -> u64 {

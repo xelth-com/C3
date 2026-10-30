@@ -646,20 +646,60 @@ fn spawn_background(
     let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
     // SAFETY: a straight CreateProcessW with bInheritHandles=FALSE and DETACHED_PROCESS; every
     // pointer is to a local, NUL-terminated buffer that outlives the call.
-    unsafe { create_process_no_inherit(&comspec, &raw, cwd, None) }
+    let out = unsafe { create_process_no_inherit(&comspec, &raw, cwd, None) }?;
+    // The breakaway path taken is a launcher-side fact (the status file is the ps-json canonical
+    // byte-identity record, and the console `.log` is written by the detached child, not us), so it
+    // goes to the launcher's spawn-diagnostics channel - visible under C3_DEBUG=1.
+    crate::telemetry::debug_log(&format!(
+        "consult -Detach spawn: job breakaway = {} (background pid {})",
+        out.breakaway.as_str(),
+        out.pid
+    ));
+    Ok(())
+}
+
+/// Which Job-object breakaway path [`create_process_no_inherit`] took, for diagnostics.
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JobBreakaway {
+    /// `CREATE_BREAKAWAY_FROM_JOB` was applied and `CreateProcessW` succeeded (the child is lifted
+    /// out of the launcher's Job object, or the launcher was in no Job and the flag was ignored).
+    Yes,
+    /// The launcher's Job object forbade breakaway (`ERROR_ACCESS_DENIED`), so the child was started
+    /// without the flag and stays in that Job (no worse than before the fix).
+    Denied,
+}
+
+#[cfg(windows)]
+impl JobBreakaway {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            JobBreakaway::Yes => "yes",
+            JobBreakaway::Denied => "denied",
+        }
+    }
+}
+
+/// What [`create_process_no_inherit`] observed about the spawn, for diagnostics (the caller logs it;
+/// a test harness asserts on it). The process is not waited for.
+#[cfg(windows)]
+pub(crate) struct SpawnOutcome {
+    pub breakaway: JobBreakaway,
+    pub pid: u32,
 }
 
 /// `CreateProcessW` of `"<program>" <raw_args>` in `cwd` with no inherited handle
-/// (`bInheritHandles = FALSE`), hidden (`CREATE_NO_WINDOW`) and in its own process group; `env`
-/// (wave 6, the telemetry sender) replaces the environment block whole, else the child inherits
-/// this process's environment. Not waited for.
+/// (`bInheritHandles = FALSE`), hidden (`CREATE_NO_WINDOW`), in its own process group and lifted out
+/// of the launcher's Windows Job object (`CREATE_BREAKAWAY_FROM_JOB`); `env` (wave 6, the telemetry
+/// sender) replaces the environment block whole, else the child inherits this process's environment.
+/// Not waited for; returns the breakaway path taken and the child pid for diagnostics.
 #[cfg(windows)]
 pub(crate) unsafe fn create_process_no_inherit(
     program: &str,
     raw_args: &str,
     cwd: &Path,
     env: Option<&[(String, String)]>,
-) -> Result<(), String> {
+) -> Result<SpawnOutcome, String> {
     use std::os::windows::ffi::OsStrExt;
     #[allow(non_snake_case)]
     #[repr(C)]
@@ -713,6 +753,17 @@ pub(crate) unsafe fn create_process_no_inherit(
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
+    // (tech-debt: detached children shared the launcher's Job object) CREATE_NEW_PROCESS_GROUP does
+    // NOT escape a Windows Job object: a detached run started from a console whose Job has
+    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (e.g. the Claude Code console) was killed with that Job
+    // when the console went away - both the bridge and the engine vanished. CREATE_BREAKAWAY_FROM_JOB
+    // lifts the child out of the Job; a Job that forbids breakaway fails CreateProcessW with
+    // ERROR_ACCESS_DENIED, so we retry once without the flag (the child then stays in the Job - no
+    // worse than before). A launcher in no Job ignores the flag and the first attempt simply succeeds.
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    const ERROR_ACCESS_DENIED: i32 = 5;
+    const BASE_FLAGS: u32 =
+        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
 
     // The environment block: `NAME=value\0` per variable (the caller sorted them), then one more
     // `\0`; an empty one is two NULs.
@@ -734,37 +785,74 @@ pub(crate) unsafe fn create_process_no_inherit(
         .encode_wide()
         .chain([0])
         .collect();
-    // The command line: "program" raw_args (program quoted, then the /d /v:off /s /c "...").
-    let mut cmdline: Vec<u16> = format!("\"{program}\" {raw_args}")
-        .encode_utf16()
-        .chain([0])
-        .collect();
     let dir: Vec<u16> = cwd.as_os_str().encode_wide().chain([0]).collect();
     let mut si: StartupInfoW = std::mem::zeroed();
     si.cb = std::mem::size_of::<StartupInfoW>() as u32;
-    let mut pi: ProcessInformation = std::mem::zeroed();
-    let ok = CreateProcessW(
-        app.as_mut_ptr(),
-        cmdline.as_mut_ptr(),
-        std::ptr::null_mut(),
-        std::ptr::null_mut(),
-        0, // bInheritHandles = FALSE: the background holds none of our handles
-        CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT,
-        env_block
-            .as_mut()
-            .map(|b| b.as_mut_ptr() as *mut u8)
-            .unwrap_or(std::ptr::null_mut()),
-        dir.as_ptr(),
-        &mut si,
-        &mut pi,
-    );
-    if ok == 0 {
-        let code = std::io::Error::last_os_error();
-        return Err(format!("could not start the background process ({code})"));
+    // Raw pointers so the two attempts below do not re-borrow across the loop (every call is in
+    // the enclosing `unsafe fn`). `cmdline` is rebuilt per attempt because CreateProcessW may
+    // modify its buffer in place.
+    let app_ptr = app.as_mut_ptr();
+    let dir_ptr = dir.as_ptr();
+    let si_ptr: *mut StartupInfoW = &mut si;
+    let env_ptr: *mut u8 = env_block
+        .as_mut()
+        .map(|b| b.as_mut_ptr() as *mut u8)
+        .unwrap_or(std::ptr::null_mut());
+
+    // Attempt 0 adds CREATE_BREAKAWAY_FROM_JOB; attempt 1 (the retry) drops it. The retry runs only
+    // when attempt 0 failed with ERROR_ACCESS_DENIED - the Job forbidding breakaway. Any other
+    // failure, or a failure of the retry itself, gives up.
+    let attempts = [BASE_FLAGS | CREATE_BREAKAWAY_FROM_JOB, BASE_FLAGS];
+    let mut started: Option<(ProcessInformation, JobBreakaway)> = None;
+    let mut last_err = std::io::Error::last_os_error();
+    for (i, &flags) in attempts.iter().enumerate() {
+        // The command line: "program" raw_args (program quoted, then e.g. the /d /v:off /s /c "...").
+        let mut cmdline: Vec<u16> = format!("\"{program}\" {raw_args}")
+            .encode_utf16()
+            .chain([0])
+            .collect();
+        let mut pi: ProcessInformation = std::mem::zeroed();
+        let ok = CreateProcessW(
+            app_ptr,
+            cmdline.as_mut_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0, // bInheritHandles = FALSE: the background holds none of our handles
+            flags,
+            env_ptr,
+            dir_ptr,
+            si_ptr,
+            &mut pi,
+        );
+        if ok != 0 {
+            let breakaway = if i == 0 {
+                JobBreakaway::Yes
+            } else {
+                JobBreakaway::Denied
+            };
+            started = Some((pi, breakaway));
+            break;
+        }
+        last_err = std::io::Error::last_os_error();
+        // Only the breakaway attempt, rejected for breakaway, is worth retrying without the flag.
+        if !(i == 0 && last_err.raw_os_error() == Some(ERROR_ACCESS_DENIED)) {
+            break;
+        }
     }
+    let (pi, breakaway) = match started {
+        Some(v) => v,
+        None => {
+            return Err(format!(
+                "could not start the background process ({last_err})"
+            ))
+        }
+    };
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
-    Ok(())
+    Ok(SpawnOutcome {
+        breakaway,
+        pid: pi.dwProcessId,
+    })
 }
 
 #[cfg(not(windows))]
@@ -950,6 +1038,11 @@ pub fn background(o: Options, run_flow: impl FnOnce(Options) -> i32) -> i32 {
             now: Utc::now(),
         }));
     }
+    // The terminal `done` write takes the task lock the readers also take, so a `--status`/`--wait`
+    // reader's death-record write and this final write cannot clobber each other (Muse,
+    // review-2026-10-30). The orchestrator released this lock when `decode_and_run` returned, so it
+    // is free here; the lock is held until this function returns (dropped after the write).
+    let _final_lock = take_status_lock(&task_dir);
     match write_status_retry(&paths.status, &mut final_rec) {
         Ok(()) => code,
         Err(_) => {
@@ -1200,10 +1293,56 @@ fn build_run_death(input: &RunDeathInputs) -> DeathRecord {
     })
 }
 
-/// A reader that found a run dead records its death ONCE: it re-reads the status file and writes
-/// only when the fresh record is still not `done` and carries no death record yet — a late
-/// background that reached `done`, or a death record another reader already wrote, is never
-/// overwritten. Returns the death record now on disk.
+/// The task ownership lock (`.consult.lock`) the detached status writers share, taken with a short
+/// bounded retry as this process's own lock record. `None` when it stayed held for the whole window
+/// (the caller then proceeds without it — best-effort serialization, never a hang). A detached
+/// run's terminal `done` write and a `--status`/`--wait` reader's death-record write BOTH take this
+/// lock so one cannot clobber the other in the gap between its re-read and its atomic replace
+/// (Muse, review-2026-10-30). A live run holds this same lock while running, so a reader can only
+/// take it once the run's process is gone (the OS releases a dead owner's lock) — exactly when a
+/// reader may record a death.
+fn take_status_lock(task_dir: &Path) -> Option<c3_core::store::TaskLock> {
+    let task = task_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let record = c3_core::store::LockRecord {
+        pid: c3_core::store::bridge_pid(),
+        start_time: String::new(),
+        host: machine_name(),
+        task,
+        started: Utc::now().to_rfc3339(),
+        panel: None,
+    };
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        match c3_core::store::take_task_lock_at(task_dir, &record) {
+            Ok(Some(lock)) => return Some(lock),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// (bridge reliability, review-2026-10-30) Whether a reader should write its death record, given the
+/// record FRESHLY re-read under the task lock: only when the run has not reached `done` and carries
+/// no death record yet. A late background that wrote `done`, or a death record another reader
+/// already wrote, between this reader's judgement and its locked re-read is thus never overwritten.
+fn reader_should_record_death(fresh: &DetachedRecord, bridge_alive: bool) -> bool {
+    // (Muse, review-2026-10-30) Never record a death while the bridge process is still alive: the
+    // run has not reached `done` only because it is still running, not because it died.
+    fresh.state != "done" && fresh.death.is_none() && !bridge_alive
+}
+
+/// A reader that found a run dead records its death ONCE: UNDER the task lock the status writers
+/// share, it re-reads the status file and writes only when the fresh record is still not `done` and
+/// carries no death record yet — a late background that reached `done`, or a death record another
+/// reader already wrote, is never overwritten. Returns the death record now on disk.
 fn ensure_reader_death_record(
     status_path: &Path,
     log_path: &Path,
@@ -1211,13 +1350,13 @@ fn ensure_reader_death_record(
     bases: &[PathBuf],
     now: chrono::DateTime<Utc>,
 ) -> Option<DeathRecord> {
+    // Hold the task lock across the re-read AND the write, so the background cannot land its own
+    // terminal `done` in the gap (it takes the same lock for that write).
+    let _lock = take_status_lock(task_dir);
     let mut fresh = match read_detached_status(status_path) {
         Ok(Some(r)) => r,
         _ => return None,
     };
-    if fresh.state == "done" || fresh.death.is_some() {
-        return fresh.death;
-    }
     let bridge_alive = {
         let pid = fresh.pid.unwrap_or(0);
         pid > 0
@@ -1226,6 +1365,9 @@ fn ensure_reader_death_record(
                 fresh.start_time.as_deref().unwrap_or(""),
             )
     };
+    if !reader_should_record_death(&fresh, bridge_alive) {
+        return fresh.death;
+    }
     let death = build_run_death(&RunDeathInputs {
         record: &fresh,
         log_path,
@@ -2046,6 +2188,28 @@ mod tests {
     }
 
     #[test]
+    fn reader_records_death_only_when_not_done_and_undeath() {
+        // A still-running record with no death yet and a dead bridge: the reader writes.
+        let mut rec = DetachedRecord {
+            state: "running".into(),
+            ..Default::default()
+        };
+        assert!(reader_should_record_death(&rec, false));
+        // (Muse, review-2026-10-30) the bridge is still alive: never record a death.
+        assert!(!reader_should_record_death(&rec, true));
+        // Already `done`: never overwritten (a late background won the race).
+        rec.state = "done".into();
+        assert!(!reader_should_record_death(&rec, false));
+        // Not done but a death record already present (another reader won): left as is.
+        rec.state = "running".into();
+        rec.death = Some(DeathRecord::default());
+        assert!(!reader_should_record_death(&rec, false));
+        // Done AND a death record: still not re-written.
+        rec.state = "done".into();
+        assert!(!reader_should_record_death(&rec, false));
+    }
+
+    #[test]
     fn complete_record_folds_members() {
         let mut rec = DetachedRecord {
             id: "x".into(),
@@ -2090,5 +2254,393 @@ mod tests {
         assert!(rec
             .summary
             .starts_with("codex-consult: another consultation"));
+    }
+
+    // ---------------------------------------------------------------- the Job-object spawn harness
+    //
+    // Proves the `CREATE_BREAKAWAY_FROM_JOB` fix in [`create_process_no_inherit`] against a real
+    // Windows Job object. The test is its own helper: run once as the top-level "parent" (no env
+    // marker), it re-execs this very test binary as a short-lived "probe" that is assigned to a Job
+    // and then calls `create_process_no_inherit` to start a long-lived grandchild (`cmd /c ping`).
+    //
+    // Two Jobs, both with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE:
+    //   * one that also allows breakaway (JOB_OBJECT_LIMIT_BREAKAWAY_OK): the helper breaks the
+    //     grandchild out, the probe reports "yes", and the grandchild SURVIVES closing the Job.
+    //   * one that forbids breakaway: the helper's first attempt is ERROR_ACCESS_DENIED, the retry
+    //     without the flag succeeds (the spawn does NOT fail), the probe reports "denied", and the
+    //     grandchild is KILLED when the Job closes.
+    //
+    // The probe is isolated from any ambient Job first (CREATE_BREAKAWAY_FROM_JOB at creation); if
+    // an ambient Job forbids even that, the test cannot set up a clean Job and skips rather than
+    // flaking.
+    #[cfg(windows)]
+    const JOBTEST_NAME: &str = "consult::detach::tests::job_object_breakaway_harness";
+    #[cfg(windows)]
+    const JOBTEST_PROBE_ENV: &str = "C3_JOBTEST_PROBE";
+    #[cfg(windows)]
+    const JOBTEST_RESULT_ENV: &str = "C3_JOBTEST_RESULT";
+
+    #[cfg(windows)]
+    mod winjob {
+        #[allow(non_snake_case)]
+        #[repr(C)]
+        pub struct StartupInfoW {
+            pub cb: u32,
+            pub lpReserved: *mut u16,
+            pub lpDesktop: *mut u16,
+            pub lpTitle: *mut u16,
+            pub dwX: u32,
+            pub dwY: u32,
+            pub dwXSize: u32,
+            pub dwYSize: u32,
+            pub dwXCountChars: u32,
+            pub dwYCountChars: u32,
+            pub dwFillAttribute: u32,
+            pub dwFlags: u32,
+            pub wShowWindow: u16,
+            pub cbReserved2: u16,
+            pub lpReserved2: *mut u8,
+            pub hStdInput: isize,
+            pub hStdOutput: isize,
+            pub hStdError: isize,
+        }
+        #[allow(non_snake_case)]
+        #[repr(C)]
+        pub struct ProcessInformation {
+            pub hProcess: isize,
+            pub hThread: isize,
+            pub dwProcessId: u32,
+            pub dwThreadId: u32,
+        }
+        #[repr(C)]
+        pub struct IoCounters {
+            pub read_op: u64,
+            pub write_op: u64,
+            pub other_op: u64,
+            pub read_tx: u64,
+            pub write_tx: u64,
+            pub other_tx: u64,
+        }
+        #[repr(C)]
+        pub struct JobBasicLimit {
+            pub per_process_user_time: i64,
+            pub per_job_user_time: i64,
+            pub limit_flags: u32,
+            pub minimum_ws: usize,
+            pub maximum_ws: usize,
+            pub active_process_limit: u32,
+            pub affinity: usize,
+            pub priority_class: u32,
+            pub scheduling_class: u32,
+        }
+        #[repr(C)]
+        pub struct JobExtendedLimit {
+            pub basic: JobBasicLimit,
+            pub io: IoCounters,
+            pub process_memory_limit: usize,
+            pub job_memory_limit: usize,
+            pub peak_process_memory_used: usize,
+            pub peak_job_memory_used: usize,
+        }
+        #[allow(non_snake_case)]
+        extern "system" {
+            pub fn CreateJobObjectW(attrs: *mut u8, name: *const u16) -> isize;
+            pub fn SetInformationJobObject(h: isize, class: u32, info: *mut u8, cb: u32) -> i32;
+            pub fn AssignProcessToJobObject(h: isize, proc_: isize) -> i32;
+            pub fn ResumeThread(thread: isize) -> u32;
+            pub fn WaitForSingleObject(h: isize, ms: u32) -> u32;
+            pub fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
+            pub fn TerminateProcess(h: isize, code: u32) -> i32;
+            pub fn CloseHandle(h: isize) -> i32;
+            pub fn CreateProcessW(
+                app: *const u16,
+                cmdline: *mut u16,
+                proc_attrs: *mut u8,
+                thread_attrs: *mut u8,
+                inherit: i32,
+                flags: u32,
+                env: *mut u8,
+                dir: *const u16,
+                si: *mut StartupInfoW,
+                pi: *mut ProcessInformation,
+            ) -> i32;
+        }
+
+        pub const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
+        pub const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+        pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK: u32 = 0x0000_0800;
+        pub const CREATE_SUSPENDED: u32 = 0x0000_0004;
+        pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        pub const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        pub const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
+        pub const WAIT_OBJECT_0: u32 = 0;
+        pub const WAIT_TIMEOUT: u32 = 0x0000_0102;
+        pub const ERROR_ACCESS_DENIED: i32 = 5;
+        pub const PROCESS_TERMINATE: u32 = 0x0001;
+        pub const SYNCHRONIZE: u32 = 0x0010_0000;
+        pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+        /// Is the process behind this handle still running? (`WaitForSingleObject` times out.)
+        pub unsafe fn is_alive(h: isize) -> bool {
+            WaitForSingleObject(h, 0) == WAIT_TIMEOUT
+        }
+
+        /// A UTF-16, NUL-terminated copy of `s`.
+        pub fn wide(s: &str) -> Vec<u16> {
+            s.encode_utf16().chain([0]).collect()
+        }
+
+        /// A UTF-16 environment block = this process's environment plus the two overrides, in the
+        /// `K=V\0` ... `\0` shape `CREATE_UNICODE_ENVIRONMENT` wants.
+        pub fn env_block(result_path: &str) -> Vec<u16> {
+            let mut b: Vec<u16> = Vec::new();
+            for (k, v) in std::env::vars_os() {
+                let (k, v) = (
+                    k.to_string_lossy().to_string(),
+                    v.to_string_lossy().to_string(),
+                );
+                // Our own markers are forced below; drop any inherited copy.
+                if k == super::JOBTEST_PROBE_ENV || k == super::JOBTEST_RESULT_ENV {
+                    continue;
+                }
+                b.extend(format!("{k}={v}").encode_utf16());
+                b.push(0);
+            }
+            b.extend(format!("{}=1", super::JOBTEST_PROBE_ENV).encode_utf16());
+            b.push(0);
+            b.extend(format!("{}={result_path}", super::JOBTEST_RESULT_ENV).encode_utf16());
+            b.push(0);
+            b.push(0);
+            b
+        }
+    }
+
+    /// The probe side of [`job_object_breakaway_harness`]: start a long-lived grandchild through the
+    /// helper under test and record the breakaway path + grandchild pid, then exit. Never returns.
+    #[cfg(windows)]
+    fn job_probe_main(result_path: &str) -> ! {
+        let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
+        // A grandchild that lives ~59 s (localhost ping, one per second) - long enough for the
+        // parent to make its checks and close the Job.
+        let out = unsafe {
+            super::create_process_no_inherit(
+                &comspec,
+                "/c ping -n 60 127.0.0.1",
+                &std::env::temp_dir(),
+                None,
+            )
+        };
+        let line = match out {
+            Ok(o) => format!("{}\n{}", o.breakaway.as_str(), o.pid),
+            Err(e) => format!("spawn_failed\n0\n{e}"),
+        };
+        let _ = std::fs::write(result_path, line);
+        std::process::exit(0);
+    }
+
+    /// Spawn this test binary as a suspended, Job-free probe (inherits no handles). Returns its
+    /// process + main-thread handles and pid, or the Win32 error code on failure.
+    #[cfg(windows)]
+    unsafe fn spawn_suspended_probe(result_path: &str) -> Result<(isize, isize, u32), i32> {
+        use winjob::*;
+        let exe = std::env::current_exe().expect("current_exe");
+        let exe_s = exe.to_string_lossy().to_string();
+        let mut app = wide(&exe_s);
+        // Run exactly this one test in the probe; it detects the env marker and takes the probe path.
+        let cmdline_s = format!("\"{exe_s}\" --exact {JOBTEST_NAME}");
+        let mut cmdline = wide(&cmdline_s);
+        let dir = wide(&std::env::temp_dir().to_string_lossy());
+        let mut env = env_block(result_path);
+        let mut si: StartupInfoW = std::mem::zeroed();
+        si.cb = std::mem::size_of::<StartupInfoW>() as u32;
+        let mut pi: ProcessInformation = std::mem::zeroed();
+        // CREATE_BREAKAWAY_FROM_JOB lifts the probe out of any ambient Job so only OUR Job governs
+        // it; CREATE_SUSPENDED lets us assign it to the Job before its first instruction.
+        let flags = CREATE_SUSPENDED
+            | CREATE_BREAKAWAY_FROM_JOB
+            | CREATE_NO_WINDOW
+            | CREATE_UNICODE_ENVIRONMENT;
+        let ok = CreateProcessW(
+            app.as_mut_ptr(),
+            cmdline.as_mut_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            0,
+            flags,
+            env.as_mut_ptr() as *mut u8,
+            dir.as_ptr(),
+            &mut si,
+            &mut pi,
+        );
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(-1));
+        }
+        Ok((pi.hProcess, pi.hThread, pi.dwProcessId))
+    }
+
+    /// Build a Job with KILL_ON_JOB_CLOSE (and BREAKAWAY_OK when `allow_breakaway`).
+    #[cfg(windows)]
+    unsafe fn make_kill_on_close_job(allow_breakaway: bool) -> isize {
+        use winjob::*;
+        let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
+        assert!(job != 0, "CreateJobObjectW failed");
+        let mut info: JobExtendedLimit = std::mem::zeroed();
+        info.basic.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            | if allow_breakaway {
+                JOB_OBJECT_LIMIT_BREAKAWAY_OK
+            } else {
+                0
+            };
+        let ok = SetInformationJobObject(
+            job,
+            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+            &mut info as *mut _ as *mut u8,
+            std::mem::size_of::<JobExtendedLimit>() as u32,
+        );
+        assert!(ok != 0, "SetInformationJobObject failed");
+        job
+    }
+
+    /// One case: build the Job, run the probe inside it, and assert the breakaway path and the
+    /// kill-on-close fate of the grandchild. Returns `false` if an ambient Job blocked the setup
+    /// (the whole test then skips).
+    #[cfg(windows)]
+    unsafe fn run_job_case(allow_breakaway: bool) -> bool {
+        use winjob::*;
+        let result = std::env::temp_dir().join(format!(
+            "c3-jobtest-{}-{}.txt",
+            if allow_breakaway { "ok" } else { "no" },
+            uuid::Uuid::new_v4().simple()
+        ));
+        let result_s = result.to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&result);
+
+        let job = make_kill_on_close_job(allow_breakaway);
+
+        let (hproc, hthread, _probe_pid) = match spawn_suspended_probe(&result_s) {
+            Ok(v) => v,
+            Err(code) => {
+                CloseHandle(job);
+                if code == ERROR_ACCESS_DENIED {
+                    eprintln!(
+                        "job_object_breakaway_harness: an ambient Job forbids breakaway; skipping."
+                    );
+                    return false;
+                }
+                panic!("could not start the probe (Win32 error {code})");
+            }
+        };
+
+        assert!(
+            AssignProcessToJobObject(job, hproc) != 0,
+            "AssignProcessToJobObject failed"
+        );
+        ResumeThread(hthread);
+
+        // The probe is short: it spawns the grandchild and exits.
+        assert_eq!(
+            WaitForSingleObject(hproc, 20_000),
+            WAIT_OBJECT_0,
+            "the probe did not exit in time"
+        );
+        CloseHandle(hproc);
+        CloseHandle(hthread);
+
+        // Read the probe's result (breakaway path + grandchild pid).
+        let mut text = String::new();
+        for _ in 0..50 {
+            if let Ok(s) = std::fs::read_to_string(&result) {
+                if !s.trim().is_empty() {
+                    text = s;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let mut it = text.lines();
+        let breakaway = it.next().unwrap_or("").trim().to_string();
+        let gc_pid: u32 = it.next().unwrap_or("0").trim().parse().unwrap_or(0);
+        assert!(
+            breakaway != "spawn_failed",
+            "the helper's spawn failed: {text}"
+        );
+        assert!(gc_pid != 0, "no grandchild pid was recorded: {text}");
+
+        let expected = if allow_breakaway { "yes" } else { "denied" };
+        assert_eq!(
+            breakaway, expected,
+            "breakaway path (allow_breakaway={allow_breakaway})"
+        );
+
+        // Open the grandchild while it is still alive (the Job handle is still open).
+        let gc = OpenProcess(
+            PROCESS_TERMINATE | SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+            0,
+            gc_pid,
+        );
+        assert!(gc != 0, "the grandchild (pid {gc_pid}) was not openable");
+        assert!(
+            is_alive(gc),
+            "the grandchild should be alive before Job close"
+        );
+
+        // Close the Job: KILL_ON_JOB_CLOSE kills everything still in the Job.
+        CloseHandle(job);
+
+        let outcome_ok = if allow_breakaway {
+            // Broke away -> not in the Job -> survives the close.
+            std::thread::sleep(std::time::Duration::from_millis(750));
+            let survived = is_alive(gc);
+            TerminateProcess(gc, 0); // cleanup: do not leave a 59 s ping behind
+            survived
+        } else {
+            // In the Job -> killed with it. Poll a bounded while for the kill to land.
+            let mut dead = false;
+            for _ in 0..50 {
+                if !is_alive(gc) {
+                    dead = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            if !dead {
+                TerminateProcess(gc, 0); // cleanup if the expectation was wrong
+            }
+            dead
+        };
+        CloseHandle(gc);
+        let _ = std::fs::remove_file(&result);
+
+        if allow_breakaway {
+            assert!(
+                outcome_ok,
+                "with BREAKAWAY_OK the grandchild must survive the Job close"
+            );
+        } else {
+            assert!(
+                outcome_ok,
+                "without BREAKAWAY_OK the grandchild must be killed with the Job"
+            );
+        }
+        true
+    }
+
+    /// The Job-object harness (see the block comment above). Dispatches to the probe path when this
+    /// process is a re-exec'd probe, else runs both Job cases as the parent.
+    #[cfg(windows)]
+    #[test]
+    fn job_object_breakaway_harness() {
+        if std::env::var(JOBTEST_PROBE_ENV).is_ok() {
+            let result = std::env::var(JOBTEST_RESULT_ENV).unwrap_or_default();
+            job_probe_main(&result);
+        }
+        unsafe {
+            // Case 1: the Job forbids breakaway -> the helper's retry path, grandchild killed.
+            if !run_job_case(false) {
+                return;
+            }
+            // Case 2: the Job allows breakaway -> grandchild lifted out, survives the close.
+            run_job_case(true);
+        }
     }
 }

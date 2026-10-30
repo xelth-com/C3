@@ -1,0 +1,1546 @@
+{
+    "task_id":  "review-2026-10-30",
+    "findings":  [
+                     {
+                         "id":  "F03-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/finish/secret_gate.rs",
+                                               "line":  105
+                                           }
+                                       ],
+                         "claim":  "The secret gate never scans staged typechange (T) entries: `staged_text_paths` filters `--diff-filter=ACMR`, so a tracked symlink replaced by a regular file commits with its new content unscanned (it still appears in the printed staged list, which uses no filter).",
+                         "trigger":  "A path is committed as a symlink (or vice versa), then replaced by the other type with secret-shaped content and staged by `c3 finish`\u0027s `git add -A`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/secret_gate.rs:96-117",
+                                              "observation":  "The name list is built with `diff --cached --name-only --diff-filter=ACMR -z`; T is not in the filter set."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/git.rs:69-92",
+                                              "observation":  "`staged_name_status` (the printed list) runs with no diff-filter, so a T entry is shown to the user as staged yet was never gated."
+                                          }
+                                      ],
+                         "verification":  "In a scratch repo, commit a symlink, replace it with a regular file containing `sk-\u003c39 chars\u003e`, `git add -A`, and run the gate; confirm the entry is status T and no SecretHit is returned.",
+                         "remedy":  "Add `T` to `--diff-filter` (ACMRT) — a typechange\u0027s new side is new content and must be scanned like any addition.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/finish/secret_gate.rs",
+                                               "line":  115
+                                           }
+                                       ],
+                         "claim":  "The gate fail-opens on a failure to LIST staged files (distinct from the already-known per-file diff fail-open): a non-success `git diff --cached --name-only` yields an empty path list, `scan_staged` returns no hits, and the commit proceeds as clean.",
+                         "trigger":  "The `git diff --cached --name-only ... -z` subprocess fails (broken index, lock contention, git error) during `c3 finish`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/secret_gate.rs:97-117",
+                                              "observation":  "`match out { Ok(o) if o.status.success() =\u003e ...collect(), _ =\u003e Vec::new() }` — the error arm silently produces an empty list."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/mod.rs:189-199",
+                                              "observation":  "`scan_staged`\u0027s empty result is treated as clean and the flow continues to commit."
+                                          }
+                                      ],
+                         "verification":  "Make the listing command fail (e.g. GIT_INDEX_FILE pointing at a corrupt index) in a test harness and confirm `c3 finish` commits instead of refusing.",
+                         "remedy":  "Fail closed: propagate the listing error as `FinishError::Other` instead of returning an empty vector.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  187
+                                           }
+                                       ],
+                         "claim":  "`agy_tool_is_writing` whitelists by substring: any tool whose name merely CONTAINS read/view/list/grep/glob/search/find/cat/ls is classified read-only, so writing tools named e.g. `search_replace`, `find_replace`, `read_write_file` or `catalog_put` (contains \"cat\") pass the drift check and the run only WARNs.",
+                         "trigger":  "An agy reviewer calls a writing tool whose name embeds one of the nine read-only substrings while the working tree/collab changes; the tree check records `warned` and the reply stays usable.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:179-188",
+                                              "observation":  "`!READ_ONLY.iter().any(|ro| t.contains(ro))` — containment, not equality or prefix, decides read-only."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:192-199",
+                                              "observation":  "`agy_warns` requires only that no tool name is classified writing; the classifier is the sole guard."
+                                          }
+                                      ],
+                         "verification":  "Call `agy_tool_is_writing(\"search_replace\")` and confirm it returns false; then grep agy fixtures/docs for real tool names containing a read-only substring.",
+                         "remedy":  "Match whole names or documented prefixes (split on `_`/`-` and compare tokens), keeping empty/unknown as writing.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  163
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  145
+                                           }
+                                       ],
+                         "claim":  "The collab-scope relaxation lets a reviewer that DID write pass as usable whenever the write lands under an ignored path: another task\u0027s directory (`\u003cother\u003e/...`), any `.consult.*`/`..consult.*`-named path at any depth, a sibling handoff prefix during panels, and this task\u0027s coordinator-owned `state.md`/`findings.json`/`sessions.json` plus their atomic-write temps — the latter being the ledger the coordinator consumes.",
+                         "trigger":  "A misbehaving reviewer writes to `\u003ctask\u003e/findings.json` (or another task\u0027s directory, or a path it names `.consult.\u003canything\u003e`) during its run; `compare_collab` drops the change and the outcome is `warned`/`clean`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:96-141, 145-172",
+                                              "observation":  "`belongs_to_other_task`, `is_control_file` (basename prefix match at any depth) and `task_owned_ignores` all remove paths from the comparison before the change is counted."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:121-133",
+                                              "observation":  "Panel members additionally ignore all sibling `handoffs/NN-` prefixes."
+                                          }
+                                      ],
+                         "verification":  "In a unit test, add `\u003ctask\u003e/findings.json` to the after-snapshot with different content and confirm `compare_collab` returns it as unchanged.",
+                         "remedy":  "Keep the ignores, but record them in the tree-check outcome (e.g. a `ignored:` count/path list) so a coordinator sees that writes to ledger-owned paths are structurally invisible; or have the ledger carry a hash the coordinator re-verifies after the run.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-5",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/retention.rs",
+                                               "line":  140
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  1169
+                                           }
+                                       ],
+                         "claim":  "The retention RULES table (`RULES`, `is_live`, `clears`, `precedence`) is consumed only by its own tests; health.rs/quota.rs call just the scalar predicates and keep their own inline ordering, so the module billed as \"the documented source of truth\" can drift from runtime behaviour invisibly.",
+                         "trigger":  "A future edit changes health.rs\u0027s inline condition (e.g. the model-mark clear or quota ordering) without touching RULES; every test still passes and the table now documents a policy the code does not implement.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "grep for `is_live(`/`clears(`/`RULES` across crates/c3-core/src",
+                                              "observation":  "The only non-test callers are inside retention.rs itself; health.rs and quota.rs reference only out_minutes/model_unsupported_live/within_*/window_* helpers."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/health.rs:1206-1275",
+                                              "observation":  "The model-mark, auth and quota liveness/clearing decisions are inline record-order logic, not calls into the table."
+                                          }
+                                      ],
+                         "verification":  "Temporarily invert one RULES row (e.g. Auth cleared_by) and run `cargo test -p c3-core`; nothing fails because nothing consumes it.",
+                         "remedy":  "Either route the health/quota decisions through `is_live`/`clears`, or add a test asserting each health.rs decision matches the corresponding RULES row.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-6",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/work/record.rs",
+                                               "line":  636
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/finish/git.rs",
+                                               "line":  1
+                                           }
+                                       ],
+                         "claim":  "`c3 work` writes to git\u0027s object database (`git hash-object -w`, including `--stdin` for the empty blob) outside `finish/`, contradicting the stated invariant that finish is \"the one code path in C3 that runs a git write\"; failures are silently swallowed (`unwrap_or_default`), degrading patches to empty.",
+                         "trigger":  "Any `c3 work --role tests` run on a repo where the object write fails (read-only .git, permissions) — baseline hashes become \"\", pre-dirty files drop out of `files_changed` and `patch.diff` renders empty with no error surfaced.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/work/record.rs:577-646",
+                                              "observation":  "`store_blob`/`empty_blob` run `hash-object -w`; `baseline_hashes` uses `.unwrap_or_default()` on the result."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/git.rs:1-2",
+                                              "observation":  "The module doc states c3 only ever runs git write commands from finish."
+                                          }
+                                      ],
+                         "verification":  "Run a work test with the repo\u0027s objects dir made read-only and observe the run completes with an empty patch and no warning.",
+                         "remedy":  "Either amend the invariant text (\"writes only loose objects outside finish\") and log the write failure where it degrades a patch, or route the object writes through finish/git.rs.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-7",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  1943
+                                           }
+                                       ],
+                         "claim":  "Re-seat eligibility classifies refusals by substring match on C3\u0027s own preflight message wording (\" is not usable:\", \" does not offer the model \", \"availability could not be established\"); a wording change in the preflight verdicts silently disables re-seating (fail-safe: the panel runs short).",
+                         "trigger":  "health/verdict refusal text is reworded in a later release; `lost_before_start` returns false for a genuine lost-before-start member.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:1930-1947",
+                                              "observation":  "`is_preflight_refusal` matches three literal substrings; no shared constant links it to the producer of those texts."
+                                          }
+                                      ],
+                         "verification":  "Grep the preflight verdict producers for the three phrases and confirm they still emit them verbatim.",
+                         "remedy":  "Carry a machine-readable refusal class on the preflight verdict instead of re-matching prose.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-8",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/finish/secret_gate.rs",
+                                               "line":  51
+                                           }
+                                       ],
+                         "claim":  "A staged text file whose first 8 KiB contain a NUL byte is skipped as binary, so a secret placed after binary-looking padding bypasses the gate even though the file is committed as text.",
+                         "trigger":  "A file with an early NUL and a secret-shaped line after the first 8 KiB is staged and committed.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/secret_gate.rs:50-54, 36-48",
+                                              "observation":  "`is_binary` checks only the first 8192 bytes; `scan_staged_text` returns None for such content by design."
+                                          }
+                                      ],
+                         "verification":  "Stage a file of NUL padding followed by an `sk-...` line and confirm `scan_staged_text` returns None.",
+                         "remedy":  "For the gate (not discovery), scan the extracted added lines for NUL-free windows — or scan the whole added text when it has no NUL in the added lines themselves.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-claudecode-refactor-review-panel-zai-claude.md",
+                                        "thread":  "e82dbb5b-dd16-470b-845a-cf1d8dc97338",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:58:03+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/finish/secret_gate.rs",
+                                               "line":  36
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/finish/secret_gate.rs",
+                                               "line":  51
+                                           }
+                                       ],
+                         "claim":  "c3 finish secret gate skips any staged blob with a NUL in the first 8 KiB, so a secret committed as or inside a binary (PEM/DER, .p12/.pfx, image metadata, vendored binary fixture) passes clean.",
+                         "trigger":  "Stage a new binary file containing a secret-shaped string (or a text secret renamed to a binary-detected blob) and run c3 finish.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/secret_gate.rs:36-54,119-122",
+                                              "observation":  "scan_staged_text returns None for binary; is_binary checks first 8 KiB for NUL; scan_staged only scans added text lines so binary diffs contribute nothing."
+                                          }
+                                      ],
+                         "verification":  "Stage a fixture binary with an embedded sk-test key plus NUL byte; run the gate and confirm clean vs refused.",
+                         "remedy":  "Fail closed on binary adds: refuse binary adds by default (or gate by hard-ignore basename list plus size cap) with --allow-secret as the override; document the binary carve-out.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-muse-refactor-review-panel-meta.md",
+                                        "thread":  "01a18d11-f478-7980-b075-6f1d475f9782",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:52:00+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  179
+                                           }
+                                       ],
+                         "claim":  "agy read-only decision is a substring allow-list: any tool name containing read/view/list/grep/glob/search/find/cat/ls is read-only, so a writing tool whose name contains one of those substrings warns instead of failing.",
+                         "trigger":  "agy stream names a writing tool such as write_read_cache, broader_search_and_edit, or find_and_replace that contains a read-only substring while the tree changed.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:179-188",
+                                              "observation":  "READ_ONLY substrings matched with contains() after lowercasing; empty name is writing. No exact tool inventory is checked."
+                                          }
+                                      ],
+                         "verification":  "Unit-check agy_tool_is_writing against adversarial names (write_read_cache, search_and_edit, cat_write) and confirm they classify as writing.",
+                         "remedy":  "Replace substring match with an exact (or prefix) allow-list of known read-only agy tools plus deny-by-default; log the tool names that decided the outcome.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-muse-refactor-review-panel-meta.md",
+                                        "thread":  "01a18d11-f478-7980-b075-6f1d475f9782",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:52:00+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  53
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  23
+                                           }
+                                       ],
+                         "claim":  "claude runs write-disabled yet only warns on any tree/collab/brief/artifact change, while its own note admits managed settings and hooks still apply — a claude reviewer (or its hooks) that did write still returns usable.",
+                         "trigger":  "Run claude with a hook that writes a file during the turn; tree check reports warned and the reply stays usable.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:23-24,53-62,167-199",
+                                              "observation":  "claude in write-disabled set with muse/grok/http; tree outcome warned for all four; engine note says hooks still apply and check cannot tell who changed it."
+                                          }
+                                      ],
+                         "verification":  "Run a claude turn with a write hook fixture and inspect outcome warned vs failed and the recorded TreeNote.",
+                         "remedy":  "For claude, fail on change unless hooks are proven off, or record hook inventory in the ledger and fail when hooks were present; at minimum downgrade usable to failed when the change is inside the review scope.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-muse-refactor-review-panel-meta.md",
+                                        "thread":  "01a18d11-f478-7980-b075-6f1d475f9782",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:52:00+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-4",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  106
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  118
+                                           }
+                                       ],
+                         "claim":  "Collab drift scope silently ignores writes a reviewer could make: other-task directories, .consult.* control files, this task state.md/findings.json/sessions.json and temps, plus own and sibling handoff prefixes — such writes never fail the run.",
+                         "trigger":  "Reviewer writes to another task dir, .consult.* file, or sibling handoff path during its turn; compare_collab drops it.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:93-150,190-209",
+                                              "observation":  "compare_collab skips belongs_to_other_task, is_control_file, task-owned ledger files, and caller ignore_prefixes; panel members additionally ignore sibling handoffs and stores."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:114-148",
+                                              "observation":  "Orchestrator builds own/sibling prefixes and passes them as ignored; collab changes there become warnings only via the write-disabled path."
+                                          }
+                                      ],
+                         "verification":  "Mutate an other-task file and a .consult.* file between collab snapshots and confirm compare_collab returns empty.",
+                         "remedy":  "Keep the ignores for usability but fail when the ignored path was written by the reviewer process (attribute by pid/time) or at least surface ignored-path writes as a separate failed class; document the monitored boundary.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-muse-refactor-review-panel-meta.md",
+                                        "thread":  "01a18d11-f478-7980-b075-6f1d475f9782",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:52:00+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-5",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/work/record.rs",
+                                               "line":  761
+                                           }
+                                       ],
+                         "claim":  "c3 work scope check is post-hoc and fail-open: empty scope checks nothing and an unbuildable glob set returns no violations, so a typoed --scope silently disables the OUT OF SCOPE guard.",
+                         "trigger":  "Start c3 work --scope with a typoed glob (e.g. unbalanced [) and change a file outside intent; run exits 0 with no scope_violations.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/work/record.rs:761-785",
+                                              "observation":  "scope_violations early-returns empty on empty scope; invalid glob is skipped and failed build returns empty; only non-matching expanded paths are reported."
+                                          }
+                                      ],
+                         "verification":  "Call scope_violations with scope [\u0027[bad\u0027] and a changed file; confirm current empty vs expected error.",
+                         "remedy":  "Refuse on empty-after-defaults when --scope was explicitly given, and error (not empty) when any scope glob fails to parse or the set fails to build.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-muse-refactor-review-panel-meta.md",
+                                        "thread":  "01a18d11-f478-7980-b075-6f1d475f9782",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:52:00+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-6",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/detach.rs",
+                                               "line":  1207
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/work/record.rs",
+                                               "line":  219
+                                           }
+                                       ],
+                         "claim":  "Consult detached reader death write has no lock or generation check while the work-run equivalent does: two concurrent --status/--wait readers (or a late background done) can race the unsynchronised re-read plus atomic replace.",
+                         "trigger":  "Two --status readers judge the same dead run concurrently, or a background writes done between the reader re-read and write_status.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/detach.rs:1207-1243",
+                                              "observation":  "ensure_reader_death_record re-reads, checks done/death, builds death, stamps updated and writes; no admission lock and no pid/attempt generation comparison."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/work/record.rs:183-242",
+                                              "observation":  "Work path re-reads under admission_lock and requires same_generation plus still-pending plus still-dead before writing died."
+                                          }
+                                      ],
+                         "verification":  "Interleave two ensure_reader_death_record calls with a done write between re-read and write; confirm death is not added over done and concurrent writers converge.",
+                         "remedy":  "Port the work pattern: re-read under the task admission lock (or an atomic compare) and only add death when the fresh record is the same generation and still not done; never overwrite a background done.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-muse-refactor-review-panel-meta.md",
+                                        "thread":  "01a18d11-f478-7980-b075-6f1d475f9782",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:52:00+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-7",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  2335
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/prompt.rs",
+                                               "line":  183
+                                           }
+                                       ],
+                         "claim":  "Grok inline_brief best-effort read silently inlines empty text when the brief file cannot be read, re-creating the invented-brief failure the feature was added to prevent.",
+                         "trigger":  "Run grok with a brief path that is missing/unreadable at prompt-build time (race with brief rotation).",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:2335-2339",
+                                              "observation":  "brief_text is read_to_string(bp).unwrap_or_default() only for inline_brief engines; prompt assembles the \u003cbrief\u003e block only when trimmed text is non-empty."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/prompt.rs:177-189",
+                                              "observation":  "Empty brief_text means no inlined block is emitted."
+                                          }
+                                      ],
+                         "verification":  "Point a grok run at an unreadable brief and check whether the prompt contains a \u003cbrief\u003e block or proceeds with path-only reference.",
+                         "remedy":  "Fail the grok turn (or refuse to launch) when inline_brief is set but the brief read fails or is empty while a brief was requested; log the read error.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-muse-refactor-review-panel-meta.md",
+                                        "thread":  "01a18d11-f478-7980-b075-6f1d475f9782",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T14:52:00+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/finish/never_commit.rs",
+                                               "line":  14
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/work/mod.rs",
+                                               "line":  1490
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/detached.rs",
+                                               "line":  289
+                                           },
+                                           {
+                                               "path":  ".gitignore",
+                                               "line":  10
+                                           }
+                                       ],
+                         "claim":  "c3 finish commits machine-local run artifacts that the never-commit globs do not match: work resume temps `.events-resume-\u003cn\u003e.jsonl` and `.stderr-resume-\u003cn\u003e` (kept after a failed append), and detached `.consult.detached-\u003cid8\u003e.prompt.txt` and `.status.json`. .gitignore does not cover them, and git add -A then commits them.",
+                         "trigger":  "c3 finish while a resume artifact_error left `.events-resume-N.jsonl` or `.stderr-resume-N` under `.collab/\u003ctask\u003e/work/`, or while a detached prompt or status file is present.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/never_commit.rs:14-22",
+                                              "observation":  "The globs name events.jsonl, *.events.jsonl, the lock and pending files, and work files whose basename is exactly .log or .stderr."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/work/mod.rs:1490-1540",
+                                              "observation":  "A resume writes `.events-resume-{n}.jsonl` and `.stderr-resume-{n}` and deletes them only after a successful append; on artifact_error they are kept."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/detached.rs:289-291 and .gitignore:10-12",
+                                              "observation":  "Detached prompt and status paths are not in NEVER_COMMIT. Gitignore lists only the consult lock and pending json under .collab."
+                                          }
+                                      ],
+                         "verification":  "In a scratch repo, create `.collab/t/work/01/.events-resume-1.jsonl` and `.stderr-resume-1` plus `.collab/t/.consult.detached-aaaaaaaa.prompt.txt`, run the never-commit matcher and `git add -A --dry-run`, and confirm all three stay staged.",
+                         "remedy":  "Add globs for `.collab/**/work/**/.events-resume-*.jsonl`, `.collab/**/work/**/.stderr-resume-*`, `.collab/**/.consult.detached-*.prompt.txt`, and `.collab/**/.consult.detached-*.status.json` (keep the detached `.log` if that convention stays).",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-2",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/finish/secret_gate.rs",
+                                               "line":  119
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/finish/git.rs",
+                                               "line":  95
+                                           }
+                                       ],
+                         "claim":  "The added-lines gate does not see a new blob Git reports as binary, and it does not see the commit message. Both can land in the commit with a secret-shaped value.",
+                         "trigger":  "A newly added file with a NUL in the first 8KB, or a `.gitattributes` binary/diff driver, containing a key; or a secret only in `c3 finish --message` past the journal title line.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/secret_gate.rs:119-121",
+                                              "observation":  "staged_diff documents that a binary diff has no + lines, so the scan contributes nothing. The scan input is added_from_diff, not the staged blob."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/finish/git.rs:95-99",
+                                              "observation":  "git commit -m receives the message with no redactor call. The journal stores only the first line as the title."
+                                          }
+                                      ],
+                         "verification":  "Stage a file Git treats as binary that contains `sk-` plus 32 alphanumerics and a message with the same token only after line 1; confirm scan_staged is empty and the commit succeeds.",
+                         "remedy":  "Hash staged blobs the diff calls binary and run the redactor on the commit message and the full journal body before commit.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-3",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  118
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  163
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  184
+                                           }
+                                       ],
+                         "claim":  "A reviewer write that touches only another task\u0027s collab directory, a .consult.* file, or this task\u0027s state.md, findings.json, or sessions.json is dropped before the engine decision. engine_tree_outcome returns clean and never consults agy tool names, so an agy turn that called write_to_file and wrote only those paths stays usable.",
+                         "trigger":  "An agy primary turn calls write_to_file (or run_command) and the only content change under the collab root is `\u003ctask\u003e/findings.json`, `\u003ctask\u003e/sessions.json`, `\u003ctask\u003e/state.md`, a `.consult.*` file, or `\u003cother-task\u003e/...`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:106-170",
+                                              "observation":  "compare_collab continues past belongs_to_other_task, is_control_file, and the task-owned prefixes for state.md, findings.json, and sessions.json."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:184-198",
+                                              "observation":  "An empty why returns outcome clean immediately. The agy_tool_is_writing filter runs only when why is non-empty."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:4575-4578",
+                                              "observation":  "usable is cleared only when the tree problem string is non-empty. clean leaves the reply usable."
+                                          }
+                                      ],
+                         "verification":  "Unit-test engine_tree_outcome/compare_collab: before/after differ only at `t/findings.json`, engine agy, tool names `[write_to_file]`. Expectation for a sound check is failed; current code returns clean.",
+                         "remedy":  "If any agy tool name classifies as writing, fail even when the watched set is unchanged, and treat writes to this task\u0027s ledger files as watched when the writer is the reviewer. Keep the other-task skip only as a warning that names the path.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  61
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/claude.rs",
+                                               "line":  442
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  4575
+                                           }
+                                       ],
+                         "claim":  "Claude is write-disabled for the drift check with no dependence on the init proof. A working-tree change yields warned and an empty problem, so the reply stays usable. The init proof also returns no problem when the stream has zero init events.",
+                         "trigger":  "A claude consult whose init lists only Read, Grep, and Glob (or has no init event) and whose turn changes a tracked file, via a managed-settings hook or any write the CLI still performed.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:53-61 and 199-205",
+                                              "observation":  "engine_write_disabled is true for engine == claude. A non-empty why then returns outcome warned and problem empty."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/claude.rs:442-468",
+                                              "observation":  "init_problem returns an empty problem when init_count == 0. Extra tools and a bad permission mode are checked only after that."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:4575-4578",
+                                              "observation":  "usable is set false only when the tree problem is non-empty. Warnings are appended and the reply stands."
+                                          }
+                                      ],
+                         "verification":  "Run a claude consult against a fake CLI that emits a clean init (Read, Grep, Glob, dontAsk) and touch a tracked file before the process exits. Confirm tree_check.outcome is warned and the process exit is 0.",
+                         "remedy":  "Fail the run when the init proof did not run (init_count == 0) or when a watched path changed and the init event is missing. Keep the warn only when the init proof passed and the change is outside the paths the read tools can write.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  179
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/agy.rs",
+                                               "line":  437
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  4559
+                                           }
+                                       ],
+                         "claim":  "Agy can write and stay usable when the writing tool\u0027s name contains a read-only substring, when the tool_name is empty, or when the write happens on the denial-retry or timeout-continuation turn. The drift snapshot is taken once, after the primary turn only, and tool names are collected only from that turn.",
+                         "trigger":  "Primary turn calls view_file only, then the denial retry or continuation calls write_to_file and edits a tracked file. Or the primary calls a tool named search_replace / find_and_replace and edits a tracked file. Or a tool step has an empty tool_name beside a real read tool.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:179-187",
+                                              "observation":  "agy_tool_is_writing returns false when the lowercased name contains any of read, view, list, grep, glob, search, find, cat, ls. Empty is writing."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/agy.rs:437-440",
+                                              "observation":  "tool_names.push runs only when tool_name is non-empty, so a nameless tool step is omitted."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:3720-3726 and 4559-4598",
+                                              "observation":  "agy_tool_names is filled from the primary events file. engine_tree_check runs before run_engine_denial_retry; the timeout continuation is later at 4625. There is one snapshot."
+                                          }
+                                      ],
+                         "verification":  "Fixture: primary events contain only view_file, collab snapshots identical, then a second turn\u0027s events contain write_to_file and a tracked file differs. Confirm the recorded tree_check is clean. Separately, call agy_tool_is_writing(\"search_replace\") and confirm it is false.",
+                         "remedy":  "Classify by an exact read-only allowlist. Accumulate tool names across every turn of the run, and take the after-snapshot after the last secondary turn.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-6",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  1558
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  1690
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/plan.rs",
+                                               "line":  825
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  1223
+                                           }
+                                       ],
+                         "claim":  "A successful re-seat still exits 1. The summary row and routing.picked keep the lost member, and the substitute stays on the not-picked line. The seed\u0027s original draw is unchanged, and the substitute reuses seat number k, so ledger lookup by k can shadow the lost seat\u0027s entry.",
+                         "trigger":  "A non-required seat exits before start with a preflight refusal (record still reserved, refusal contains \u0027is not usable:\u0027 or \u0027does not offer the model\u0027), a reserve member exists, and that substitute later returns a usable reply.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:1212-1266 and 1935-1937",
+                                              "observation":  "On lost_before_start the scheduler pushes a new slot with the same k and a new n/nn. The original slot stays Done."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:1558-1645 and 1680-1690",
+                                              "observation":  "Summary rows for state run read slots[row.runner], the original slot. A lost seat with no usable entry sets all_usable false. Exit is 1. not-picked rows are listed separately and include the reserve."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/plan.rs:825-834 and crates/c3/src/panel/run.rs:1822 and 2125",
+                                              "observation":  "routing.picked is the pre-run draw and is copied into the member spec. find_panel_entry matches panel position to seat k."
+                                          }
+                                      ],
+                         "verification":  "Panel of two with one reserve; force the second seat\u0027s preflight refusal and a usable reserve reply. Confirm the process exit, the summary row, and sessions routing.picked.",
+                         "remedy":  "Point the seat\u0027s display row and routing.picked slot at the promoted runner, ignore the lost slot in all_usable, and record the substitute under a distinct panel position or an explicit replaced_by field.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-7",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  717
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  1288
+                                           }
+                                       ],
+                         "claim":  "A re-seated member gets a private concurrency group, so it does not count against the endpoint parallel limit of a seat that is still running on that same endpoint.",
+                         "trigger":  "Panel concurrency greater than 1, an endpoint limit of 1, one seat of that endpoint still running, and a before-start loss that promotes a reserve runner with the same fingerprint.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:713-742",
+                                              "observation":  "Each reserve runner\u0027s group is concurrency.groups.len() + j, past the planned endpoint groups."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:1285-1326",
+                                              "observation":  "The group limit and the machine-running local count filter on that group only. The panel-wide cap counts every running slot; the endpoint cap does not."
+                                          }
+                                      ],
+                         "verification":  "Two roster entries on one fingerprint, endpoint limit 1, panel concurrency 2, one running seat and one preflight loss. Confirm the reserve starts while the first seat is still running.",
+                         "remedy":  "Give the reserve the endpoint group of its fingerprint so the existing limit and machine count apply.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-8",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/detach.rs",
+                                               "line":  1221
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/liveness/proc.rs",
+                                               "line":  1394
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/detach.rs",
+                                               "line":  120
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/detached.rs",
+                                               "line":  501
+                                           }
+                                       ],
+                         "claim":  "The consult status reader writes a death record even when the fresh pid check says the bridge is alive, and on Windows pid_alive is false for any process whose GetProcessTimes exit FILETIME is non-zero. The background then overwrites the status file from an in-memory copy. A dead bridge with a live engine child is judged died from the bridge pid alone.",
+                         "trigger":  "c3 consult --status (or --wait) while a detached background is still running and process_start_iso returns None, or after the bridge process has exited while its engine child still runs.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/detach.rs:1207-1242 and 1584",
+                                              "observation":  "ensure_reader_death_record computes bridge_alive and always assigns fresh.death unless state is done or death is already set. The caller enters when the earlier judgement was died."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/liveness/proc.rs:149-160 and 1371-1396",
+                                              "observation":  "pid_alive is false when process_start_iso returns None. The Windows implementation returns None when the exit FILETIME is non-zero."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "GetProcessTimes lpExitTime",
+                                              "observation":  "The API contract says the exit time is undefined if the process has not exited. A non-zero value on a live process makes pid_alive false."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/detach.rs:120-127 and 1805; crates/c3/src/consult/detached.rs:481-508 and 208-210",
+                                              "observation":  "update_member writes Sink.record without re-reading. write_report prints death whenever it is set. judgement returns died when pid_alive is false, and engine_alive does not change that state."
+                                          }
+                                      ],
+                         "verification":  "RC2 below. Also start a detached run, and from another process call the reader path while the bridge pid is alive; the status file must not gain a death object.",
+                         "remedy":  "Write the death record only when the fresh read still says the bridge is dead, under the same lock as the background\u0027s status write. Have the background re-read before write. Treat a non-zero exit FILETIME as gone only together with a wait that shows the process has actually exited. Keep state running while engine_alive is true.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-9",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/retention.rs",
+                                               "line":  172
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/health.rs",
+                                               "line":  1212
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/verdict.rs",
+                                               "line":  113
+                                           }
+                                       ],
+                         "claim":  "The retention table says a model-unsupported mark clears only on a later usable reply from the same model. endpoint_health_set drops the mark whenever the newest record for that model is not itself a model-unsupported failure, including a later quota or transport failure. The verdict if-else does not read RULES.precedence, is_live, or clears.",
+                         "trigger":  "A model-unsupported failure for model M, then a later quota failure for the same endpoint and model M, still inside 24 hours.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/retention.rs:171-175 and 293-296",
+                                              "observation":  "MarkKind::ModelUnsupported is ClearedBy::UsableReplyOfModel, implemented as usable_reply \u0026\u0026 same_model."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/health.rs:1212-1223",
+                                              "observation":  "The newest record per model is considered once. The mark is pushed only when that record is a non-ok model-unsupported failure inside the window."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/verdict.rs:113-208",
+                                              "observation":  "verdict_with_credential branches on credential, auth, quota, then models_unsupported. It does not call retention::clears or retention::rule."
+                                          }
+                                      ],
+                         "verification":  "Feed endpoint_health_set two records for one model: an older model-unsupported failure and a newer quota failure inside 24h. Confirm models_unsupported is empty.",
+                         "remedy":  "Make endpoint_health_set call clears, so only a newer usable reply from that model removes the mark, or change the table row to say any newer record for the model wins.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F05-10",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/work/record.rs",
+                                               "line":  577
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/work/record.rs",
+                                               "line":  635
+                                           }
+                                       ],
+                         "claim":  "c3 work writes dirty working-tree file bytes into the git object store with git hash-object -w. Those blobs are not a commit and c3 finish\u0027s secret gate does not scan unreachable objects. patch.diff from the same bytes is not in NEVER_COMMIT.",
+                         "trigger":  "A work run whose baseline or result includes a dirty file that holds a secret, then c3 finish.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/work/record.rs:577-636",
+                                              "observation":  "baseline_hashes and file_patch call store_blob, which runs git hash-object -w on the working-tree path. The comment says the object is loose and unreferenced."
+                                          }
+                                      ],
+                         "verification":  "Dirty a file with an sk- key, run a work record that calls baseline_hashes, and confirm git cat-file -t \u003cprinted-id\u003e is blob while git rev-list --all --objects does not name it.",
+                         "remedy":  "Hash with git hash-object without -w, or write the blob only under the work run directory, and add patch.diff to the never-commit set.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/05-grok-refactor-review-panel-grok.md",
+                                        "thread":  "01a18d11-e920-77f3-82f4-4e0c897213a1",
+                                        "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                        "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T15:04:33+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "958aa5b79d955e28e328a91c75f8856d3406a0da",
+                                             "tree_sha256":  "78368e63f658782bf53522d2d7478825234c9e6e5560c886a0a42c8ac9e9a4d8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     }
+                 ],
+    "ratings":  [
+                    {
+                        "n":  2,
+                        "consult_id":  "aeaf165f-7dbc-4292-8001-7f557cc29447",
+                        "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                        "provider":  "ZAI-claude",
+                        "model":  "glm-5.3",
+                        "engine":  "claude",
+                        "purpose":  "core-contract",
+                        "topics":  [
+                                       "refactor",
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T14:48:39+01:00",
+                        "useful":  "yes",
+                        "note":  "GLM: typechange entries unscanned, list fail-open, agy substring classifier, collab ignores - all verified in code",
+                        "when":  "2026-10-30T15:10:07+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793369407
+                    },
+                    {
+                        "n":  3,
+                        "consult_id":  "c1c00a6d-637d-4a70-aefa-8b434e0cbfe8",
+                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                        "provider":  "meta",
+                        "model":  "muse-spark-1.3-contributor",
+                        "engine":  "muse",
+                        "purpose":  "core-contract",
+                        "topics":  [
+                                       "refactor",
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T14:48:38+01:00",
+                        "useful":  "yes",
+                        "note":  "Muse: binary key containers, agy substring classifier, scope fail-open, death-write race, empty grok inline brief - 5 of 7 verified and fixed",
+                        "when":  "2026-10-30T15:10:08+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793369408
+                    },
+                    {
+                        "n":  4,
+                        "consult_id":  "73d392aa-5190-4523-be5e-6a20de717334",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "core-contract",
+                        "topics":  [
+                                       "refactor",
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T14:48:41+01:00",
+                        "useful":  "yes",
+                        "note":  "Grok: blocker - agy writes into ignored paths pass; re-seat exit/summary/seat reuse and concurrency group; never-commit misses resume temps and detached prompt/status; model-unsupported mark dropped by later failures",
+                        "when":  "2026-10-30T15:10:08+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793369408
+                    }
+                ]
+}

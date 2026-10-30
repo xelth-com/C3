@@ -639,6 +639,10 @@ fn fake_agy_cmd() -> String {
         "@echo off".to_string(),
         "if \"%~1\"==\"models\" goto models".to_string(),
         "more >nul".to_string(),
+        // The tool step's tool name (FAKE_AGY_TOOL_NAME, default run_command): the stall tests use a
+        // read-only tool so the read-only tree check does not fail them, while the writing-tool test
+        // leaves the default.
+        "if not defined FAKE_AGY_TOOL_NAME set FAKE_AGY_TOOL_NAME=run_command".to_string(),
         format!(
             r#"echo {{"event":"init","conversation_id":"{ID}","init":{{"model":"gemini-3.8-flash-high","cwd":"x","tools":["run_command"],"permission_mode":"request-review"}}}}"#
         ),
@@ -647,11 +651,11 @@ fn fake_agy_cmd() -> String {
         ),
         "if not defined FAKE_AGY_TOOL_PINGS goto result".to_string(),
         format!(
-            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{{"name":"run_command","parameters":{{"CommandLine":"cargo build"}}}}}}}}"#
+            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"%FAKE_AGY_TOOL_NAME%","tool_info":{{"name":"%FAKE_AGY_TOOL_NAME%","parameters":{{"CommandLine":"cargo build"}}}}}}}}"#
         ),
         "ping -n %FAKE_AGY_TOOL_PINGS% 127.0.0.1 >nul".to_string(),
         format!(
-            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"DONE","step_type":"tool","tool_name":"run_command"}}}}"#
+            r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"DONE","step_type":"tool","tool_name":"%FAKE_AGY_TOOL_NAME%"}}}}"#
         ),
         ":result".to_string(),
         format!(
@@ -826,7 +830,13 @@ fn agy_quiet_tool_run(e: &Env, tag: &str, pings: &str) -> Output {
             "--continue-sec",
             "0",
         ],
-        &[("PATH", &path), ("FAKE_AGY_TOOL_PINGS", pings)],
+        &[
+            ("PATH", &path),
+            ("FAKE_AGY_TOOL_PINGS", pings),
+            // A read-only tool: the stall mechanic is what these tests exercise, not the read-only
+            // tree check, so the tool must not trip the writing-tool fail (Muse, review-2026-10-30).
+            ("FAKE_AGY_TOOL_NAME", "read_file"),
+        ],
     )
 }
 
@@ -859,6 +869,41 @@ fn an_agy_stall_names_the_open_tool_step() {
         .unwrap();
     assert!((6..12).contains(&silent), "{o}");
     assert_eq!(last["stall"]["seconds"], 3);
+}
+
+// (Muse, review-2026-10-30, item 6) agy that calls a WRITING tool (run_command) FAILS the run even
+// when the working tree and collab dir did not change: its write may have landed in a path the
+// monitored compare ignores, so a clean compare must not let it pass.
+#[test]
+fn an_agy_writing_tool_call_fails_a_clean_run() {
+    let e = setup("agywrite");
+    let agy = e.fake_agy();
+    let path = path_without_agy();
+    let x = e.consult(
+        &[
+            "--provider",
+            "gemini",
+            "--engine",
+            "agy",
+            "--model",
+            "gemini-3.8-flash-high",
+            "--engine-exe",
+            &agy,
+            "--reply-name",
+            "aw",
+            "--stall-sec",
+            "30",
+            "--continue-sec",
+            "0",
+        ],
+        // run_command (the default) completes quickly (no stall); the tree is untouched.
+        &[("PATH", &path), ("FAKE_AGY_TOOL_PINGS", "2")],
+    );
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(1), "{t}");
+    let last = e.last();
+    let o = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(o.contains("a writing tool was called: run_command"), "{o}");
 }
 
 // ------------------------------------------------------------------ ROLE / TOPIC (companions D8)

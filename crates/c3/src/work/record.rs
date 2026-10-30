@@ -767,21 +767,45 @@ pub fn scope_violations(
     if scope.is_empty() {
         return Vec::new();
     }
-    let mut b = globset::GlobSetBuilder::new();
-    for g in scope {
-        if let Ok(glob) = globset::Glob::new(g) {
-            b.add(glob);
+    let kept = |changed: &[String]| -> Vec<String> {
+        changed
+            .iter()
+            .flat_map(|p| expand_path(repo, p))
+            .filter(|p| skip.is_empty() || !p.starts_with(skip))
+            .collect()
+    };
+    match build_scope_set(scope) {
+        Ok(set) => kept(changed)
+            .into_iter()
+            .filter(|p| !set.is_match(p))
+            .collect(),
+        Err(reason) => {
+            // Fail closed (Muse, review-2026-10-30): a scope that cannot be evaluated protects
+            // nothing, so every changed path (outside the skip prefix) is a violation and the
+            // reason is listed FIRST so the caller prints it (`OUT OF SCOPE: ...`) rather than the
+            // run quietly passing an unchecked scope.
+            let mut out = vec![format!("{SCOPE_CHECK_FAILED}: {reason}")];
+            out.extend(kept(changed));
+            out
         }
     }
-    let Ok(set) = b.build() else {
-        return Vec::new();
-    };
-    changed
-        .iter()
-        .flat_map(|p| expand_path(repo, p))
-        .filter(|p| skip.is_empty() || !p.starts_with(skip))
-        .filter(|p| !set.is_match(p))
-        .collect()
+}
+
+/// The sentinel that leads a [`scope_violations`] result when the scope could not be built, so the
+/// `OUT OF SCOPE` line names why the check failed closed.
+pub const SCOPE_CHECK_FAILED: &str = "<scope check could not be built>";
+
+/// Build the scope glob set, surfacing the reason a bad glob or a failed build is a visible error
+/// (so [`scope_violations`] fails closed instead of silently checking nothing).
+fn build_scope_set(scope: &[String]) -> Result<globset::GlobSet, String> {
+    let mut b = globset::GlobSetBuilder::new();
+    for g in scope {
+        let glob =
+            globset::Glob::new(g).map_err(|e| format!("scope glob '{g}' is invalid: {e}"))?;
+        b.add(glob);
+    }
+    b.build()
+        .map_err(|e| format!("the scope glob set could not be built: {e}"))
 }
 
 /// `diff.txt`: the baseline, the after state and the diff stat.
@@ -1200,6 +1224,24 @@ mod tests {
         assert_eq!(
             scope_violations(&repo, &one, &record, ""),
             vec![".collab/t/work/01-x/run.json".to_string()]
+        );
+        // a scope that cannot be built fails CLOSED: a leading sentinel (with the reason) plus
+        // every changed path outside the skip prefix (Muse, review-2026-10-30).
+        let bad = vec!["src/**".to_string(), "a[b".to_string()];
+        let v = scope_violations(&repo, &bad, &changed, ".collab/");
+        assert!(
+            v.first().is_some_and(|s| s.starts_with(SCOPE_CHECK_FAILED)),
+            "first entry names the failure: {v:?}"
+        );
+        assert!(
+            v.iter().any(|p| p == "src/lib.rs")
+                && v.iter().any(|p| p == "tests/it.rs")
+                && v.iter().any(|p| p == "newdir/n1.txt"),
+            "every changed path outside skip is a violation: {v:?}"
+        );
+        assert!(
+            !v.iter().any(|p| p.contains(".collab/")),
+            "the skip prefix is still honoured: {v:?}"
         );
         let _ = std::fs::remove_dir_all(&repo);
     }

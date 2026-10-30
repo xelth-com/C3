@@ -25,10 +25,13 @@ runtime dependency (`.mcp.json`, `.codex/config.toml`, `opencode.json` point at
    `.collab/**/work/**/.log`, `.collab/**/work/**/.stderr`. (`Cargo.lock` and every other lock
    file outside `.collab` are NOT in the set; `.consult.detached-*.log` stays committed - the
    repository's convention.)
-4. Secret gate: every staged text file's staged content passes the pack redactor
-   (`crates/c3/src/pack/redact.rs`); a secret-shaped value refuses the commit (exit 1, the
-   file and the KIND listed, never the value; nothing is unstaged so the coordinator can look).
-   `--allow-secret <path>` (repeatable) lets one reviewed file through.
+4. Secret gate: the ADDED lines of every staged text file (`git diff --cached -U0`, every `+`
+   line inside a hunk) pass the pack redactor (`crates/c3/src/pack/redact.rs`) - an unchanged
+   committed test fixture no longer re-blocks every later commit of its file; a secret-shaped
+   value refuses the commit (exit 1, the file and the KIND listed, never the value; nothing is
+   unstaged so the coordinator can look). Fail closed: a staged list or a diff git cannot show
+   refuses the commit as `unreadable`. `--allow-secret <path>` (repeatable) lets one reviewed
+   file through.
 5. Print the staged list (`A/M/D path`), then `git commit -m <msg>` (the message as given - the
    coordinator adds its trailers). Nothing staged: refuse with "nothing to commit" unless
    `--allow-empty`.
