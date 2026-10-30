@@ -62,7 +62,7 @@ if ($raw -match '--version') { Write-Output 'codex-cli 0.155.1-fake'; exit 0 }
 if ($raw -match '^\s*login\s+status(\s|$)') { [Console]::Error.WriteLine('Logged in using ChatGPT'); exit 0 }
 if ($env:FAKE_CODEX_LOG) { [IO.File]::AppendAllText($env:FAKE_CODEX_LOG, "ARGS: $raw`n") }
 $o = $null
-if ($raw -match '(?:^| )-o (\S+)') { $o = $Matches[1] }
+if ($raw -match '(?:^| )-o (?:"([^"]+)"|(\S+))') { $o = $(if ($Matches[1]) { $Matches[1] } else { $Matches[2] }) }
 $null = [Console]::In.ReadToEnd()
 $tid = [guid]::NewGuid().ToString()
 [Console]::Out.Write("{""type"":""thread.started"",""thread_id"":""$tid""}`n")

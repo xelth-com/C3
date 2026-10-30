@@ -99,7 +99,7 @@ if ($raw -match ' resume ([0-9a-fA-F-]{36})') { $resume = $true; $tid = $Matches
 $mode = $(if ($resume) { [string]$env:FAKE_RESUME } else { [string]$env:FAKE_MAIN })
 if ($mode -eq 'prose') {
     $o = ''
-    if ($raw -match '(?:^| )-o (\S+)') { $o = $Matches[1] }
+    if ($raw -match '(?:^| )-o (?:"([^"]+)"|(\S+))') { $o = $(if ($Matches[1]) { $Matches[1] } else { $Matches[2] }) }
     $words = @(1..40 | ForEach-Object { "word$_" }) -join ' '
     $text = "1. The record is written before the kill and updated after it; $words.`n2. A write that fails ends the run refused and nothing is committed; $words.`n3. Every kill site is covered; $words. Verdict: OK.`n"
     [IO.File]::WriteAllText($o, $text)

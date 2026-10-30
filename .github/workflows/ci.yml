@@ -55,13 +55,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy (default features)
         run: cargo clippy -p c3 -p c3-core -p c3-cli --all-targets -- -D warnings
-      # Tests run on Linux only for now. On the Windows runner the fake codex/claude launchers
-      # (Windows PowerShell 5.1 scripts) fail in ways the local Windows suite does not
-      # (ArgumentException in the fake codex, a cold PowerShell start past the 15 s version probe);
-      # the Windows gate is the local run until that is fixed (.eck/TECH_DEBT.md).
+      # Windows: one test thread - the fake codex/claude launchers each start Windows PowerShell 5.1,
+      # and a parallel cold start on the runner outlasts the bridge's 15 s `--version` probe.
       - name: Test (default features)
-        if: runner.os != 'Windows'
-        run: cargo test --workspace
+        run: cargo test --workspace ${{ runner.os == 'Windows' && '-- --test-threads=1' || '' }}
 
   index-surreal:
     name: ubuntu-latest / index-surreal

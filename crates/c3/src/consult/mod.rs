@@ -8,7 +8,7 @@
 //!
 //! The self-contained pieces of the flow are in the submodules below (each unit-tested):
 //! [`args`] (validation + defaults), [`prompt`] (prompt assembly), [`ingest`] (the prose
-//! gate + structured/prose classification), [`render`] (the handoff's findings sections),
+//! gate + structured/prose classification), [`section`] (the handoff's findings sections),
 //! [`revision`] (the git fingerprint, content-only tree check), [`summary`] (the resume
 //! command + the console summary). [`orchestrate`] ties them to the identity/preflight/
 //! launcher layer (reused from [`crate::providers`]) and the [`crate::engines::codex`]
@@ -25,9 +25,9 @@ pub mod kick;
 pub mod orchestrate;
 pub mod prompt;
 pub mod recovery;
-pub mod render;
 pub mod revision;
 pub mod secondary;
+pub mod section;
 pub mod semantics;
 pub mod summary;
 
