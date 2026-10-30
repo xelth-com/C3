@@ -75,6 +75,14 @@
                                                      "note":  "Staged listing uses --diff-filter=ACMRT (secret_gate.rs:196-200) and a binary or typechange diff is scanned via git show (secret_gate.rs:109-117).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected staged listing now includes T via ACMRT.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -152,6 +160,14 @@
                                                      "note":  "A failed staged listing appends the unreadable pseudo-hit and returns (secret_gate.rs:77-82) before commit (finish/mod.rs:218-220).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Listing failure produces an unreadable pseudo-hit and refuses.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -229,6 +245,14 @@
                                                      "note":  "agy_tool_is_writing is an exact allow-list (tree_check.rs:182-201); search_replace is writing.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Outside the requested two-finding verification.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -310,6 +334,14 @@
                                                      "note":  "compare_collab still drops other tasks, .consult.*, and this task\u0027s ledger (tree_check.rs:118-132). Accepted boundary. An agy writing tool name now fails anyway (tree.rs:234-258).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reviewed the accepted boundary documentation, not the complete filtering implementation.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -391,6 +423,14 @@
                                                      "note":  "RULES remains the documented table (retention.rs:140). health calls model_unsupported_live, not RULES.precedence. Accepted boundary (TECH_DEBT.md:46).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Retention implementation not independently reviewed.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -472,6 +512,14 @@
                                                      "note":  "baseline_hashes still calls hash-object -w and unwrap_or_default (record.rs:586, 635-636). Accepted as loose unreachable objects (TECH_DEBT.md:47).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Worker object-write failure handling not independently reviewed.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -544,6 +592,14 @@
                                                      "note":  "lost_before_start still matches the three phrases (run.rs:2061-2064), and verdict.rs:117, :219, :230 still emit them. Accepted, fail-safe boundary.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Preflight wording producers not independently reviewed.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -616,6 +672,14 @@
                                                      "note":  "scan_staged_text scans lossy UTF-8 and no longer returns clean on a NUL (secret_gate.rs:33-39; test at :274).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "NUL early-return removed; Git-binary changes scan staged blob bytes.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -692,6 +756,14 @@
                                                      "note":  "A git-binary staged diff is scanned from the index blob (secret_gate.rs:109-117); key-container extensions are refused up front (secret_gate.rs:88-97).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Binary blobs are scanned as lossy UTF-8; listed key-container extensions are refused. This is not general binary-secret recognition.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -764,6 +836,14 @@
                                                      "note":  "Same exact allow-list as F03-3 (tree_check.rs:182-201).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Agy tool classification not independently reviewed.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -840,6 +920,14 @@
                                                      "note":  "Claude still warns on a tree change when init is missing or read-only (tree.rs:184-190). Extra tools now fail (tree.rs:183-198). Accepted boundary.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Read-only or absent Claude init still permits warning-only drift; documented accepted boundary.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -921,6 +1009,14 @@
                                                      "note":  "Same path ignore as F03-4 (tree_check.rs:118-132), accepted. Agy writing names fail even when the compare is empty.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Collab exclusions documented but implementation not independently verified.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -993,6 +1089,14 @@
                                                      "note":  "An unbuildable glob returns a sentinel plus every changed path (record.rs:782-789) and scope_exit returns 1 (work/mod.rs:841-850). An empty scope still checks nothing, by the comment at record.rs:760.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Scope validation outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1074,6 +1178,14 @@
                                                      "note":  "The consult reader holds the task lock across re-read and write and skips a fresh done record (detach.rs:1346-1385). Acquisition is best-effort after 10 seconds (detach.rs:1317-1324).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Partially addressed: shared lock and fresh checks added, but lock timeout/error returns None and callers still write without serialization.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1155,6 +1267,14 @@
                                                      "note":  "An unreadable grok inline brief returns Err before the prompt is assembled (orchestrate/mod.rs:2382-2384).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Current Grok purpose-dependent brief behavior not fully traced.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1249,6 +1369,14 @@
                                                      "note":  "NEVER_COMMIT includes .events-resume-*, .stderr-resume-*, .consult.detached-*.prompt.txt and .status.json (never_commit.rs:26-29); the test at :140-153 matches them.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Never-commit matching outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1330,6 +1458,14 @@
                                                      "note":  "Binary staged blobs are scanned (secret_gate.rs:109-117) and the commit message is scanned before side effects (finish/mod.rs:197-201).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Inspected binary staged-blob fallback and commit-message scan before side effects.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1420,6 +1556,14 @@
                                                      "note":  "A writing agy tool fails before the clean early return (tree.rs:234-258), including when the only writes are on ignored collab paths.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Agy outcome and ignored-path interaction not independently reviewed.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1510,6 +1654,14 @@
                                                      "note":  "No init event still warns with a note (tree.rs:184-186). Extra tools clear write-disabled (tree.rs:183-190). The warn half is the accepted claude boundary.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Absent/read-only init still grants warning-only drift; accepted boundary. Unexpected init tools now remove the exemption.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1600,6 +1752,14 @@
                                                      "note":  "Substring matching and secondary-turn snapshots are fixed (tree_check.rs:182-201, mod.rs:4106-4120, mod.rs:4752-4778). Empty tool_name is still dropped (agy.rs:438); finding #1 replaces that slice.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "All-turn tool aggregation and parser behavior not independently reviewed.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1694,6 +1854,14 @@
                                                      "note":  "Summary and exit use the substitute (run.rs:1697-1760, 1808), the substitute gets a new seat number (run.rs:1244-1247), and routing.picked is rewritten (run.rs:2339-2410).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Re-seat reporting and exit behavior outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1775,6 +1943,14 @@
                                                      "note":  "A reserve with a seated fingerprint joins that endpoint group (run.rs:733-742). A new fingerprint gets limit 1 (run.rs:1310).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Endpoint concurrency scheduling outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1874,6 +2050,14 @@
                                                      "note":  "reader_should_record_death requires !bridge_alive (detach.rs:1336-1339) under the task lock (detach.rs:1353-1384). A non-zero Windows exit FILETIME is documented as a dead process (proc.rs:1390-1396). vanished can still be bridge while engine_alive is true (detached.rs:208-211), which is recorded on the death object.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Confirmed live-bridge predicate only; Windows process identity and child-liveness claims not fully checked.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -1964,6 +2148,14 @@
                                                      "note":  "Only a usable reply or a model-unsupported row decides the model; other failures are skipped (health.rs:1219-1228) and the mark uses model_unsupported_live (health.rs:1226).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Retention runtime behavior outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -2040,6 +2232,14 @@
                                                      "note":  "Dirty bytes are still stored with hash-object -w (record.rs:635-636). Accepted boundary (TECH_DEBT.md:47). patch.diff is passed through sanitize before write (work/mod.rs:1158-1161).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Unreachable baseline blobs outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -2114,6 +2314,14 @@
                                                      "note":  "brief_artifact_drift runs again after the last turn and assigns brief_changed and artifacts_changed_paths (orchestrate/mod.rs:4764-4777).",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Current final-turn block recomputes brief and bound-artifact hashes and updates all corresponding drift fields.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -2175,6 +2383,14 @@
                                                      "note":  "The staged-list hit returns before the allow set (secret_gate.rs:77-82). Deliberate: finish/mod.rs:308-325 says --allow-secret does not apply. Repair git to pass it.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Intentional fail-closed boundary; current refusal explicitly says repair Git and that --allow-secret does not apply.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -2231,6 +2447,14 @@
                                                      "note":  "A sessions read failure now prints (run.rs:2356-2368). A later to_bytes or write failure is still silent (run.rs:2412-2417), filed as finding #2.",
                                                      "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
                                                      "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 },
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Routing ledger rewrite outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
                                                  }
                                              ]
                      },
@@ -2298,7 +2522,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Empty agy tool-name parser behavior outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
+                                                 }
                                              ]
                      },
                      {
@@ -2352,7 +2583,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  10,
+                                                     "when":  "2026-10-30T18:02:29+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Routing serialization/write error handling outside this pass.",
+                                                     "base_commit":  "e2046edcc617490345e21bebd5e8b63f118882f5",
+                                                     "tree_sha256":  "7cf04ad26ba4868e8161942488b02598e3d41e2f05326835ea12df9cc51501ba"
+                                                 }
                                              ]
                      }
                  ],
@@ -2520,6 +2758,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1793377654
+                    },
+                    {
+                        "n":  10,
+                        "consult_id":  "438ca7cb-f67e-4284-a70b-dbfa605ca5db",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "acceptance",
+                        "topics":  [
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T18:00:12+01:00",
+                        "useful":  "yes",
+                        "note":  "Astra acceptance: her two handoff-02 findings verified closed with file:line evidence; no new blocker",
+                        "when":  "2026-10-30T18:02:43+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793379763
                     }
                 ]
 }
