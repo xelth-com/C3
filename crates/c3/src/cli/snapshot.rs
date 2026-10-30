@@ -30,6 +30,14 @@ pub struct SnapshotArgs {
     /// Omit the directory tree.
     #[arg(long)]
     pub no_tree: bool,
+    /// Delta base: a commit-ish (hash/tag/branch) or the path to a previous snapshot file
+    /// whose header records its anchor. Diffs that commit against HEAD plus the dirty tree.
+    #[arg(long)]
+    pub base: Option<String>,
+    /// Profile selection `a,b,-c,<glob>` read from `.eck/profiles.json`: named profiles union
+    /// their includes, a leading `-` subtracts a profile, a glob token is an ad-hoc include.
+    #[arg(long)]
+    pub profile: Option<String>,
     /// Where consultations are stored; a relative path resolves against the repo root.
     #[arg(long, default_value = ".collab")]
     pub collab_dir: String,
@@ -55,6 +63,12 @@ pub fn run(args: SnapshotArgs) -> i32 {
         eck: false,
         keep: 0,
         embed_report: None,
+        base: args.base,
+        profile: args
+            .profile
+            .as_deref()
+            .map(crate::pack::profile::parse_tokens)
+            .unwrap_or_default(),
     };
 
     match snapshot::run(&opts) {

@@ -72,6 +72,7 @@ pub fn build(opts: &ExplainOpts) -> Result<ExplainPack, String> {
             max_file_size: opts.max_file_size,
             include_binary: false,
             never_commit: false,
+            eck_hidden: false,
         },
     );
 

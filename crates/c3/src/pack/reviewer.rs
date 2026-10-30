@@ -210,6 +210,7 @@ fn build_inner(
             max_file_size: opts.max_file_size,
             include_binary: false,
             never_commit: false,
+            eck_hidden: false,
         },
     );
     let focus_set = build_set(&opts.focus);

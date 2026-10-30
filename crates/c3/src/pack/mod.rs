@@ -15,6 +15,7 @@
 pub mod budget;
 pub mod discover;
 pub mod explain;
+pub mod profile;
 pub mod redact;
 pub mod reviewer;
 pub mod snapshot;

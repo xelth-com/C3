@@ -158,6 +158,8 @@ fn hand_off_snapshot(
         eck: true,
         keep,
         embed_report: Some(report.to_string()),
+        base: None,
+        profile: vec![],
     };
     match snapshot::run(&opts) {
         Ok(r) if r.wrote => (Some(r.path), None, r.pruned),

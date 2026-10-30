@@ -52,6 +52,15 @@ pub struct SnapshotOpts {
     /// Report text embedded at the very top of the snapshot as
     /// `MESSAGE FROM THE EXECUTION AGENT`. (Part B)
     pub embed_report: Option<String>,
+    /// Delta base: a commit-ish (hash, tag, branch) or the path to a previous snapshot FILE
+    /// whose `- Anchor:` header line records the commit it was taken at. The delta runs from
+    /// the resolved commit to HEAD (plus the dirty working tree). An unresolvable ref or a
+    /// snapshot file with no recorded anchor refuses the run. Overrides the stored anchor and
+    /// does not touch C3's anchor/sequence state. (Part B)
+    pub base: Option<String>,
+    /// Profile tokens (already split from `--profile a,b,-c,<glob>`), applied after discovery
+    /// and before the budget/depth pass. Empty = no profile filtering. (Part B)
+    pub profile: Vec<String>,
 }
 
 /// The result of a snapshot run.
@@ -185,8 +194,21 @@ fn render_body(entry: &FileEntry, depth: budget::Depth, focus: bool) -> Option<S
 pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     let depth = budget::depth(opts.depth);
     let focus_set = build_focus_set(&opts.focus);
-    // `fail` is a delta against the anchor like `delta`, differing only in the empty case.
-    let is_delta = opts.delta || opts.fail;
+
+    // HEAD at capture time, recorded in the header so `--base <snapshot file>` can diff
+    // against the commit a previous snapshot was taken at.
+    let head_full = git_line(&opts.repo_root, &["rev-parse", "HEAD"]);
+
+    // An explicit `--base` resolves to a commit (hash/ref) or the anchor recorded in a
+    // previous snapshot file; it overrides the stored anchor and makes this a delta.
+    let base_anchor = match &opts.base {
+        Some(spec) => Some(resolve_base(&opts.repo_root, spec)?),
+        None => None,
+    };
+
+    // `fail` is a delta against the anchor like `delta`, differing only in the empty case;
+    // a `--base` is a delta against the resolved commit.
+    let is_delta = opts.delta || opts.fail || base_anchor.is_some();
 
     let discovered = discover::discover(
         &opts.repo_root,
@@ -195,12 +217,16 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
             include_binary: false,
             // The `.eck` hand-off snapshot drops the never-commit set from its body too.
             never_commit: opts.eck,
+            // ...and every hidden-component path except the `.eck/*.md` manifests.
+            eck_hidden: opts.eck,
         },
     );
 
     // Which files to include, and any deletions (delta only).
     let mut deletions: Vec<String> = Vec::new();
-    let anchor = if is_delta {
+    let anchor = if let Some(b) = base_anchor {
+        Some(b)
+    } else if is_delta {
         let a = read_anchor(&opts.collab_root)
             .ok_or_else(|| "no C3 anchor: run `c3 snapshot` (a full snapshot) first".to_string())?;
         Some(a)
@@ -208,7 +234,7 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         None
     };
 
-    let included: Vec<FileEntry> = if let Some(anchor) = &anchor {
+    let mut included: Vec<FileEntry> = if let Some(anchor) = &anchor {
         let changes = changed_files(&opts.repo_root, anchor);
         let by_rel: std::collections::BTreeMap<&str, &FileEntry> =
             discovered.iter().map(|e| (e.rel.as_str(), e)).collect();
@@ -228,6 +254,25 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
     } else {
         discovered
     };
+
+    // Profiles: applied after discovery, before the budget/depth pass. Refuses an unknown
+    // profile name (with the known names).
+    if !opts.profile.is_empty() {
+        let profiles = crate::pack::profile::load_profiles(&opts.repo_root)?;
+        let resolved = crate::pack::profile::resolve(&opts.profile, &profiles)?;
+        let filter = crate::pack::profile::ProfileFilter::new(&resolved);
+        included.retain(|e| filter.keep(&e.rel));
+        deletions.retain(|rel| filter.keep(rel));
+    }
+
+    // The `.eck` hand-off snapshot carries the curated `.eck/*.md` manifests even when `.eck`
+    // is gitignored (so discovery never walked it). JOURNAL.md is never surfaced (D6).
+    if opts.eck {
+        inject_eck_manifests(&opts.repo_root, opts.max_file_size, &mut included);
+        // A gitignored `.eck` never yields git-tracked deletions, but a non-ignored one can;
+        // drop any hidden-path deletion the policy would hide.
+        deletions.retain(|rel| !discover::eck_hidden_drop(rel));
+    }
 
     let delta_entries = included.len() + deletions.len();
 
@@ -306,13 +351,15 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         .unwrap_or("repo")
         .to_string();
     let generated = chrono::Local::now().to_rfc3339();
-    let seq = if is_delta {
+    // A `--base` delta is an ad-hoc query: it does not bump C3's persistent sequence.
+    let seq = if is_delta && opts.base.is_none() {
         Some(bump_seq(&opts.collab_root))
     } else {
         None
     };
     let mode = match (&anchor, seq) {
         (Some(a), Some(n)) => format!("delta against {} (update {n})", short7(a)),
+        (Some(a), None) => format!("delta against {}", short7(a)),
         _ => "full".to_string(),
     };
     let dirty = if rev.dirty { "dirty" } else { "clean" };
@@ -338,6 +385,10 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
         ));
     }
     header.push_str(&format!("- Generated: {generated}\n"));
+    // The commit HEAD this snapshot captured, so `--base <this file>` can diff against it.
+    if let Some(head) = &head_full {
+        header.push_str(&format!("- Anchor: {head}\n"));
+    }
     header.push_str(&format!("- Mode: {mode}\n"));
     header.push_str(&format!(
         "- Depth: {} (max_lines {})\n",
@@ -403,8 +454,8 @@ pub fn run(opts: &SnapshotOpts) -> Result<SnapshotResult, String> {
 
     // A full snapshot updates C3's anchor and resets the sequence.
     if !is_delta {
-        if let Some(head) = git_line(&opts.repo_root, &["rev-parse", "HEAD"]) {
-            write_anchor(&opts.collab_root, &head)?;
+        if let Some(head) = &head_full {
+            write_anchor(&opts.collab_root, head)?;
         }
         reset_seq(&opts.collab_root);
     }
@@ -507,6 +558,85 @@ fn prune_snapshots(repo_root: &Path, keep: usize) -> usize {
         }
     }
     deleted
+}
+
+/// Parse the `- Anchor: <sha>` line a snapshot writes into its header. Pure. Returns the
+/// recorded commit, or `None` when no anchor line is present. (Part B, `--base <file>`.)
+pub fn parse_anchor_header(snapshot_text: &str) -> Option<String> {
+    for line in snapshot_text.lines() {
+        if let Some(rest) = line.strip_prefix("- Anchor:") {
+            let s = rest.trim();
+            if !s.is_empty() {
+                return Some(s.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a `--base` spec to a commit: a path to a previous snapshot FILE whose header
+/// records an anchor, else a git commit-ish. Refuses a spec that does not resolve.
+fn resolve_base(repo_root: &Path, spec: &str) -> Result<String, String> {
+    // 1. A path to an existing snapshot file → the anchor recorded in its header.
+    let p = Path::new(spec);
+    if p.is_file() {
+        let text =
+            std::fs::read_to_string(p).map_err(|e| format!("read base snapshot '{spec}': {e}"))?;
+        return parse_anchor_header(&text).ok_or_else(|| {
+            format!("base snapshot '{spec}' records no anchor (no `- Anchor:` header line)")
+        });
+    }
+    // 2. A commit-ish (hash, tag, branch). `--verify ...^{commit}` resolves to a commit or
+    //    fails, which refuses the run.
+    git_line(
+        repo_root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{spec}^{{commit}}"),
+        ],
+    )
+    .ok_or_else(|| format!("base ref '{spec}' does not resolve to a commit"))
+}
+
+/// Surface the curated `.eck/<name>.md` manifests (direct children of `.eck/`) into the
+/// hand-off snapshot's included set, even when `.eck` is gitignored so discovery skipped it.
+/// `JOURNAL.md` is never surfaced (the standing "never read JOURNAL" rule, DESIGN D6).
+/// Already-present manifests (a non-gitignored `.eck`) are not duplicated.
+fn inject_eck_manifests(repo_root: &Path, max_file_size: u64, included: &mut Vec<FileEntry>) {
+    let eck = repo_root.join(".eck");
+    let rd = match std::fs::read_dir(&eck) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    let have: std::collections::BTreeSet<String> = included.iter().map(|e| e.rel.clone()).collect();
+    let mut added: Vec<FileEntry> = Vec::new();
+    for entry in rd.flatten() {
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.to_lowercase().ends_with(".md") || name.eq_ignore_ascii_case("JOURNAL.md") {
+            continue;
+        }
+        let rel = format!(".eck/{name}");
+        if have.contains(&rel) {
+            continue;
+        }
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        if size > max_file_size {
+            continue;
+        }
+        added.push(FileEntry {
+            rel,
+            abs: entry.path(),
+            size,
+        });
+    }
+    included.extend(added);
+    included.sort_by(|a, b| a.rel.cmp(&b.rel));
 }
 
 fn short7(s: &str) -> String {
@@ -635,6 +765,8 @@ mod tests {
             eck: false,
             keep: 0,
             embed_report: None,
+            base: None,
+            profile: vec![],
         };
         let r = run(&opts).unwrap();
         let text = fs::read_to_string(&out).unwrap();
@@ -676,6 +808,8 @@ mod tests {
             eck: false,
             keep: 0,
             embed_report: None,
+            base: None,
+            profile: vec![],
         };
         run(&base).unwrap();
 
@@ -728,6 +862,8 @@ mod tests {
             eck: false,
             keep: 0,
             embed_report: None,
+            base: None,
+            profile: vec![],
         };
         let r = run(&opts).unwrap();
         let text = fs::read_to_string(&out).unwrap();
@@ -735,5 +871,101 @@ mod tests {
         assert!(text.contains("[REDACTED:github-token]"));
         assert!(r.redactions >= 1);
         let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn parse_anchor_header_reads_the_anchor_line() {
+        let text = "# C3 snapshot — x\n\n- Project: x\n- Generated: now\n- Anchor: deadbeefcafe\n- Mode: full\n";
+        assert_eq!(parse_anchor_header(text).as_deref(), Some("deadbeefcafe"));
+        assert_eq!(
+            parse_anchor_header("# no anchor here\n- Mode: full\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn base_hash_and_base_file_both_delta_against_that_commit() {
+        let d = scratch_repo("base");
+        fs::write(d.join("a.rs"), "fn a() {}\n").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-qm", "c0"]);
+        let c0 = git_line(&d, &["rev-parse", "HEAD"]).unwrap();
+
+        // Outputs live OUTSIDE the repo so they never count as dirty changes in the delta.
+        let outdir = std::env::temp_dir().join(format!("c3-base-out-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outdir);
+        fs::create_dir_all(&outdir).unwrap();
+
+        // A full snapshot at c0 records `- Anchor: <c0>` in its header.
+        let full_out = outdir.join("full.md");
+        let base_opts = SnapshotOpts {
+            repo_root: d.clone(),
+            collab_root: d.join(".collab"),
+            out: Some(full_out.clone()),
+            delta: false,
+            depth: 9,
+            budget: 0,
+            focus: vec![],
+            tree: false,
+            max_file_size: 2 * 1024 * 1024,
+            fail: false,
+            eck: false,
+            keep: 0,
+            embed_report: None,
+            base: None,
+            profile: vec![],
+        };
+        run(&base_opts).unwrap();
+        let full_text = fs::read_to_string(&full_out).unwrap();
+        assert!(full_text.contains(&format!("- Anchor: {c0}")));
+
+        // Advance: new commit adds b.rs.
+        fs::write(d.join("b.rs"), "fn b() {}\n").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-qm", "c1"]);
+
+        // `--base <hash>`: delta from c0 to HEAD → only b.rs changed.
+        let by_hash = outdir.join("by_hash.md");
+        let r = run(&SnapshotOpts {
+            out: Some(by_hash.clone()),
+            base: Some(c0.clone()),
+            ..base_opts.clone()
+        })
+        .unwrap();
+        let t = fs::read_to_string(&by_hash).unwrap();
+        assert!(t.contains("--- File: b.rs ---"), "{t}");
+        assert!(!t.contains("--- File: a.rs ---"), "{t}");
+        assert!(t.contains(&format!("delta against {}", short7(&c0))));
+        assert_eq!(r.anchor.as_deref(), Some(c0.as_str()));
+        // A `--base` query is ad-hoc: it leaves the stored anchor (set by the full snapshot
+        // at c0) untouched rather than advancing it to HEAD.
+        assert_eq!(
+            read_anchor(&base_opts.collab_root).as_deref(),
+            Some(c0.as_str())
+        );
+
+        // `--base <snapshot file>`: the full snapshot's recorded anchor is c0 → same delta.
+        let by_file = outdir.join("by_file.md");
+        run(&SnapshotOpts {
+            out: Some(by_file.clone()),
+            base: Some(full_out.to_string_lossy().into_owned()),
+            ..base_opts.clone()
+        })
+        .unwrap();
+        let t = fs::read_to_string(&by_file).unwrap();
+        assert!(t.contains("--- File: b.rs ---"), "{t}");
+        assert!(!t.contains("--- File: a.rs ---"), "{t}");
+
+        // An unresolvable ref refuses the run.
+        let err = run(&SnapshotOpts {
+            out: Some(outdir.join("bad.md")),
+            base: Some("nope-not-a-ref".into()),
+            ..base_opts.clone()
+        })
+        .unwrap_err();
+        assert!(err.contains("does not resolve"), "{err}");
+
+        let _ = fs::remove_dir_all(&d);
+        let _ = fs::remove_dir_all(&outdir);
     }
 }

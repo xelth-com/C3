@@ -22,6 +22,19 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `c3 fail` does the same without committing (`--fail` delta to the working tree). `c3 manifest`
   edits `.eck/*.md` only (no path traversal; `append_to_section` appends at the section's end).
   The MCP tools take eck's argument names.
+- **Snapshot additions (eck port Part B):** `c3 snapshot --base <commit | snapshot file>` (the
+  header now records `- Anchor: <sha>`; an ad-hoc base does not move the anchor);
+  `.eckignore` (gitignore syntax) honoured by every snapshot and pack; `--profile a,b,-c,<glob>`
+  from `.eck/profiles.json`; the `finish`/`fail` hand-off snapshot drops every hidden path
+  except the `.eck/*.md` manifests (JOURNAL.md excluded) - the first full hand-off of this
+  repository was 19.5 MB with every `.collab` brief inside.
+- **Dead detached runs leave a death record:** written by the background, or once by the next
+  `--status`/`--wait` reader (which side vanished, child exit, elapsed, last engine event, a
+  sanitized log tail); `--status`/`--wait` print it and the raw-stream path when it may hold a
+  usable reply.
+- **Per-model health mark and panel re-seat:** a "model not supported / does not exist /
+  unknown model id" failure marks that roster entry (not the provider) unavailable for 24 h, a
+  usable reply clears it; a panel seat lost at preflight is re-seated from the same draw.
 - **Cross-model tests in `c3 work`** (consilium 2026-10-29, `.collab/consilium-2026-10-29-test-workers`):
   every work record holds `patch.diff` (the run's own change from each file's start content;
   pre-dirty baselines kept as loose git objects); `--role tests` inlines another author's change
