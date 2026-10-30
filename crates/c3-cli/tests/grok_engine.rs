@@ -354,6 +354,65 @@ fn the_billing_guard_strips_the_xai_api_key_from_the_child_unless_opted_in() {
     );
 }
 
+// --------------------------------------------------- the zero-tool-call review guard
+
+#[test]
+fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() {
+    // The fake grok emits no tool_call events. On a reviewing purpose (acceptance) a reply that
+    // read no file cannot have checked anything: the run is a capability failure. The SAME stream
+    // on a framing purpose is usable (the brief carries the question; no tools needed).
+    let e = setup("guard-acceptance");
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "acceptance",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.starts_with(
+            "failed: grok answered in one model call without reading any file (0 tool calls)"
+        ) && outcome.contains("a acceptance review must read the code; ask again"),
+        "acceptance/0-tools must fail the guard: {outcome}\n{t}"
+    );
+    assert_eq!(
+        last["provider_failure"]["class"], "capability",
+        "the guard uses the capability class (no provider outage): {last}"
+    );
+    // the reply is kept for the record even though the run failed.
+    assert!(!e.turns().is_empty(), "the primary turn ran");
+
+    let e2 = setup("guard-framing");
+    let o2 = e2.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t2 = text(&o2);
+    assert_eq!(o2.status.code(), Some(0), "{t2}");
+    assert!(
+        e2.last()["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "framing/0-tools is usable: {}",
+        e2.last()
+    );
+}
+
 // ------------------------------------------------------------------ the resume path
 
 #[test]

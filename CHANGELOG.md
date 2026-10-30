@@ -79,6 +79,19 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **A grok code review that read nothing is no longer usable:** on `acceptance`, `core-contract`,
+  `diff-review` and `checkpoint`, a grok reply with zero tool calls (one model call, e.g. "HOLD -
+  I am still reading", 13.8 s) fails with class `capability` (no outage mark); framing and decision
+  answers without tool calls stay usable.
+- **Review-2026-10-30 fixes:** the `finish` secret gate fails closed (unreadable list or diff),
+  reads `+` lines inside hunks only, scans typechanges, binary blobs and the commit message,
+  refuses key-container files; agy writing-tool calls always fail the drift check, tool names come
+  from every turn; a claude init listing a writing tool is not write-disabled; panel re-seat exit
+  and summary over the final seats, a new seat number, the endpoint concurrency group,
+  `routing.picked` rewritten; no death record while the bridge lives (task lock around the final
+  write); a model-unsupported mark survives later failures; detached children try
+  `CREATE_BREAKAWAY_FROM_JOB`.
+
 - **grok reviewer answered an invented brief** — a grok `--json-schema` turn can answer in one
   model call without calling `read_file`; it then made up the brief from the question numbers
   (panel 2026-10-29, handoff 05). The brief's text is now inlined into the prompt after the

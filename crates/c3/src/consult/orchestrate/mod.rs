@@ -3760,6 +3760,7 @@ fn run_primary_turn(
                 primary,
                 secondary: TurnFiles::default(),
                 stall_sec: ctx.stall_sec,
+                purpose: ctx.o.purpose.clone(),
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
                 on_kill,

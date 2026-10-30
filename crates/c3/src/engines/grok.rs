@@ -41,6 +41,10 @@ pub struct GrokEngine {
     pub secondary: TurnFiles,
     /// The stall cut in seconds for the PRIMARY turn (`0` = off).
     pub stall_sec: i64,
+    /// The consultation purpose (`acceptance`, `framing`, ...). The zero-tool-call review guard
+    /// ([`grok_review_tool_guard`]) reads it on the PRIMARY turn; empty / irrelevant for a
+    /// secondary (format-repair / continuation) turn.
+    pub purpose: String,
     /// The operator's kick file for the PRIMARY turn (`None` = no kick watch).
     pub kick_path: Option<PathBuf>,
     /// Called once per turn, right after the child spawns and before it is waited on.
@@ -247,7 +251,17 @@ impl GrokEngine {
 
         let exit_code = result.exit_code.unwrap_or(-1);
         let expect_thread = Self::expect_thread(turn);
-        let t = grok_turn_outcome(&events, exit_code, &result.stderr, &expect_thread);
+        let mut t = grok_turn_outcome(&events, exit_code, &result.stderr, &expect_thread);
+        // The zero-tool-call review guard: a PRIMARY turn of a reviewing purpose that produced a
+        // usable reply without reading any file cannot have checked the code. Downgrade it to a
+        // `capability` failure, keeping the reply (and thread) for the record. Secondary turns (a
+        // convert-only format repair, a timeout continuation) are exempt - the review happened on
+        // the primary turn.
+        if is_primary && t.ok {
+            if let Some((why, class)) = grok_review_tool_guard(&self.purpose, events.tool_calls) {
+                fail(&mut t, &why, &class, &[]);
+            }
+        }
         let outcome = to_outcome(&t, &events, files, result.wall_seconds, exit_code);
         Ok(GrokRun { outcome, turn: t })
     }
@@ -351,6 +365,9 @@ fn one_line(s: &str) -> String {
 #[derive(Debug, Clone, Default)]
 pub struct GrokEvents {
     pub records: usize,
+    /// The number of `tool_call` events (a read_file / list_dir / grep the model issued) over the
+    /// stream - the evidence that it read the code. A `tool_call_update` is not counted.
+    pub tool_calls: usize,
     /// Why the stream is malformed (`''` when well-formed).
     pub malformed: String,
     /// The reply text: the concatenated `text` events, in order.
@@ -409,8 +426,8 @@ pub fn read_grok_events(events_text: &str, allow_partial_last: bool) -> GrokEven
         r.records += 1;
         let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
         match kind {
-            "available_commands" | "thought" | "tool_call" | "tool_call_update"
-            | "max_turns_reached" => {}
+            "tool_call" => r.tool_calls += 1,
+            "available_commands" | "thought" | "tool_call_update" | "max_turns_reached" => {}
             "text" => {
                 if let Some(d) = obj.get("data").and_then(|v| v.as_str()) {
                     r.text.push_str(d);
@@ -473,7 +490,33 @@ pub struct GrokTurn {
     pub thread_candidate: String,
     pub reply: String,
     pub structured: bool,
+    /// The number of `tool_call` events over the stream (the review guard's input).
+    pub tool_calls: usize,
     pub warnings: Vec<String>,
+}
+
+/// The consultation purposes whose grok reply must be backed by reading the code: a zero-tool-call
+/// answer to one of these cannot have checked anything, so it is not a usable review.
+pub const GROK_TOOL_REQUIRED_PURPOSES: [&str; 4] =
+    ["acceptance", "core-contract", "diff-review", "checkpoint"];
+
+/// The zero-tool-call review guard decision (pure). For a turn of one of
+/// [`GROK_TOOL_REQUIRED_PURPOSES`] that made zero tool calls over the whole run, returns the forced
+/// `(why, class)`: `why` goes through [`fail`] as `failed: <why>`, and the class is `capability` -
+/// a reviewer-quality / capability failure (the same class as grok's `max_turn_requests`) that does
+/// NOT mark the provider unavailable (only `quota`/`auth` set a health outage window). `None` when
+/// the guard does not fire (another purpose, or at least one tool call).
+pub fn grok_review_tool_guard(purpose: &str, tool_calls: usize) -> Option<(String, String)> {
+    if tool_calls == 0 && GROK_TOOL_REQUIRED_PURPOSES.contains(&purpose) {
+        Some((
+            format!(
+                "grok answered in one model call without reading any file (0 tool calls) - a {purpose} review must read the code; ask again"
+            ),
+            "capability".into(),
+        ))
+    } else {
+        None
+    }
 }
 
 /// Judge one grok turn. `expect_thread` is the session a resume must land on.
@@ -483,7 +526,10 @@ pub fn grok_turn_outcome(
     stderr_text: &str,
     expect_thread: &str,
 ) -> GrokTurn {
-    let mut o = GrokTurn::default();
+    let mut o = GrokTurn {
+        tool_calls: events.tool_calls,
+        ..Default::default()
+    };
     let lines: Vec<String> = stderr_text
         .split(['\r', '\n'])
         .map(|l| l.trim().to_string())
@@ -751,6 +797,65 @@ mod tests {
         assert!(t.outcome.contains("grok error"));
         assert!(t.thread.is_empty());
         assert!(t.thread_candidate.is_empty());
+    }
+
+    #[test]
+    fn tool_calls_counts_tool_call_events_only() {
+        // A fixture line set: two tool_call events (a read_file and a grep), their updates (not
+        // counted), a thought and text, and the end.
+        let stream = concat!(
+            r#"{"type":"thought","data":"planning"}"#,
+            "\n",
+            r#"{"type":"tool_call","toolCallId":"c1","toolName":"read_file","status":"pending"}"#,
+            "\n",
+            r#"{"type":"tool_call_update","toolCallId":"c1","status":null}"#,
+            "\n",
+            r#"{"type":"tool_call_update","toolCallId":"c1","status":"completed"}"#,
+            "\n",
+            r#"{"type":"tool_call","toolCallId":"c2","toolName":"grep","status":"pending"}"#,
+            "\n",
+            r#"{"type":"tool_call_update","toolCallId":"c2","status":"completed"}"#,
+            "\n",
+            r#"{"type":"text","data":"done"}"#,
+            "\n",
+            r#"{"type":"end","stopReason":"end_turn","sessionId":"11111111-2222-3333-4444-555555555555","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}"#,
+        );
+        let e = read_grok_events(stream, false);
+        assert!(e.malformed.is_empty(), "malformed: {}", e.malformed);
+        assert_eq!(e.tool_calls, 2, "two tool_call events, updates not counted");
+        let t = grok_turn_outcome(&e, 0, "", "");
+        assert!(t.ok, "outcome: {}", t.outcome);
+        assert_eq!(t.tool_calls, 2, "the count rides the turn");
+
+        // A zero-tool-call stream (the incident shape): a thought and text, no tool_call.
+        let zero = read_grok_events(OK, false);
+        assert_eq!(zero.tool_calls, 0);
+    }
+
+    #[test]
+    fn review_tool_guard_fires_only_on_a_reviewing_purpose_with_zero_tool_calls() {
+        // acceptance / 0 tool calls -> the guard fires (a failure with the capability class).
+        let (why, class) = grok_review_tool_guard("acceptance", 0).expect("acceptance/0 fires");
+        assert!(
+            why.contains("0 tool calls") && why.contains("a acceptance review must read the code"),
+            "message: {why}"
+        );
+        assert_eq!(class, "capability");
+        // acceptance / 3 tool calls -> usable (it read the code).
+        assert!(grok_review_tool_guard("acceptance", 3).is_none());
+        // framing / 0 tool calls -> usable (a framing answer needs no tools; the brief carries it).
+        assert!(grok_review_tool_guard("framing", 0).is_none());
+        // the other reviewing purposes fire too.
+        for p in GROK_TOOL_REQUIRED_PURPOSES {
+            assert!(grok_review_tool_guard(p, 0).is_some(), "{p}/0 must fire");
+            assert!(
+                grok_review_tool_guard(p, 1).is_none(),
+                "{p}/1 must not fire"
+            );
+        }
+        // an empty / unknown purpose is exempt.
+        assert!(grok_review_tool_guard("", 0).is_none());
+        assert!(grok_review_tool_guard("decision", 0).is_none());
     }
 
     #[test]

@@ -99,6 +99,9 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   with `--resume`; files `handoffs/<NN>-grok-<slug>.*`. The tree check only WARNS. `XAI_API_KEY` /
   `GROK_CODE_XAI_API_KEY` are stripped from the child (they would bill the API per token) unless
   `C3_GROK_ALLOW_API_KEY=1`; `c3 providers` names the billing route. Reviewer use only (no `c3 work`).
+  On a reviewing purpose (`acceptance`, `core-contract`, `diff-review`, `checkpoint`) a primary turn
+  that answers with zero tool calls read no file, so it is failed (class `capability`, no provider
+  outage) with `ask again` rather than recorded as a usable reply.
 - **`http`** — an OpenAI-compatible `chat/completions` request built from a reviewer pack; no
   CLI, no subscription, no tools (OpenRouter by default). Wired via `setup-providers` section
   4b (`ext.c3.reviewers`). The key is read from an environment variable the user sets, bound to

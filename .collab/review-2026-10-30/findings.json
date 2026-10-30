@@ -52,7 +52,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -106,7 +113,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -160,7 +174,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -218,7 +239,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -276,7 +304,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -334,7 +369,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -383,7 +425,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -432,7 +481,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -485,7 +541,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -534,7 +597,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -587,7 +657,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -645,7 +722,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -694,7 +778,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -752,7 +843,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -810,7 +908,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -881,7 +986,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -939,7 +1051,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1006,7 +1125,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1073,7 +1199,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1140,7 +1273,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1211,7 +1351,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1269,7 +1416,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1345,7 +1499,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1412,7 +1573,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      },
                      {
@@ -1465,7 +1633,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  6,
+                                                     "when":  "2026-10-30T16:30:21+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Reading in progress.",
+                                                     "base_commit":  "9f1dda50120fa8cdeaa142e1b62a0a9002e087ba",
+                                                     "tree_sha256":  "3ddfe9a0f0be4c5d75c37453beab0a29e711a618f904301ee490a11fa2425b4f"
+                                                 }
                                              ]
                      }
                  ],
@@ -1541,6 +1716,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1793369408
+                    },
+                    {
+                        "n":  6,
+                        "consult_id":  "e6e4d3c4-a2b3-43b9-825f-72ef3d5ec639",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "acceptance",
+                        "topics":  [
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T16:30:07+01:00",
+                        "useful":  "no",
+                        "note":  "acceptance answered in one model call with 0 tool calls in 13.8 s: \u0027HOLD - I am still reading\u0027 - a placeholder, nothing verified; a guard for code-review purposes is being added",
+                        "when":  "2026-10-30T16:31:23+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793374283
                     }
                 ]
 }

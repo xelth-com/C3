@@ -223,6 +223,9 @@ fn run_codex_secondary(
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
+                // A secondary turn is exempt from the zero-tool-call review guard (it only fires on
+                // the PRIMARY turn); the purpose is carried for completeness.
+                purpose: ctx.o.purpose.clone(),
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
@@ -1022,6 +1025,9 @@ fn run_engine_secondary(
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
+                // A secondary turn is exempt from the review guard (primary-only); purpose carried
+                // for completeness.
+                purpose: ctx.o.purpose.clone(),
                 kick_path: None,
                 on_running: None,
                 on_kill: None,
