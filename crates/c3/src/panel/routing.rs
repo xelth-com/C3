@@ -586,6 +586,58 @@ pub fn invoke_panel_draw(
     seats
 }
 
+/// (C3 panel re-seat, TECH_DEBT "router picks a model the account cannot use" (c)) The reserve
+/// order: the eligible candidates NOT among `seats`, drawn in the SAME seeded draw as the panel -
+/// the slots continue from `seats.len() + 1`, so a member that loses its seat to a before-start
+/// preflight failure is replaced by the candidate the draw would have reached next. The lab
+/// reserve is spent on the panel's own seats; the continuation is a plain rank draw (with the same
+/// exploration rule), which keeps it deterministic and order-independent of which seat failed.
+pub fn invoke_panel_draw_reserve(
+    candidates: &[Candidate],
+    seats: &[Seat],
+    seed: &[u8],
+    explore: f64,
+) -> Vec<Seat> {
+    let seated: Vec<i64> = seats.iter().map(|s| s.position).collect();
+    let mut left: Vec<Candidate> = candidates
+        .iter()
+        .filter(|c| !seated.contains(&c.position))
+        .cloned()
+        .collect();
+    let mut reserve: Vec<Seat> = Vec::new();
+    while !left.is_empty() {
+        let slot = (seats.len() + reserve.len()) as i32 + 1;
+        let (pick, expl) = slot_uniforms(seed, slot);
+        let (winner_idx, rule) = if expl < explore {
+            let mut idx = (pick * left.len() as f64).floor() as usize;
+            if idx >= left.len() {
+                idx = left.len() - 1;
+            }
+            (idx, "reserve-explore".to_string())
+        } else {
+            let total: f64 = left.iter().map(|c| c.weight).sum();
+            let target = pick * total;
+            let mut acc = 0.0;
+            let mut chosen: Option<usize> = None;
+            for (i, c) in left.iter().enumerate() {
+                acc += c.weight;
+                if target < acc {
+                    chosen = Some(i);
+                    break;
+                }
+            }
+            (chosen.unwrap_or(left.len() - 1), "reserve-draw".to_string())
+        };
+        let winner = left.remove(winner_idx);
+        reserve.push(Seat {
+            slot,
+            position: winner.position,
+            rule,
+        });
+    }
+    reserve
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -128,6 +128,7 @@ pub fn detach_foreground(o: Options, r: Resolved, _home: Option<&str>) -> i32 {
     let mut members: Vec<crate::consult::detach::PlannedMember> = b
         .runners
         .iter()
+        .take(b.seated_count)
         .map(|ru| crate::consult::detach::PlannedMember {
             position: ru.position,
             lineage: ru.shown.clone(),
@@ -706,6 +707,39 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                 .unwrap_or_default(),
         });
     }
+    let seated_count = runners.len();
+    // (C3 panel re-seat (c)) the reserve runners, appended after the seated ones (indices
+    // >= seated_count), in draw order. The scheduler promotes them when a seat is lost to a
+    // before-start preflight failure. Each gets a group of its own (beyond the planned groups) so
+    // its endpoint parallel limit defaults to one and it never relaxes a seated group's limit.
+    for (j, p) in route.reserve.iter().enumerate() {
+        let m = selection
+            .members
+            .iter()
+            .find(|m| m.entry.position as i64 == p.position);
+        let engine = m
+            .map(|m| {
+                if m.entry.engine.is_empty() {
+                    "codex".into()
+                } else {
+                    m.entry.engine.clone()
+                }
+            })
+            .unwrap_or_else(|| "codex".into());
+        runners.push(RunnerInfo {
+            position: p.position,
+            entry: m.map(|m| m.entry.clone()).unwrap_or_default(),
+            engine,
+            shown: p.lineage.clone(),
+            role: role_of.get(&p.position).cloned().unwrap_or_default(),
+            required: false,
+            group: concurrency.groups.len() + j,
+            fingerprint: m
+                .map(|m| m.identity.fingerprint.clone())
+                .unwrap_or_default(),
+        });
+    }
+
     let runner_of: HashMap<i64, usize> = runners
         .iter()
         .enumerate()
@@ -752,7 +786,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         task,
         codex_launcher: launcher,
         entry_count: selection.members.len(),
-        seated_count: route.picked.len(),
+        seated_count,
         rows,
         runners,
         routing_value: routing_value(&route.routing),
@@ -903,52 +937,22 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     } else {
         o.reply_name.clone()
     };
-    for (k0, ru) in b.runners.iter().enumerate() {
-        let k = k0 as i64 + 1;
+    for k0 in 0..b.seated_count {
         let n = nn_n.n + k0 as i64;
         let nn = nn_n.nn + k0 as u32;
-        let slug = provider_slug(&ru.entry.provider);
-        let prefix = c3_core::lineage::engine_spec(&ru.engine)
-            .map(|s| s.prefix)
-            .unwrap_or("codex");
-        let reply_name = format!("{reply_base}-{slug}");
-        let reply_rel = format!("handoffs/{nn:02}-{prefix}-{reply_name}.md");
-        let denial = c3_core::lineage::engine_spec(&ru.engine)
-            .map(|s| s.denial_retry)
-            .unwrap_or(false)
-            && o.denial_retry == 1;
-        let guard = if guard_hook > 0.0 {
-            guard_hook
-        } else {
-            panel_member_guard(r.timeout_sec, r.continue_sec, r.repair_enabled, denial)
-        };
-        slots.push(Slot {
-            runner: k0,
-            k,
+        slots.push(build_slot(
+            &b,
+            &o,
+            &r,
+            k0,
+            k0 as i64 + 1,
             n,
             nn,
-            engine: ru.engine.clone(),
-            reply_name,
-            reply_rel,
-            record_path: task_dir.join(format!(".consult.pending-{nn:02}.json")),
-            consult_id: uuid::Uuid::new_v4().to_string(),
-            group: ru.group,
-            guard,
-            state: SlotState::Waiting,
-            child: None,
-            watch: None,
-            exit: None,
-            wall: 0.0,
-            out_path: panel_tmp.join(format!("{nn:02}.out")),
-            err_path: panel_tmp.join(format!("{nn:02}.err")),
-            lines: Vec::new(),
-            refusal: String::new(),
-            entry: None,
-            record_state: String::new(),
-            record_kept: false,
-            not_started: String::new(),
-            start_error: String::new(),
-        });
+            guard_hook,
+            &reply_base,
+            &task_dir,
+            &panel_tmp,
+        ));
     }
 
     let panel_watch = Instant::now();
@@ -1097,6 +1101,11 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     // already printed their "waits: N run(s) elsewhere" line (once each).
     let machine_health_path = c3_core::health::machine_health_path(&providers::get_codex_home());
     let mut ext_wait_shown: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // (C3 panel re-seat (c)) the next reserve runner (index into b.runners, past the seated ones)
+    // and how many reserves have been promoted - so a seat lost to a before-start preflight failure
+    // keeps the panel at its planned size.
+    let mut reserve_cursor = b.seated_count;
+    let mut promoted = 0usize;
     loop {
         let mut progress = false;
         // Reap finished/killed members.
@@ -1198,6 +1207,63 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                     }
                 }
             }
+            // (C3 panel re-seat (c)) a NON-required seat lost before it started (a preflight-class
+            // refusal: the provider is unavailable, a credential is missing, or the model is not
+            // supported on this login) is replaced from the reserve, in draw order, so the panel
+            // still runs at its planned size. A mid-run failure does not re-seat.
+            if !dry
+                && blocked.is_empty()
+                && !b.runners[slots[i].runner].required
+                && reserve_cursor < b.runners.len()
+                && lost_before_start(&slots[i])
+            {
+                let runner = reserve_cursor;
+                let seat_k = slots[i].k;
+                let lost_shown = b.runners[slots[i].runner].shown.clone();
+                let lost_refusal = c3_core::one_line(&slots[i].refusal);
+                let used = b.seated_count + promoted;
+                let n = nn_n.n + used as i64;
+                let nn = nn_n.nn + used as u32;
+                let ns = build_slot(
+                    &b,
+                    &o,
+                    &r,
+                    runner,
+                    seat_k,
+                    n,
+                    nn,
+                    guard_hook,
+                    &reply_base,
+                    &task_dir,
+                    &panel_tmp,
+                );
+                let launcher_k = if ns.engine == "codex" {
+                    b.codex_launcher.clone()
+                } else {
+                    providers::resolve_engine_launcher(&ns.engine, "")
+                        .unwrap_or(None)
+                        .unwrap_or_default()
+                };
+                let rec =
+                    reserved_record(&b, &ns, &b.runners[runner], launcher_k, parent_pid, short);
+                let pref = PendingRef::member(b.task.clone(), ns.nn);
+                match store.write_pending(&pref, &rec) {
+                    Ok(()) => {
+                        println!(
+                            "  re-seating seat {seat_k}: {} replaces {lost_shown} (lost before start: {lost_refusal})",
+                            b.runners[runner].shown
+                        );
+                        reserve_cursor += 1;
+                        promoted += 1;
+                        slots.push(ns);
+                    }
+                    Err(e) => {
+                        println!(
+                            "{TOOL}: could not re-seat seat {seat_k} from the reserve ({e}); the panel runs a member short."
+                        );
+                    }
+                }
+            }
         }
         // Start waiting members along the plan.
         let mut running = slots
@@ -1262,7 +1328,7 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                                     "{}",
                                     c3_core::plan::format_machine_wait(
                                         slots[i].k,
-                                        b.runners.len(),
+                                        b.seated_count,
                                         &ext.rows,
                                         &ext.by_plan,
                                         limit,
@@ -1777,6 +1843,86 @@ fn find_panel_entry(
             .map(|p| p.id == panel_id && p.position == position)
             .unwrap_or(false)
     })
+}
+
+/// One panel slot for runner index `runner` (into `b.runners`), with its seat number `k`, handoff
+/// `n`/`nn` and reply paths. Shared by the initial seat loop and the (c) reserve promotion.
+#[allow(clippy::too_many_arguments)]
+fn build_slot(
+    b: &Built,
+    o: &Options,
+    r: &Resolved,
+    runner: usize,
+    k: i64,
+    n: i64,
+    nn: u32,
+    guard_hook: f64,
+    reply_base: &str,
+    task_dir: &Path,
+    panel_tmp: &Path,
+) -> Slot {
+    let ru = &b.runners[runner];
+    let slug = provider_slug(&ru.entry.provider);
+    let prefix = c3_core::lineage::engine_spec(&ru.engine)
+        .map(|s| s.prefix)
+        .unwrap_or("codex");
+    let reply_name = format!("{reply_base}-{slug}");
+    let reply_rel = format!("handoffs/{nn:02}-{prefix}-{reply_name}.md");
+    let denial = c3_core::lineage::engine_spec(&ru.engine)
+        .map(|s| s.denial_retry)
+        .unwrap_or(false)
+        && o.denial_retry == 1;
+    let guard = if guard_hook > 0.0 {
+        guard_hook
+    } else {
+        panel_member_guard(r.timeout_sec, r.continue_sec, r.repair_enabled, denial)
+    };
+    Slot {
+        runner,
+        k,
+        n,
+        nn,
+        engine: ru.engine.clone(),
+        reply_name,
+        reply_rel,
+        record_path: task_dir.join(format!(".consult.pending-{nn:02}.json")),
+        consult_id: uuid::Uuid::new_v4().to_string(),
+        group: ru.group,
+        guard,
+        state: SlotState::Waiting,
+        child: None,
+        watch: None,
+        exit: None,
+        wall: 0.0,
+        out_path: panel_tmp.join(format!("{nn:02}.out")),
+        err_path: panel_tmp.join(format!("{nn:02}.err")),
+        lines: Vec::new(),
+        refusal: String::new(),
+        entry: None,
+        record_state: String::new(),
+        record_kept: false,
+        not_started: String::new(),
+        start_error: String::new(),
+    }
+}
+
+/// (C3 panel re-seat (c)) A finished seat was LOST to a before-start preflight failure: it never
+/// started (its reserved record is untouched), it produced no usable reply, and the refusal is a
+/// preflight-class one - the provider is unavailable, a credential is missing, or the model is not
+/// supported on this login. A mid-run failure (the member started and then failed/stalled) is NOT
+/// this, so it does not re-seat.
+fn lost_before_start(s: &Slot) -> bool {
+    !slot_usable(s) && s.record_state == "reserved" && is_preflight_refusal(&s.refusal)
+}
+
+/// The refusal text of a preflight-class refusal (`Get-PreflightVerdict`'s refusals): an
+/// unavailable provider / missing credential (`provider X is not usable: ...`), the per-model
+/// mark (`provider X does not offer the model ...`), or an unresolved identity
+/// (`availability could not be established`).
+fn is_preflight_refusal(refusal: &str) -> bool {
+    refusal.contains(" is not usable:")
+        || refusal.contains(" does not offer the model ")
+        || refusal.contains("availability could not be established")
 }
 
 /// Launch one member as a child `c3 consult --task <t> --panel-spec <b64>` process.

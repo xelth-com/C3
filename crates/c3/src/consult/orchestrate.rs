@@ -6781,6 +6781,9 @@ fn finish(
         .map(|mut r| {
             // (wave 9b, F66-3) the record names its consultation
             r.consult_id = ctx.consult_id.clone();
+            // (C3 model-health) the record names its model, so a per-MODEL "not supported on this
+            // login" failure is attributed to the right entry when another repository folds it in
+            r.model = ctx.identity.model.clone();
             r
         })
     });

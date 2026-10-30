@@ -125,6 +125,87 @@ pub fn is_usable_outcome(outcome: &str) -> bool {
     outcome == "usable reply" || outcome == "usable reply (after a timeout continuation)"
 }
 
+/// (C3 model-health, TECH_DEBT "router picks a model the account cannot use") How long a
+/// model-unsupported mark keeps ONE roster entry (provider + model) out: the same retention as the
+/// per-provider auth/unavailable mark (24 h), the "existing per-provider unavailable mark" this
+/// dimension extends. The mark has no reset time of its own - an account-tier model restriction is
+/// persistent, not a window - so the newest outcome of the model decides: a later usable reply from
+/// that model clears it (see [`endpoint_health_set`]), otherwise it holds for a day and the entry is
+/// re-probed.
+pub const MODEL_UNSUPPORTED_RETENTION_MINUTES: i64 = 24 * 60;
+
+/// A failure text that clearly means the MODEL (not a feature, not the whole provider) cannot be
+/// used on this login / plan, cut to [`MODEL_UNSUPPORTED_TEXT_MAX`] chars; `None` for every other
+/// failure. Pure, so it is unit-tested with sample texts per engine.
+///
+/// The clear per-engine shapes (`provider_failure.code` / `.message` as the ledger kept them):
+/// - **codex**: an HTTP 400 `invalid_request_error` whose message names the model and says it
+///   "is not supported" (`The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT
+///   account.`), "does not exist", "is not available" or "not found".
+/// - **grok**: `Couldn't set model '...': Invalid params: "unknown model id". ...`.
+/// - **claude** / **http** (Anthropic + OpenAI-compatible): a `not_found_error` / `model_not_found`
+///   whose message names the model and says it "does not exist" / "not found" / "you do not have
+///   access to it".
+/// - **agy** (gemini): `models/<id> is not found for API version ...` / the model "is not supported".
+/// - **muse**: a start failure naming the model as unknown / unsupported.
+///
+/// It deliberately does NOT fire for a generic capability refusal (a feature / `json_schema` /
+/// context-window limit - those name no model), nor for a transient "model is overloaded /
+/// temporarily unavailable" 5xx, which is a provider blip, not an account-tier restriction.
+pub fn model_unsupported_message(code: &str, message: &str) -> Option<String> {
+    if message.is_empty() && code.is_empty() {
+        return None;
+    }
+    // A transient blip ("overloaded", "temporarily unavailable", "try again", a 5xx) is a provider
+    // outage, not a per-model entitlement: never a model-unsupported mark.
+    let transient =
+        Regex::new(r"(?i)overload|temporar|try again|\bcapacity\b|\b50[234]\b|too many requests")
+            .unwrap();
+    if transient.is_match(message) {
+        return None;
+    }
+    let code_hit = {
+        let c = code.trim().to_ascii_lowercase();
+        matches!(
+            c.as_str(),
+            "model_not_found" | "model_not_supported" | "invalid_model" | "unknown_model"
+        )
+    };
+    // Every message pattern is ANCHORED to the word "model" (or the distinctive grok / gemini
+    // wording), so "json_schema is not supported" and "supports only N tokens" never match.
+    let msg_hit = MODEL_UNSUPPORTED_MSG_PATTERNS
+        .iter()
+        .any(|p| Regex::new(p).unwrap().is_match(message));
+    if !code_hit && !msg_hit {
+        return None;
+    }
+    let text = if message.is_empty() {
+        code.to_string()
+    } else {
+        crate::one_line(message)
+    };
+    Some(text.chars().take(MODEL_UNSUPPORTED_TEXT_MAX).collect())
+}
+
+/// How many characters of the model-unsupported message the mark keeps.
+pub const MODEL_UNSUPPORTED_TEXT_MAX: usize = 100;
+
+/// The message shapes [`model_unsupported_message`] recognises (model-anchored, case-insensitive).
+const MODEL_UNSUPPORTED_MSG_PATTERNS: [&str; 7] = [
+    // grok: Couldn't set model '...': Invalid params: "unknown model id".
+    r"(?i)unknown model id",
+    // codex: ... model is not supported when using Codex with a ChatGPT account.
+    r"(?i)\bmodel\b.{0,40}?not supported",
+    // OpenAI / claude: The model `x` does not exist or you do not have access to it.
+    r"(?i)\bmodel\b.{0,40}?does(?:n't| not) exist",
+    // not found: model not found / no such model / gemini models/<id> is not found
+    r"(?i)\bmodel\b.{0,40}?not found",
+    r"(?i)\bno such model\b",
+    r"(?i)\bmodels?/\S+ is not found",
+    // model not available on this login / plan
+    r"(?i)\bmodel\b.{0,40}?not available",
+];
+
 /// `ConvertFrom-ProviderErrorText`: (code, message) from an SSE/JSON error payload,
 /// else the one-lined text.
 pub fn convert_from_provider_error_text(text: &str) -> (String, String) {
@@ -865,6 +946,9 @@ pub struct Record {
     /// (wave 1b, E5) the endpoint fingerprint the record was recorded on (a plan's record set
     /// spans several).
     pub fingerprint: String,
+    /// (C3 model-health) the roster entry's model this record was recorded on (`reviewer.model`);
+    /// `""` for a record that names none. The per-MODEL unsupported mark groups by it.
+    pub model: String,
     pub class: String,
     /// `"burst"` for a reset-less burst 429, else `""` (wave 24c).
     pub kind: String,
@@ -914,6 +998,11 @@ pub struct EndpointHealth {
     pub window_text: String,
     /// `low quota: 5-hour window 84 % until 18:32` (a window at 80 % or more), else `""`.
     pub window_low: String,
+    /// (C3 model-health) one record per MODEL of this endpoint whose NEWEST outcome is a
+    /// model-unsupported failure (within [`MODEL_UNSUPPORTED_RETENTION_MINUTES`]) that no later
+    /// usable reply from that model has cleared - the per-MODEL "not supported on this login" mark.
+    /// Each record carries its [`Record::model`]; [`crate::verdict`] looks the queried model up here.
+    pub models_unsupported: Vec<Record>,
 }
 
 fn dto(v: &Value) -> Option<DateTime<FixedOffset>> {
@@ -1033,6 +1122,7 @@ pub fn endpoint_health_set(
         let when = at.format("%Y-%m-%dT%H:%M:%S%:z").to_string();
         let mut rec = Record {
             fingerprint: fp,
+            model: rev["model"].as_str().unwrap_or("").to_string(),
             class: String::new(),
             kind: String::new(),
             code: String::new(),
@@ -1126,6 +1216,27 @@ pub fn endpoint_health_set(
             .then(b.n.cmp(&a.n))
             .then(b.until.cmp(&a.until))
     });
+
+    // (C3 model-health) the per-MODEL "not supported on this login" mark: for each MODEL of this
+    // endpoint, its NEWEST record decides (records are newest-first). A model whose newest outcome
+    // is a model-unsupported failure within the retention window is marked; a later usable reply
+    // from that model is newer, so it is seen first and clears the mark. The provider's other
+    // models are untouched.
+    {
+        let mut seen_models: Vec<&str> = Vec::new();
+        for r in &records {
+            if r.model.is_empty() || seen_models.contains(&r.model.as_str()) {
+                continue;
+            }
+            seen_models.push(r.model.as_str());
+            if !r.ok
+                && r.age_minutes <= MODEL_UNSUPPORTED_RETENTION_MINUTES
+                && model_unsupported_message(&r.code, &r.message).is_some()
+            {
+                h.models_unsupported.push(r.clone());
+            }
+        }
+    }
 
     {
         let newest_ok = records.iter().find(|r| r.ok).map(|r| r.order);
@@ -1244,6 +1355,7 @@ pub fn quota_window_record(
     let local_obs = crate::quota::to_local(obs);
     Some(Record {
         fingerprint: w.fingerprint.clone(),
+        model: String::new(),
         class: "quota".into(),
         kind: String::new(),
         code: String::new(),
@@ -1285,6 +1397,11 @@ const MACHINE_HEALTH_MAX_ENDPOINTS: usize = 500;
 pub struct MachineEndpoint {
     #[serde(default)]
     pub endpoint: String,
+    /// (C3 model-health) the roster entry's model this record was recorded on, so a per-MODEL
+    /// "not supported on this login" failure recorded in one repository is attributed to the right
+    /// model when folded into another's health. Empty (and skipped) for a provider-wide record.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
     #[serde(default)]
     pub class: String,
     #[serde(default)]
@@ -1559,6 +1676,7 @@ pub fn new_machine_health_record_quota(
     if let Some(q) = named {
         let r = rec.get_or_insert_with(|| MachineEndpoint {
             endpoint: fingerprint.to_string(),
+            model: String::new(),
             class: String::new(),
             kind: String::new(),
             until: None,
@@ -1610,6 +1728,7 @@ fn new_machine_health_record_base(
         });
         return Some(MachineEndpoint {
             endpoint: fingerprint.to_string(),
+            model: String::new(),
             class: "ok".into(),
             kind: String::new(),
             until: None,
@@ -1657,6 +1776,7 @@ fn new_machine_health_record_base(
     }
     Some(MachineEndpoint {
         endpoint: fingerprint.to_string(),
+        model: String::new(),
         class,
         kind,
         until: until.map(format_offset_iso),
@@ -2724,7 +2844,9 @@ fn machine_consults_filtered(path: &Path, fingerprint: Option<&str>) -> Vec<Valu
                 "when": e.when,
                 "n": 0,
                 "finished_at": e.when,
-                "reviewer": { "provider_fingerprint": e.endpoint },
+                // (C3 model-health) the record's model travels on the synthetic reviewer, so a
+                // per-MODEL unsupported mark folds into another repository's health on the right model
+                "reviewer": { "provider_fingerprint": e.endpoint, "model": e.model },
                 // (wave 9b, F66-3) a synthetic consultation: marked, and carrying the consult id
                 // when the record has one
                 "machine": true,
@@ -4351,6 +4473,7 @@ mod machine_health_tests {
         let future_until = now_offset() + Duration::hours(1);
         let expired = MachineEndpoint {
             endpoint: "fp-expired".into(),
+            model: String::new(),
             class: "quota".into(),
             kind: String::new(),
             until: Some(format_offset_iso(past_until)),
@@ -4364,6 +4487,7 @@ mod machine_health_tests {
         };
         let still_out = MachineEndpoint {
             endpoint: "fp-still-out".into(),
+            model: String::new(),
             class: "auth".into(),
             kind: String::new(),
             until: Some(format_offset_iso(future_until)),
@@ -5686,5 +5810,259 @@ mod quota_window_tests {
             Some("window")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+// (C3 model-health, TECH_DEBT "router picks a model the account cannot use") the per-MODEL
+// "not supported on this login" classifier and mark: recorded, shown, skipped and cleared.
+#[cfg(test)]
+mod model_unsupported_tests {
+    use super::*;
+    use crate::credential::CredentialResult;
+    use crate::verdict::verdict_with_credential;
+    use serde_json::json;
+
+    fn clock() -> DateTime<Utc> {
+        "2026-10-13T12:00:00Z".parse().unwrap()
+    }
+
+    // --------------------------------------------------------------- the pure classifier
+
+    #[test]
+    fn codex_chatgpt_tier_restriction_is_model_unsupported() {
+        // the exact evidence from the TECH_DEBT item (codex, HTTP 400 invalid_request_error)
+        let msg =
+            "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.";
+        let got = model_unsupported_message("invalid_request_error", msg);
+        assert_eq!(got.as_deref(), Some(msg));
+    }
+
+    #[test]
+    fn grok_unknown_model_id_is_model_unsupported() {
+        let msg = "Couldn't set model 'grok-nonexistent-9': Invalid params: \"unknown model id\". Run 'grok models' to see available models.";
+        assert!(model_unsupported_message("", msg).is_some());
+    }
+
+    #[test]
+    fn openai_and_claude_not_found_shapes_are_model_unsupported() {
+        // OpenAI-compatible (http engine)
+        assert!(model_unsupported_message(
+            "model_not_found",
+            "The model `gpt-9` does not exist or you do not have access to it."
+        )
+        .is_some());
+        // code alone (an OpenAI-compatible error whose message was stripped)
+        assert!(model_unsupported_message("model_not_found", "").is_some());
+        // Anthropic not_found_error naming the model
+        assert!(model_unsupported_message(
+            "not_found_error",
+            "model: claude-nonexistent-9 - the model was not found"
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn gemini_model_not_found_is_model_unsupported() {
+        assert!(model_unsupported_message(
+            "",
+            "models/gemini-9-ultra is not found for API version v1beta, or is not supported."
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn a_generic_capability_refusal_is_not_model_unsupported() {
+        // a feature/schema/context limit names no MODEL: never a per-model mark
+        assert!(
+            model_unsupported_message("", "response_format json_schema is not supported").is_none()
+        );
+        assert!(model_unsupported_message(
+            "",
+            "This endpoint supports only 128000 tokens, but the prompt is too long."
+        )
+        .is_none());
+        assert!(
+            model_unsupported_message("invalid_argument", "tool_choice is not supported").is_none()
+        );
+    }
+
+    #[test]
+    fn a_transient_model_blip_is_not_model_unsupported() {
+        // overloaded / temporarily / 5xx is a provider outage, not an entitlement
+        assert!(
+            model_unsupported_message("", "The model is overloaded. Please try again later.")
+                .is_none()
+        );
+        assert!(model_unsupported_message("", "model is temporarily unavailable (503)").is_none());
+    }
+
+    // --------------------------------------------------------------- the health mark round-trip
+
+    fn failed(fp: &str, model: &str, when: &str, message: &str) -> Value {
+        json!({
+            "n": 1,
+            "when": when,
+            "finished_at": when,
+            "bridge_outcome": format!("failed: capability ({message})"),
+            "reviewer": {"provider": "openai", "model": model, "provider_fingerprint": fp},
+            "provider_failure": {
+                "class": "capability",
+                "code": "invalid_request_error",
+                "message": message,
+                "when": when,
+                "retry_after": null
+            }
+        })
+    }
+
+    fn usable(fp: &str, model: &str, when: &str) -> Value {
+        json!({
+            "n": 2,
+            "when": when,
+            "finished_at": when,
+            "bridge_outcome": "usable reply",
+            "reviewer": {"provider": "openai", "model": model, "provider_fingerprint": fp},
+            "provider_failure": null
+        })
+    }
+
+    fn ident_for(model: &str) -> crate::lineage::ReviewerIdentity {
+        let cfg = crate::config::scan_config_text("", &format!("model = \"{model}\"\n"));
+        crate::lineage::resolve_reviewer_identity(&cfg, "openai", model, "", "codex", "")
+    }
+
+    const SOL: &str =
+        "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.";
+
+    #[test]
+    fn a_model_unsupported_failure_is_recorded_shown_and_skipped() {
+        let fp = "fp-openai";
+        let h = endpoint_health(
+            &[failed(fp, "gpt-6.1-sol", "2026-10-13T11:40:00+00:00", SOL)],
+            fp,
+            clock(),
+        );
+        // recorded against THAT model only
+        assert_eq!(h.models_unsupported.len(), 1);
+        assert_eq!(h.models_unsupported[0].model, "gpt-6.1-sol");
+
+        // the verdict skips the entry, kind "model"
+        let v = verdict_with_credential(
+            &ident_for("gpt-6.1-sol"),
+            Some(&h),
+            CredentialResult::ok("logged in"),
+            true,
+        );
+        assert_eq!(v.state, "unavailable");
+        assert_eq!(v.kind, "model");
+        assert_eq!(
+            v.reason,
+            format!("model not supported on this login: {SOL}")
+        );
+
+        // shown by `c3 providers` (the availability record's short carries the message)
+        let rec = crate::availability::convert_to_availability_record(
+            1,
+            "openai",
+            "gpt-6.1-sol",
+            "codex",
+            0,
+            Some(&v),
+            "",
+            clock(),
+        );
+        assert_eq!(rec.state, "out");
+        assert_eq!(rec.kind, "model");
+        assert!(
+            rec.short.starts_with("model not supported on this login:"),
+            "{}",
+            rec.short
+        );
+    }
+
+    #[test]
+    fn another_model_of_the_same_provider_stays_available() {
+        let fp = "fp-openai";
+        let h = endpoint_health(
+            &[failed(fp, "gpt-6.1-sol", "2026-10-13T11:40:00+00:00", SOL)],
+            fp,
+            clock(),
+        );
+        // gpt-6-astra shares the endpoint but has no mark of its own
+        let v = verdict_with_credential(
+            &ident_for("gpt-6-astra"),
+            Some(&h),
+            CredentialResult::ok("logged in"),
+            true,
+        );
+        assert_eq!(v.state, "available", "{}", v.reason);
+    }
+
+    #[test]
+    fn a_later_usable_reply_from_the_model_clears_the_mark() {
+        let fp = "fp-openai";
+        let h = endpoint_health(
+            &[
+                failed(fp, "gpt-6.1-sol", "2026-10-13T11:40:00+00:00", SOL),
+                usable(fp, "gpt-6.1-sol", "2026-10-13T11:50:00+00:00"),
+            ],
+            fp,
+            clock(),
+        );
+        assert!(h.models_unsupported.is_empty());
+        let v = verdict_with_credential(
+            &ident_for("gpt-6.1-sol"),
+            Some(&h),
+            CredentialResult::ok("logged in"),
+            true,
+        );
+        assert_eq!(v.state, "available", "{}", v.reason);
+    }
+
+    #[test]
+    fn the_mark_travels_through_the_machine_file() {
+        // a machine record carrying the model folds into another repo's health on the right model
+        // a recent `when`, so the machine file's retention keeps the record (the prune judges
+        // against the real wall clock, not the fixed test clock)
+        let now = Utc::now();
+        let when = now.to_rfc3339();
+        let mut rec = new_machine_health_record(
+            "fp-openai",
+            &format!("failed: capability ({SOL})"),
+            Some(&MachineFailure {
+                class: "capability".into(),
+                kind: String::new(),
+                when: when.clone(),
+                retry_after: None,
+                message: SOL.into(),
+            }),
+            "repoA",
+        )
+        .expect("a failure record");
+        rec.model = "gpt-6.1-sol".into();
+        assert_eq!(rec.model, "gpt-6.1-sol");
+
+        let dir = std::env::temp_dir().join(format!(
+            "c3-model-mark-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("codex-consult-health.json");
+        let alive = |_: u32, _: &str| true;
+        assert!(matches!(
+            add_machine_health_endpoint(&path, &rec, &alive),
+            HealthUpdate::Written
+        ));
+        let synth = machine_endpoint_consults(&path, "fp-openai");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(synth.len(), 1, "the record must survive the write/prune");
+        assert_eq!(synth[0]["reviewer"]["model"].as_str(), Some("gpt-6.1-sol"));
+        let h = endpoint_health(&synth, "fp-openai", now);
+        assert_eq!(h.models_unsupported.len(), 1);
+        assert_eq!(h.models_unsupported[0].model, "gpt-6.1-sol");
     }
 }

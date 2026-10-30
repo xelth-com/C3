@@ -504,6 +504,9 @@ pub struct PanelRoutingResult {
     pub members: Vec<SeatedMember>,
     /// The seated members, in seat order.
     pub picked: Vec<SeatedMember>,
+    /// (C3 panel re-seat (c)) the eligible-but-unseated members, in draw order - the reserve a
+    /// before-start preflight failure promotes from, so the panel keeps its planned size.
+    pub reserve: Vec<SeatedMember>,
     pub k: i64,
     pub size_asked: i64,
     pub routing: RoutingRecord,
@@ -694,6 +697,9 @@ pub fn select_panel_routing_with(
 
     // Seats: (member index into `seated`, rule).
     let mut seats: Vec<(usize, i32, String)> = Vec::new();
+    // (C3 panel re-seat (c)) the eligible-but-unseated members in draw order, for promotion when a
+    // seat is lost to a before-start preflight failure.
+    let mut reserve_positions: Vec<i64> = Vec::new();
     if mode == "routed" {
         let cands: Vec<Candidate> = eligible_idx
             .iter()
@@ -704,7 +710,12 @@ pub fn select_panel_routing_with(
                 pinned: seated[i].required,
             })
             .collect();
-        for s in invoke_panel_draw(&cands, k as usize, &seed_bytes, neutral, ROUTING_EXPLORE) {
+        let drawn = invoke_panel_draw(&cands, k as usize, &seed_bytes, neutral, ROUTING_EXPLORE);
+        // the reserve continues the SAME seeded draw past the panel's seats
+        for s in routing::invoke_panel_draw_reserve(&cands, &drawn, &seed_bytes, ROUTING_EXPLORE) {
+            reserve_positions.push(s.position);
+        }
+        for s in drawn {
             let mi = seated
                 .iter()
                 .position(|m| m.position == s.position)
@@ -725,6 +736,12 @@ pub fn select_panel_routing_with(
             }
             if !seated[i].required {
                 chosen.push(i);
+            }
+        }
+        // the reserve is the remaining eligible in roster order
+        for &i in &eligible_idx {
+            if !chosen.contains(&i) {
+                reserve_positions.push(seated[i].position);
             }
         }
         let mut slot = 0;
@@ -837,10 +854,16 @@ pub fn select_panel_routing_with(
     };
 
     let picked: Vec<SeatedMember> = seats.iter().map(|(mi, _, _)| seated[*mi].clone()).collect();
+    // (C3 panel re-seat (c)) the reserve members (not-picked eligible), in draw order
+    let reserve: Vec<SeatedMember> = reserve_positions
+        .iter()
+        .filter_map(|pos| seated.iter().find(|m| m.position == *pos).cloned())
+        .collect();
 
     PanelRoutingResult {
         members: seated,
         picked,
+        reserve,
         k,
         size_asked,
         routing,
@@ -1115,6 +1138,76 @@ mod tests {
         let m2 = res.members.iter().find(|m| m.position == 2).unwrap();
         assert_eq!(m2.state, "not-picked");
         assert_eq!(m2.reason, "panel size 2");
+    }
+
+    // (C3 panel re-seat (c)) the reserve is the eligible-but-unseated members in draw order - the
+    // list a before-start preflight failure promotes from, so the panel keeps its planned size.
+    #[test]
+    fn the_reserve_is_the_unseated_eligible_in_draw_order() {
+        let members = vec![
+            member(1, "openai", "gpt-6", "run"),
+            member(2, "zai", "glm-5.3", "run"),
+            member(3, "google", "gemini-3", "run"),
+            member(4, "moonshot", "kimi-k2", "run"),
+        ];
+        let res = select_panel_routing(
+            &members,
+            2,
+            "-PanelSize",
+            "roster",
+            &[],
+            "framing",
+            &[],
+            Utc::now(),
+            "task",
+            "sha",
+            "nonce",
+            "-PanelSeed",
+            &[3],
+        );
+        // seats: required #3, then #1 (roster order)
+        let picked: Vec<i64> = res.picked.iter().map(|p| p.position).collect();
+        assert_eq!(picked, vec![3, 1]);
+        // reserve: the remaining eligible, in roster order, none of them a seated one
+        let reserve: Vec<i64> = res.reserve.iter().map(|m| m.position).collect();
+        assert_eq!(reserve, vec![2, 4]);
+        assert!(res.reserve.iter().all(|m| !picked.contains(&m.position)));
+    }
+
+    // a member skipped at selection (e.g. the model is not supported on this login) is neither
+    // seated nor in the reserve - only eligible `run` members can be promoted.
+    #[test]
+    fn a_skipped_member_is_excluded_from_seats_and_reserve() {
+        let mut m3 = member(3, "google", "gemini-3", "skipped");
+        m3.reason = "model not supported on this login".into();
+        m3.skip_kind = "unavailable".into();
+        let members = vec![
+            member(1, "openai", "gpt-6", "run"),
+            member(2, "zai", "glm-5.3", "run"),
+            m3,
+            member(4, "moonshot", "kimi-k2", "run"),
+        ];
+        let res = select_panel_routing(
+            &members,
+            2,
+            "-PanelSize",
+            "roster",
+            &[],
+            "framing",
+            &[],
+            Utc::now(),
+            "task",
+            "sha",
+            "nonce",
+            "-PanelSeed",
+            &[],
+        );
+        let picked: Vec<i64> = res.picked.iter().map(|p| p.position).collect();
+        assert_eq!(picked, vec![1, 2]);
+        let reserve: Vec<i64> = res.reserve.iter().map(|m| m.position).collect();
+        // #4 remains eligible for promotion; the skipped #3 never appears
+        assert_eq!(reserve, vec![4]);
+        assert!(!reserve.contains(&3));
     }
 
     #[test]

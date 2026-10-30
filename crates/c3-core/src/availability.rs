@@ -200,6 +200,9 @@ pub fn convert_to_availability_record(
                 .map(|h| format_local_when(h, now_utc))
                 .unwrap_or_else(|| "recently".into())
         );
+    } else if rec.kind == "model" {
+        // (C3 model-health) `model not supported on this login: <message, cut>`
+        rec.short = v.reason.clone();
     } else if rec.kind == "unresolved" {
         rec.short = "identity unresolved".into();
     } else if let Some(cred) = v

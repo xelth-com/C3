@@ -20,7 +20,8 @@ pub struct PreflightVerdict {
     pub reason: String,
     pub refusal: String,
     pub label: String,
-    /// `` | identity | unresolved | credentials | auth | quota | quota-unknown-reset | unknown.
+    /// `` | identity | unresolved | credentials | auth | model | quota | quota-unknown-reset |
+    /// unknown.
     pub kind: String,
     pub hit: Option<DateTime<FixedOffset>>,
     pub until: Option<DateTime<FixedOffset>>,
@@ -194,6 +195,29 @@ pub fn verdict_with_credential(
         v.refusal = format!(
             "provider {p} is not usable: it hit a {limit_word} limit at {} ({}{burst_clause}) and named no reset time - out for {out_min} minutes, until {until_iso}; nothing was started{tail}",
             q.hit_iso, q.message
+        );
+        v.label = format!(
+            "unavailable ({}) - a real run is refused: {}",
+            v.reason, v.refusal
+        );
+    } else if let Some(m) = health
+        .map(|h| h.models_unsupported.as_slice())
+        .unwrap_or(&[])
+        .iter()
+        .find(|r| !id.model.is_empty() && r.model == id.model)
+    {
+        // (C3 model-health) this provider is reachable, but the account/login does not offer THIS
+        // model (a 400 invalid_request / not_found naming the model). Only the entry is out; the
+        // provider's other models stay available. Same retention as the per-provider mark; a later
+        // usable reply from the model clears it.
+        v.state = "unavailable".into();
+        v.kind = "model".into();
+        v.hit = Some(m.hit);
+        v.reason = format!("model not supported on this login: {}", m.message);
+        v.preflight = format!("unavailable: {}", v.reason);
+        v.refusal = format!(
+            "provider {p} does not offer the model {} on this login: {}; nothing was started - this model is skipped while the provider's other models stay available (pass -SkipPreflight to launch anyway)",
+            id.model, m.message
         );
         v.label = format!(
             "unavailable ({}) - a real run is refused: {}",
