@@ -91,21 +91,43 @@ fn walk_collab(root: &Path, cur: &Path, out: &mut HashMap<String, String>) {
 }
 
 /// `Compare-DirectorySnapshot`: the collab-relative paths whose `length|sha256` differs (or which
-/// appeared/disappeared) between `before` and `after`, ignoring any path that starts with one of
-/// `ignore_prefixes` (case-insensitive). Ordinal-sorted.
+/// appeared/disappeared) between `before` and `after` AND belong to THIS run. A path is skipped
+/// when it:
+///   * lives under ANOTHER task's directory (`<other-task>/...`) — those belong to other
+///     consultations/sessions running in the same collab dir (TECH_DEBT instances 1-4);
+///   * is a bridge control/status/log/lock file (`.consult.*` / `..consult.*`) at any depth;
+///   * is one of this task's coordinator-owned ledger/state files — `<task>/state.md`,
+///     `<task>/findings.json`, `<task>/sessions.json` and their atomic-write temps
+///     (`<task>/.findings.json.*`, `<task>/.sessions.json.*`);
+///   * starts with one of `ignore_prefixes` (this run's own handoff prefix and, for a panel
+///     member, its siblings' handoffs — case-insensitive).
+///
+/// Ordinal-sorted.
 pub fn compare_collab(
     before: &HashMap<String, String>,
     after: &HashMap<String, String>,
+    task: &str,
     ignore_prefixes: &[String],
 ) -> Vec<String> {
+    let task_ignores = task_owned_ignores(task);
     let mut keys: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
     keys.extend(before.keys());
     keys.extend(after.keys());
     let mut changed: Vec<String> = Vec::new();
     for k in keys {
+        if belongs_to_other_task(k, task) {
+            continue;
+        }
+        if is_control_file(k) {
+            continue;
+        }
+        let low = k.to_ascii_lowercase();
+        if task_ignores.iter().any(|p| low.starts_with(p)) {
+            continue;
+        }
         if ignore_prefixes
             .iter()
-            .any(|p| k.to_ascii_lowercase().starts_with(&p.to_ascii_lowercase()))
+            .any(|p| low.starts_with(&p.to_ascii_lowercase()))
         {
             continue;
         }
@@ -116,6 +138,53 @@ pub fn compare_collab(
     }
     changed.sort();
     changed
+}
+
+/// Whether a collab-relative `key` lives under a task directory OTHER than `task`. A top-level file
+/// (no `/`) is not under any task directory and is kept under watch.
+fn belongs_to_other_task(key: &str, task: &str) -> bool {
+    match key.split_once('/') {
+        Some((seg, _)) => !seg.eq_ignore_ascii_case(task),
+        None => false,
+    }
+}
+
+/// Whether `key`'s basename is one of the bridge's control/status/log/lock files
+/// (`.consult.*` / `..consult.*`, case-insensitive). `collab_snapshot` already drops these, so this
+/// is a defensive second gate that also covers such a file under any task subdirectory.
+fn is_control_file(key: &str) -> bool {
+    let base = key.rsplit('/').next().unwrap_or(key).to_ascii_lowercase();
+    base.starts_with(".consult.") || base.starts_with("..consult.")
+}
+
+/// The lowercased prefixes of THIS task's coordinator-owned ledger/state files that every engine's
+/// tree check ignores: `state.md` (the coordinator writes it mid-run), the two JSON stores and
+/// their `Write-TextAtomic` temps (`.<store>.<id>`).
+fn task_owned_ignores(task: &str) -> Vec<String> {
+    let t = task.to_ascii_lowercase();
+    vec![
+        format!("{t}/state.md"),
+        format!("{t}/findings.json"),
+        format!("{t}/.findings.json."),
+        format!("{t}/sessions.json"),
+        format!("{t}/.sessions.json."),
+    ]
+}
+
+/// Whether an `agy` tool name is a writing/command-running tool. agy enforces no read-only sandbox,
+/// so the tree check treats EVERY tool that is not clearly read-only (a `read`/`view`/`list`/`grep`/
+/// `glob`/`search`/`find`/`cat`/`ls` family name) as able to write or run commands. An empty name is
+/// treated as writing (unknown). Example from the agy fixtures: `view_file` is read-only,
+/// `run_command` is writing.
+pub fn agy_tool_is_writing(tool: &str) -> bool {
+    let t = tool.trim().to_ascii_lowercase();
+    if t.is_empty() {
+        return true;
+    }
+    const READ_ONLY: &[&str] = &[
+        "read", "view", "list", "grep", "glob", "search", "find", "cat", "ls",
+    ];
+    !READ_ONLY.iter().any(|ro| t.contains(ro))
 }
 
 /// `Get-PanelIgnorePrefixes` (D7, F04-1): the collab paths a panel member's siblings write while
@@ -184,20 +253,85 @@ mod tests {
     fn collab_compare_detects_writes_and_honours_ignore_prefix() {
         let mut before = HashMap::new();
         before.insert("t/handoffs/01-agy-run.md".to_string(), "10|aaa".to_string());
-        before.insert("t/state.md".to_string(), "5|bbb".to_string());
+        before.insert(
+            "t/handoffs/02-codex-run.md".to_string(),
+            "7|kkk".to_string(),
+        );
         let mut after = before.clone();
         // The reviewer wrote a new file into the collab dir.
         after.insert("t/handoffs/99-agy-note.md".to_string(), "3|ccc".to_string());
         // This run's own handoff prefix changed (ignored).
         after.insert("t/handoffs/01-agy-run.md".to_string(), "20|zzz".to_string());
         let own = vec!["t/handoffs/01-agy-run.".to_string()];
-        let changed = compare_collab(&before, &after, &own);
+        let changed = compare_collab(&before, &after, "t", &own);
         assert_eq!(changed, vec!["t/handoffs/99-agy-note.md".to_string()]);
-        // A content change to a non-ignored file is caught.
-        after.insert("t/state.md".to_string(), "6|ddd".to_string());
-        let changed = compare_collab(&before, &after, &own);
-        assert!(changed.contains(&"t/state.md".to_string()));
+        // A content change to a non-ignored handoff (a sibling not in own/panel) is caught.
+        after.insert(
+            "t/handoffs/02-codex-run.md".to_string(),
+            "8|www".to_string(),
+        );
+        let changed = compare_collab(&before, &after, "t", &own);
+        assert!(changed.contains(&"t/handoffs/02-codex-run.md".to_string()));
         assert_eq!(changed.len(), 2);
+    }
+
+    #[test]
+    fn collab_compare_ignores_another_tasks_directory() {
+        // The sibling runs / other sessions write under their OWN task dirs (TECH_DEBT 1-4);
+        // changes there are never this run's and must not be counted.
+        let before = HashMap::new();
+        let mut after = HashMap::new();
+        after.insert(
+            "other-task/handoffs/02-codex.md".to_string(),
+            "3|aaa".to_string(),
+        );
+        after.insert("other-task/findings.json".to_string(), "9|bbb".to_string());
+        after.insert(
+            "lb120-bt-connect/.consult.detached-x.log".to_string(),
+            "9|ccc".to_string(),
+        );
+        assert!(compare_collab(&before, &after, "t", &[]).is_empty());
+        // A change under THIS task's own handoff IS caught.
+        after.insert("t/handoffs/02-codex.md".to_string(), "3|ddd".to_string());
+        assert_eq!(
+            compare_collab(&before, &after, "t", &[]),
+            vec!["t/handoffs/02-codex.md".to_string()]
+        );
+    }
+
+    #[test]
+    fn collab_compare_ignores_this_tasks_ledger_state_and_control_files() {
+        let before = HashMap::new();
+        let mut after = HashMap::new();
+        // state.md (coordinator writes it), the two stores and their atomic-write temps, and the
+        // task's own control/status/log/lock files — all ignored for every engine.
+        for (p, v) in [
+            ("t/state.md", "6|ddd"),
+            ("t/findings.json", "2|f1"),
+            ("t/.findings.json.tmp-123", "2|f2"),
+            ("t/sessions.json", "2|s1"),
+            ("t/.sessions.json.tmp-456", "2|s2"),
+            ("t/.consult.pending.json", "2|c1"),
+            ("t/..consult.lock", "2|c2"),
+        ] {
+            after.insert(p.to_string(), v.to_string());
+        }
+        assert!(compare_collab(&before, &after, "t", &[]).is_empty());
+    }
+
+    #[test]
+    fn agy_tool_classifier_reads_vs_writes() {
+        // Read-only families warn; anything else (writing/command) fails.
+        assert!(!agy_tool_is_writing("view_file"));
+        assert!(!agy_tool_is_writing("read_file"));
+        assert!(!agy_tool_is_writing("list_dir"));
+        assert!(!agy_tool_is_writing("grep"));
+        assert!(!agy_tool_is_writing("glob_search"));
+        assert!(agy_tool_is_writing("run_command"));
+        assert!(agy_tool_is_writing("write_file"));
+        assert!(agy_tool_is_writing("apply_patch"));
+        // An unknown/empty name is treated as writing.
+        assert!(agy_tool_is_writing(""));
     }
 
     #[test]

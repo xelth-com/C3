@@ -4845,6 +4845,9 @@ struct EngineDetail {
     permission: String,
     tool_name: String,
     denied_action: String,
+    /// (agy only) `tool_name` of every `step_update` tool step of the primary turn, in order. The
+    /// tree check classifies these to decide whether an agy tree change FAILS or only WARNS.
+    agy_tool_names: Vec<String>,
     /// A conversation id observed but not verified (never a thread/parent).
     thread_candidate: String,
     /// A verified thread the turn named even on a failure (e.g. agy status ERROR).
@@ -4991,6 +4994,7 @@ fn run_primary_turn(
             );
             d.tool_name = ev.tool_name;
             d.denied_action = ev.denied_action;
+            d.agy_tool_names = ev.tool_names;
             Ok((run.outcome, d))
         }
         "muse" => {
@@ -5125,6 +5129,7 @@ fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         permission: t.permission.clone(),
         tool_name: String::new(),
         denied_action: String::new(),
+        agy_tool_names: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -5147,6 +5152,7 @@ fn claude_detail(r: &crate::engines::claude::ClaudeRun) -> EngineDetail {
         permission: String::new(),
         tool_name: r.events.denied_action.clone(),
         denied_action: r.events.denied_action.clone(),
+        agy_tool_names: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -5196,6 +5202,7 @@ fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         permission: String::new(),
         tool_name: String::new(),
         denied_action: String::new(),
+        agy_tool_names: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -5216,6 +5223,7 @@ fn grok_detail(t: &crate::engines::grok::GrokTurn) -> EngineDetail {
         permission: String::new(),
         tool_name: String::new(),
         denied_action: String::new(),
+        agy_tool_names: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -6036,7 +6044,13 @@ fn finish(
             sec.engine_warnings.extend(detail.warnings.clone());
         }
         let collab_after = crate::engines::tree_check::collab_snapshot(&ctx.collab_root);
-        let check = engine_tree_check(&ctx, &drift, &collab_before, &collab_after);
+        let check = engine_tree_check(
+            &ctx,
+            &drift,
+            &collab_before,
+            &collab_after,
+            &detail.agy_tool_names,
+        );
         sec.tree_check_outcome = check.outcome.clone();
         sec.tree_check_files = check.files.clone();
         // A write-disabled engine (muse) WARNS: the reply stays usable, the change is recorded as
@@ -8129,21 +8143,27 @@ fn cut_files(names: &[String]) -> String {
     format!("{n} file{}: {list}", if n != 1 { "s" } else { "" })
 }
 
-/// Whether the engine ran write-disabled (muse `--disable-write --disable-shell`): its own tools
-/// cannot have made a change, so the tree check WARNS instead of failing (D9).
+/// Whether the engine ran write-disabled: its own tools cannot have made a change, so the tree
+/// check WARNS instead of failing (D9).
 fn engine_write_disabled(engine: &str) -> bool {
     // muse runs with --disable-write --disable-shell; grok runs with the read-only tool allowlist
-    // (write/shell/MCP-gateway tools disallowed) so its own tools cannot have written; the http
-    // reviewer receives only a pack and never touches the machine at all — so any tree change
-    // during such a run is not the reviewer's, and the check WARNS instead of failing (D9).
-    engine == "muse" || engine == "grok" || engine == "http"
+    // (write/shell/MCP-gateway tools disallowed); claude runs with --restricted --tools
+    // Read,Grep,Glob --permission-mode dontAsk (proven by each turn's init event) so its own tools
+    // cannot have written; the http reviewer receives only a pack and never touches the machine at
+    // all — so any tree change during such a run is not the reviewer's, and the check WARNS instead
+    // of failing (D9). agy is NOT here: it enforces no read-only sandbox, so its fail/warn decision
+    // turns on whether its event stream shows a writing tool call (see engine_tree_check).
+    engine == "muse" || engine == "grok" || engine == "http" || engine == "claude"
 }
 
 /// The structured read-only tree check (`Get-EngineTreeCheck`, wave 26b D9). Compares the working
-/// tree, the collab directory (this run's own handoff prefix ignored), the brief and the
-/// artifacts. A write-disabled engine (muse) WARNS (`outcome = "warned"`, the reply stays usable);
-/// agy FAILS (`outcome = "failed"`, `problem` set, forced class `permission`). `outcome = "clean"`
-/// when nothing changed.
+/// tree, the collab directory (this run's own handoff prefix, another task's directory, and this
+/// task's control/ledger/state files ignored — see `compare_collab`), the brief and the artifacts.
+/// A write-disabled engine (muse/grok/http/claude) WARNS (`outcome = "warned"`, the reply stays
+/// usable). agy WARNS when its event stream shows at least one tool call and none could write/run
+/// commands; it FAILS (`outcome = "failed"`, `problem` set, forced class `permission`) when the
+/// stream shows a writing tool call or names no tool call at all. `outcome = "clean"` when nothing
+/// changed.
 struct EngineTreeCheck {
     outcome: String,
     problem: String,
@@ -8156,14 +8176,26 @@ fn engine_tree_check(
     drift: &Drift,
     collab_before: &std::collections::HashMap<String, String>,
     collab_after: &std::collections::HashMap<String, String>,
+    agy_tool_names: &[String],
 ) -> EngineTreeCheck {
     let mut why: Vec<String> = Vec::new();
     let mut warn: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
-    let not_mine = format!(
-        "{} ran write-disabled, the change is not the reviewer's",
-        ctx.engine
-    );
+    // The per-engine suffix on each warning line (the change is not the reviewer's).
+    let not_mine = if ctx.engine == "agy" {
+        format!(
+            "agy called no writing tool ({}), the change is not the reviewer's",
+            agy_tool_names.join(", ")
+        )
+    } else if ctx.engine == "claude" {
+        "claude ran with --restricted and read tools only, the change is not the reviewer's"
+            .to_string()
+    } else {
+        format!(
+            "{} ran write-disabled, the change is not the reviewer's",
+            ctx.engine
+        )
+    };
     if drift.tree_changed {
         files.extend(drift.tree_changed_paths.iter().cloned());
         let cut = cut_files(&drift.tree_changed_paths);
@@ -8188,8 +8220,12 @@ fn engine_tree_check(
             &m.sibling_nns,
         ));
     }
-    let collab_changed =
-        crate::engines::tree_check::compare_collab(collab_before, collab_after, &own_prefixes);
+    let collab_changed = crate::engines::tree_check::compare_collab(
+        collab_before,
+        collab_after,
+        ctx.task.as_str(),
+        &own_prefixes,
+    );
     if !collab_changed.is_empty() {
         let shown = collab_shown(ctx);
         let names: Vec<String> = collab_changed
@@ -8220,6 +8256,26 @@ fn engine_tree_check(
             "artifact(s) changed during the run ({list}) - {not_mine}"
         ));
     }
+    engine_tree_outcome(&ctx.engine, agy_tool_names, why, warn, files)
+}
+
+/// Decide the tree-check outcome from the collected change reasons (`why`), their warning form
+/// (`warn`) and the changed paths (`files`). Pulled out of [`engine_tree_check`] so the fail/warn
+/// rules are unit-testable without building a whole `Context`:
+///   * nothing changed → `clean`;
+///   * a write-disabled engine (muse/grok/http/claude) → `warned` (D9, decision 1);
+///   * agy enforces no read-only sandbox, so its decision turns on the tool calls its own event
+///     stream recorded (D9 / TECH_DEBT fourth instance): only read-only tool calls → `warned`; a
+///     writing/command tool call → `failed` naming it; no tool call at all → `failed` reporting
+///     that (decision 3);
+///   * any other engine → `failed`.
+fn engine_tree_outcome(
+    engine: &str,
+    agy_tool_names: &[String],
+    why: Vec<String>,
+    warn: Vec<String>,
+    files: Vec<String>,
+) -> EngineTreeCheck {
     if why.is_empty() {
         return EngineTreeCheck {
             outcome: "clean".into(),
@@ -8228,7 +8284,14 @@ fn engine_tree_check(
             files,
         };
     }
-    if engine_write_disabled(&ctx.engine) {
+    let agy_writing: Vec<String> = agy_tool_names
+        .iter()
+        .filter(|t| crate::engines::tree_check::agy_tool_is_writing(t))
+        .cloned()
+        .collect();
+    let agy_no_tools = agy_tool_names.is_empty();
+    let agy_warns = engine == "agy" && !agy_no_tools && agy_writing.is_empty();
+    if engine_write_disabled(engine) || agy_warns {
         EngineTreeCheck {
             outcome: "warned".into(),
             problem: String::new(),
@@ -8236,9 +8299,27 @@ fn engine_tree_check(
             files,
         }
     } else {
+        // FAIL. For agy, name why the stream did not clear it: a writing tool call, or no tool call
+        // at all (the remedy of the TECH_DEBT fourth instance).
+        let note = if engine == "agy" {
+            if agy_no_tools {
+                format!(
+                    "{} (its event stream named no tool call)",
+                    engine_tree_note(engine)
+                )
+            } else {
+                format!(
+                    "{} (a writing tool was called: {})",
+                    engine_tree_note(engine),
+                    agy_writing.join(", ")
+                )
+            }
+        } else {
+            engine_tree_note(engine)
+        };
         EngineTreeCheck {
             outcome: "failed".into(),
-            problem: format!("{} - {}", why.join("; "), engine_tree_note(&ctx.engine)),
+            problem: format!("{} - {}", why.join("; "), note),
             warnings: Vec::new(),
             files,
         }
@@ -10484,6 +10565,51 @@ mod engine_tests {
             engine_tree_note("muse"),
             "muse ran with --disable-write --disable-shell (the check cannot tell who changed it)"
         );
+    }
+
+    // (D9 / TECH_DEBT bridge-reliability) the fail/warn decision of the engine tree check. The
+    // `why`/`warn` reasons are already built; only the engine and agy's tool calls decide.
+    #[test]
+    fn engine_tree_outcome_decides_warn_vs_fail() {
+        let why = vec!["the working tree changed during the run (1 file: a.rs)".to_string()];
+        let warn = vec!["the working tree changed during the run (1 file: a.rs) - x".to_string()];
+        let files = vec!["a.rs".to_string()];
+        let run = |engine: &str, tools: &[&str]| {
+            let names: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
+            engine_tree_outcome(engine, &names, why.clone(), warn.clone(), files.clone())
+        };
+
+        // Nothing changed → clean, whatever the engine.
+        let clean = engine_tree_outcome("agy", &[], Vec::new(), Vec::new(), Vec::new());
+        assert_eq!(clean.outcome, "clean");
+
+        // (decision 1) a claude change WARNS (the reply stays usable); the warning is kept.
+        let c = run("claude", &[]);
+        assert_eq!(c.outcome, "warned");
+        assert!(c.problem.is_empty());
+        assert!(!c.warnings.is_empty());
+
+        // The other write-disabled engines still WARN.
+        assert_eq!(run("muse", &[]).outcome, "warned");
+        assert_eq!(run("grok", &[]).outcome, "warned");
+        assert_eq!(run("http", &[]).outcome, "warned");
+
+        // (decision 3) agy with only a read-only tool call WARNS and the reply stays usable.
+        let w = run("agy", &["view_file"]);
+        assert_eq!(w.outcome, "warned");
+        assert!(w.problem.is_empty());
+        assert!(!w.warnings.is_empty());
+
+        // (decision 3) agy with a writing/command tool call FAILS and names the tool.
+        let f = run("agy", &["view_file", "run_command"]);
+        assert_eq!(f.outcome, "failed");
+        assert!(f.problem.contains("a writing tool was called: run_command"));
+        assert!(f.warnings.is_empty());
+
+        // (decision 3) agy whose stream named NO tool call stays FAILED and reports that.
+        let n = run("agy", &[]);
+        assert_eq!(n.outcome, "failed");
+        assert!(n.problem.contains("its event stream named no tool call"));
     }
 
     #[test]

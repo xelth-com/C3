@@ -82,8 +82,12 @@ reviewer: add `--provider <name> --model <id>`. Set `CODEX_CONSULT_COORDINATOR` 
 own model so the bridge warns when it seats it as a reviewer — keep the operator's value when
 set; do not guess your own.
 
-**Which reviewer.** Without `--provider` the roster's first entry answers. Do not let one
-reviewer take every consultation: the track record that seats panels is built from marks, and a
+**Which reviewer.** Without `--provider` the roster's first entry answers - on this roster that is
+Astra, the scarcest quota. **So a single consultation always names its reviewer** (`--provider
+meta` or `--provider grok` by default); leave `--provider` out only for acceptance or
+core-contract, where the standing partner is meant. Measured 2026-10-30: Astra took 37 of 75
+consultations in two weeks (27 of 47 in the last one) and the Muse contributor 2 - the default
+answering, not a choice. Do not let one reviewer take every consultation: the track record that seats panels is built from marks, and a
 reviewer that is never asked never earns a seat. The operator's goal is to **drain every plan's
 allowance by the end of its window, not long before it** - a window spent on day one means days
 of waiting; one left half full is paid for nothing. So:
@@ -99,7 +103,9 @@ of waiting; one left half full is paid for nothing. So:
 - **acceptance, core-contract** - the standing partner (or the reviewer who raised the findings).
 - A reviewer that **hits its limit** (Kimi: `failed: quota` on the scoreboard, `c3 providers`
   QUOTA column for codex plans) keeps a small share; a plan the operator is **not renewing**
-  (MiMo: the subscription bills at its cheap API rate, no plan discount) is not planned on.
+  but has allowance left on is **used up**, not saved (MiMo: the last ~10 % of its yearly limit -
+  an ordinary panel seat until it fails `quota`, then it goes to `ext.c3.inactive`); a plan paid
+  for the year (Alibaba Qwen) is an ordinary seat.
 
 Before choosing, glance at `c3 scoreboard` (per-reviewer counts of this repository) and
 `c3 providers` (quota windows where the bridge can read them: codex plans only; z.ai, Kimi,

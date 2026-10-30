@@ -395,6 +395,9 @@ pub struct AgyEvents {
     pub usage: Option<Usage>,
     /// `tool_name` of the LAST `step_update` with `step_type` `"tool"`.
     pub tool_name: String,
+    /// `tool_name` of EVERY `step_update` with `step_type` `"tool"`, in order (the orchestrator's
+    /// tree check classifies these to decide whether an agy tree change FAILS or only WARNS).
+    pub tool_names: Vec<String>,
     /// The first `result.denied_actions[].display_name` (else `.action`).
     pub denied_action: String,
 }
@@ -433,7 +436,8 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
                     if su.get("step_type").and_then(|v| v.as_str()) == Some("tool") {
                         let tn = str_field(su, "tool_name");
                         if !tn.is_empty() {
-                            r.tool_name = tn;
+                            r.tool_name = tn.clone();
+                            r.tool_names.push(tn);
                         }
                     }
                 }
