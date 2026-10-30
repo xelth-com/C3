@@ -37,6 +37,7 @@ pub mod plan;
 pub mod ps_json;
 pub mod purpose;
 pub mod quota;
+pub mod retention;
 pub mod roster;
 pub mod roster_ext;
 pub mod schema;

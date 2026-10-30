@@ -8,7 +8,9 @@
 //! rules of a zone ([`ResetZone`]: `chrono::Local` there, daylight saving included), and a
 //! time without a date (0.6.1) is placed on the day before, of or after the reference.
 //! Health is computed per endpoint fingerprint, newest by completion wins, and a later
-//! usable reply clears an earlier auth or quota failure.
+//! usable reply clears an earlier auth or quota failure. The retention windows, what clears each
+//! mark and the order marks are checked in are the policy owned by [`crate::retention`]; this module
+//! calls its predicates instead of inline constants.
 //!
 //! (C3 wave 1b, the plugin's 0.6.0 wave 29b E5/E15/E16) [`endpoint_health_set`] reads the
 //! records of SEVERAL fingerprints as one record set (the routes of one coding plan), every
@@ -86,18 +88,11 @@ pub fn provider_failure_class(message: &str) -> String {
     "unknown".into()
 }
 
-/// Minutes an endpoint stays out after a quota failure that named no reset time: a burst
-/// 429 recovers fast (`$script:BurstOutMinutes`, wave 24c); a real usage window keeps 60.
-pub const BURST_OUT_MINUTES: i64 = 10;
-/// Minutes a reset-less usage-limit failure keeps the endpoint out (`$script:QuotaOutMinutes`).
-pub const QUOTA_OUT_MINUTES: i64 = 60;
-/// (wave 9, D4) A 429 that came back in less than this many seconds is an INSTANT 429.
-pub const INSTANT_429_SECS: f64 = 2.0;
-/// (wave 9e, F76-1) Id-carrying cap-pair hits are retained up to this bound (35 days, the longest
-/// monthly cap period). The per-entry period rule - a hinted entry's hit counts until its declared
-/// reset, an unhinted entry's only while it is younger than 24 h - is applied at read time in
-/// `plan_cap_verdict`, where the roster entry (hence the hint) is known.
-pub const CAP_PAIR_RETENTION_MINUTES: i64 = 35 * 24 * 60;
+// The retention / clearing / precedence policy lives in [`crate::retention`]; these constants are
+// re-exported from there so the `c3_core::health::` paths stay unchanged.
+pub use crate::retention::{
+    BURST_OUT_MINUTES, CAP_PAIR_RETENTION_MINUTES, INSTANT_429_SECS, QUOTA_OUT_MINUTES,
+};
 
 fn burst_text_re() -> Regex {
     Regex::new(r"(?i)\b429\b|too many requests|concurren").unwrap()
@@ -125,14 +120,9 @@ pub fn is_usable_outcome(outcome: &str) -> bool {
     outcome == "usable reply" || outcome == "usable reply (after a timeout continuation)"
 }
 
-/// (C3 model-health, TECH_DEBT "router picks a model the account cannot use") How long a
-/// model-unsupported mark keeps ONE roster entry (provider + model) out: the same retention as the
-/// per-provider auth/unavailable mark (24 h), the "existing per-provider unavailable mark" this
-/// dimension extends. The mark has no reset time of its own - an account-tier model restriction is
-/// persistent, not a window - so the newest outcome of the model decides: a later usable reply from
-/// that model clears it (see [`endpoint_health_set`]), otherwise it holds for a day and the entry is
-/// re-probed.
-pub const MODEL_UNSUPPORTED_RETENTION_MINUTES: i64 = 24 * 60;
+/// (C3 model-health) How long a model-unsupported mark keeps a roster entry out; see
+/// [`crate::retention::MODEL_UNSUPPORTED_RETENTION_MINUTES`] for the policy.
+pub use crate::retention::MODEL_UNSUPPORTED_RETENTION_MINUTES;
 
 /// A failure text that clearly means the MODEL (not a feature, not the whole provider) cannot be
 /// used on this login / plan, cut to [`MODEL_UNSUPPORTED_TEXT_MAX`] chars; `None` for every other
@@ -1176,11 +1166,7 @@ pub fn endpoint_health_set(
             // (wave 24c) the failure kind decides the reset-less out-window: a burst 429 is
             // out for 10 minutes, a real usage window for 60.
             rec.kind = failure_kind(&rec.class, &format!("{} {}", rec.code, rec.message));
-            let out_minutes = if rec.kind == "burst" {
-                BURST_OUT_MINUTES
-            } else {
-                QUOTA_OUT_MINUTES
-            };
+            let out_minutes = crate::retention::out_minutes(rec.kind == "burst");
             if rec.retry_after.is_none() {
                 rec.retry_after = retry_after_ref(&rec.message, reference);
             }
@@ -1230,7 +1216,7 @@ pub fn endpoint_health_set(
             }
             seen_models.push(r.model.as_str());
             if !r.ok
-                && r.age_minutes <= MODEL_UNSUPPORTED_RETENTION_MINUTES
+                && crate::retention::model_unsupported_live(r.age_minutes)
                 && model_unsupported_message(&r.code, &r.message).is_some()
             {
                 h.models_unsupported.push(r.clone());
@@ -1253,9 +1239,9 @@ pub fn endpoint_health_set(
                 !r.ok
                     && r.class == "quota"
                     && r.kind == "burst"
-                    && r.wall_secs < INSTANT_429_SECS
+                    && crate::retention::is_instant_429(r.wall_secs)
                     && !r.consult_id.is_empty()
-                    && r.age_minutes <= CAP_PAIR_RETENTION_MINUTES
+                    && crate::retention::within_cap_retention(r.age_minutes)
                     && newest_ok.is_none_or(|o| r.order > o)
             })
             .collect();
@@ -1272,7 +1258,7 @@ pub fn endpoint_health_set(
     }
     let auth = records.iter().find(|r| r.ok || r.class == "auth").cloned();
     if let Some(a) = auth {
-        if !a.ok && a.age_minutes <= 24 * 60 {
+        if !a.ok && crate::retention::within_failure_retention(a.age_minutes) {
             h.auth = Some(a);
         }
     }
@@ -1295,11 +1281,13 @@ pub fn endpoint_health_set(
         .unwrap_or(false);
     h.last_limit = records
         .iter()
-        .find(|r| !r.ok && r.class == "quota" && r.age_minutes <= 24 * 60)
+        .find(|r| {
+            !r.ok && r.class == "quota" && crate::retention::within_failure_retention(r.age_minutes)
+        })
         .cloned();
     h.last_failure = records
         .iter()
-        .find(|r| !r.ok && r.age_minutes <= 24 * 60)
+        .find(|r| !r.ok && crate::retention::within_failure_retention(r.age_minutes))
         .cloned();
     if h.last_limit.is_none() {
         h.last_limit = h.quota.clone();
@@ -1307,7 +1295,10 @@ pub fn endpoint_health_set(
     if h.last_failure.is_none() {
         h.last_failure = h.quota.clone();
     }
-    h.recent_usable = records.iter().find(|r| r.ok && r.age <= 60.0).cloned();
+    h.recent_usable = records
+        .iter()
+        .find(|r| r.ok && crate::retention::is_recent_usable(r.age))
+        .cloned();
     // (wave 8 = plugin wave 30) the newest observed quota windows (the ledgers' and the machine
     // file's `quota`, the codex home's newest rollout for the built-in openai endpoint when the live
     // source is on): shown (window_text, window_low), and a window at 98 % or more whose reset lies
@@ -1708,12 +1699,7 @@ fn new_machine_health_record_base(
                 .as_deref()
                 .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
             let until = ra.unwrap_or_else(|| {
-                m_when
-                    + Duration::minutes(if m.kind == "burst" {
-                        BURST_OUT_MINUTES
-                    } else {
-                        QUOTA_OUT_MINUTES
-                    })
+                m_when + Duration::minutes(crate::retention::out_minutes(m.kind == "burst"))
             });
             let msg: String = m.message.chars().take(200).collect();
             serde_json::json!({
@@ -1755,16 +1741,15 @@ fn new_machine_health_record_base(
         match ra {
             Some(r) => (Some(r), Some(r)),
             None => {
-                let mins = if kind == "burst" {
-                    BURST_OUT_MINUTES
-                } else {
-                    QUOTA_OUT_MINUTES
-                };
+                let mins = crate::retention::out_minutes(kind == "burst");
                 (Some(when + Duration::minutes(mins)), None)
             }
         }
     } else if class == "auth" {
-        (Some(when + Duration::hours(24)), None)
+        (
+            Some(when + Duration::minutes(crate::retention::FAILURE_RETENTION_MINUTES)),
+            None,
+        )
     } else {
         (None, None)
     };
@@ -2611,7 +2596,7 @@ fn update_machine_health(
         let now = Utc::now();
         endpoints.retain(|e| {
             let recent = DateTime::parse_from_rfc3339(&e.when)
-                .map(|w| (now - w.with_timezone(&Utc)).num_hours() <= 24)
+                .map(|w| crate::retention::machine_row_recent(now - w.with_timezone(&Utc)))
                 .unwrap_or(false);
             // (wave 9f, F78-2) an id-carrying instant-429 cap-evidence row is kept for the full
             // cap-pair retention (35 days), even after its burst `until` expired, so a reader in
@@ -2620,7 +2605,7 @@ fn update_machine_health(
             // (wave 9h, F82-1) the clearing anchor of an endpoint is kept just as long, so late
             // evidence merged by a later update is still superseded instead of reviving the refusal.
             let within_retention = when_utc(e)
-                .map(|w| (now - w).num_minutes() <= CAP_PAIR_RETENTION_MINUTES)
+                .map(|w| crate::retention::within_cap_retention_dur(now - w))
                 .unwrap_or(false);
             let evidence_kept = is_cap_evidence(e) && within_retention;
             let anchor_kept = is_anchor(e, &anchors) && within_retention;

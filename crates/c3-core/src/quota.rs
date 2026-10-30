@@ -21,9 +21,9 @@
 //! (`session_meta`) names `"parent_thread_id":"<parent>"`; their totals start at zero.
 //!
 //! A window at or above [`QUOTA_BLOCK_PERCENT`] whose reset lies ahead keeps the endpoint out until
-//! that reset (`crate::health::endpoint_health_set`, like a usage limit with a known reset); at or
-//! above [`QUOTA_WARN_PERCENT`] the available verdict says `low quota: ...`. A reset in the past
-//! means the window was reset: shown, never judged.
+//! that reset; at or above [`QUOTA_WARN_PERCENT`] the available verdict says `low quota: ...`; a
+//! reset in the past means the window was reset (shown, never judged). The retention / clearing
+//! policy these shares belong to lives in [`crate::retention`].
 //!
 //! Ported from the plugin's `codex-consult-common.ps1` (wave 30): `Get-RolloutTokenEvents`,
 //! `Get-RolloutUsage`, `Get-CodexRolloutPath`, `Get-CodexSubagentRollouts`, `Get-CodexRunQuota`,
@@ -41,10 +41,9 @@ use std::time::{Instant, SystemTime};
 use chrono::{DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, TimeZone, Utc};
 use serde_json::{json, Value};
 
-/// A window at or above this share whose reset lies ahead keeps its endpoint out until that reset.
-pub const QUOTA_BLOCK_PERCENT: f64 = 98.0;
-/// A window at or above this share (not reset) adds `low quota: ...` to an available verdict.
-pub const QUOTA_WARN_PERCENT: f64 = 80.0;
+// The window block / warn shares are part of the retention policy; see [`crate::retention`]. They
+// are re-exported here so the `c3_core::quota::` paths stay unchanged.
+pub use crate::retention::{QUOTA_BLOCK_PERCENT, QUOTA_WARN_PERCENT};
 /// `CODEX_CONSULT_FORK_MAX_KB`'s default: a parent rollout over it refuses a fork / resume.
 pub const FORK_MAX_KB_DEFAULT: i64 = 512;
 /// From this size on (up to the limit) a fork / resume is warned about.
@@ -960,8 +959,8 @@ pub fn window_states(quota: &Value, now: DateTime<Utc>) -> Vec<WindowState> {
             used,
             resets_at,
             reset,
-            blocks: !reset && resets_at.is_some() && used >= QUOTA_BLOCK_PERCENT,
-            low: !reset && used >= QUOTA_WARN_PERCENT,
+            blocks: !reset && resets_at.is_some() && crate::retention::window_blocks(used),
+            low: !reset && crate::retention::window_low(used),
         });
     }
     out
