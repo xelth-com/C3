@@ -54,13 +54,22 @@ fn c3_bin() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_c3")))
 }
 
-/// A fresh scratch directory under the system temp dir.
+/// A fresh scratch directory under the system temp dir, by its LONG path: the GitHub Windows
+/// runner's TEMP is an 8.3 short path (`C:\Users\RUNNER~1\...`) while the bridge records the long
+/// one, and the assertions compare the two as text.
 fn scratch(tag: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let p = std::env::temp_dir().join(format!("c3-{tag}-{}-{nanos}", std::process::id()));
+    let tmp = std::env::temp_dir();
+    let tmp = std::fs::canonicalize(&tmp)
+        .map(|c| {
+            let s = c.to_string_lossy().to_string();
+            PathBuf::from(s.strip_prefix(r"\\?\").unwrap_or(&s).to_string())
+        })
+        .unwrap_or(tmp);
+    let p = tmp.join(format!("c3-{tag}-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&p).unwrap();
     p
 }
