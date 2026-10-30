@@ -2,7 +2,7 @@
 //!
 //! `priors.json.sig` = `{ "alg": "ed25519", "key_id": "<id>", "sig": "<base64 of the 64-byte
 //! signature over the exact file bytes>" }`. Trusted public keys are pinned in the binary
-//! ([`PRIORS_KEYS`], empty until the maintainer publishes one) plus an optional user key from
+//! ([`PRIORS_KEYS`]) plus an optional user key from
 //! `C3_PRIORS_KEY=<key_id>:<base64>`. A download whose signature does not verify against a
 //! trusted key is discarded and the previous verified copy stays. No private key material is
 //! ever stored, printed or written by C3 outside a test's memory.
@@ -16,10 +16,14 @@ use base64::Engine as _;
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 
-/// The maintainer's pinned public keys: `(key_id, base64 of the 32-byte public key)`. Empty
-/// until the maintainer publishes one; a user adds trust for their own hub with
-/// `C3_PRIORS_KEY`, never by editing this list at runtime.
-pub const PRIORS_KEYS: &[(&str, &str)] = &[];
+/// The maintainer's pinned public keys: `(key_id, base64 of the 32-byte public key)`; a user adds
+/// trust for their own hub with `C3_PRIORS_KEY`, never by editing this list at runtime.
+/// `xelth-2026-1`: generated on the xelth.com hub 2026-10-30, the private seed never left it. To
+/// rotate, pin the next key id here and release BEFORE the hub signs with it.
+pub const PRIORS_KEYS: &[(&str, &str)] = &[(
+    "xelth-2026-1",
+    "Ugd1Y51CkCFmUX+I+ajROZW9CuOifZe7ImIgPvh73Q8=",
+)];
 
 /// The detached signature file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
