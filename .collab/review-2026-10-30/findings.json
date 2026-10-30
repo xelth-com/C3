@@ -67,6 +67,14 @@
                                                      "note":  "staged_text_paths now uses --diff-filter=ACMRT (secret_gate.rs:195), typechange entries are scanned.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Staged listing uses --diff-filter=ACMRT (secret_gate.rs:196-200) and a binary or typechange diff is scanned via git show (secret_gate.rs:109-117).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -136,6 +144,14 @@
                                                      "note":  "A None staged list pushes an UNREADABLE hit and returns before any commit path (secret_gate.rs:77-83).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A failed staged listing appends the unreadable pseudo-hit and returns (secret_gate.rs:77-82) before commit (finish/mod.rs:218-220).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -205,6 +221,14 @@
                                                      "note":  "agy_tool_is_writing is an exact allow-list, empty/unknown names are writing (tree_check.rs:182-201).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "agy_tool_is_writing is an exact allow-list (tree_check.rs:182-201); search_replace is writing.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -278,6 +302,14 @@
                                                      "note":  "Relaxation unchanged (tree_check.rs:96-172) but accepted as a decided boundary (TECH_DEBT:44).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "compare_collab still drops other tasks, .consult.*, and this task\u0027s ledger (tree_check.rs:118-132). Accepted boundary. An agy writing tool name now fails anyway (tree.rs:234-258).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -351,6 +383,14 @@
                                                      "note":  "RULES stays test-documented with runtime on scalar predicates; accepted boundary (TECH_DEBT:46); health.rs now at least calls retention::model_unsupported_live (health.rs:1226).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "RULES remains the documented table (retention.rs:140). health calls model_unsupported_live, not RULES.precedence. Accepted boundary (TECH_DEBT.md:46).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -424,6 +464,14 @@
                                                      "note":  "hash-object -w with unwrap_or_default swallow remains (record.rs:577-586, 636-643); accepted boundary (TECH_DEBT:47).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "baseline_hashes still calls hash-object -w and unwrap_or_default (record.rs:586, 635-636). Accepted as loose unreachable objects (TECH_DEBT.md:47).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -488,6 +536,14 @@
                                                      "note":  "Wording-based is_preflight_refusal unchanged (run.rs:2061-2065); producers still emit the phrases verbatim (verdict.rs:89,117,219,230); accepted boundary (TECH_DEBT:45).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "lost_before_start still matches the three phrases (run.rs:2061-2064), and verdict.rs:117, :219, :230 still emit them. Accepted, fail-safe boundary.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -552,6 +608,14 @@
                                                      "note":  "scan_staged_text is lossy UTF-8 (secret_gate.rs:38-40) and a NUL-bearing change scans the staged blob (109-117).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "scan_staged_text scans lossy UTF-8 and no longer returns clean on a NUL (secret_gate.rs:33-39; test at :274).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -620,6 +684,14 @@
                                                      "note":  "Binary/NUL blobs scanned via staged_blob lossy; key-container extensions refused regardless of content (secret_gate.rs:92-98, 109-120, 168-182).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A git-binary staged diff is scanned from the index blob (secret_gate.rs:109-117); key-container extensions are refused up front (secret_gate.rs:88-97).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -684,6 +756,14 @@
                                                      "note":  "Same exact allow-list fix as F03-3.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Same exact allow-list as F03-3 (tree_check.rs:182-201).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -752,6 +832,14 @@
                                                      "note":  "claude still warns on a tree change (tree.rs:53-62), now mitigated by the init proof: extra_tools fails (tree.rs:183-191), no_init still warns; accepted boundary (TECH_DEBT:43).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Claude still warns on a tree change when init is missing or read-only (tree.rs:184-190). Extra tools now fail (tree.rs:183-198). Accepted boundary.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -825,6 +913,14 @@
                                                      "note":  "Same accepted collab-scope boundary as F03-4.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Same path ignore as F03-4 (tree_check.rs:118-132), accepted. Agy writing names fail even when the compare is empty.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -889,6 +985,14 @@
                                                      "note":  "scope_violations fails closed on an unbuildable glob set with a leading sentinel (record.rs:777-791, 796).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "An unbuildable glob returns a sentinel plus every changed path (record.rs:782-789) and scope_exit returns 1 (work/mod.rs:841-850). An empty scope still checks nothing, by the comment at record.rs:760.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -962,6 +1066,14 @@
                                                      "note":  "Work reader death write is under the admission lock with a fresh re-read (record.rs:215-237); consult reader under the shared task lock (detach.rs:1304-1386).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The consult reader holds the task lock across re-read and write and skips a fresh done record (detach.rs:1346-1385). Acquisition is best-effort after 10 seconds (detach.rs:1317-1324).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1035,6 +1147,14 @@
                                                      "note":  "A failed brief read for inline_brief refuses before anything starts (orchestrate/mod.rs:2339-2345).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "An unreadable grok inline brief returns Err before the prompt is assembled (orchestrate/mod.rs:2382-2384).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1121,6 +1241,14 @@
                                                      "note":  "never_commit.rs:26-29 covers .events-resume-*, .stderr-resume-*, .consult.detached-*.prompt.txt and .status.json; .log stays committed by convention.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "NEVER_COMMIT includes .events-resume-*, .stderr-resume-*, .consult.detached-*.prompt.txt and .status.json (never_commit.rs:26-29); the test at :140-153 matches them.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1194,6 +1322,14 @@
                                                      "note":  "Binary staged changes scan the blob; the commit message is scanned before side effects (finish/mod.rs:188-190, secret_gate.rs:56-58).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Binary staged blobs are scanned (secret_gate.rs:109-117) and the commit message is scanned before side effects (finish/mod.rs:197-201).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1276,6 +1412,14 @@
                                                      "note":  "A writing agy tool call fails BEFORE the clean early-return even when the compare is clean (tree.rs:239-259).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A writing agy tool fails before the clean early return (tree.rs:234-258), including when the only writes are on ignored collab paths.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1358,6 +1502,14 @@
                                                      "note":  "extra_tools half fixed (tree.rs:183-198); a claude turn with no init event still only warns with a note (tree.rs:184-186) - inside the accepted boundary.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "No init event still warns with a note (tree.rs:184-186). Extra tools clear write-disabled (tree.rs:183-190). The warn half is the accepted claude boundary.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1404,7 +1556,7 @@
 
                                         ],
                          "superseded_by":  [
-
+                                               "F11-1"
                                            ],
                          "source":  {
                                         "consult":  4,
@@ -1440,6 +1592,14 @@
                                                      "note":  "Tool names aggregated from all turn streams (mod.rs:4064-4080) and the compare retaken after the last turn (mod.rs:4729-4751); empty tool_name is writing.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Substring matching and secondary-turn snapshots are fixed (tree_check.rs:182-201, mod.rs:4106-4120, mod.rs:4752-4778). Empty tool_name is still dropped (agy.rs:438); finding #1 replaces that slice.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1526,6 +1686,14 @@
                                                      "note":  "Final-seat summary/exit (run.rs:1697-1761, 1808), new seat number beyond the planned seats (run.rs:1244-1247), routing.picked rewritten under the write lock (run.rs:2339-2410); residual: silent no-op on a sessions read failure (see finding #3).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Summary and exit use the substitute (run.rs:1697-1760, 1808), the substitute gets a new seat number (run.rs:1244-1247), and routing.picked is rewritten (run.rs:2339-2410).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1599,6 +1767,14 @@
                                                      "note":  "A reserve joins the seated runner\u0027s endpoint group by fingerprint (run.rs:733-742); an unknown group defaults to limit 1 (run.rs:1310).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A reserve with a seated fingerprint joins that endpoint group (run.rs:733-742). A new fingerprint gets limit 1 (run.rs:1310).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1690,6 +1866,14 @@
                                                      "note":  "reader_should_record_death requires !bridge_alive (detach.rs:1336-1340) and the re-read+write happen under the shared task lock (1346-1386); the Windows exit-FILETIME=None behavior is documented-intentional (proc.rs:1390-1396), not a defect.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "reader_should_record_death requires !bridge_alive (detach.rs:1336-1339) under the task lock (detach.rs:1353-1384). A non-zero Windows exit FILETIME is documented as a dead process (proc.rs:1390-1396). vanished can still be bridge while engine_alive is true (detached.rs:208-211), which is recorded on the death object.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1772,6 +1956,14 @@
                                                      "note":  "Only a usable reply or a model-unsupported record decides the model mark; other failures are skipped (health.rs:1213-1230).",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Only a usable reply or a model-unsupported row decides the model; other failures are skipped (health.rs:1219-1228) and the mark uses model_unsupported_live (health.rs:1226).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1840,6 +2032,14 @@
                                                      "note":  "Baseline blobs stay loose/unreachable by design (accepted boundary, TECH_DEBT:47); the patch.diff content itself is now caught by the staged-lines gate when committed.",
                                                      "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                                      "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                                 },
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Dirty bytes are still stored with hash-object -w (record.rs:635-636). Accepted boundary (TECH_DEBT.md:47). patch.diff is passed through sanitize before write (work/mod.rs:1158-1161).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                                  }
                                              ]
                      },
@@ -1907,7 +2107,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "brief_artifact_drift runs again after the last turn and assigns brief_changed and artifacts_changed_paths (orchestrate/mod.rs:4764-4777).",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 }
                                              ]
                      },
                      {
@@ -1961,7 +2168,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The staged-list hit returns before the allow set (secret_gate.rs:77-82). Deliberate: finish/mod.rs:308-325 says --allow-secret does not apply. Repair git to pass it.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 }
                                              ]
                      },
                      {
@@ -2007,6 +2221,134 @@
                                              "evidence":  "",
                                              "base_commit":  "b34d2a4862066ee63ce3cfe9e8866cdf735c12bf",
                                              "tree_sha256":  "f24d8abf174c6f855f2ebab551e68d9e72131811c6ca9eb743db54ce6e3eb80e"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  9,
+                                                     "when":  "2026-10-30T17:22:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A sessions read failure now prints (run.rs:2356-2368). A later to_bytes or write failure is still silent (run.rs:2412-2417), filed as finding #2.",
+                                                     "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                                     "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-1",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/agy.rs",
+                                               "line":  438
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  182
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  269
+                                           }
+                                       ],
+                         "claim":  "read_agy_events drops a tool step whose tool_name is empty, so agy_tool_is_writing never sees it. Beside a real read-only name, a tracked-file change stays warned and the reply stays usable. The allow-list comment says an empty name is writing.",
+                         "trigger":  "An agy primary stream contains view_file and a step_update of step_type tool with tool_name missing or empty, and a tracked file changes before the process exits.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/agy.rs:437-441",
+                                              "observation":  "tool_names.push runs only when str_field(tool_name) is non-empty."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:178-184",
+                                              "observation":  "agy_tool_is_writing treats a name absent from AGY_READ_ONLY_TOOLS, including an empty string, as writing."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:268-275",
+                                              "observation":  "agy_warns is true when the name list is non-empty and contains no writing name, which yields outcome warned."
+                                          }
+                                      ],
+                         "verification":  "Unit-test read_agy_events on one view_file step plus one tool step with tool_name \"\", then engine_tree_outcome with that name list and a non-empty why. Expect failed; the current split returns warned.",
+                         "remedy":  "Push the empty tool_name into tool_names. The allow-list already classifies it as writing.",
+                         "supersedes":  [
+                                            "F05-5"
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/11-grok-fix-verification-grok3.md",
+                                        "thread":  "01a18d97-3b2c-7223-abac-d232817298b3",
+                                        "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                        "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T17:22:09+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                             "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-2",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  2412
+                                           }
+                                       ],
+                         "claim":  "After a re-seat, patch_routing_picked warns when sessions.json cannot be read, and it still ignores a failed to_bytes or write_text_atomic, so routing.picked can stay at the build-time draw with no line.",
+                         "trigger":  "A re-seat has rewritten the in-memory sessions and write_text_atomic returns Err, or to_bytes fails.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:2356-2368",
+                                              "observation":  "A read Err or missing file prints could not rewrite routing.picked and returns."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:2412-2417",
+                                              "observation":  "The write is let _ = write_text_atomic inside if let Ok(bytes) = sessions.to_bytes(), with no else."
+                                          }
+                                      ],
+                         "verification":  "Force write_text_atomic to fail after a re-seat fixture and confirm stdout has no routing warning while sessions.json still lists the lost member.",
+                         "remedy":  "Print the same one-line warning when to_bytes or the atomic write fails.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  9,
+                                        "reply":  "handoffs/11-grok-fix-verification-grok3.md",
+                                        "thread":  "01a18d97-3b2c-7223-abac-d232817298b3",
+                                        "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                        "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-10-30T17:22:09+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "737202dca9b186044ff6a68940fc41c96e766393",
+                                             "tree_sha256":  "5e5e9c4fc81b745c173edf5b923d5bff984f21f3311d302aabbdb1ca70627269"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -2155,6 +2497,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1793375788
+                    },
+                    {
+                        "n":  9,
+                        "consult_id":  "bbda83d2-5b1f-4eff-a3f0-9896aebe29ec",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "acceptance",
+                        "topics":  [
+                                       "security"
+                                   ],
+                        "consult_when":  "2026-10-30T17:14:20+01:00",
+                        "useful":  "yes",
+                        "note":  "acceptance with the brief NOT inlined: 77 tool calls, ACCEPT with file:line evidence; found the agy unnamed tool step gap and a silent write failure",
+                        "when":  "2026-10-30T17:27:34+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "other",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1793377654
                     }
                 ]
 }

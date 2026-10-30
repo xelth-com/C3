@@ -2410,10 +2410,20 @@ fn patch_routing_picked(
         changed = true;
     }
     if changed {
-        if let Ok(bytes) = sessions.to_bytes() {
-            let _ = c3_core::store::write_text_atomic(
-                &store.task_dir(task).join("sessions.json"),
-                &bytes,
+        let written = sessions
+            .to_bytes()
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| {
+                c3_core::store::write_text_atomic(
+                    &store.task_dir(task).join("sessions.json"),
+                    &bytes,
+                )
+                .map_err(|e| e.to_string())
+            });
+        if let Err(e) = written {
+            println!(
+                "could not rewrite routing.picked after the re-seat: {}; the ledger keeps the build-time picks",
+                e.replace(['\r', '\n'], " ")
             );
         }
     }

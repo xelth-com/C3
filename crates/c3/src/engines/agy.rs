@@ -437,8 +437,10 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
                         let tn = str_field(su, "tool_name");
                         if !tn.is_empty() {
                             r.tool_name = tn.clone();
-                            r.tool_names.push(tn);
                         }
+                        // an unnamed tool step is kept too: the classifier counts an empty
+                        // name as writing (Grok, review-2026-10-30)
+                        r.tool_names.push(tn);
                     }
                 }
             }
@@ -916,6 +918,25 @@ mod tests {
 
     const OK: &str = include_str!("fixtures/agy_ok.events.jsonl");
     const DENIED: &str = include_str!("fixtures/agy_denied.events.jsonl");
+
+    /// (Grok, review-2026-10-30) an unnamed tool step is kept, so the drift classifier sees it
+    /// and counts it as writing; `tool_name` keeps the last NAMED tool.
+    #[test]
+    fn an_unnamed_tool_step_is_kept_for_the_classifier() {
+        let s = concat!(
+            r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":"read_file"}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"step_type":"tool","tool_name":""}}"#,
+            "\n"
+        );
+        let e = read_agy_events(s, true);
+        assert_eq!(e.tool_names, vec!["read_file".to_string(), String::new()]);
+        assert_eq!(e.tool_name, "read_file");
+        assert!(e
+            .tool_names
+            .iter()
+            .any(|t| crate::engines::tree_check::agy_tool_is_writing(t)));
+    }
     const DENIED_STDERR: &str = include_str!("fixtures/agy_denied.stderr.txt");
 
     // (wave 2e, F11-5) the agy tool-call classifier: an ACTIVE tool step opens a call keyed by its
