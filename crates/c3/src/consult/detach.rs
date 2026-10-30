@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 
 use super::args::Options;
 use super::detached::{
-    detached_paths, judgement, member_guard, read_detached_status, DetachedMember, DetachedPaths,
-    DetachedRecord, Judgement, PRUNE_DAYS,
+    build_death_record, detached_paths, judgement, member_guard, read_detached_status, DeathInputs,
+    DeathRecord, DetachedMember, DetachedPaths, DetachedRecord, Judgement, PRUNE_DAYS,
 };
 use crate::providers;
 
@@ -935,6 +935,22 @@ pub fn background(o: Options, run_flow: impl FnOnce(Options) -> i32) -> i32 {
         })
         .unwrap_or(rec);
     complete_record(&mut final_rec, code, &line);
+    // (bridge reliability) A failed terminal write carries a death record the supervisor itself
+    // writes (the bridge is alive here; the child exit is this run's code), so the diagnostics are
+    // on disk even when no reader is called. A clean `done, exit 0` carries none.
+    if code != 0 && final_rec.death.is_none() {
+        let bases = vec![task_dir.clone(), repo_root.clone(), collab_root.clone()];
+        final_rec.death = Some(build_run_death(
+            &final_rec,
+            &paths.log,
+            &task_dir,
+            &bases,
+            "background",
+            true,
+            Some(code as i64),
+            Utc::now(),
+        ));
+    }
     match write_status_retry(&paths.status, &mut final_rec) {
         Ok(()) => code,
         Err(_) => {
@@ -1039,6 +1055,220 @@ fn parse_when(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     chrono::DateTime::parse_from_rfc3339(s)
         .ok()
         .or_else(|| chrono::DateTime::parse_from_rfc3339(&s.replacen(' ', "T", 1)).ok())
+}
+
+// ------------------------------------------------------------------ the death record (bridge reliability)
+
+/// The engine-side evidence read from the task's `.consult.pending*` records: the partial-reply
+/// hint, the raw event stream path, its last event time and mtime, and whether any reviewer
+/// process is still alive. Every piece is best-effort (missing records leave it blank/`None`).
+struct EngineEvidence {
+    partial_hint: String,
+    events_file: String,
+    last_event: String,
+    events_mtime: Option<chrono::DateTime<Utc>>,
+    /// `Some(true)` a reviewer process is still alive, `Some(false)` records exist but none alive,
+    /// `None` no pending records at all.
+    engine_alive: Option<bool>,
+}
+
+/// The last non-empty line's timestamp of an event stream (`ts`/`timestamp`/`time`/`created_at`/
+/// `at`), `""` when the file or a timestamp cannot be read.
+fn last_event_time(path: &Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let last = match text.lines().rev().find(|l| !l.trim().is_empty()) {
+        Some(l) => l,
+        None => return String::new(),
+    };
+    let v: serde_json::Value = match serde_json::from_str(last) {
+        Ok(v) => v,
+        Err(_) => return String::new(),
+    };
+    for k in ["ts", "timestamp", "time", "created_at", "at"] {
+        if let Some(s) = v.get(k).and_then(|x| x.as_str()) {
+            if !s.is_empty() {
+                return s.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+/// Read the engine evidence of a task (`bases` are the directories a recorded `events` path may be
+/// relative to: the task dir first, then the repo and collab roots).
+fn engine_evidence(task_dir: &Path, bases: &[PathBuf]) -> EngineEvidence {
+    use crate::liveness::pending;
+    let mut ev = EngineEvidence {
+        partial_hint: String::new(),
+        events_file: String::new(),
+        last_event: String::new(),
+        events_mtime: None,
+        engine_alive: None,
+    };
+    let listed = pending::pending_paths(task_dir);
+    let mut any = false;
+    let mut alive = false;
+    for p in listed.paths {
+        let rd = pending::read_pending_file(&p);
+        let record = match rd.record {
+            Some(r) => r,
+            None => continue,
+        };
+        any = true;
+        if pending::test_pending_active(&record, &p).active {
+            alive = true;
+        }
+        if ev.partial_hint.is_empty() {
+            let note = pending::pending_original_note(&record);
+            if !note.is_empty() {
+                ev.partial_hint = note;
+            }
+        }
+        if ev.events_file.is_empty() {
+            if let Some(evf) = record
+                .get("events")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+            {
+                ev.events_file = evf.to_string();
+            }
+        }
+    }
+    ev.engine_alive = any.then_some(alive);
+    if !ev.events_file.is_empty() {
+        for base in bases {
+            let cand = base.join(&ev.events_file);
+            if cand.is_file() {
+                if let Ok(m) = std::fs::metadata(&cand).and_then(|m| m.modified()) {
+                    ev.events_mtime = Some(chrono::DateTime::<Utc>::from(m));
+                }
+                ev.last_event = last_event_time(&cand);
+                break;
+            }
+        }
+    }
+    ev
+}
+
+/// The last `max_lines` lines of a console log (`""` when it cannot be read).
+fn read_log_tail(path: &Path, max_lines: usize) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(max_lines);
+    lines[start..].join("\n")
+}
+
+/// Gather the on-disk evidence of a detached run that ended abnormally and build its death record.
+#[allow(clippy::too_many_arguments)]
+fn build_run_death(
+    record: &DetachedRecord,
+    log_path: &Path,
+    task_dir: &Path,
+    bases: &[PathBuf],
+    recorded_by: &str,
+    bridge_alive: bool,
+    child_exit: Option<i64>,
+    now: chrono::DateTime<Utc>,
+) -> DeathRecord {
+    let log_text = read_log_tail(log_path, 40);
+    let ev = engine_evidence(task_dir, bases);
+    build_death_record(DeathInputs {
+        recorded_by,
+        now,
+        started: record.started.as_deref(),
+        bridge_alive,
+        engine_alive: ev.engine_alive,
+        child_exit,
+        log_text: &log_text,
+        events_file: &ev.events_file,
+        events_mtime: ev.events_mtime,
+        last_event: &ev.last_event,
+        partial_hint: &ev.partial_hint,
+    })
+}
+
+/// A reader that found a run dead records its death ONCE: it re-reads the status file and writes
+/// only when the fresh record is still not `done` and carries no death record yet — a late
+/// background that reached `done`, or a death record another reader already wrote, is never
+/// overwritten. Returns the death record now on disk.
+fn ensure_reader_death_record(
+    status_path: &Path,
+    log_path: &Path,
+    task_dir: &Path,
+    bases: &[PathBuf],
+    now: chrono::DateTime<Utc>,
+) -> Option<DeathRecord> {
+    let mut fresh = match read_detached_status(status_path) {
+        Ok(Some(r)) => r,
+        _ => return None,
+    };
+    if fresh.state == "done" || fresh.death.is_some() {
+        return fresh.death;
+    }
+    let bridge_alive = {
+        let pid = fresh.pid.unwrap_or(0);
+        pid > 0
+            && crate::liveness::proc::pid_alive(
+                pid as u32,
+                fresh.start_time.as_deref().unwrap_or(""),
+            )
+    };
+    let death = build_run_death(
+        &fresh,
+        log_path,
+        task_dir,
+        bases,
+        "reader",
+        bridge_alive,
+        fresh.exit,
+        now,
+    );
+    fresh.death = Some(death.clone());
+    // Keep the on-disk state as-is (the judgement still reads `died` by the pid); only add the
+    // record, so a reader never masks the run's own terminal write if one lands later.
+    let _ = write_status(status_path, &mut fresh);
+    Some(death)
+}
+
+/// Print the death block of a run under its report (`write_report`).
+fn print_death_block(d: &DeathRecord) {
+    let elapsed = d
+        .elapsed_sec
+        .map(|s| format!(", elapsed {} s", fmt_num(s)))
+        .unwrap_or_default();
+    let exit = d
+        .child_exit
+        .map(|c| format!("child exit {c}"))
+        .unwrap_or_else(|| "child exit unknown".into());
+    println!(
+        "  death ({}): {} vanished{elapsed}; {exit}",
+        d.recorded_by, d.vanished
+    );
+    let le = (!d.last_event.is_empty()).then(|| format!("last engine event {}", d.last_event));
+    let mt =
+        (!d.events_mtime.is_empty()).then(|| format!("stream last written {}", d.events_mtime));
+    let joined = [le, mt]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("; ");
+    if !joined.is_empty() {
+        println!("    {joined}");
+    }
+    if !d.partial_hint.is_empty() {
+        println!("    {}", d.partial_hint);
+    } else if !d.events_file.is_empty() {
+        println!("    raw event stream: {}", d.events_file);
+    }
+    if !d.log_tail.is_empty() {
+        println!(
+            "    console log tail (sanitized, last {} lines):",
+            d.log_tail.len()
+        );
+        for l in &d.log_tail {
+            println!("    | {l}");
+        }
+    }
 }
 
 // ------------------------------------------------------------------ the query surface: -Status / -Wait / -Prune
@@ -1334,6 +1564,17 @@ pub fn query(o: &Options) -> i32 {
         return 0;
     }
     let now = Utc::now();
+    // (bridge reliability) Record the death of any run judged dead whose background was killed and
+    // never wrote one, then re-read so the report prints what is now on disk. Written once per run.
+    let bases = vec![task_dir.clone(), repo_root.clone(), collab_root.clone()];
+    for run in runs.iter_mut() {
+        if run.record.is_some() && judge(run, now).state == "died" {
+            ensure_reader_death_record(&run.path, &run.log, &task_dir, &bases, now);
+            if let Ok(r) = read_detached_status(&run.path) {
+                run.record = r;
+            }
+        }
+    }
     write_report(&runs, now);
     if timed_out {
         println!();
@@ -1548,6 +1789,9 @@ fn write_report(runs: &[RunEntry], now: chrono::DateTime<Utc>) {
             rec.log.clone()
         };
         println!("  log: {log}");
+        if let Some(d) = &rec.death {
+            print_death_block(d);
+        }
         if j.state == "done" && !rec.summary.is_empty() {
             println!();
             for l in rec.summary.split('\n') {
@@ -1721,6 +1965,71 @@ mod tests {
         );
         assert!(parse_status_name(".consult.detached-abcd1234.log").is_none());
         assert!(parse_status_name("sessions.json").is_none());
+    }
+
+    #[test]
+    fn reader_writes_the_death_record_once_and_never_over_a_done() {
+        let dir = std::env::temp_dir().join(format!("c3-death-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = "abcdef12-0000-0000-0000-000000000000";
+        let paths = detached_paths(&dir, id);
+        let bases = vec![dir.clone()];
+
+        // a running record whose pid is dead on this host -> the reader records its death
+        let mut rec = DetachedRecord {
+            id: id.into(),
+            id8: paths.id8.clone(),
+            state: "running".into(),
+            started: Some((Utc::now() - chrono::Duration::seconds(30)).to_rfc3339()),
+            pid: Some(999999),
+            start_time: Some("2020-01-01T00:00:00.0000000Z".into()),
+            host: machine_name(),
+            ..Default::default()
+        };
+        write_status(&paths.status, &mut rec).unwrap();
+
+        let d1 = ensure_reader_death_record(&paths.status, &paths.log, &dir, &bases, Utc::now())
+            .expect("the reader records the death");
+        assert_eq!(d1.recorded_by, "reader");
+        // no engine evidence on disk -> only the bridge is known gone.
+        assert_eq!(d1.vanished, "bridge");
+
+        // a second reader keeps the first record (written once, not rebuilt)
+        let on_disk = read_detached_status(&paths.status)
+            .unwrap()
+            .unwrap()
+            .death
+            .unwrap();
+        let d2 = ensure_reader_death_record(&paths.status, &paths.log, &dir, &bases, Utc::now())
+            .unwrap();
+        assert_eq!(d2, on_disk, "the second reader keeps the first record");
+
+        // a run that reached `done` is never given a death record by a reader
+        let done_id = "beefbeef-0000-0000-0000-000000000000";
+        let done_paths = detached_paths(&dir, done_id);
+        let mut done = DetachedRecord {
+            id: done_id.into(),
+            id8: done_paths.id8.clone(),
+            state: "done".into(),
+            exit: Some(0),
+            ..Default::default()
+        };
+        write_status(&done_paths.status, &mut done).unwrap();
+        assert!(ensure_reader_death_record(
+            &done_paths.status,
+            &done_paths.log,
+            &dir,
+            &bases,
+            Utc::now()
+        )
+        .is_none());
+        assert!(read_detached_status(&done_paths.status)
+            .unwrap()
+            .unwrap()
+            .death
+            .is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

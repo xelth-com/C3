@@ -122,6 +122,117 @@ pub struct DetachedRecord {
     /// background's self-reports drop it (`None`).
     #[serde(default)]
     pub args: Option<String>,
+    /// (bridge reliability) What is known about an abnormal end: written by the background on a
+    /// failed terminal write, or by the first reader (`--status`/`--wait`) that judges the run
+    /// `died` because its background was killed and never wrote one. Absent on a clean run.
+    #[serde(default)]
+    pub death: Option<DeathRecord>,
+}
+
+/// (bridge reliability) The post-mortem of a detached run: what is known about how it ended, so a
+/// `died`/failed run is not a silent `running` freeze. Written once (a reader never overwrites an
+/// existing one or a newer `done`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct DeathRecord {
+    /// `background` (the run's own terminal write) or `reader` (a `--status`/`--wait` that found it
+    /// dead on disk).
+    #[serde(default)]
+    pub recorded_by: String,
+    /// When this record was written (RFC3339, UTC).
+    #[serde(default)]
+    pub recorded_at: String,
+    /// Which side vanished, by the existing liveness checks: `bridge` (the detached background),
+    /// `engine` (the reviewer child), `both`, `neither`, or `unknown`.
+    #[serde(default)]
+    pub vanished: String,
+    /// The child engine's exit code, when the supervisor saw one (else `null`).
+    #[serde(default)]
+    pub child_exit: Option<i64>,
+    /// Elapsed wall time from the run's `started` to this judgement (seconds, one decimal).
+    #[serde(default)]
+    pub elapsed_sec: Option<f64>,
+    /// The engine event stream's last event time (its last line's timestamp), when readable.
+    #[serde(default)]
+    pub last_event: String,
+    /// The engine event stream file's modification time (local wall-clock), when readable.
+    #[serde(default)]
+    pub events_mtime: String,
+    /// The engine event stream file (as the pending record names it), when known.
+    #[serde(default)]
+    pub events_file: String,
+    /// The sanitized tail of the console log (at most [`DEATH_LOG_TAIL_LINES`] lines).
+    #[serde(default)]
+    pub log_tail: Vec<String>,
+    /// The recovery hint, when the raw stream may hold a usable partial reply (its exact path and
+    /// the "it may hold a usable reply" phrasing, reused from [`crate::liveness::pending`]).
+    #[serde(default)]
+    pub partial_hint: String,
+}
+
+/// The console log tail kept in a death record.
+pub const DEATH_LOG_TAIL_LINES: usize = 20;
+
+/// The pure inputs of [`build_death_record`]: everything already read from disk and judged, so the
+/// builder itself touches no file and no clock.
+pub struct DeathInputs<'a> {
+    /// `background` or `reader`.
+    pub recorded_by: &'a str,
+    pub now: DateTime<Utc>,
+    /// The run's `started` string (for the elapsed time).
+    pub started: Option<&'a str>,
+    /// Is the detached background (the bridge) still alive on this host?
+    pub bridge_alive: bool,
+    /// Is a reviewer (engine child / survivor) still alive? `None` = no engine evidence on disk.
+    pub engine_alive: Option<bool>,
+    pub child_exit: Option<i64>,
+    /// The raw console log text (the builder redacts it and keeps the last lines).
+    pub log_text: &'a str,
+    pub events_file: &'a str,
+    pub events_mtime: Option<DateTime<Utc>>,
+    pub last_event: &'a str,
+    pub partial_hint: &'a str,
+}
+
+/// Build the death record from already-gathered inputs (pure: redacts the log, keeps its tail,
+/// computes the elapsed time and decides which side vanished).
+pub fn build_death_record(i: DeathInputs) -> DeathRecord {
+    let elapsed = i.started.and_then(parse_when).map(|s| {
+        let secs = (i.now - s.with_timezone(&Utc)).num_milliseconds() as f64 / 1000.0;
+        (secs.max(0.0) * 10.0).round() / 10.0
+    });
+    let (redacted, _) = crate::pack::redact::redact(i.log_text);
+    let mut lines: Vec<String> = redacted.lines().map(str::to_string).collect();
+    if lines.len() > DEATH_LOG_TAIL_LINES {
+        lines = lines.split_off(lines.len() - DEATH_LOG_TAIL_LINES);
+    }
+    let vanished = match (i.bridge_alive, i.engine_alive) {
+        (false, Some(false)) => "both",
+        (false, Some(true)) => "bridge",
+        (false, None) => "bridge",
+        (true, Some(false)) => "engine",
+        (true, Some(true)) => "neither",
+        (true, None) => "unknown",
+    }
+    .to_string();
+    DeathRecord {
+        recorded_by: i.recorded_by.to_string(),
+        recorded_at: i.now.to_rfc3339(),
+        vanished,
+        child_exit: i.child_exit,
+        elapsed_sec: elapsed,
+        last_event: i.last_event.to_string(),
+        events_mtime: i
+            .events_mtime
+            .map(|m| {
+                m.with_timezone(&chrono::Local)
+                    .format("%Y-%m-%dT%H:%M:%S%:z")
+                    .to_string()
+            })
+            .unwrap_or_default(),
+        events_file: i.events_file.to_string(),
+        log_tail: lines,
+        partial_hint: i.partial_hint.to_string(),
+    }
 }
 
 fn default_version() -> i64 {
@@ -153,6 +264,7 @@ impl Default for DetachedRecord {
             summary: String::new(),
             log: String::new(),
             args: None,
+            death: None,
         }
     }
 }
@@ -685,5 +797,115 @@ mod tests {
             .unwrap()
             .is_none());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn death_builder_redacts_and_tails_the_log() {
+        let now = Utc::now();
+        let started = (now - chrono::Duration::seconds(42)).to_rfc3339();
+        // 25 lines, one carrying a secret: the tail keeps 20 and the secret is redacted.
+        let mut log = String::new();
+        for i in 1..=24 {
+            log.push_str(&format!("line {i}\n"));
+        }
+        log.push_str("token = \"hunter2hunter2hunter2\"\n");
+        let d = build_death_record(DeathInputs {
+            recorded_by: "reader",
+            now,
+            started: Some(&started),
+            bridge_alive: false,
+            engine_alive: Some(false),
+            child_exit: None,
+            log_text: &log,
+            events_file: "handoffs/03-x.events.jsonl",
+            events_mtime: Some(now - chrono::Duration::seconds(50)),
+            last_event: "2026-10-22T11:00:57Z",
+            partial_hint: "the raw event stream of that run is at handoffs/03-x.events.jsonl (it may hold a usable reply)",
+        });
+        assert_eq!(d.recorded_by, "reader");
+        assert_eq!(d.vanished, "both");
+        assert_eq!(d.log_tail.len(), DEATH_LOG_TAIL_LINES);
+        // the oldest kept line is "line 6" (25 lines -> last 20 -> lines 6..=24 + the secret line)
+        assert_eq!(d.log_tail[0], "line 6");
+        assert!(
+            d.log_tail.last().unwrap().contains("[REDACTED:assignment]"),
+            "{:?}",
+            d.log_tail.last()
+        );
+        assert!(!d.log_tail.last().unwrap().contains("hunter2"));
+        // elapsed is ~42 s.
+        assert!((d.elapsed_sec.unwrap() - 42.0).abs() < 2.0, "{d:?}");
+        assert_eq!(d.last_event, "2026-10-22T11:00:57Z");
+        assert!(!d.events_mtime.is_empty());
+        assert!(d.partial_hint.contains("it may hold a usable reply"));
+    }
+
+    #[test]
+    fn death_builder_decides_which_side_vanished() {
+        let now = Utc::now();
+        let mk = |bridge: bool, engine: Option<bool>| {
+            build_death_record(DeathInputs {
+                recorded_by: "reader",
+                now,
+                started: None,
+                bridge_alive: bridge,
+                engine_alive: engine,
+                child_exit: Some(1),
+                log_text: "",
+                events_file: "",
+                events_mtime: None,
+                last_event: "",
+                partial_hint: "",
+            })
+            .vanished
+        };
+        assert_eq!(mk(false, Some(false)), "both");
+        assert_eq!(mk(false, Some(true)), "bridge");
+        assert_eq!(mk(false, None), "bridge");
+        assert_eq!(mk(true, Some(false)), "engine");
+        assert_eq!(mk(true, Some(true)), "neither");
+        assert_eq!(mk(true, None), "unknown");
+        // no started -> no elapsed; the log tail of an empty log is empty.
+        let d = build_death_record(DeathInputs {
+            recorded_by: "background",
+            now,
+            started: None,
+            bridge_alive: true,
+            engine_alive: Some(false),
+            child_exit: Some(2),
+            log_text: "",
+            events_file: "",
+            events_mtime: None,
+            last_event: "",
+            partial_hint: "",
+        });
+        assert!(d.elapsed_sec.is_none());
+        assert!(d.log_tail.is_empty());
+        assert_eq!(d.child_exit, Some(2));
+        assert_eq!(d.recorded_by, "background");
+    }
+
+    #[test]
+    fn death_round_trips_through_ps_json() {
+        let mut r = DetachedRecord {
+            id: "abcdef12-0000".into(),
+            state: "running".into(),
+            ..Default::default()
+        };
+        r.death = Some(DeathRecord {
+            recorded_by: "reader".into(),
+            vanished: "both".into(),
+            child_exit: None,
+            elapsed_sec: Some(42.0),
+            log_tail: vec!["line a".into(), "line b".into()],
+            partial_hint: "it may hold a usable reply".into(),
+            ..Default::default()
+        });
+        let bytes = record_to_bytes(&r).unwrap();
+        let back: DetachedRecord = serde_json::from_slice(&bytes).unwrap();
+        let d = back.death.expect("death survives the round trip");
+        assert_eq!(d.vanished, "both");
+        assert_eq!(d.log_tail.len(), 2);
+        assert_eq!(d.elapsed_sec, Some(42.0));
     }
 }

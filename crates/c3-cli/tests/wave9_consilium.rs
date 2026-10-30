@@ -335,6 +335,124 @@ fn detached_single_runs_of_one_task_run_side_by_side_and_speak_c3() {
     let _ = std::fs::remove_dir_all(&e.work);
 }
 
+/// Whether a process with this pid is running (reuses c3's own liveness check).
+fn alive(pid: u32) -> bool {
+    c3::liveness::proc::process_start_iso(pid).is_some()
+}
+
+// (bridge reliability) A detached run whose background is killed mid-turn is found `died` by the
+// next `--status`, which writes a death record (the side that vanished, the sanitized log tail, the
+// elapsed time, the raw stream pointer) and exits 1 with a reply pointer - not a silent `running`.
+#[test]
+fn a_detached_run_whose_background_is_killed_gets_a_death_record_from_the_next_status() {
+    let e = setup("death");
+    // a long turn so the background stays `running` while we kill it
+    let fg = e.run(
+        &[
+            "consult",
+            "--task",
+            "t",
+            "--detach",
+            "--prompt",
+            "x",
+            "--reply-name",
+            "a",
+        ],
+        &[("FAKE_CODEX_SLEEP", "120")],
+    );
+    assert_eq!(fg.status.code(), Some(0), "{}", text(&fg));
+    let task_dir = e.repo.join(".collab").join("t");
+    // find the one detached status file
+    let status_path = {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let found = std::fs::read_dir(&task_dir).ok().and_then(|rd| {
+                rd.flatten().map(|x| x.path()).find(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.starts_with(".consult.detached-") && n.ends_with(".status.json"))
+                        .unwrap_or(false)
+                })
+            });
+            if let Some(p) = found {
+                break p;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "no detached status file appeared"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    };
+    // wait until the background reports `running` with its pid
+    let pid = {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let v: Value = std::fs::read_to_string(&status_path)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or(Value::Null);
+            if v["state"] == "running" {
+                if let Some(p) = v["pid"].as_u64() {
+                    break p as u32;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the background never reported running: {v}"
+            );
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    };
+    // kill the background's whole tree (the launcher dies and cannot write `done`)
+    let _ = Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .output();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while alive(pid) {
+        assert!(Instant::now() < deadline, "pid {pid} outlived its kill");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // the status file is still frozen at `running` (no death record yet)
+    let before: Value = serde_json::from_str(&std::fs::read_to_string(&status_path).unwrap())
+        .unwrap_or(Value::Null);
+    assert_eq!(before["state"], "running", "{before}");
+    assert!(before.get("death").is_none_or(|d| d.is_null()), "{before}");
+    // the next --status finds it died, writes the death record and exits 1
+    let st = e.run(&["consult", "--task", "t", "--status"], &[]);
+    let t = text(&st);
+    assert_eq!(st.status.code(), Some(1), "{t}");
+    assert!(t.contains("died"), "{t}");
+    assert!(
+        t.contains("death (reader):") && t.contains("vanished"),
+        "{t}"
+    );
+    // an engine/stream pointer or the sanitized log tail is printed
+    assert!(
+        t.contains("it may hold a usable reply")
+            || t.contains("raw event stream")
+            || t.contains("console log tail"),
+        "{t}"
+    );
+    // the record is on disk, written once, recorded_by the reader
+    let after: Value =
+        serde_json::from_str(&std::fs::read_to_string(&status_path).unwrap()).unwrap();
+    assert_eq!(after["death"]["recorded_by"], "reader", "{after}");
+    assert!(
+        after["death"]["vanished"]
+            .as_str()
+            .is_some_and(|v| { v == "both" || v == "bridge" || v == "engine" }),
+        "{after}"
+    );
+    // a second --status does not rewrite it
+    let recorded_at = after["death"]["recorded_at"].clone();
+    let _ = e.run(&["consult", "--task", "t", "--status"], &[]);
+    let again: Value =
+        serde_json::from_str(&std::fs::read_to_string(&status_path).unwrap()).unwrap();
+    assert_eq!(again["death"]["recorded_at"], recorded_at, "{again}");
+    let _ = std::fs::remove_dir_all(&e.work);
+}
+
 // F66-5: a shim invoked from a persistent PowerShell session leaves no compat switch behind - a
 // native `c3 consult --panel --dry-run` afterwards defaults to new threads and speaks c3.
 #[test]
