@@ -137,6 +137,9 @@ struct Prepared {
     walk: Option<Walk>,
     availability_records: Vec<AvailabilityRecord>,
     availability_line: String,
+    /// (roster balance) The concentration warning line when one reviewer carried more than half of
+    /// this repository's recent consultations; `None` otherwise.
+    concentration: Option<String>,
 }
 
 fn prepare(opts: &Options) -> Result<Prepared, String> {
@@ -299,6 +302,15 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
     let availability_line =
         format_availability_line(&availability_records, noun, "codex-consult: ", suffix);
 
+    // (roster balance) THIS repository's recent consultation concentration (the first
+    // `repo_consult_count` consults are this repo's, before the machine-health records were folded
+    // in for the verdicts): a nudge when one reviewer carried more than half of them.
+    let concentration = concentration_warning(
+        &concentration_pairs(&ctx.consults[..repo_consult_count]),
+        utc_now,
+    )
+    .map(|c| c.line());
+
     Ok(Prepared {
         ctx,
         rows,
@@ -308,6 +320,7 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
         walk,
         availability_records,
         availability_line,
+        concentration,
     })
 }
 
@@ -325,6 +338,9 @@ fn run_inner(opts: &Options) -> Result<i32, String> {
             );
         } else {
             println!("{}", p.availability_line);
+            if let Some(c) = &p.concentration {
+                println!("{c}");
+            }
         }
         return Ok(0);
     }
@@ -341,6 +357,9 @@ fn run_inner(opts: &Options) -> Result<i32, String> {
             &p.walk,
             &p.availability_line,
         );
+        if let Some(c) = &p.concentration {
+            println!("{c}");
+        }
     }
 
     if !opts.provider.is_empty() {
@@ -2315,6 +2334,100 @@ pub fn resolve_collab_root(repo_root: &Path, collab_dir: &str) -> PathBuf {
         .unwrap_or(joined)
 }
 
+// ---- roster concentration warning (roster balance, wish b)
+
+/// (roster balance) The window a concentration warning looks back over.
+pub const CONCENTRATION_WINDOW_DAYS: i64 = 14;
+/// (roster balance) The floor of consultations in the window below which no warning is raised.
+pub const CONCENTRATION_MIN: usize = 10;
+/// (roster balance) The share (per cent) above which one reviewer triggers the warning.
+pub const CONCENTRATION_PCT: f64 = 50.0;
+
+/// (roster balance) One reviewer carried more than [`CONCENTRATION_PCT`] of this repository's
+/// consultations in the window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Concentration {
+    /// `provider :: model`.
+    pub reviewer: String,
+    pub count: usize,
+    pub total: usize,
+    /// The rounded share, per cent.
+    pub percent: i64,
+}
+
+impl Concentration {
+    /// The one-line warning (`providers --short` and the long view print it).
+    pub fn line(&self) -> String {
+        format!(
+            "concentration: {} answered {} of {} consultations in {} days ({} %) - name another reviewer with --provider",
+            self.reviewer, self.count, self.total, CONCENTRATION_WINDOW_DAYS, self.percent
+        )
+    }
+}
+
+/// (roster balance) The `(reviewer, when)` pairs of recorded consultations: `provider :: model`
+/// and the parsed `when`. A consult with no reviewer identity or no parseable timestamp is left out.
+fn concentration_pairs(consults: &[Value]) -> Vec<(String, DateTime<FixedOffset>)> {
+    let mut out = Vec::new();
+    for c in consults {
+        let rev = c.get("reviewer");
+        let provider = rev
+            .and_then(|r| r.get("provider"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let model = rev
+            .and_then(|r| r.get("model"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if provider.is_empty() && model.is_empty() {
+            continue;
+        }
+        let when = c.get("when").and_then(|v| v.as_str()).unwrap_or("");
+        if let Ok(dt) = DateTime::parse_from_rfc3339(when) {
+            out.push((c3_core::lineage::format_lineage(provider, model), dt));
+        }
+    }
+    out
+}
+
+/// (roster balance) Compute the concentration warning from `(reviewer, when)` pairs and the clock:
+/// a pair whose timestamp lies in `[now - CONCENTRATION_WINDOW_DAYS, now]` counts, and when at least
+/// [`CONCENTRATION_MIN`] counted, a reviewer whose share is STRICTLY above [`CONCENTRATION_PCT`]
+/// triggers (the top reviewer; ties broken by name for a stable result). Pure: no clock, no I/O.
+fn concentration_warning(
+    pairs: &[(String, DateTime<FixedOffset>)],
+    now: DateTime<Utc>,
+) -> Option<Concentration> {
+    let cutoff = now - chrono::Duration::days(CONCENTRATION_WINDOW_DAYS);
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut total = 0usize;
+    for (reviewer, when) in pairs {
+        let w = when.with_timezone(&Utc);
+        if w >= cutoff && w <= now {
+            total += 1;
+            *counts.entry(reviewer.clone()).or_insert(0) += 1;
+        }
+    }
+    if total < CONCENTRATION_MIN {
+        return None;
+    }
+    // the busiest reviewer (ties: the lexicographically first name, so the result is deterministic).
+    let (reviewer, count) = counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))?;
+    if (count as f64) * 100.0 > CONCENTRATION_PCT * total as f64 {
+        let percent = (count as f64 * 100.0 / total as f64).round() as i64;
+        Some(Concentration {
+            reviewer,
+            count,
+            total,
+            percent,
+        })
+    } else {
+        None
+    }
+}
+
 fn count_task_ledgers(collab_root: &Path) -> usize {
     if !collab_root.is_dir() {
         return 0;
@@ -3209,6 +3322,79 @@ pub(crate) fn get_muse_harness(launcher: &str) -> String {
         "muse-cli (version unknown)".to_string()
     } else {
         format!("muse-cli {}", ver.trim_start_matches('v'))
+    }
+}
+
+#[cfg(test)]
+mod concentration_tests {
+    use super::*;
+
+    fn pairs(now: DateTime<Utc>, spec: &[(&str, i64)]) -> Vec<(String, DateTime<FixedOffset>)> {
+        // (reviewer, days-ago) -> a pair whose timestamp is `days` before `now`.
+        spec.iter()
+            .map(|(r, days)| {
+                let when = (now - chrono::Duration::days(*days)).fixed_offset();
+                (r.to_string(), when)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn below_the_floor_raises_nothing() {
+        let now = Utc::now();
+        // 9 consultations, all by one reviewer: under the 10-consultation floor -> no warning.
+        let spec: Vec<(&str, i64)> = (0..9).map(|_| ("openai :: gpt-6-astra", 1)).collect();
+        assert_eq!(concentration_warning(&pairs(now, &spec), now), None);
+    }
+
+    #[test]
+    fn exactly_half_is_not_more_than_half() {
+        let now = Utc::now();
+        // 10 in the window, 5/5: the top share is exactly 50 %, not MORE than 50 % -> no warning.
+        let mut spec: Vec<(&str, i64)> = Vec::new();
+        for _ in 0..5 {
+            spec.push(("openai :: gpt-6-astra", 1));
+            spec.push(("ZAI :: glm-5.3", 1));
+        }
+        assert_eq!(concentration_warning(&pairs(now, &spec), now), None);
+        // tip it to 6/11: now strictly above half -> a warning naming the busiest reviewer.
+        spec.push(("openai :: gpt-6-astra", 1));
+        let c = concentration_warning(&pairs(now, &spec), now).expect("a warning");
+        assert_eq!(c.reviewer, "openai :: gpt-6-astra");
+        assert_eq!((c.count, c.total), (6, 11));
+        assert_eq!(c.percent, 55); // 6/11 = 54.5 % -> 55
+        assert!(
+            c.line()
+                .starts_with("concentration: openai :: gpt-6-astra answered 6 of 11"),
+            "{}",
+            c.line()
+        );
+        assert!(c.line().ends_with("name another reviewer with --provider"));
+    }
+
+    #[test]
+    fn the_window_edge_counts_in_but_not_before() {
+        let now = Utc::now();
+        // 9 recent by astra + 2 older than 14 days: only 9 count -> under the floor, no warning.
+        let mut spec: Vec<(&str, i64)> = (0..9).map(|_| ("openai :: gpt-6-astra", 2)).collect();
+        spec.push(("openai :: gpt-6-astra", 15));
+        spec.push(("openai :: gpt-6-astra", 20));
+        assert_eq!(concentration_warning(&pairs(now, &spec), now), None);
+        // a consultation exactly AT the 14-day cutoff is in the window: 10 count -> 100 % warning.
+        spec.push(("openai :: gpt-6-astra", CONCENTRATION_WINDOW_DAYS));
+        let c = concentration_warning(&pairs(now, &spec), now).expect("a warning at the edge");
+        assert_eq!((c.count, c.total), (10, 10));
+        assert_eq!(c.percent, 100);
+    }
+
+    #[test]
+    fn pairs_skip_a_consult_with_no_reviewer_or_bad_time() {
+        let good = json!({"reviewer": {"provider": "openai", "model": "gpt-6-astra"}, "when": "2026-10-30T12:00:00+00:00"});
+        let no_rev = json!({"when": "2026-10-30T12:00:00+00:00"});
+        let bad_time = json!({"reviewer": {"provider": "openai", "model": "gpt-6-astra"}, "when": "not-a-time"});
+        let got = concentration_pairs(&[good, no_rev, bad_time]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0, "openai :: gpt-6-astra");
     }
 }
 

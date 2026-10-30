@@ -135,6 +135,16 @@ pub struct RunRecord {
     /// engine can refuse an edit by path before it happens.
     #[serde(default)]
     pub scope_violations: Vec<String>,
+    /// (0.2.4) The post-mortem of a run the `--status`/`--wait` reader judged `died` because its
+    /// owning process was gone: which side vanished, the child exit, elapsed, the last engine event
+    /// and the sanitized console-log tail - so a killed `--detach` background is not a silent
+    /// `running`→`died` with no diagnostics. Reuses the consult [`DeathRecord`]; written ONCE by
+    /// [`recover_dead_run`] under the admission lock, never over a newer generation. Absent on a
+    /// clean run.
+    ///
+    /// [`DeathRecord`]: crate::consult::detached::DeathRecord
+    #[serde(default)]
+    pub death: Option<crate::consult::detached::DeathRecord>,
 }
 
 impl RunRecord {
@@ -181,7 +191,15 @@ fn same_generation(a: &RunRecord, b: &RunRecord) -> bool {
 /// `CODEX_CONSULT_TEST_WORK_RECOVERY_BARRIER` names a path, wait (bounded) until it exists — the
 /// acceptance test interposes a competing resume claim between the status snapshot and the locked
 /// recovery re-read.
+///
+/// (0.2.4, F95-1) Before waiting it SIGNALS barrier entry: when
+/// `CODEX_CONSULT_TEST_WORK_RECOVERY_ENTERED` names a path it touches that marker, so the test can
+/// wait on a real entry signal (bounded) instead of a fixed sleep — the dead-owner snapshot is
+/// already captured by the time this runs (the caller read the record before calling the barrier).
 fn test_recovery_barrier() {
+    if let Some(marker) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_WORK_RECOVERY_ENTERED") {
+        let _ = std::fs::write(&marker, b"1");
+    }
     if let Some(gate) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_WORK_RECOVERY_BARRIER") {
         let gate = PathBuf::from(gate);
         for _ in 0..600 {
@@ -209,12 +227,72 @@ pub fn recover_dead_run(
         None => return Ok(None),
     };
     if same_generation(&rec, snapshot) && is_pending(&rec.status) && !is_live(&rec) {
+        let now = chrono::Utc::now();
         rec.status = "died".into();
-        rec.ended = Some(chrono::Utc::now().to_rfc3339());
+        rec.ended = Some(now.to_rfc3339());
         rec.args = None;
+        // (0.2.4) Attach the death post-mortem ONCE, under this same lock: the record is pending and
+        // this reader owns the `running`→`died` transition, so no other writer can race it.
+        if rec.death.is_none() {
+            rec.death = Some(build_reader_death(dir, &rec, now));
+        }
         write_record(dir, &rec)?;
     }
     Ok(Some(rec))
+}
+
+/// (0.2.4) The last non-empty line's timestamp of a work event stream (`ts`/`timestamp`/`time`/
+/// `created_at`/`at`), `""` when the file or a timestamp cannot be read. Mirrors the consult
+/// reader's `last_event_time`.
+fn last_event_time(path: &Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    let Some(last) = text.lines().rev().find(|l| !l.trim().is_empty()) else {
+        return String::new();
+    };
+    let Ok(v) = serde_json::from_str::<Value>(last) else {
+        return String::new();
+    };
+    for k in ["ts", "timestamp", "time", "created_at", "at"] {
+        if let Some(s) = v.get(k).and_then(|x| x.as_str()).filter(|s| !s.is_empty()) {
+            return s.to_string();
+        }
+    }
+    String::new()
+}
+
+/// (0.2.4) Build the death record a `--status`/`--wait` reader attaches when it judges a work run
+/// `died`. The owning process (the run's "bridge") is gone — that is why the reader got here — and a
+/// work run tracks no separate engine pid, so `vanished` reads `bridge`. The consult
+/// [`build_death_record`] builder is reused over the run dir's console log (`.log`, detached runs
+/// only) and event stream (`events.jsonl`). The two file reads are best-effort.
+///
+/// [`build_death_record`]: crate::consult::detached::build_death_record
+fn build_reader_death(
+    dir: &Path,
+    rec: &RunRecord,
+    now: chrono::DateTime<chrono::Utc>,
+) -> crate::consult::detached::DeathRecord {
+    use crate::consult::detached::{build_death_record, DeathInputs};
+    let log_text = std::fs::read_to_string(dir.join(".log")).unwrap_or_default();
+    let events = dir.join("events.jsonl");
+    let events_mtime = std::fs::metadata(&events)
+        .and_then(|m| m.modified())
+        .ok()
+        .map(chrono::DateTime::<chrono::Utc>::from);
+    let last_event = last_event_time(&events);
+    build_death_record(DeathInputs {
+        recorded_by: "reader",
+        now,
+        started: Some(rec.started.as_str()),
+        bridge_alive: false,
+        engine_alive: None,
+        child_exit: rec.exit_code,
+        log_text: &log_text,
+        events_file: "events.jsonl",
+        events_mtime,
+        last_event: &last_event,
+        partial_hint: "",
+    })
 }
 
 /// (0.2.4, F93-1) Read a record for the DISPLAY path (`--status`/`--wait`/the resume listing): a
@@ -1205,6 +1283,57 @@ mod tests {
         assert_eq!(seq2, 2);
         assert!(id2.starts_with("02-byteplus-claude-deepseek-v4.1-flash"));
         assert!(dir2.is_dir());
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// (0.2.4) The display path attaches a death post-mortem when it judges a dead-owner run
+    /// `died`: the owning process is gone (`vanished` = `bridge`), the console-log tail and the
+    /// last engine event are captured, and the record is written ONCE (a second display read keeps
+    /// the same record, never rebuilding it).
+    #[test]
+    fn a_dead_owner_run_gets_a_death_record() {
+        let work = scratch("death");
+        let dir = work.join("01-zai-claude-glm-5.3");
+        std::fs::create_dir_all(&dir).unwrap();
+        // a console log and an event stream for the reader to read back
+        std::fs::write(dir.join(".log"), "launch line\nthe last console line\n").unwrap();
+        std::fs::write(
+            dir.join("events.jsonl"),
+            "{\"type\":\"assistant\",\"ts\":\"2026-10-30T12:00:00Z\"}\n",
+        )
+        .unwrap();
+        let rec = RunRecord {
+            id: "01-zai-claude-glm-5.3".into(),
+            task: "t".into(),
+            seq: 1,
+            provider: "ZAI-claude".into(),
+            model: "glm-5.3".into(),
+            engine: "claude".into(),
+            // a dead owner: no live pid and far older than the start grace
+            started: "2026-10-20T10:00:00+00:00".into(),
+            status: "running".into(),
+            pid: None,
+            ..Default::default()
+        };
+        write_record(&dir, &rec).unwrap();
+        let got = read_for_display(&work, &dir).unwrap().unwrap();
+        assert_eq!(got.status, "died");
+        let d = got.death.expect("a death record");
+        assert_eq!(d.recorded_by, "reader");
+        assert_eq!(d.vanished, "bridge");
+        assert_eq!(d.events_file, "events.jsonl");
+        assert_eq!(d.last_event, "2026-10-30T12:00:00Z");
+        assert!(
+            d.log_tail
+                .iter()
+                .any(|l| l.contains("the last console line")),
+            "{:?}",
+            d.log_tail
+        );
+        // written ONCE: a second display read keeps the same record (status is already died)
+        let again = read_for_display(&work, &dir).unwrap().unwrap();
+        assert_eq!(again.status, "died");
+        assert_eq!(again.death, Some(d));
         let _ = std::fs::remove_dir_all(&work);
     }
 }

@@ -325,91 +325,68 @@ mod tests {
     fn embed_reaches_a_loopback_fake_via_localhost() {
         use std::io::{Read, Write};
         use std::net::TcpListener;
-        // An in-process fake bound on EVERY loopback address `localhost` resolves to, at one port
-        // (127.0.0.1 first, then ::1 at the same port, best effort), so the request reaches it
-        // whichever address the pinned resolver tries first - the test must not depend on a
-        // refused first address falling through to the second under load (was flaky).
-        let first = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = first.local_addr().unwrap().port();
-        let mut listeners = vec![first];
-        if let Ok(l) = TcpListener::bind(("::1", port)) {
-            listeners.push(l);
-        }
-        let n_listeners = listeners.len();
-        let handles: Vec<_> = listeners
-            .into_iter()
-            .map(|listener| {
-                std::thread::spawn(move || {
-                    // Keep accepting until the test's final empty "stop" connection arrives (it
-                    // sends nothing and closes), so a diagnostic probe or a client retry is
-                    // answered too and the join at the end still returns.
-                    while let Ok((mut stream, _)) = listener.accept() {
-                        // Read the WHOLE request (headers + Content-Length body) before answering:
-                        // answering and closing while the client is still sending the body makes
-                        // Windows reset the connection and the client loses the response (the
-                        // former flake of this test under a loaded suite).
-                        let mut req = Vec::new();
-                        let mut chunk = [0u8; 4096];
-                        loop {
-                            let n = match stream.read(&mut chunk) {
-                                Ok(0) | Err(_) => break,
-                                Ok(n) => n,
-                            };
-                            req.extend_from_slice(&chunk[..n]);
-                            let text = String::from_utf8_lossy(&req);
-                            if let Some(end) = text.find("\r\n\r\n") {
-                                let len = text[..end]
-                                    .lines()
-                                    .find_map(|l| {
-                                        let (k, v) = l.split_once(':')?;
-                                        k.eq_ignore_ascii_case("content-length")
-                                            .then(|| v.trim().parse::<usize>().ok())
-                                            .flatten()
-                                    })
-                                    .unwrap_or(0);
-                                if req.len() >= end + 4 + len {
-                                    break;
-                                }
-                            }
+        // An in-process fake bound on 127.0.0.1 at an OS-assigned port (bind :0, read the bound
+        // port back) - never a fixed or guessed port, which raced another binder under a loaded
+        // suite (the former flake). The pinned resolver is IPv4-loopback-first, so `localhost`
+        // connects to 127.0.0.1; a single listener there is enough and removes the old second
+        // (::1-at-the-same-guessed-port) listener and its "refused first address" dependency.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            // Keep accepting until the test's final empty "stop" connection arrives (it sends
+            // nothing and closes), so a diagnostic probe or a client retry is answered too and
+            // the join at the end still returns.
+            while let Ok((mut stream, _)) = listener.accept() {
+                // Read the WHOLE request (headers + Content-Length body) before answering:
+                // answering and closing while the client is still sending the body makes Windows
+                // reset the connection and the client loses the response.
+                let mut req = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let n = match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => n,
+                    };
+                    req.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&req);
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let len = text[..end]
+                            .lines()
+                            .find_map(|l| {
+                                let (k, v) = l.split_once(':')?;
+                                k.eq_ignore_ascii_case("content-length")
+                                    .then(|| v.trim().parse::<usize>().ok())
+                                    .flatten()
+                            })
+                            .unwrap_or(0);
+                        if req.len() >= end + 4 + len {
+                            break;
                         }
-                        if req.is_empty() {
-                            break; // the stop connection
-                        }
-                        let body = r#"{"data":[{"index":0,"embedding":[1.0,2.0,3.0]}]}"#;
-                        let resp = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                            body.len(),
-                            body
-                        );
-                        let _ = stream.write_all(resp.as_bytes());
-                        let _ = stream.flush();
                     }
-                })
-            })
-            .collect();
+                }
+                if req.is_empty() {
+                    break; // the stop connection
+                }
+                let body = r#"{"data":[{"index":0,"embedding":[1.0,2.0,3.0]}]}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
         let e = Embedder::new(format!("http://localhost:{port}/v1/embeddings"), "m", 3);
         let diag = || {
             let pinned = resolve_loopback_addrs(&format!("http://localhost:{port}/v1/embeddings"));
-            let probes: Vec<String> = ["127.0.0.1", "::1"]
-                .iter()
-                .map(|a| {
-                    format!(
-                        "{a}: {:?}",
-                        std::net::TcpStream::connect_timeout(
-                            &format!("{}:{port}", if *a == "::1" { "[::1]" } else { a })
-                                .parse()
-                                .unwrap(),
-                            Duration::from_secs(1)
-                        )
-                        .map(|_| "ok")
-                        .map_err(|e| e.to_string())
-                    )
-                })
-                .collect();
-            format!(
-                "pinned={pinned:?} listeners={} probes={probes:?}",
-                n_listeners
+            let probe = std::net::TcpStream::connect_timeout(
+                &format!("127.0.0.1:{port}").parse().unwrap(),
+                Duration::from_secs(1),
             )
+            .map(|_| "ok".to_string())
+            .unwrap_or_else(|e| e.to_string());
+            format!("pinned={pinned:?} probe_127.0.0.1={probe}")
         };
         let v = e
             .embed_batch(&["hi".to_string()], Duration::from_secs(5))
@@ -421,13 +398,9 @@ mod tests {
             });
         assert_eq!(v.len(), 1);
         assert_eq!(v[0], vec![1.0, 2.0, 3.0]);
-        // A listener that never got a connection blocks in accept(); unblock it by connecting.
-        for addr in ["127.0.0.1", "::1"] {
-            let _ = std::net::TcpStream::connect((addr, port));
-        }
-        for h in handles {
-            let _ = h.join();
-        }
+        // The listener blocks in accept() after the one request; unblock it so the join returns.
+        let _ = std::net::TcpStream::connect(("127.0.0.1", port));
+        let _ = handle.join();
     }
 
     #[test]

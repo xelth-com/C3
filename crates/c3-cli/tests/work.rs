@@ -1880,15 +1880,32 @@ fn a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim() {
     // start --status, paused at the recovery barrier (gate absent) in test mode
     let gate = e.work.join("recovery-gate.txt");
     let gates = gate.to_string_lossy().to_string();
+    // (F95-1) the status process touches this marker once it has captured the dead-owner snapshot
+    // and reached the barrier; the test waits on it (bounded) instead of a fixed sleep.
+    let entered = e.work.join("recovery-entered.txt");
+    let entereds = entered.to_string_lossy().to_string();
     let senv: Vec<(&str, &str)> = vec![
         ("CODEX_CONSULT_TEST_MODE", "1"),
         ("CODEX_CONSULT_TEST_WORK_RECOVERY_BARRIER", gates.as_str()),
+        (
+            "CODEX_CONSULT_TEST_WORK_RECOVERY_ENTERED",
+            entereds.as_str(),
+        ),
     ];
     let status = e
         .cmd(&["work", "--task", "t", "--status"], &senv)
         .spawn()
         .expect("spawn status");
-    std::thread::sleep(std::time::Duration::from_millis(1500)); // let status reach the barrier
+    // wait until the status reader has snapshotted the dead owner and reached the barrier
+    let mut reached = false;
+    for _ in 0..400 {
+        if entered.is_file() {
+            reached = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    assert!(reached, "status never reached the recovery barrier");
 
     // A finished as quota (owner gone): rewrite 01 to a resumable quota record
     let quota = "{\"text\":\"usage limit\",\"reset_at\":null,\"resume_at\":\"2100-01-01T00:01:00+00:00\",\"resumes\":0,\"exhausted\":false}";
@@ -1937,6 +1954,42 @@ fn a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim() {
     // release B and reap
     std::fs::write(e.repo.join("release.txt"), b"1").unwrap();
     let _ = b.wait_with_output();
+}
+
+/// (0.2.4) A `--detach` run whose background was killed (a `running` record with a dead owner) is
+/// not a silent freeze: the `--status` reader judges it `died`, attaches a death post-mortem and
+/// prints it - which side vanished and the sanitized console-log tail - and persists it to run.json.
+#[test]
+fn a_dead_detached_run_gets_a_death_record_and_status_prints_it() {
+    let e = setup("death-status");
+    // 01 is `running` with a dead owner (pid 999999 does not exist)
+    write_raw_run(&e, "running", Some(999999), 0, None);
+    let dir = e.work_root().join("01-ZAI-claude-glm-5.3");
+    std::fs::write(
+        dir.join(".log"),
+        "work run ... started\nthe last console line\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("events.jsonl"),
+        "{\"type\":\"assistant\",\"ts\":\"2026-10-30T12:00:00Z\"}\n",
+    )
+    .unwrap();
+
+    let out = e.c3(&["work", "--task", "t", "--status"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "a died run is exit 1: {t}");
+    assert!(t.contains("death (reader): bridge vanished"), "{t}");
+    assert!(t.contains("console log tail"), "{t}");
+    assert!(t.contains("the last console line"), "{t}");
+    assert!(t.contains("last engine event 2026-10-30T12:00:00Z"), "{t}");
+
+    // the reader persisted the death record (and the `died` transition) to run.json, once.
+    let run: Value = serde_json::from_str(&read(&dir.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "died", "{run}");
+    assert_eq!(run["death"]["recorded_by"], "reader", "{run}");
+    assert_eq!(run["death"]["vanished"], "bridge", "{run}");
+    assert_eq!(run["death"]["events_file"], "events.jsonl", "{run}");
 }
 
 // ------------------------------------------------------------------ 0.2.4 (--role tests / --of / --scope / patch.diff)

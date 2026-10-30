@@ -528,8 +528,53 @@ pub fn query(o: &Options) -> i32 {
                 q.resume_at
             );
         }
+        if let Some(d) = &rec.death {
+            print_death_block(d);
+        }
     }
     exit_of(&runs)
+}
+
+/// Print a died run's post-mortem (the record's `death` block), mirroring the consult detach's
+/// death-block printer so `--status`/`--wait` give the same diagnostics for a silently killed run.
+fn print_death_block(d: &crate::consult::detached::DeathRecord) {
+    let elapsed = d
+        .elapsed_sec
+        .map(|s| format!(", elapsed {s} s"))
+        .unwrap_or_default();
+    let exit = d
+        .child_exit
+        .map(|c| format!("child exit {c}"))
+        .unwrap_or_else(|| "child exit unknown".into());
+    println!(
+        "  death ({}): {} vanished{elapsed}; {exit}",
+        d.recorded_by, d.vanished
+    );
+    let le = (!d.last_event.is_empty()).then(|| format!("last engine event {}", d.last_event));
+    let mt =
+        (!d.events_mtime.is_empty()).then(|| format!("stream last written {}", d.events_mtime));
+    let joined = [le, mt]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("; ");
+    if !joined.is_empty() {
+        println!("    {joined}");
+    }
+    if !d.partial_hint.is_empty() {
+        println!("    {}", d.partial_hint);
+    } else if !d.events_file.is_empty() {
+        println!("    raw event stream: {}", d.events_file);
+    }
+    if !d.log_tail.is_empty() {
+        println!(
+            "    console log tail (sanitized, last {} lines):",
+            d.log_tail.len()
+        );
+        for l in &d.log_tail {
+            println!("    | {l}");
+        }
+    }
 }
 
 #[cfg(test)]
