@@ -2039,6 +2039,7 @@ mod tests {
     }
 
     /// (wave 3e, F30-1, RC1) `quiet_table` plus `extra` rows (with their command lines).
+    #[cfg(windows)]
     fn check_with(r: &Value, extra: Vec<(proc::ScanProc, &'static str)>) -> PendingCheck {
         let mut table = quiet_table();
         let mut cmds = QUIET_CMDS.to_vec();

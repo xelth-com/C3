@@ -1,0 +1,7 @@
+# The toolchain CI and local builds share: a newer stable adds clippy lints that fail
+# `-D warnings` on CI while the local build stays green. Bump on purpose, together with a
+# clippy pass on both.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

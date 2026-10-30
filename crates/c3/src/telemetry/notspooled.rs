@@ -914,23 +914,22 @@ pub(crate) fn merge(paths: &LocalPaths, already: &HashMap<String, FoldedEntry>) 
                 let mut earlier = false;
                 let counted: Option<(u64, i64)> = (|| {
                     let len = fs_.metadata().ok()?.len() as i64;
-                    let n;
-                    if rec.is_some_and(|b| b < 0 || len >= b) {
+                    let n = if rec.is_some_and(|b| b < 0 || len >= b) {
                         earlier = true;
                         let b = rec.unwrap_or(-1);
-                        n = if b >= 0 && len > b {
+                        if b >= 0 && len > b {
                             fs_.seek(SeekFrom::Start(b as u64)).ok()?;
                             let mut buf = Vec::new();
                             fs_.read_to_end(&mut buf).ok()?;
                             complete_lines(&String::from_utf8_lossy(&buf), true).len() as u64
                         } else {
                             0
-                        };
+                        }
                     } else {
                         let mut buf = Vec::new();
                         fs_.read_to_end(&mut buf).ok()?;
-                        n = complete_lines(&String::from_utf8_lossy(&buf), true).len() as u64;
-                    }
+                        complete_lines(&String::from_utf8_lossy(&buf), true).len() as u64
+                    };
                     Some((n, len))
                 })();
                 if let Some((n, len)) = counted {

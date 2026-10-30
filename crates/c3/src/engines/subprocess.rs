@@ -550,6 +550,9 @@ pub fn apply_launcher_args(cmd: &mut Command, launcher: &str, argv: &[String]) {
 /// gets every argument as `ConvertTo-CrtArg` writes it (the plugin's `Start-Process` argument
 /// string), an `.exe` Rust std's own MSVC quoting - which is the C runtime's.
 pub fn apply_launcher_args_quoted(cmd: &mut Command, launcher: &str, argv: &[String], crt: bool) {
+    // the C runtime quoting is a Windows matter; elsewhere argv goes as it is
+    #[cfg(not(windows))]
+    let _ = crt;
     #[cfg(windows)]
     {
         if crt && is_batch_launcher(launcher) {
