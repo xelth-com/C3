@@ -119,6 +119,22 @@ pub struct RunRecord {
     /// from its baseline hash, so a pre-dirty file the worker edited further is reported.
     #[serde(default)]
     pub baseline_hashes: BTreeMap<String, String>,
+    /// (0.2.4) `"tests"` for a run started `--role tests` (it writes tests for another author's
+    /// change); `""` for an ordinary run.
+    #[serde(default)]
+    pub role: String,
+    /// (0.2.4) The work run whose change a `--role tests` run tests (`--of`); `""` when it tests
+    /// the working tree's change against HEAD (the coordinator's own code).
+    #[serde(default)]
+    pub of: String,
+    /// (0.2.4) The globs the run may change (`--scope`, plus the test-path defaults of a
+    /// `--role tests` run); empty = no scope check.
+    #[serde(default)]
+    pub scope: Vec<String>,
+    /// (0.2.4) The changed files outside `scope` - a post-hoc check, not a containment: no worker
+    /// engine can refuse an edit by path before it happens.
+    #[serde(default)]
+    pub scope_violations: Vec<String>,
 }
 
 impl RunRecord {
@@ -479,12 +495,20 @@ pub fn hash_of(repo: &Path, path: &str) -> String {
 /// (0.2.4, F89-7) The content hash of every path dirty at the baseline (`git status --short`
 /// before the run). `files_changed` compares against this so a path already dirty but edited
 /// further by the worker is reported, and one left untouched is not.
+///
+/// (0.2.4) The baseline content is also WRITTEN to git's object store (`hash-object -w`; a loose
+/// object, never a commit or a ref), so `patch.diff` can show what the worker changed in a file
+/// that was already dirty.
 pub fn baseline_hashes(repo: &Path, before: &[String]) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     for line in before {
         let p = path_of_status_line(line);
         if !p.is_empty() {
-            let h = hash_of(repo, &p);
+            let h = if repo.join(&p).is_file() {
+                store_blob(repo, &p).unwrap_or_default()
+            } else {
+                hash_of(repo, &p)
+            };
             m.insert(p, h);
         }
     }
@@ -513,6 +537,173 @@ pub fn files_changed(
         }
     }
     out
+}
+
+/// The stdout of a git command that succeeded; `None` otherwise.
+fn git_raw(repo: &Path, args: &[&str]) -> Option<String> {
+    let o = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    o.status
+        .success()
+        .then(|| String::from_utf8_lossy(&o.stdout).to_string())
+}
+
+/// (0.2.4) Write a working-tree file's content to the object store; its blob id.
+fn store_blob(repo: &Path, path: &str) -> Option<String> {
+    git_raw(repo, &["hash-object", "-w", "--", path])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// (0.2.4) The empty blob, written so a diff against it (a new or a deleted file) resolves.
+fn empty_blob(repo: &Path) -> Option<String> {
+    git_raw(repo, &["hash-object", "-w", "--stdin"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// (0.2.4) The blob of `path` at HEAD; `None` when HEAD has no such path.
+fn head_blob(repo: &Path, path: &str) -> Option<String> {
+    git_raw(
+        repo,
+        &["rev-parse", "--verify", "-q", &format!("HEAD:{path}")],
+    )
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
+}
+
+/// (0.2.4) A `git status --short` path that names an untracked DIRECTORY (`?? dir/`) stands for
+/// every untracked file under it.
+fn expand_path(repo: &Path, p: &str) -> Vec<String> {
+    if p.ends_with('/') {
+        git_lines(
+            repo,
+            &["ls-files", "--others", "--exclude-standard", "--", p],
+        )
+    } else {
+        vec![p.to_string()]
+    }
+}
+
+/// (0.2.4) The unified diff of one file from the blob `before` (`None` = it did not exist) to its
+/// working-tree content (absent = deleted); `""` when nothing changed. The hunks are git's
+/// (`git diff <blob> <blob>`); the header names the path, not the blob ids.
+pub fn file_patch(repo: &Path, path: &str, before: Option<&str>) -> String {
+    let after = if repo.join(path).is_file() {
+        store_blob(repo, path)
+    } else {
+        None
+    };
+    if before.is_none() && after.is_none() || before == after.as_deref() {
+        return String::new();
+    }
+    let Some(empty) = empty_blob(repo) else {
+        return String::new();
+    };
+    let a = before.unwrap_or(&empty);
+    let b = after.as_deref().unwrap_or(&empty);
+    let Some(out) = git_raw(repo, &["diff", "--no-color", "--no-ext-diff", a, b]) else {
+        return String::new();
+    };
+    let from = if before.is_some() {
+        format!("a/{path}")
+    } else {
+        "/dev/null".to_string()
+    };
+    let to = if after.is_some() {
+        format!("b/{path}")
+    } else {
+        "/dev/null".to_string()
+    };
+    let mut text = format!("diff --git a/{path} b/{path}\n--- {from}\n+++ {to}\n");
+    let mut body = false;
+    for line in out.lines() {
+        if line.starts_with("Binary files ") {
+            text.push_str(&format!("Binary files {from} and {to} differ\n"));
+            break;
+        }
+        body |= line.starts_with("@@");
+        if body {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    text
+}
+
+/// (0.2.4) `patch.diff` of a work run: every file it changed, from its baseline content (the
+/// stored blob of a pre-dirty path, else HEAD's, else nothing) to its content now.
+pub fn run_patch(
+    repo: &Path,
+    baseline_hashes: &BTreeMap<String, String>,
+    changed: &[String],
+) -> String {
+    let mut out = String::new();
+    for p in changed {
+        for f in expand_path(repo, p) {
+            let before = match baseline_hashes.get(&f).map(String::as_str) {
+                Some("<absent>") => None,
+                Some(h) if !h.is_empty() => Some(h.to_string()),
+                _ => head_blob(repo, &f),
+            };
+            out.push_str(&file_patch(repo, &f, before.as_deref()));
+        }
+    }
+    out
+}
+
+/// (0.2.4) The working tree's change against HEAD (the change a `--role tests` run without `--of`
+/// tests), every path under `skip` (the collab directory) left out.
+pub fn worktree_patch(repo: &Path, skip: &str) -> String {
+    let mut out = String::new();
+    for line in status_short(repo) {
+        let mut paths = expand_path(repo, &path_of_status_line(&line));
+        // a staged rename (`R  old -> new`): the old path's deletion belongs to the change too
+        if let Some((old, _)) = line.get(3..).unwrap_or("").split_once(" -> ") {
+            paths.insert(0, old.trim().to_string());
+        }
+        for f in paths {
+            if !skip.is_empty() && f.starts_with(skip) {
+                continue;
+            }
+            let before = head_blob(repo, &f);
+            out.push_str(&file_patch(repo, &f, before.as_deref()));
+        }
+    }
+    out
+}
+
+/// (0.2.4) The changed files no `scope` glob matches, every path under `skip` (the collab
+/// directory: the run's own record) left out. An empty scope checks nothing.
+pub fn scope_violations(
+    repo: &Path,
+    scope: &[String],
+    changed: &[String],
+    skip: &str,
+) -> Vec<String> {
+    if scope.is_empty() {
+        return Vec::new();
+    }
+    let mut b = globset::GlobSetBuilder::new();
+    for g in scope {
+        if let Ok(glob) = globset::Glob::new(g) {
+            b.add(glob);
+        }
+    }
+    let Ok(set) = b.build() else {
+        return Vec::new();
+    };
+    changed
+        .iter()
+        .flat_map(|p| expand_path(repo, p))
+        .filter(|p| skip.is_empty() || !p.starts_with(skip))
+        .filter(|p| !set.is_match(p))
+        .collect()
 }
 
 /// `diff.txt`: the baseline, the after state and the diff stat.
@@ -761,6 +952,176 @@ mod tests {
         assert!(
             !changed2.contains(&"tracked.txt".to_string()),
             "{changed2:?}"
+        );
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// (0.2.4) A scratch git repository with one commit of `app.txt` ("one\n").
+    fn git_repo(tag: &str) -> PathBuf {
+        let repo = scratch(tag);
+        let git = |a: &[&str]| {
+            let st = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(a)
+                .status()
+                .expect("git on PATH");
+            assert!(st.success(), "git {a:?} failed");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@e.com"]);
+        git(&["config", "user.name", "T"]);
+        std::fs::write(repo.join("app.txt"), "one\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "init"]);
+        repo
+    }
+
+    /// (0.2.4, cases 1-4) `file_patch`: the header names the path (never the blob ids); a new
+    /// file diffs from /dev/null, a deleted one to /dev/null, a modified one hunk-by-hunk, and
+    /// an unchanged one is "".
+    #[test]
+    fn file_patch_shapes_for_new_deleted_modified_and_unchanged() {
+        let repo = git_repo("fp");
+        // modified: app.txt edited past HEAD
+        std::fs::write(repo.join("app.txt"), "two\n").unwrap();
+        let head = head_blob(&repo, "app.txt").expect("app.txt at HEAD");
+        let text = file_patch(&repo, "app.txt", Some(&head));
+        assert!(
+            text.starts_with("diff --git a/app.txt b/app.txt\n--- a/app.txt\n+++ b/app.txt\n"),
+            "{text}"
+        );
+        assert!(text.contains("@@"), "{text}");
+        assert!(text.contains("-one"), "{text}");
+        assert!(text.contains("+two"), "{text}");
+        assert!(
+            !text.contains(&head),
+            "the header must name the path, not the blob id: {text}"
+        );
+        // a new file: from /dev/null
+        std::fs::write(repo.join("new.txt"), "n\n").unwrap();
+        let text = file_patch(&repo, "new.txt", None);
+        assert!(
+            text.starts_with("diff --git a/new.txt b/new.txt\n--- /dev/null\n+++ b/new.txt\n"),
+            "{text}"
+        );
+        assert!(text.contains("+n"), "{text}");
+        // unchanged content: no patch at all
+        let now = store_blob(&repo, "new.txt").expect("hash new.txt");
+        assert_eq!(file_patch(&repo, "new.txt", Some(&now)), "");
+        // deleted: to /dev/null
+        std::fs::remove_file(repo.join("app.txt")).unwrap();
+        let text = file_patch(&repo, "app.txt", Some(&head));
+        assert!(
+            text.starts_with("diff --git a/app.txt b/app.txt\n--- a/app.txt\n+++ /dev/null\n"),
+            "{text}"
+        );
+        assert!(text.contains("-one"), "{text}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// (0.2.4, cases 5-6) `run_patch`: a pre-dirty file the worker edits FURTHER shows only the
+    /// worker's hunk (the baseline blob - WRITTEN to the object store by `baseline_hashes`, its
+    /// content never in any commit - is the base, not HEAD), and an untracked directory in
+    /// `changed` expands to the files under it.
+    #[test]
+    fn run_patch_diffs_from_the_baseline_content_and_expands_directories() {
+        let repo = git_repo("rp");
+        // pre-dirty the tracked file BEFORE the run (this is the baseline)
+        std::fs::write(repo.join("app.txt"), "one\npre-dirty\n").unwrap();
+        let before = status_short(&repo);
+        let base_h = baseline_hashes(&repo, &before);
+        // the worker edits the pre-dirty file FURTHER and creates an untracked directory
+        std::fs::write(repo.join("app.txt"), "one\npre-dirty\nworker-edit\n").unwrap();
+        std::fs::create_dir_all(repo.join("newdir")).unwrap();
+        std::fs::write(repo.join("newdir").join("a.txt"), "a\n").unwrap();
+        std::fs::write(repo.join("newdir").join("b.txt"), "b\n").unwrap();
+        let after = status_short(&repo);
+        let changed = files_changed(&base_h, &after, &repo);
+        assert!(changed.contains(&"app.txt".to_string()), "{changed:?}");
+        assert!(changed.contains(&"newdir/".to_string()), "{changed:?}");
+        let patch = run_patch(&repo, &base_h, &changed);
+        // only the worker's hunk: the pre-dirty line is the baseline, not part of the change
+        assert!(patch.contains("+worker-edit"), "{patch}");
+        assert!(!patch.contains("+pre-dirty"), "{patch}");
+        // the untracked directory expanded to both files, each a new file
+        assert!(patch.contains("+++ b/newdir/a.txt"), "{patch}");
+        assert!(patch.contains("+++ b/newdir/b.txt"), "{patch}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// (0.2.4, case 7) `worktree_patch`: every dirty path against HEAD, with the collab
+    /// directory (the `skip` prefix) left out - and part of the change when nothing is skipped.
+    #[test]
+    fn worktree_patch_skips_the_collab_directory() {
+        let repo = git_repo("wt");
+        std::fs::write(repo.join("app.txt"), "two\n").unwrap();
+        std::fs::write(repo.join("free.txt"), "f\n").unwrap();
+        let collab = repo.join(".collab").join("t").join("work").join("01-x");
+        std::fs::create_dir_all(&collab).unwrap();
+        std::fs::write(collab.join("run.json"), "{}").unwrap();
+        let with_skip = worktree_patch(&repo, ".collab/");
+        assert!(with_skip.contains("+++ b/app.txt"), "{with_skip}");
+        assert!(with_skip.contains("+++ b/free.txt"), "{with_skip}");
+        assert!(!with_skip.contains(".collab"), "{with_skip}");
+        let without = worktree_patch(&repo, "");
+        assert!(without.contains("run.json"), "{without}");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    /// (0.2.4, cases 8-10) `scope_violations`: an empty scope checks nothing; the test-path
+    /// defaults cover every test file (a directory entry expands); a file no glob matches is
+    /// listed; a path under the skip prefix never counts.
+    #[test]
+    fn scope_violations_empty_defaults_violation_and_skip() {
+        let repo = git_repo("sv");
+        std::fs::create_dir_all(repo.join("newdir")).unwrap();
+        std::fs::write(repo.join("newdir").join("n1.txt"), "1\n").unwrap();
+        std::fs::write(repo.join("newdir").join("n2.txt"), "2\n").unwrap();
+        let changed = [
+            "src/lib.rs",
+            "src/x_test.rs",
+            "tests/it.rs",
+            "crates/x/tests/deep.rs",
+            "pkg/tests.rs",
+            "notes.md",
+            ".collab/t/work/01-x/run.json",
+            "newdir/",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+        // an empty scope checks nothing
+        assert!(scope_violations(&repo, &[], &changed, ".collab/").is_empty());
+        // the test-path defaults cover every test file; the rest violate
+        let defaults = [
+            "tests/**",
+            "**/tests/**",
+            "**/tests.rs",
+            "**/*_test.rs",
+            "**/*_tests.rs",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect::<Vec<_>>();
+        let v = scope_violations(&repo, &defaults, &changed, ".collab/");
+        assert_eq!(
+            v,
+            vec![
+                "src/lib.rs".to_string(),
+                "notes.md".to_string(),
+                "newdir/n1.txt".to_string(),
+                "newdir/n2.txt".to_string()
+            ],
+            "{v:?}"
+        );
+        // a path under the skip prefix (the run's own record) never counts; without the skip it does
+        let one = vec!["src/lib.rs".to_string()];
+        let record = vec![".collab/t/work/01-x/run.json".to_string()];
+        assert!(scope_violations(&repo, &one, &record, ".collab/").is_empty());
+        assert_eq!(
+            scope_violations(&repo, &one, &record, ""),
+            vec![".collab/t/work/01-x/run.json".to_string()]
         );
         let _ = std::fs::remove_dir_all(&repo);
     }

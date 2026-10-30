@@ -214,6 +214,30 @@ Muse sign-in not oauth), a missing launcher, `--allow` naming git
 The live-member rule does NOT apply to a worker run: a worker is expected to change the
 tree, so you may keep working (and writing under the collab directory) while one runs.
 
+**Cross-model tests (`--role tests`, `--of`, `--scope`, `patch.diff`).** Every run's record
+holds `patch.diff`: the unified diff of what THIS run changed, from the content each file had
+when it started (a file already dirty shows only the worker's hunks; the baseline content is
+stored as loose git objects, never a commit). `--role tests` makes the run a test writer for
+another author's change: without `--of` the change is the working tree against HEAD (the
+coordinator's own code, `.collab` left out); with `--of <id>` it is that done run's
+`patch.diff`. The change is inlined into the prompt between `<author-change>` tags with a
+preamble: list the cases, say which existing test covers each, write tests only for the
+uncovered ones, change only test code, report (never fix) a change it thinks is wrong.
+`--scope <glob>` (repeatable) names the paths a run may change; a tests run adds the test-path
+defaults (`tests/**`, `**/tests/**`, `**/tests.rs`, `**/*_test.rs`, `**/*_tests.rs`), so name the
+source files whose `#[cfg(test)]` modules it may extend. The check runs AFTER the run (no
+engine can refuse an edit by path): files outside the scope go to `run.json`
+`scope_violations`, print as `OUT OF SCOPE`, and the run exits 1 (`--status` prints them but
+its exit code still follows the status). A tests run is refused on the muse worker (its
+unrestricted shell would read the author's change), with an empty change, and with `--of` a run
+that is not done or has no `patch.diff`; a tester on the author's own provider gets a warning.
+
+```
+c3 work --task t --role tests --brief tests.md --provider ZAI-claude \
+        --scope crates/c3/src/work/record.rs          # tests for the coordinator's change
+c3 work --task t --role tests --of 01 --brief tests.md --provider byteplus-claude
+```
+
 **Quota, resume and the alarm.** When the worker runs out of its provider's usage limit the
 run is classified `quota` (not `died`) and `run.json` records when the window resets. A
 detached run resumes itself: the background parks `waiting_quota`, sleeps until the window

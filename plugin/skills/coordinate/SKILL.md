@@ -115,6 +115,13 @@ directory (and hold your writing workers) while one runs. Pick the engine by the
 work; the `claude` endpoint workers (GLM/DeepSeek on cheap API plans) for ordinary coding; and
 `codex` (`openai :: gpt-6.1-sol`) for complex programs.
 
+**Cross-model tests (`c3 work --role tests`).** The coordinator authors the code; a worker of
+another family writes the tests. `--role tests` inlines the change (the working tree against HEAD,
+or `--of <id>`'s `patch.diff`) and asks for the missing cases only; pass `--scope <file>` for
+each source file whose `#[cfg(test)]` module it may extend. Read `patch.diff` and
+`scope_violations` before keeping its work, rerun its commands yourself, and decide a failing test
+("code bug" or "test bug") yourself - c3 records, it never arbitrates.
+
 **Worker quota (`c3 work --resume` / `--kick`).** A worker that runs out of its provider's usage
 limit is parked, not failed: `--status` shows `quota` (or `waiting_quota` while a detached run
 sleeps, which reads as running). A foreground run prints the `resume_at` time and the exact

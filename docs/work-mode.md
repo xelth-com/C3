@@ -190,6 +190,37 @@ again."
 - the entry is not a worker (roles) or not engine claude; its `env_key` variable is unset;
 - the launcher is not found; `--allow` contains `git`;
 - a live work run exists for the task.
+- (0.2.4, tests role) `--role` other than `tests`; `--of` without `--role tests`; a `--scope` that
+  is not a valid glob; `--role tests` on the muse worker; `--of` naming a run that is not done or
+  has no `patch.diff`; a tests run whose change is empty.
+
+## Cross-model tests (0.2.4, consilium 2026-10-29)
+
+Operator decision: the coordinator (Claude) authors the code; a roster worker of another family
+writes or completes the tests. Two modes, the same mechanism: the tester sees the change and the
+existing tests and writes only what is missing; or a cheap worker writes first and the
+coordinator completes. The coordinator arbitrates a failing test ("code bug" or "test bug");
+c3 records, never decides.
+
+- `patch.diff` (every run): for each `files_changed` path outside the collab directory, the
+  unified diff from its start content - the stored blob of a pre-dirty path (`baseline_hashes`
+  now writes it with `hash-object -w`; a loose object, no commit, no ref), else HEAD's blob, else
+  nothing - to its content now. Hunks are `git diff <blob> <blob>`; the header names the path.
+  An untracked directory (`?? dir/`) expands to its files. Sanitized like `diff.txt`.
+- `--role tests [--of <id>]`: the prompt is the work preamble, the tests preamble, the change
+  between `<author-change>` tags (sanitized), then the brief. Without `--of` the change is the
+  working tree against HEAD (a staged rename includes the old path's deletion); with `--of` the
+  done run's `patch.diff`. `run.json` records `role`, `of` (the resolved id) and `scope`.
+- `--scope <glob>` (any run; a tests run adds `tests/**`, `**/tests/**`, `**/tests.rs`,
+  `**/*_test.rs`, `**/*_tests.rs`): after the run, `files_changed` outside every glob and outside
+  the collab directory go to `scope_violations`; the run prints `OUT OF SCOPE` and exits 1 - on
+  the first launch and on a resumed or detached run alike. Inline `#[cfg(test)]` modules live in
+  source files, so a tests run names those files in `--scope`; a path scope cannot tell a test
+  hunk from a code hunk there (accepted; the coordinator reads `patch.diff`). `--status` prints
+  the violations but keeps its status exit code.
+- Not in v1 (by the consilium): enforcing a different family (warning only, on the author's own
+  provider), a fail-before/pass-after validity gate (manual for now), a `--continue` of a done
+  author session (the coordinator is the author).
 
 ## Tests (harness: `cargo test && cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`)
 

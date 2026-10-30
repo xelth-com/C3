@@ -11,6 +11,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Added
 
+- **Cross-model tests in `c3 work`** (consilium 2026-10-29, `.collab/consilium-2026-10-29-test-workers`):
+  every work record holds `patch.diff` (the run's own change from each file's start content;
+  pre-dirty baselines kept as loose git objects); `--role tests` inlines another author's change
+  (the working tree against HEAD, or `--of <id>`'s `patch.diff`) into the prompt with a
+  cases-first test-writer preamble; `--scope <glob>` plus the test-path defaults is checked after
+  the run (`scope_violations` in `run.json`, `OUT OF SCOPE`, exit 1, also on a resumed run); a
+  tests run is refused on the muse worker; `--status` prints the role and the violations. The
+  tests were written by a GLM worker run through `--role tests` itself.
+
 - **`c3 update` — self-update check and apply** (wave 11, `docs/port/wave11-update.md`): C3 now
   checks whether a newer release of itself exists and offers it; it applies only on an explicit
   flag. The source of truth is the git tags of `xelth-com/C3`, read once a day through the

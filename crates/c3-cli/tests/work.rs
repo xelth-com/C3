@@ -448,6 +448,47 @@ fn set_executable(p: &Path) {
     std::fs::set_permissions(p, perm).unwrap();
 }
 
+/// (0.2.4) A launcher that writes a TEST file (`tests/it_works.rs`) and finishes successfully:
+/// a `--role tests` run whose change falls under the test-path scope defaults.
+#[cfg(windows)]
+fn write_tests_file_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-testsfile-claude.cmd");
+    std::fs::write(
+        &p,
+        concat!(
+            "@echo off\r\n",
+            "if not exist \"tests\" mkdir \"tests\"\r\n",
+            "echo marker>tests\\it_works.rs\r\n",
+            "@echo {\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"aaaaaaa2-0000-0000-0000-000000000001\",\"model\":\"glm-5.3\"}\r\n",
+            "@echo {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"wrote one test; cargo test: 1 passed.\"}\r\n",
+            "@exit /b 0\r\n",
+        ),
+    )
+    .unwrap();
+    p
+}
+
+/// [`write_tests_file_launcher`] elsewhere: the same stream, the same file, `sh` instead.
+#[cfg(unix)]
+fn write_tests_file_launcher(work: &Path) -> PathBuf {
+    let p = work.join("fake-testsfile-claude.sh");
+    std::fs::write(
+        &p,
+        concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "mkdir -p tests\n",
+            "echo marker >tests/it_works.rs\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"aaaaaaa2-0000-0000-0000-000000000001\",\"model\":\"glm-5.3\"}'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1,\"result\":\"wrote one test; cargo test: 1 passed.\"}'\n",
+            "exit 0\n",
+        ),
+    )
+    .unwrap();
+    set_executable(&p);
+    p
+}
+
 fn c3_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_c3"))
 }
@@ -1896,4 +1937,267 @@ fn a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim() {
     // release B and reap
     std::fs::write(e.repo.join("release.txt"), b"1").unwrap();
     let _ = b.wait_with_output();
+}
+
+// ------------------------------------------------------------------ 0.2.4 (--role tests / --of / --scope / patch.diff)
+
+/// (0.2.4, cases 11-14, 18) The tests-role guards refuse BEFORE any record directory exists:
+/// `--role` only takes "tests", `--of` needs `--role tests`, a `--scope` glob that does not
+/// parse, the muse worker never writes tests (even `--unrestricted`, the refusal precedes the
+/// launch guard), and a clean working tree has nothing to test.
+#[test]
+fn the_tests_role_guards_refuse_before_any_record_exists() {
+    let e = setup("role-refuse");
+
+    // --role takes only "tests"
+    let out = e.work("ZAI-claude", &["--role", "author"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("--role must be 'tests' (got 'author')"), "{t}");
+    assert!(!e.work_root().exists(), "no record may exist");
+
+    // --of names a run only a tests run may test
+    let out = e.work("ZAI-claude", &["--of", "01"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("it needs --role tests"), "{t}");
+    assert!(!e.work_root().exists(), "no record may exist");
+
+    // a --scope glob that does not parse
+    let out = e.work("ZAI-claude", &["--scope", "["], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("is not a valid glob"), "{t}");
+    assert!(!e.work_root().exists(), "no record may exist");
+
+    // a clean working tree has nothing to test
+    let out = e.work("ZAI-claude", &["--role", "tests"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(
+        t.contains("nothing to test: the working tree's change against HEAD is empty"),
+        "{t}"
+    );
+    assert!(!e.work_root().exists(), "no record may exist");
+
+    // the muse worker never writes tests: the tree must hold a change, else the nothing-to-test
+    // refusal fires first (the tests block is built before the roster is read)
+    let e2 = setup("role-muse");
+    std::fs::write(e2.repo.join("app.txt"), "dirty\n").unwrap();
+    let out = e2.work("meta", &["--role", "tests", "--unrestricted"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("use a claude or codex worker"), "{t}");
+    assert!(!e2.work_root().exists(), "no record may exist");
+}
+
+/// (0.2.4, cases 15-17) `--of` refuses a run that is not done, a done run without patch.diff,
+/// and an unknown id - each before any new record directory appears.
+#[test]
+fn of_refuses_a_not_done_run_a_run_without_patch_and_an_unknown_id() {
+    let e = setup("of-refuse");
+    e.synthetic_run("01-a-m", "died");
+    e.synthetic_run("02-a-m", "done");
+
+    let out = e.work("ZAI-claude", &["--role", "tests", "--of", "01"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("the run is died, not done"), "{t}");
+
+    let out = e.work("ZAI-claude", &["--role", "tests", "--of", "02"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(
+        t.contains("has no patch.diff (recorded before 0.2.4)"),
+        "{t}"
+    );
+
+    let out = e.work("ZAI-claude", &["--role", "tests", "--of", "zz"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(
+        t.contains("no work run has an id starting with 'zz'"),
+        "{t}"
+    );
+
+    assert!(
+        !e.work_root().join("03-ZAI-claude-glm-5.3").exists(),
+        "no new record directory"
+    );
+}
+
+/// (0.2.4, cases 19-21, 23, 25) A `--role tests` run without `--of`: the prompt carries the
+/// tests preamble and the working tree's change inside `<author-change>` tags before the brief;
+/// the test-path defaults join the scope, a change under them exits 0; patch.diff holds the
+/// run's own change and never the record's files; `--status` prints the role.
+#[test]
+fn a_tests_run_inlines_the_working_tree_change_and_lands_within_the_defaults() {
+    let e = setup("tests-role");
+    // the author's change: a dirty tracked file
+    std::fs::write(e.repo.join("app.txt"), "dirty\n").unwrap();
+    let fake = write_tests_file_launcher(&e.work);
+    let fakep = fake.to_string_lossy().to_string();
+    let out = e.work(
+        "ZAI-claude",
+        &["--role", "tests"],
+        &[("CODEX_CONSULT_CLAUDE_EXE", fakep.as_str())],
+    );
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    // the prompt: the work preamble, the tests preamble, the change, then the brief
+    let brief = read(&rec.join("brief.md"));
+    assert!(brief.starts_with(PREAMBLE), "{brief}");
+    let tp = brief
+        .find("You are the TEST writer")
+        .expect("tests preamble");
+    let open = brief.find("<author-change>").expect("author-change open");
+    let close = brief.find("</author-change>").expect("author-change close");
+    let bt = brief.find(BRIEF_TEXT).expect("the brief text");
+    assert!(tp < open && open < close && close < bt, "{brief}");
+    assert!(
+        brief.contains("The change (the working tree's change against HEAD):"),
+        "{brief}"
+    );
+    assert!(brief[open..close].contains("+dirty"), "the change: {brief}");
+    // the record: role/of/scope with the test-path defaults joined, no violation
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["role"], "tests", "{run}");
+    assert_eq!(run["of"], "", "{run}");
+    let scope: Vec<&str> = run["scope"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    for g in [
+        "tests/**",
+        "**/tests/**",
+        "**/tests.rs",
+        "**/*_test.rs",
+        "**/*_tests.rs",
+    ] {
+        assert!(scope.contains(&g), "scope {scope:?} must hold {g}");
+    }
+    assert!(
+        run["scope_violations"].as_array().unwrap().is_empty(),
+        "{run}"
+    );
+    // patch.diff: the run's own change (the test file it wrote), never the record's files
+    let patch = read(&rec.join("patch.diff"));
+    assert!(patch.contains("+++ b/tests/it_works.rs"), "{patch}");
+    assert!(!patch.contains(".collab"), "{patch}");
+    // --status prints the role
+    let st = e.c3(&["work", "--task", "t", "--status", "--id", "01"], &[]);
+    let stt = text(&st);
+    assert!(stt.contains("role tests of the working tree"), "{stt}");
+}
+
+/// (0.2.4, cases 20-22, 25) A run that changes a file outside its `--scope` exits 1 whatever
+/// its status: the run itself is `done`, the violation is listed on stdout and stderr and
+/// recorded in run.json, and `--status` prints it. A scope that covers the change exits 0.
+#[test]
+fn an_out_of_scope_run_exits_one_and_lists_the_violation() {
+    let e = setup("scope-out");
+    let out = e.work("ZAI-claude", &["--scope", "src/**"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(1), "{t}");
+    assert!(t.contains("OUT OF SCOPE: worker-touched.txt"), "{t}");
+    assert!(t.contains("changed files outside its scope"), "{t}");
+
+    let rec = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["status"], "done", "the run itself finished: {run}");
+    let scope: Vec<&str> = run["scope"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(scope, vec!["src/**"], "{run}");
+    let violations: Vec<&str> = run["scope_violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(violations, vec!["worker-touched.txt"], "{run}");
+    // patch.diff: the change, never the record's files (they are no violation either)
+    let patch = read(&rec.join("patch.diff"));
+    assert!(patch.contains("+++ b/worker-touched.txt"), "{patch}");
+    assert!(!patch.contains(".collab"), "{patch}");
+    // --status lists the violation
+    let st = e.c3(&["work", "--task", "t", "--status"], &[]);
+    assert!(
+        text(&st).contains("OUT OF SCOPE: worker-touched.txt"),
+        "{}",
+        text(&st)
+    );
+
+    // a scope that covers the change exits 0 with no violation
+    let e2 = setup("scope-in");
+    let out = e2.work("ZAI-claude", &["--scope", "worker-touched.txt"], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let rec = e2.work_root().join("01-ZAI-claude-glm-5.3");
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert!(
+        run["scope_violations"].as_array().unwrap().is_empty(),
+        "{run}"
+    );
+}
+
+/// (0.2.4, cases 24-25) A `--role tests --of <id>` run: the AUTHOR's patch.diff is the inlined
+/// change (not the working tree's), `of` records the author's id, and using the author's own
+/// provider warns on stderr.
+#[test]
+fn a_tests_run_of_a_done_run_inlines_the_authors_patch() {
+    let e = setup("of-run");
+    // the author's run: it touches worker-touched.txt and finishes done
+    let out = e.work("ZAI-claude", &[], &[]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let author = e.work_root().join("01-ZAI-claude-glm-5.3");
+    let author_patch = read(&author.join("patch.diff"));
+    assert!(
+        author_patch.contains("+++ b/worker-touched.txt"),
+        "{author_patch}"
+    );
+
+    // a further working-tree change the --of run must NOT test (it tests the author's patch)
+    std::fs::write(e.repo.join("app.txt"), "appdirty\n").unwrap();
+    // the tests run of the author (the same provider: a warning, not a refusal)
+    let out = e.work("ZAI-claude", &["--role", "tests", "--of", "01"], &[]);
+    let t = text(&out);
+    assert_eq!(out.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("uses the author's own provider 'ZAI-claude'"),
+        "{t}"
+    );
+
+    let rec = e.work_root().join("02-ZAI-claude-glm-5.3");
+    let brief = read(&rec.join("brief.md"));
+    assert!(
+        brief.contains("The change (work run 01-ZAI-claude-glm-5.3 (ZAI-claude :: glm-5.3)):"),
+        "{brief}"
+    );
+    let open = brief.find("<author-change>").expect("author-change open");
+    let close = brief.find("</author-change>").expect("author-change close");
+    assert!(
+        brief[open..close].contains("+touched"),
+        "the author's patch inlined: {brief}"
+    );
+    assert!(
+        !brief[open..close].contains("+appdirty"),
+        "the working tree's later change must not be tested: {brief}"
+    );
+    let run: Value = serde_json::from_str(&read(&rec.join("run.json"))).unwrap();
+    assert_eq!(run["role"], "tests", "{run}");
+    assert_eq!(run["of"], "01-ZAI-claude-glm-5.3", "{run}");
+    // --status prints role/of
+    let st = e.c3(&["work", "--task", "t", "--status", "--id", "02"], &[]);
+    assert!(
+        text(&st).contains("role tests of 01-ZAI-claude-glm-5.3"),
+        "{}",
+        text(&st)
+    );
 }

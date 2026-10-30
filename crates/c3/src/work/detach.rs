@@ -72,6 +72,12 @@ struct WorkWire {
     max_resumes: i64,
     #[serde(default)]
     unrestricted: bool,
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    of: String,
+    #[serde(default)]
+    scope: Vec<String>,
 }
 
 fn eighty() -> i64 {
@@ -98,6 +104,9 @@ impl WorkWire {
             quota_window_sec: o.quota_window_sec,
             max_resumes: o.max_resumes,
             unrestricted: o.unrestricted,
+            role: o.role.clone(),
+            of: o.of.clone(),
+            scope: o.scope.clone(),
         }
     }
 
@@ -116,6 +125,9 @@ impl WorkWire {
             quota_window_sec: self.quota_window_sec,
             max_resumes: self.max_resumes,
             unrestricted: self.unrestricted,
+            role: self.role,
+            of: self.of,
+            scope: self.scope,
             ..Default::default()
         }
     }
@@ -480,6 +492,17 @@ pub fn query(o: &Options) -> i32 {
         } else {
             println!("  files changed: {}", rec.files_changed.join(", "));
         }
+        if !rec.role.is_empty() {
+            let of = if rec.of.is_empty() {
+                "the working tree".to_string()
+            } else {
+                rec.of.clone()
+            };
+            println!("  role {} of {of}", rec.role);
+        }
+        if !rec.scope_violations.is_empty() {
+            println!("  OUT OF SCOPE: {}", rec.scope_violations.join(", "));
+        }
         if let Some(q) = &rec.quota {
             if rec.status == "waiting_quota" {
                 // (0.2.4, F89-6) The persisted cap, unless the operator overrode it on this call.
@@ -635,6 +658,9 @@ mod tests {
             quota_window_sec: 900,
             max_resumes: 2,
             unrestricted: true,
+            role: "tests".into(),
+            of: "01".into(),
+            scope: vec!["crates/x/src/lib.rs".into()],
         };
         let text = serde_json::to_string(&w).unwrap();
         let back: WorkWire = serde_json::from_str(&text).unwrap();
@@ -647,10 +673,15 @@ mod tests {
         assert_eq!(o.max_resumes, 2);
         assert!(o.unrestricted);
         assert_eq!(o.allow, vec!["Bash(cargo test:*)".to_string()]);
+        // (0.2.4, case 26) the tests role travels the wire too
+        assert_eq!(o.role, "tests");
+        assert_eq!(o.of, "01");
+        assert_eq!(o.scope, vec!["crates/x/src/lib.rs".to_string()]);
         assert!(!o.detach && !o.status && !o.wait && o.detach_id.is_empty());
         // the defaults of the wire are the CLI's defaults
         let empty: WorkWire = serde_json::from_str("{}").unwrap();
         assert_eq!(empty.max_turns, 80);
         assert_eq!(empty.timeout_sec, 3600);
+        assert!(empty.role.is_empty() && empty.of.is_empty() && empty.scope.is_empty());
     }
 }

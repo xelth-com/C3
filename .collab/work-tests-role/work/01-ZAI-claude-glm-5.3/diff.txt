@@ -1,0 +1,22 @@
+git status --short (before the run):
+ M crates/c3/src/cli/work.rs
+ M crates/c3/src/work/detach.rs
+ M crates/c3/src/work/mod.rs
+ M crates/c3/src/work/record.rs
+?? .collab/work-tests-role/
+
+git status --short (after the run):
+ M crates/c3-cli/tests/work.rs
+ M crates/c3/src/cli/work.rs
+ M crates/c3/src/work/detach.rs
+ M crates/c3/src/work/mod.rs
+ M crates/c3/src/work/record.rs
+?? .collab/work-tests-role/
+
+git diff --stat (after the run):
+ crates/c3-cli/tests/work.rs  | 304 ++++++++++++++++++++++++++++++++++++
+ crates/c3/src/cli/work.rs    |  15 ++
+ crates/c3/src/work/detach.rs |  31 ++++
+ crates/c3/src/work/mod.rs    | 170 +++++++++++++++++++-
+ crates/c3/src/work/record.rs | 358 ++++++++++++++++++++++++++++++++++++++++++-
+ 5 files changed, 874 insertions(+), 4 deletions(-)

@@ -75,6 +75,18 @@ pub struct WorkArgs {
     /// --disable-sandbox. Recorded in run.json as unrestricted: true.
     #[arg(long)]
     pub unrestricted: bool,
+    /// The run writes tests for another author's change (only "tests"): the change is inlined
+    /// into the prompt, the test-path defaults join --scope. Refused on the muse worker.
+    #[arg(long, default_value = "")]
+    pub role: String,
+    /// With --role tests: the work run of this task whose patch.diff is tested; without it, the
+    /// working tree's change against HEAD (the coordinator's own code).
+    #[arg(long, default_value = "")]
+    pub of: String,
+    /// A glob of the paths the run may change (repeatable), checked after the run: a file
+    /// outside it is listed as OUT OF SCOPE and the run exits 1.
+    #[arg(long)]
+    pub scope: Vec<String>,
     /// INTERNAL: the background process of --detach; never pass it yourself.
     #[arg(long, default_value = "", hide = true)]
     pub detach_id: String,
@@ -112,5 +124,8 @@ pub fn run(args: WorkArgs) -> i32 {
         quota_window_sec: args.quota_window_sec.unwrap_or(0),
         max_resumes: args.max_resumes.unwrap_or(0),
         unrestricted: args.unrestricted,
+        role: args.role,
+        of: args.of,
+        scope: args.scope,
     })
 }
