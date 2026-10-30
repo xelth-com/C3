@@ -12,7 +12,7 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use chrono::Utc;
 
 use base64::Engine as _;
-use c3::panel::routing::{routing_score, Rating};
+use c3::panel::routing::{routing_score, Rating, RoutingQuery};
 use c3::router::download::{self, Fetched, Fetcher, RefreshOutcome};
 use c3::router::{priors::Priors, priors::PriorsError, score, sign, Lineage, RouterContext};
 use c3_core::ledger::SessionsFile;
@@ -110,16 +110,16 @@ fn v1_without_priors_matches_routing_score_bit_for_bit() {
             .collect();
 
         let want_topics = vec!["api".to_string()];
-        let base = routing_score(
-            &ratings,
-            "openai",
-            "gpt-6",
-            "codex",
-            "framing",
-            &want_topics,
-            now,
-            false,
-        );
+        let base = routing_score(&RoutingQuery {
+            ratings: &ratings,
+            provider: "openai",
+            model: "gpt-6",
+            engine: "codex",
+            purpose: "framing",
+            topics: &want_topics,
+            utc_now: now,
+            all_purpose: false,
+        });
         let got = score(
             &ratings,
             Lineage {

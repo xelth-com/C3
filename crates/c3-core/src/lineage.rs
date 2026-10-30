@@ -434,6 +434,20 @@ impl ReviewerIdentity {
     }
 }
 
+/// Inputs to [`resolve_reviewer_identity_auth`]: the engine, its roster `auth`/`endpoint` and the
+/// provider/model to resolve against a Codex config. Fields are borrowed so callers pass without
+/// cloning.
+pub struct ReviewerIdentityQuery<'a> {
+    pub config: &'a CodexConfig,
+    pub provider: &'a str,
+    pub model: &'a str,
+    pub openai_base_url: &'a str,
+    pub engine: &'a str,
+    pub launcher: &'a str,
+    pub auth: &'a str,
+    pub endpoint: Option<&'a crate::claude::ClaudeEndpoint>,
+}
+
 /// `Resolve-ReviewerIdentity`.
 pub fn resolve_reviewer_identity(
     config: &CodexConfig,
@@ -443,32 +457,32 @@ pub fn resolve_reviewer_identity(
     engine: &str,
     launcher: &str,
 ) -> ReviewerIdentity {
-    resolve_reviewer_identity_auth(
+    resolve_reviewer_identity_auth(&ReviewerIdentityQuery {
         config,
         provider,
         model,
         openai_base_url,
         engine,
         launcher,
-        "",
-        None,
-    )
+        auth: "",
+        endpoint: None,
+    })
 }
 
 /// `Resolve-ReviewerIdentity -Auth -Endpoint` (0.6.0, wave 29/29b): the identity of an engine that
 /// takes a roster `auth` (claude) - `auth` `""` takes the engine's default (subscription), and
 /// auth `endpoint` takes the roster entry's `endpoint`. Every other engine ignores both.
-#[allow(clippy::too_many_arguments)]
-pub fn resolve_reviewer_identity_auth(
-    config: &CodexConfig,
-    provider: &str,
-    model: &str,
-    openai_base_url: &str,
-    engine: &str,
-    launcher: &str,
-    auth: &str,
-    endpoint: Option<&crate::claude::ClaudeEndpoint>,
-) -> ReviewerIdentity {
+pub fn resolve_reviewer_identity_auth(q: &ReviewerIdentityQuery) -> ReviewerIdentity {
+    let &ReviewerIdentityQuery {
+        config,
+        provider,
+        model,
+        openai_base_url,
+        engine,
+        launcher,
+        auth,
+        endpoint,
+    } = q;
     let mut id = ReviewerIdentity::blank(&config.path);
     if !engine.is_empty() && engine != "codex" {
         return resolve_engine_identity(id, engine, provider, model, launcher, auth, endpoint);

@@ -7,7 +7,7 @@ use serde_json::json;
 
 use c3_core::availability::{
     convert_to_availability_record, format_availability_line, format_relative_hint,
-    AvailabilityRecord,
+    AvailabilityInput, AvailabilityRecord,
 };
 use c3_core::config::{provider_endpoint, provider_names, provider_table, scan_config_text};
 use c3_core::credential::CredentialResult;
@@ -644,7 +644,16 @@ fn availability_record_out_quota_short() {
         quota_warning: String::new(),
     };
     v.reason = "usage limit until 2026-09-26T15:00:00+02:00".into();
-    let r = convert_to_availability_record(1, "ZAI", "glm", "codex", 0, Some(&v), "", now);
+    let r = convert_to_availability_record(&AvailabilityInput {
+        position: 1,
+        provider: "ZAI",
+        model: "glm",
+        engine: "codex",
+        group: 0,
+        verdict: Some(&v),
+        block: "",
+        now_utc: now,
+    });
     assert_eq!(r.state, "out");
     assert!(r.short.starts_with("until "), "{}", r.short);
     // 15:00+02:00 == 13:00 UTC; now == 12:00 UTC -> one hour out (timezone-independent).
@@ -654,7 +663,16 @@ fn availability_record_out_quota_short() {
         plan: "zai".into(),
         label: "ZAI".into(),
     });
-    let r = convert_to_availability_record(2, "ZAI-b", "glm", "codex", 0, Some(&v), "", now);
+    let r = convert_to_availability_record(&AvailabilityInput {
+        position: 2,
+        provider: "ZAI-b",
+        model: "glm",
+        engine: "codex",
+        group: 0,
+        verdict: Some(&v),
+        block: "",
+        now_utc: now,
+    });
     assert!(
         r.short.starts_with("plan zai (usage limit on ZAI until "),
         "{}",
@@ -664,13 +682,31 @@ fn availability_record_out_quota_short() {
     // (wave 24c) a reset-less burst names itself, through the plan or not
     v.kind = "quota-unknown-reset".into();
     v.burst = true;
-    let r = convert_to_availability_record(2, "ZAI-b", "glm", "codex", 0, Some(&v), "", now);
+    let r = convert_to_availability_record(&AvailabilityInput {
+        position: 2,
+        provider: "ZAI-b",
+        model: "glm",
+        engine: "codex",
+        group: 0,
+        verdict: Some(&v),
+        block: "",
+        now_utc: now,
+    });
     assert!(
         r.short.starts_with("plan zai (burst limit hit on ZAI "),
         "{}",
         r.short
     );
     v.plan_quota = None;
-    let r = convert_to_availability_record(2, "ZAI-b", "glm", "codex", 0, Some(&v), "", now);
+    let r = convert_to_availability_record(&AvailabilityInput {
+        position: 2,
+        provider: "ZAI-b",
+        model: "glm",
+        engine: "codex",
+        group: 0,
+        verdict: Some(&v),
+        block: "",
+        now_utc: now,
+    });
     assert!(r.short.starts_with("burst limit hit "), "{}", r.short);
 }

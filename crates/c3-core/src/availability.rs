@@ -99,18 +99,32 @@ pub fn get_first_clause(text: &str) -> String {
     text.to_string()
 }
 
+/// Inputs to [`convert_to_availability_record`]: a roster `position` and its provider/model/engine
+/// identity, the preflight `verdict` and any refusal `block`. Borrowed so callers pass without
+/// cloning.
+pub struct AvailabilityInput<'a> {
+    pub position: i64,
+    pub provider: &'a str,
+    pub model: &'a str,
+    pub engine: &'a str,
+    pub group: usize,
+    pub verdict: Option<&'a PreflightVerdict>,
+    pub block: &'a str,
+    pub now_utc: DateTime<Utc>,
+}
+
 /// `ConvertTo-AvailabilityRecord`.
-#[allow(clippy::too_many_arguments)]
-pub fn convert_to_availability_record(
-    position: i64,
-    provider: &str,
-    model: &str,
-    engine: &str,
-    group: usize,
-    verdict: Option<&PreflightVerdict>,
-    block: &str,
-    now_utc: DateTime<Utc>,
-) -> AvailabilityRecord {
+pub fn convert_to_availability_record(input: &AvailabilityInput) -> AvailabilityRecord {
+    let &AvailabilityInput {
+        position,
+        provider,
+        model,
+        engine,
+        group,
+        verdict,
+        block,
+        now_utc,
+    } = input;
     let engine = if engine.is_empty() { "codex" } else { engine };
     let lineage = if !model.is_empty() {
         format_lineage(provider, model)

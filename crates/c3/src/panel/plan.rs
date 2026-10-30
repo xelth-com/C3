@@ -519,25 +519,39 @@ fn round(x: f64, d: i32) -> f64 {
     (x * f).round() / f
 }
 
+/// Inputs shared by [`select_panel_routing`] and [`select_panel_routing_with`]: the members to
+/// seat, the panel size and its source, the draw order, the ratings/purpose/topics the routed draw
+/// scores on, the clock, the task/brief/nonce identity and the required positions. Borrowed so
+/// callers pass without cloning.
+pub struct PanelRoutingInput<'a> {
+    pub members: &'a [MemberInput],
+    pub size: i32,
+    pub size_source: &'a str,
+    pub order: &'a str,
+    pub ratings: &'a [Rating],
+    pub purpose: &'a str,
+    pub topics: &'a [String],
+    pub utc_now: DateTime<Utc>,
+    pub task: &'a str,
+    pub brief_sha: &'a str,
+    pub nonce: &'a str,
+    pub nonce_source: &'a str,
+    pub required: &'a [i64],
+}
+
 /// `Select-PanelRouting` (D1, D4-D7) with the plugin's weights: no priors, default parameters.
-#[allow(clippy::too_many_arguments)]
-pub fn select_panel_routing(
-    members: &[MemberInput],
-    size: i32,
-    size_source: &str,
-    order: &str,
-    ratings: &[Rating],
-    purpose: &str,
-    topics: &[String],
-    utc_now: DateTime<Utc>,
-    task: &str,
-    brief_sha: &str,
-    nonce: &str,
-    nonce_source: &str,
-    required: &[i64],
+pub fn select_panel_routing(input: &PanelRoutingInput) -> PanelRoutingResult {
+    select_panel_routing_with(&RouterContext::default(), input)
+}
+
+/// `Select-PanelRouting` with the weight source of router v1 (M9): the same draw, the score
+/// from [`router::score`]. With no priors in `ctx` and default parameters every number and
+/// every byte of the record equals [`select_panel_routing`]'s.
+pub fn select_panel_routing_with(
+    ctx: &RouterContext,
+    input: &PanelRoutingInput,
 ) -> PanelRoutingResult {
-    select_panel_routing_with(
-        &RouterContext::default(),
+    let &PanelRoutingInput {
         members,
         size,
         size_source,
@@ -551,29 +565,7 @@ pub fn select_panel_routing(
         nonce,
         nonce_source,
         required,
-    )
-}
-
-/// `Select-PanelRouting` with the weight source of router v1 (M9): the same draw, the score
-/// from [`router::score`]. With no priors in `ctx` and default parameters every number and
-/// every byte of the record equals [`select_panel_routing`]'s.
-#[allow(clippy::too_many_arguments)]
-pub fn select_panel_routing_with(
-    ctx: &RouterContext,
-    members: &[MemberInput],
-    size: i32,
-    size_source: &str,
-    order: &str,
-    ratings: &[Rating],
-    purpose: &str,
-    topics: &[String],
-    utc_now: DateTime<Utc>,
-    task: &str,
-    brief_sha: &str,
-    nonce: &str,
-    nonce_source: &str,
-    required: &[i64],
-) -> PanelRoutingResult {
+    } = input;
     let neutral = ROUTING_NEUTRAL;
 
     // Enrich each member: a required member that only the weighty gate (0.6.0: or the light gate)
@@ -1113,21 +1105,21 @@ mod tests {
             member(2, "zai", "glm-5.3", "run"),
             member(3, "google", "gemini-3", "run"),
         ];
-        let res = select_panel_routing(
-            &members,
-            2,
-            "-PanelSize",
-            "roster",
-            &[],
-            "framing",
-            &[],
-            Utc::now(),
-            "task",
-            "sha",
-            "nonce",
-            "-PanelSeed",
-            &[3],
-        );
+        let res = select_panel_routing(&PanelRoutingInput {
+            members: &members,
+            size: 2,
+            size_source: "-PanelSize",
+            order: "roster",
+            ratings: &[],
+            purpose: "framing",
+            topics: &[],
+            utc_now: Utc::now(),
+            task: "task",
+            brief_sha: "sha",
+            nonce: "nonce",
+            nonce_source: "-PanelSeed",
+            required: &[3],
+        });
         // required #3 takes seat 1, then roster order fills seat 2 with #1.
         assert_eq!(res.picked.len(), 2);
         assert_eq!(res.picked[0].position, 3);
@@ -1150,21 +1142,21 @@ mod tests {
             member(3, "google", "gemini-3", "run"),
             member(4, "moonshot", "kimi-k2", "run"),
         ];
-        let res = select_panel_routing(
-            &members,
-            2,
-            "-PanelSize",
-            "roster",
-            &[],
-            "framing",
-            &[],
-            Utc::now(),
-            "task",
-            "sha",
-            "nonce",
-            "-PanelSeed",
-            &[3],
-        );
+        let res = select_panel_routing(&PanelRoutingInput {
+            members: &members,
+            size: 2,
+            size_source: "-PanelSize",
+            order: "roster",
+            ratings: &[],
+            purpose: "framing",
+            topics: &[],
+            utc_now: Utc::now(),
+            task: "task",
+            brief_sha: "sha",
+            nonce: "nonce",
+            nonce_source: "-PanelSeed",
+            required: &[3],
+        });
         // seats: required #3, then #1 (roster order)
         let picked: Vec<i64> = res.picked.iter().map(|p| p.position).collect();
         assert_eq!(picked, vec![3, 1]);
@@ -1187,21 +1179,21 @@ mod tests {
             m3,
             member(4, "moonshot", "kimi-k2", "run"),
         ];
-        let res = select_panel_routing(
-            &members,
-            2,
-            "-PanelSize",
-            "roster",
-            &[],
-            "framing",
-            &[],
-            Utc::now(),
-            "task",
-            "sha",
-            "nonce",
-            "-PanelSeed",
-            &[],
-        );
+        let res = select_panel_routing(&PanelRoutingInput {
+            members: &members,
+            size: 2,
+            size_source: "-PanelSize",
+            order: "roster",
+            ratings: &[],
+            purpose: "framing",
+            topics: &[],
+            utc_now: Utc::now(),
+            task: "task",
+            brief_sha: "sha",
+            nonce: "nonce",
+            nonce_source: "-PanelSeed",
+            required: &[],
+        });
         let picked: Vec<i64> = res.picked.iter().map(|p| p.position).collect();
         assert_eq!(picked, vec![1, 2]);
         let reserve: Vec<i64> = res.reserve.iter().map(|m| m.position).collect();
@@ -1216,21 +1208,21 @@ mod tests {
             member(1, "openai", "gpt-6", "run"),
             member(2, "zai", "glm-5.3", "run"),
         ];
-        let res = select_panel_routing(
-            &members,
-            2,
-            "-PanelSize",
-            "routed",
-            &[],
-            "framing",
-            &[],
-            Utc::now(),
-            "task",
-            "sha",
-            "nonce",
-            "date",
-            &[],
-        );
+        let res = select_panel_routing(&PanelRoutingInput {
+            members: &members,
+            size: 2,
+            size_source: "-PanelSize",
+            order: "routed",
+            ratings: &[],
+            purpose: "framing",
+            topics: &[],
+            utc_now: Utc::now(),
+            task: "task",
+            brief_sha: "sha",
+            nonce: "nonce",
+            nonce_source: "date",
+            required: &[],
+        });
         assert_eq!(res.routing.mode, "roster");
         assert_eq!(res.routing.fallback, "no ratings");
     }
@@ -1249,19 +1241,21 @@ mod tests {
     fn routed(ctx: &RouterContext, members: &[MemberInput]) -> PanelRoutingResult {
         select_panel_routing_with(
             ctx,
-            members,
-            2,
-            "-PanelSize",
-            "routed",
-            &[],
-            "framing",
-            &[],
-            Utc::now(),
-            "task",
-            "sha",
-            "nonce",
-            "date",
-            &[],
+            &PanelRoutingInput {
+                members,
+                size: 2,
+                size_source: "-PanelSize",
+                order: "routed",
+                ratings: &[],
+                purpose: "framing",
+                topics: &[],
+                utc_now: Utc::now(),
+                task: "task",
+                brief_sha: "sha",
+                nonce: "nonce",
+                nonce_source: "date",
+                required: &[],
+            },
         )
     }
 
@@ -1343,38 +1337,38 @@ mod tests {
     fn framing_below_two_seats_warns_unless_explicit_size() {
         // One eligible member, purpose framing, size from purpose default => floor warning.
         let members = vec![member(1, "openai", "gpt-6", "run")];
-        let res = select_panel_routing(
-            &members,
-            3,
-            "purpose",
-            "roster",
-            &[],
-            "framing",
-            &[],
-            Utc::now(),
-            "task",
-            "sha",
-            "nonce",
-            "date",
-            &[],
-        );
+        let res = select_panel_routing(&PanelRoutingInput {
+            members: &members,
+            size: 3,
+            size_source: "purpose",
+            order: "roster",
+            ratings: &[],
+            purpose: "framing",
+            topics: &[],
+            utc_now: Utc::now(),
+            task: "task",
+            brief_sha: "sha",
+            nonce: "nonce",
+            nonce_source: "date",
+            required: &[],
+        });
         assert!(res.warnings.iter().any(|w| w.starts_with("panel floor:")));
         // Explicit -PanelSize suppresses the floor warning.
-        let res = select_panel_routing(
-            &members,
-            1,
-            "-PanelSize",
-            "roster",
-            &[],
-            "framing",
-            &[],
-            Utc::now(),
-            "task",
-            "sha",
-            "nonce",
-            "date",
-            &[],
-        );
+        let res = select_panel_routing(&PanelRoutingInput {
+            members: &members,
+            size: 1,
+            size_source: "-PanelSize",
+            order: "roster",
+            ratings: &[],
+            purpose: "framing",
+            topics: &[],
+            utc_now: Utc::now(),
+            task: "task",
+            brief_sha: "sha",
+            nonce: "nonce",
+            nonce_source: "date",
+            required: &[],
+        });
         assert!(!res.warnings.iter().any(|w| w.starts_with("panel floor:")));
     }
 }

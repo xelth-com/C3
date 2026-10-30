@@ -757,7 +757,6 @@ fn unproven_identity(name: &str, cmd: &str) -> Option<String> {
 /// process (pid 0) is never a candidate. C3's table reads every start time as the plugin's
 /// `Win32_Process.CreationDate` does (`NtQuerySystemInformation`); one it cannot read must never
 /// release a record by being skipped.
-#[allow(clippy::too_many_arguments)]
 pub fn find_codex_processes(
     procs: &[ScanProc],
     since: chrono::DateTime<chrono::Utc>,

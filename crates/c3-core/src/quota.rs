@@ -1638,6 +1638,8 @@ mod tests {
     }
 
     /// A `token_count` line as codex-cli 0.155 (and the plugin's harness) writes it.
+    // kept: test-only fixture builder with ~19 positional call sites; a struct would bloat every
+    // call site without any production benefit.
     #[allow(clippy::too_many_arguments)]
     fn token_line(
         at: DateTime<Utc>,

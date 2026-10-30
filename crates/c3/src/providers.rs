@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 
 use c3_core::availability::{
     convert_to_availability_record, endpoint_groups, format_availability_line, format_roster_skips,
-    AvailabilityRecord,
+    AvailabilityInput, AvailabilityRecord,
 };
 use c3_core::config::{
     self, config_not_found, config_unreadable, provider_endpoint, provider_names,
@@ -286,16 +286,16 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
         } else {
             let mut recs = Vec::new();
             for (i, rv) in row_verdicts.iter().enumerate() {
-                recs.push(convert_to_availability_record(
-                    (i + 1) as i64,
-                    &rows[i].name,
-                    "",
-                    &rv.engine,
-                    i,
-                    Some(&rv.verdict),
-                    &rv.block,
-                    ctx.utc_now,
-                ));
+                recs.push(convert_to_availability_record(&AvailabilityInput {
+                    position: (i + 1) as i64,
+                    provider: &rows[i].name,
+                    model: "",
+                    engine: &rv.engine,
+                    group: i,
+                    verdict: Some(&rv.verdict),
+                    block: &rv.block,
+                    now_utc: ctx.utc_now,
+                }));
             }
             (recs, "providers", " (no reviewer roster)")
         };
@@ -418,7 +418,6 @@ pub(crate) struct RosterWalk {
 
 impl Ctx {
     /// Construct a context for the consult roster walk (its own fresh caches).
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn for_consult(
         config: CodexConfig,
         consults: Vec<Value>,
@@ -662,6 +661,18 @@ pub(crate) struct PanelSelection {
     pub error: String,
 }
 
+/// The selection inputs shared by `panel_members` and `panel_members_of`: the `-Model`/engine
+/// filters, the consult `purpose`, the `-PanelAll`/`-SkipPreflight` flags and the token estimate.
+/// Borrowed so callers pass without cloning.
+pub(crate) struct PanelQuery<'a> {
+    pub model: &'a str,
+    pub engine: &'a str,
+    pub purpose: &'a str,
+    pub all: bool,
+    pub skip_preflight: bool,
+    pub estimate_tokens: i64,
+}
+
 impl Ctx {
     /// `Select-PanelMembers`: every roster entry with its availability state, the weighty gate,
     /// (wave 26b, D16) the context skip (`estimate_tokens`: the new prompt's estimate, 0 = none),
@@ -683,29 +694,33 @@ impl Ctx {
     ) -> PanelSelection {
         self.panel_members_of(
             None,
-            model,
-            engine,
-            purpose,
-            all,
-            skip_preflight,
-            estimate_tokens,
+            &PanelQuery {
+                model,
+                engine,
+                purpose,
+                all,
+                skip_preflight,
+                estimate_tokens,
+            },
         )
     }
 
     /// [`panel_members`] judging only the entries at `positions` (`None`: every entry) - (wave
     /// 2e, F11-3) the single run's `-Require` check: the context keeps the FULL roster, so a plan's
     /// quota (`plan_quota`) sees every route of the plan, also one of an entry that is not required.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn panel_members_of(
         &self,
         positions: Option<&[i64]>,
-        model: &str,
-        engine: &str,
-        purpose: &str,
-        all: bool,
-        skip_preflight: bool,
-        estimate_tokens: i64,
+        query: &PanelQuery,
     ) -> PanelSelection {
+        let &PanelQuery {
+            model,
+            engine,
+            purpose,
+            all,
+            skip_preflight,
+            estimate_tokens,
+        } = query;
         let purpose_label = if purpose.is_empty() { "none" } else { purpose };
         let weighty_purpose = WEIGHTY_PURPOSES.contains(&purpose);
         let mut members: Vec<PanelMemberRow> = Vec::new();
@@ -901,16 +916,16 @@ impl Ctx {
         } else {
             ""
         };
-        c3_core::lineage::resolve_reviewer_identity_auth(
-            &self.config,
-            &e.provider,
-            &e.model,
-            &self.openai_base_url,
+        c3_core::lineage::resolve_reviewer_identity_auth(&c3_core::lineage::ReviewerIdentityQuery {
+            config: &self.config,
+            provider: &e.provider,
+            model: &e.model,
+            openai_base_url: &self.openai_base_url,
             engine,
             launcher,
             auth,
-            e.endpoint.as_ref(),
-        )
+            endpoint: e.endpoint.as_ref(),
+        })
     }
 
     fn engine_launch_block(&self, engine: &str) -> String {
@@ -1322,16 +1337,16 @@ impl Ctx {
         let mut records: Vec<AvailabilityRecord> = members
             .iter()
             .map(|m| {
-                convert_to_availability_record(
-                    m.pos,
-                    &m.provider,
-                    &m.model,
-                    &m.engine,
-                    *eg.group_of.get(&m.pos).unwrap_or(&0),
-                    m.verdict.as_ref(),
-                    &m.block,
-                    self.utc_now,
-                )
+                convert_to_availability_record(&AvailabilityInput {
+                    position: m.pos,
+                    provider: &m.provider,
+                    model: &m.model,
+                    engine: &m.engine,
+                    group: *eg.group_of.get(&m.pos).unwrap_or(&0),
+                    verdict: m.verdict.as_ref(),
+                    block: &m.block,
+                    now_utc: self.utc_now,
+                })
             })
             .collect();
         // D16: an outage recorded on the endpoint marks the whole group.
@@ -1592,18 +1607,20 @@ impl Ctx {
             .cloned();
         let probe = match &first_entry {
             Some(e) => c3_core::lineage::resolve_reviewer_identity_auth(
-                &self.config,
-                label,
-                &e.model,
-                "",
-                engine,
-                &engine_launcher,
-                if engine == "claude" {
-                    e.auth.as_str()
-                } else {
-                    ""
+                &c3_core::lineage::ReviewerIdentityQuery {
+                    config: &self.config,
+                    provider: label,
+                    model: &e.model,
+                    openai_base_url: "",
+                    engine,
+                    launcher: &engine_launcher,
+                    auth: if engine == "claude" {
+                        e.auth.as_str()
+                    } else {
+                        ""
+                    },
+                    endpoint: e.endpoint.as_ref(),
                 },
-                e.endpoint.as_ref(),
             ),
             None => {
                 resolve_reviewer_identity(&self.config, label, "", "", engine, &engine_launcher)
@@ -1941,7 +1958,6 @@ fn print_rows_json(rows: &[Row]) {
     );
 }
 
-#[allow(clippy::too_many_arguments)]
 fn print_table(
     ctx: &Ctx,
     rows: &[Row],

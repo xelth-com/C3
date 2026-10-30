@@ -256,18 +256,31 @@ fn basis_counts(
 }
 
 /// The weight a policy gives a reviewer for the current question.
-#[allow(clippy::too_many_arguments)]
-fn weight(
-    policy: &Policy,
-    world: &World,
-    priors: &Priors,
-    hist: &[Obs],
+/// Inputs to [`weight`] other than the RNG: the policy and simulated world, the priors population,
+/// the reviewer's observation history and index, the purpose/topics and the clock. Borrowed so the
+/// caller passes without cloning.
+struct WeightInput<'a> {
+    policy: &'a Policy,
+    world: &'a World,
+    priors: &'a Priors,
+    hist: &'a [Obs],
     r: usize,
     purpose: usize,
-    topics: &[usize],
+    topics: &'a [usize],
     now: u64,
-    rng: &mut Rng,
-) -> f64 {
+}
+
+fn weight(input: &WeightInput, rng: &mut Rng) -> f64 {
+    let &WeightInput {
+        policy,
+        world,
+        priors,
+        hist,
+        r,
+        purpose,
+        topics,
+        now,
+    } = input;
     match &policy.kind {
         Kind::Uniform => ROUTING_NEUTRAL,
         Kind::Smoothed {
@@ -427,7 +440,17 @@ fn run_one(policy: &Policy, world: &World, priors: &Priors, seed: u64, rounds: u
                 position: r as i64,
                 lab: format!("lab{}", world.lab[r]),
                 weight: weight(
-                    policy, world, priors, &hist[r], r, purpose, &topics, t, &mut act,
+                    &WeightInput {
+                        policy,
+                        world,
+                        priors,
+                        hist: &hist[r],
+                        r,
+                        purpose,
+                        topics: &topics,
+                        now: t,
+                    },
+                    &mut act,
                 ),
                 pinned: false,
             })

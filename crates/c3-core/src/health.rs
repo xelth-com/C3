@@ -1591,7 +1591,6 @@ pub fn add_machine_health_record_bounded(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 fn add_machine_health_record_with(
     path: &Path,
     fingerprint: &str,
@@ -5962,14 +5961,16 @@ mod model_unsupported_tests {
 
         // shown by `c3 providers` (the availability record's short carries the message)
         let rec = crate::availability::convert_to_availability_record(
-            1,
-            "openai",
-            "gpt-6.1-sol",
-            "codex",
-            0,
-            Some(&v),
-            "",
-            clock(),
+            &crate::availability::AvailabilityInput {
+                position: 1,
+                provider: "openai",
+                model: "gpt-6.1-sol",
+                engine: "codex",
+                group: 0,
+                verdict: Some(&v),
+                block: "",
+                now_utc: clock(),
+            },
         );
         assert_eq!(rec.state, "out");
         assert_eq!(rec.kind, "model");

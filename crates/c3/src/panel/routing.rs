@@ -284,17 +284,31 @@ fn count(list: &[&Rating]) -> Counts {
 /// `Get-RoutingScore` (full): hierarchy `(lineage, purpose, topics)` when the pooled topic
 /// evidence reaches 3, else `(lineage, purpose)` with `>= 3`, else all-purpose `>= 3`, else
 /// neutral. Provider and model compare case-sensitively; the engine case-insensitively.
-#[allow(clippy::too_many_arguments)]
-pub fn routing_score(
-    ratings: &[Rating],
-    provider: &str,
-    model: &str,
-    engine: &str,
-    purpose: &str,
-    topics: &[String],
-    utc_now: DateTime<Utc>,
-    all_purpose: bool,
-) -> RoutingScore {
+/// Inputs to [`routing_score`]: the `ratings` to score, the provider/model/engine lineage, the
+/// consult `purpose` and `topics`, the clock and the `-PanelAll` flag. Borrowed so callers pass
+/// without cloning.
+pub struct RoutingQuery<'a> {
+    pub ratings: &'a [Rating],
+    pub provider: &'a str,
+    pub model: &'a str,
+    pub engine: &'a str,
+    pub purpose: &'a str,
+    pub topics: &'a [String],
+    pub utc_now: DateTime<Utc>,
+    pub all_purpose: bool,
+}
+
+pub fn routing_score(query: &RoutingQuery) -> RoutingScore {
+    let &RoutingQuery {
+        ratings,
+        provider,
+        model,
+        engine,
+        purpose,
+        topics,
+        utc_now,
+        all_purpose,
+    } = query;
     let engine = if engine.is_empty() { "codex" } else { engine };
     let from = utc_now - Duration::days(ROUTING_WINDOW_DAYS);
     let mine: Vec<&Rating> = ratings
@@ -905,16 +919,16 @@ mod tests {
 
     #[test]
     fn routing_score_neutral_without_evidence() {
-        let s = routing_score(
-            &[],
-            "openai",
-            "gpt-6",
-            "codex",
-            "framing",
-            &[],
-            Utc::now(),
-            false,
-        );
+        let s = routing_score(&RoutingQuery {
+            ratings: &[],
+            provider: "openai",
+            model: "gpt-6",
+            engine: "codex",
+            purpose: "framing",
+            topics: &[],
+            utc_now: Utc::now(),
+            all_purpose: false,
+        });
         assert_eq!(s.basis, "neutral");
         assert!((s.score - ROUTING_NEUTRAL).abs() < 1e-9);
         assert_eq!(s.all, 0);
@@ -934,16 +948,16 @@ mod tests {
             useful: u.into(),
         };
         let ratings = vec![mk("yes"), mk("yes"), mk("partly")];
-        let s = routing_score(
-            &ratings,
-            "openai",
-            "gpt-6",
-            "codex",
-            "framing",
-            &[],
-            now,
-            false,
-        );
+        let s = routing_score(&RoutingQuery {
+            ratings: &ratings,
+            provider: "openai",
+            model: "gpt-6",
+            engine: "codex",
+            purpose: "framing",
+            topics: &[],
+            utc_now: now,
+            all_purpose: false,
+        });
         assert_eq!(s.basis, "purpose");
         assert_eq!(s.all, 3);
         // w = (2 + 0.5 + 1) / (3 + 2) = 3.5/5 = 0.7; score = 0.25 + 1.75*0.7 = 1.475.

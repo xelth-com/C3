@@ -438,7 +438,6 @@ pub struct PlannedMember {
 /// The foreground of `-Detach` once every pre-lock check passed (D1, D5, D8): picks a free detach
 /// id, writes the `starting` record once, spawns the background, prints three lines and returns 0
 /// — or refuses (exit 1) with nothing left behind.
-#[allow(clippy::too_many_arguments)]
 pub fn start_detached_run(
     o: &Options,
     kind: &str,
@@ -940,16 +939,16 @@ pub fn background(o: Options, run_flow: impl FnOnce(Options) -> i32) -> i32 {
     // on disk even when no reader is called. A clean `done, exit 0` carries none.
     if code != 0 && final_rec.death.is_none() {
         let bases = vec![task_dir.clone(), repo_root.clone(), collab_root.clone()];
-        final_rec.death = Some(build_run_death(
-            &final_rec,
-            &paths.log,
-            &task_dir,
-            &bases,
-            "background",
-            true,
-            Some(code as i64),
-            Utc::now(),
-        ));
+        final_rec.death = Some(build_run_death(&RunDeathInputs {
+            record: &final_rec,
+            log_path: &paths.log,
+            task_dir: &task_dir,
+            bases: &bases,
+            recorded_by: "background",
+            bridge_alive: true,
+            child_exit: Some(code as i64),
+            now: Utc::now(),
+        }));
     }
     match write_status_retry(&paths.status, &mut final_rec) {
         Ok(()) => code,
@@ -1158,18 +1157,32 @@ fn read_log_tail(path: &Path, max_lines: usize) -> String {
     lines[start..].join("\n")
 }
 
-/// Gather the on-disk evidence of a detached run that ended abnormally and build its death record.
-#[allow(clippy::too_many_arguments)]
-fn build_run_death(
-    record: &DetachedRecord,
-    log_path: &Path,
-    task_dir: &Path,
-    bases: &[PathBuf],
-    recorded_by: &str,
+/// Inputs to [`build_run_death`]: the run's status `record`, its log and task directory, the
+/// snapshot `bases` to search for engine evidence, who is recording, and the observed liveness/exit
+/// at this moment. Borrowed so callers pass without cloning.
+struct RunDeathInputs<'a> {
+    record: &'a DetachedRecord,
+    log_path: &'a Path,
+    task_dir: &'a Path,
+    bases: &'a [PathBuf],
+    recorded_by: &'a str,
     bridge_alive: bool,
     child_exit: Option<i64>,
     now: chrono::DateTime<Utc>,
-) -> DeathRecord {
+}
+
+/// Gather the on-disk evidence of a detached run that ended abnormally and build its death record.
+fn build_run_death(input: &RunDeathInputs) -> DeathRecord {
+    let &RunDeathInputs {
+        record,
+        log_path,
+        task_dir,
+        bases,
+        recorded_by,
+        bridge_alive,
+        child_exit,
+        now,
+    } = input;
     let log_text = read_log_tail(log_path, 40);
     let ev = engine_evidence(task_dir, bases);
     build_death_record(DeathInputs {
@@ -1213,16 +1226,16 @@ fn ensure_reader_death_record(
                 fresh.start_time.as_deref().unwrap_or(""),
             )
     };
-    let death = build_run_death(
-        &fresh,
+    let death = build_run_death(&RunDeathInputs {
+        record: &fresh,
         log_path,
         task_dir,
         bases,
-        "reader",
+        recorded_by: "reader",
         bridge_alive,
-        fresh.exit,
+        child_exit: fresh.exit,
         now,
-    );
+    });
     fresh.death = Some(death.clone());
     // Keep the on-disk state as-is (the judgement still reads `died` by the pid); only add the
     // record, so a reader never masks the run's own terminal write if one lands later.

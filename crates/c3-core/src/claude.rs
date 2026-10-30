@@ -1110,16 +1110,16 @@ mod tests {
         // token variable's NAME - the label, the model and the plan are no part of it
         let cfg = crate::config::config_not_found("C:/x/config.toml");
         let id = |model: &str, auth: &str, ep: Option<&ClaudeEndpoint>| {
-            crate::lineage::resolve_reviewer_identity_auth(
-                &cfg,
-                "",
+            crate::lineage::resolve_reviewer_identity_auth(&crate::lineage::ReviewerIdentityQuery {
+                config: &cfg,
+                provider: "",
                 model,
-                "",
-                "claude",
-                "C:/x/claude.exe",
+                openai_base_url: "",
+                engine: "claude",
+                launcher: "C:/x/claude.exe",
                 auth,
-                ep,
-            )
+                endpoint: ep,
+            })
         };
         let opus = id("opus", "", None);
         assert_eq!(opus.compat_string, "cc-engine-v1|claude|subscription|opus");

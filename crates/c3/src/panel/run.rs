@@ -398,19 +398,21 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     let router_ctx = crate::router::load_context();
     let route: PanelRoutingResult = plan::select_panel_routing_with(
         &router_ctx,
-        &members,
-        size_wanted,
-        size_source,
-        &order,
-        &ratings,
-        &o.purpose,
-        &topics,
-        utc_now,
-        &o.task,
-        &brief_sha,
-        &nonce,
-        nonce_source,
-        &required.positions,
+        &plan::PanelRoutingInput {
+            members: &members,
+            size: size_wanted,
+            size_source,
+            order: &order,
+            ratings: &ratings,
+            purpose: &o.purpose,
+            topics: &topics,
+            utc_now,
+            task: &o.task,
+            brief_sha: &brief_sha,
+            nonce: &nonce,
+            nonce_source,
+            required: &required.positions,
+        },
     );
     if route.picked.is_empty() {
         return Err((
@@ -940,19 +942,19 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
     for k0 in 0..b.seated_count {
         let n = nn_n.n + k0 as i64;
         let nn = nn_n.nn + k0 as u32;
-        slots.push(build_slot(
-            &b,
-            &o,
-            &r,
-            k0,
-            k0 as i64 + 1,
+        slots.push(build_slot(&SlotBuild {
+            b: &b,
+            o: &o,
+            r: &r,
+            runner: k0,
+            k: k0 as i64 + 1,
             n,
             nn,
             guard_hook,
-            &reply_base,
-            &task_dir,
-            &panel_tmp,
-        ));
+            reply_base: &reply_base,
+            task_dir: &task_dir,
+            panel_tmp: &panel_tmp,
+        }));
     }
 
     let panel_watch = Instant::now();
@@ -1224,19 +1226,19 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
                 let used = b.seated_count + promoted;
                 let n = nn_n.n + used as i64;
                 let nn = nn_n.nn + used as u32;
-                let ns = build_slot(
-                    &b,
-                    &o,
-                    &r,
+                let ns = build_slot(&SlotBuild {
+                    b: &b,
+                    o: &o,
+                    r: &r,
                     runner,
-                    seat_k,
+                    k: seat_k,
                     n,
                     nn,
                     guard_hook,
-                    &reply_base,
-                    &task_dir,
-                    &panel_tmp,
-                );
+                    reply_base: &reply_base,
+                    task_dir: &task_dir,
+                    panel_tmp: &panel_tmp,
+                });
                 let launcher_k = if ns.engine == "codex" {
                     b.codex_launcher.clone()
                 } else {
@@ -1350,13 +1352,15 @@ fn schedule(o: Options, r: Resolved, b: Built) -> i32 {
             }
             start_member(
                 &mut slots,
-                i,
-                &o,
-                &r,
-                &b,
-                parent_pid,
-                &panel_tmp,
-                &listed_ids,
+                &MemberStart {
+                    i,
+                    o: &o,
+                    r: &r,
+                    b: &b,
+                    parent_pid,
+                    panel_tmp: &panel_tmp,
+                    listed: &listed_ids,
+                },
             );
             progress = true;
             match slots[i].state {
@@ -1845,22 +1849,39 @@ fn find_panel_entry(
     })
 }
 
-/// One panel slot for runner index `runner` (into `b.runners`), with its seat number `k`, handoff
-/// `n`/`nn` and reply paths. Shared by the initial seat loop and the (c) reserve promotion.
-#[allow(clippy::too_many_arguments)]
-fn build_slot(
-    b: &Built,
-    o: &Options,
-    r: &Resolved,
+/// Inputs to [`build_slot`]: the built panel/options/resolved context, the runner index (into
+/// `b.runners`), its seat number `k`, handoff `n`/`nn`, the guard override and the reply paths.
+/// Borrowed so callers pass without cloning.
+struct SlotBuild<'a> {
+    b: &'a Built,
+    o: &'a Options,
+    r: &'a Resolved,
     runner: usize,
     k: i64,
     n: i64,
     nn: u32,
     guard_hook: f64,
-    reply_base: &str,
-    task_dir: &Path,
-    panel_tmp: &Path,
-) -> Slot {
+    reply_base: &'a str,
+    task_dir: &'a Path,
+    panel_tmp: &'a Path,
+}
+
+/// One panel slot for runner index `runner` (into `b.runners`), with its seat number `k`, handoff
+/// `n`/`nn` and reply paths. Shared by the initial seat loop and the (c) reserve promotion.
+fn build_slot(p: &SlotBuild) -> Slot {
+    let &SlotBuild {
+        b,
+        o,
+        r,
+        runner,
+        k,
+        n,
+        nn,
+        guard_hook,
+        reply_base,
+        task_dir,
+        panel_tmp,
+    } = p;
     let ru = &b.runners[runner];
     let slug = provider_slug(&ru.entry.provider);
     let prefix = c3_core::lineage::engine_spec(&ru.engine)
@@ -1925,18 +1946,30 @@ fn is_preflight_refusal(refusal: &str) -> bool {
         || refusal.contains("availability could not be established")
 }
 
-/// Launch one member as a child `c3 consult --task <t> --panel-spec <b64>` process.
-#[allow(clippy::too_many_arguments)]
-fn start_member(
-    slots: &mut [Slot],
+/// Inputs to [`start_member`] other than the slots: the slot index, the built panel/options/
+/// resolved context, the parent pid, the member tmp dir and the listed ids. Borrowed so the caller
+/// passes without cloning.
+struct MemberStart<'a> {
     i: usize,
-    o: &Options,
-    r: &Resolved,
-    b: &Built,
+    o: &'a Options,
+    r: &'a Resolved,
+    b: &'a Built,
     parent_pid: u32,
-    panel_tmp: &Path,
-    listed: &[String],
-) {
+    panel_tmp: &'a Path,
+    listed: &'a [String],
+}
+
+/// Launch one member as a child `c3 consult --task <t> --panel-spec <b64>` process.
+fn start_member(slots: &mut [Slot], m: &MemberStart) {
+    let &MemberStart {
+        i,
+        o,
+        r,
+        b,
+        parent_pid,
+        panel_tmp,
+        listed,
+    } = m;
     let spec = build_spec(&slots[..], i, o, r, b, parent_pid, listed);
     let wire = match spec.to_wire() {
         Ok(w) => w,
@@ -2004,7 +2037,6 @@ fn start_member(
 }
 
 /// The `MemberSpec` for seat `i` (`Start-PanelMember`'s `$spec`).
-#[allow(clippy::too_many_arguments)]
 fn build_spec(
     slots: &[Slot],
     i: usize,

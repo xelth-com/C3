@@ -446,6 +446,14 @@ pub struct HttpAttempt {
     pub warnings: Vec<String>,
 }
 
+/// The event-log sink shared by `post` and `parse_response`: the key to scrub from every line, the
+/// events file to append to and the attempt label. Borrowed so the caller passes without cloning.
+struct EventSink<'a> {
+    key: Option<&'a str>,
+    events_path: &'a Path,
+    label: Option<&'a str>,
+}
+
 impl HttpEngine {
     /// The `<stem>.pack.md` path.
     pub fn pack_md_path(&self) -> PathBuf {
@@ -737,13 +745,15 @@ impl HttpEngine {
         );
 
         let (outcome, mut warnings) = self.post(
-            key.as_deref(),
+            &EventSink {
+                key: key.as_deref(),
+                events_path: &events_path,
+                label,
+            },
             proxy,
             tls,
             &url,
             &body_str,
-            &events_path,
-            label,
         );
         // (F07-5) The header-less mode rests on a proxy that attaches the credential; when no
         // proxy applies to this request the credential-less request is said out loud, in the
@@ -797,17 +807,19 @@ impl HttpEngine {
     /// (item 1) The wall clock stops only after the response BODY has been read (OpenRouter answers
     /// the headers at once and streams keep-alive whitespace while the model works). Every string
     /// that could carry the key is scrubbed, and each outcome writes its event line.
-    #[allow(clippy::too_many_arguments)]
     fn post(
         &self,
-        key: Option<&str>,
+        sink: &EventSink,
         proxy: bool,
         tls: Option<std::sync::Arc<rustls::ClientConfig>>,
         url: &str,
         body: &str,
-        events_path: &Path,
-        label: Option<&str>,
     ) -> (AttemptOutcome, Vec<String>) {
+        let EventSink {
+            key,
+            events_path,
+            label,
+        } = *sink;
         let mut builder = ureq::AgentBuilder::new()
             .timeout_connect(self.config.timeout)
             .timeout(self.config.timeout)
@@ -879,7 +891,7 @@ impl HttpEngine {
                 match resp.into_string() {
                     Ok(text) => {
                         let wall = round1(started.elapsed().as_secs_f64());
-                        self.parse_response(key, &text, wall, status, req_id, events_path, label)
+                        self.parse_response(sink, &text, wall, status, req_id)
                     }
                     Err(e) => {
                         let wall = round1(started.elapsed().as_secs_f64());
@@ -1054,17 +1066,19 @@ impl HttpEngine {
     /// LOCAL normaliser runs — the http engine has no enforced output schema — and, when it makes
     /// the reply valid, records a `reply normalised: <list>` warning. Writes the response event and,
     /// for an error envelope, the error event.
-    #[allow(clippy::too_many_arguments)]
     fn parse_response(
         &self,
-        key: Option<&str>,
+        sink: &EventSink,
         text: &str,
         wall: f64,
         status: u16,
         req_id: Option<String>,
-        events_path: &Path,
-        label: Option<&str>,
     ) -> (AttemptOutcome, Vec<String>) {
+        let EventSink {
+            key,
+            events_path,
+            label,
+        } = *sink;
         let json: Value = match serde_json::from_str(text) {
             Ok(v) => v,
             Err(_) => {

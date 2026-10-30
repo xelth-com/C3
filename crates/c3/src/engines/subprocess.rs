@@ -861,7 +861,6 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
 /// partial-line buffer. Applies `tool_flight` to each COMPLETE new line to keep `open_tools`
 /// (the tool calls in flight) current. Returns whether the stream grew at all (any new
 /// bytes) — the caller resets the silent timer on that (wave 26c D3: reset on byte growth).
-#[allow(clippy::too_many_arguments)]
 fn read_stream_growth(
     path: &Path,
     offset: &mut u64,

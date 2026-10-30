@@ -44,9 +44,13 @@ impl DoctorReport {
     }
 }
 
-/// Whether a `.eck/*.md` body still carries a `[STUB` marker.
+/// Whether a `.eck/*.md` body still carries a stub marker: a LINE that starts with `[STUB:` (the
+/// form `c3 init` and eck write). Prose that merely mentions `[STUB]` - a journal entry, the
+/// description of this very check - is not a stub.
 pub fn has_stub_marker(content: &str) -> bool {
-    content.contains("[STUB")
+    content
+        .lines()
+        .any(|l| l.trim_start().starts_with("[STUB:"))
 }
 
 /// Whether a `.claude/rules/*.md` body names any `eck_*` MCP tool.
@@ -199,6 +203,11 @@ mod tests {
     fn stub_and_rule_detectors() {
         assert!(has_stub_marker("# X\n\n[STUB: fill me]\n"));
         assert!(!has_stub_marker("# X\n\nresolved\n"));
+        // prose that mentions the marker is not a stub (a journal entry, a command description)
+        assert!(!has_stub_marker(
+            "- `c3 doctor` reports leftover `[STUB]` markers\n- 3 manifests still [STUB]\n"
+        ));
+        assert!(has_stub_marker("# X\n\n  [STUB: indented]\n"));
         assert!(rule_names_eck_tool("call `eck_finish_task` now"));
         assert!(rule_names_eck_tool("use eck_manifest_edit"));
         assert!(!rule_names_eck_tool("call `c3_finish_task` now"));

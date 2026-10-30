@@ -20,7 +20,7 @@ pub mod simulate;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::panel::routing::{routing_score, Rating, RoutingScore};
+use crate::panel::routing::{routing_score, Rating, RoutingQuery, RoutingScore};
 
 pub use params::RouterParams;
 pub use priors::{PriorBasis, PriorHit, Priors, PriorsError};
@@ -71,16 +71,16 @@ pub fn score(
     now: DateTime<Utc>,
     ctx: &RouterContext,
 ) -> Scored {
-    let mut base = routing_score(
+    let mut base = routing_score(&RoutingQuery {
         ratings,
-        lineage.provider,
-        lineage.model,
-        lineage.engine,
+        provider: lineage.provider,
+        model: lineage.model,
+        engine: lineage.engine,
         purpose,
         topics,
-        now,
-        false,
-    );
+        utc_now: now,
+        all_purpose: false,
+    });
 
     let hit = match &ctx.priors {
         // The prior lookup matches topic cells by the fixed vocabulary (M9 §7 D-b); a local free

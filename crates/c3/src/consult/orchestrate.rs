@@ -2645,12 +2645,14 @@ fn build_context(
             }
             let sel = req_ctx.panel_members_of(
                 Some(&required.positions),
-                "",
-                "",
-                &o.purpose,
-                true,
-                false,
-                0,
+                &providers::PanelQuery {
+                    model: "",
+                    engine: "",
+                    purpose: &o.purpose,
+                    all: true,
+                    skip_preflight: false,
+                    estimate_tokens: 0,
+                },
             );
             let out: Vec<String> = sel
                 .members
@@ -2758,14 +2760,16 @@ fn build_context(
         )
     };
     let mut identity = c3_core::lineage::resolve_reviewer_identity_auth(
-        &config,
-        &identity_provider,
-        &identity_model,
-        &openai_base_url,
-        &engine_name,
-        &engine_launcher,
-        &engine_auth,
-        engine_endpoint.as_ref(),
+        &c3_core::lineage::ReviewerIdentityQuery {
+            config: &config,
+            provider: &identity_provider,
+            model: &identity_model,
+            openai_base_url: &openai_base_url,
+            engine: &engine_name,
+            launcher: &engine_launcher,
+            auth: &engine_auth,
+            endpoint: engine_endpoint.as_ref(),
+        },
     );
     if !provider_source_override.is_empty() {
         identity.provider_source = provider_source_override.clone();
@@ -3537,20 +3541,20 @@ fn build_context(
     // The argv (byte-identical to the core plan): build the Request and plan it for the
     // selected engine.
     let engine_kind = engine_kind_of(&engine_name);
-    let mut request = make_request(
-        &o,
-        &r,
-        &identity,
-        &effort,
-        &transport,
-        &prompt_text,
-        &schema_path,
-        &last_msg_path,
-        resolved_mode(&effective_mode, &parent_thread, &identity),
-        engine_kind,
-        prompt_file.as_deref(),
-        &context_config,
-    );
+    let mut request = make_request(MakeRequest {
+        o: &o,
+        r: &r,
+        id: &identity,
+        effort: &effort,
+        transport: &transport,
+        prompt_text: &prompt_text,
+        schema_path: &schema_path,
+        last_msg_path: &last_msg_path,
+        mode: resolved_mode(&effective_mode, &parent_thread, &identity),
+        engine: engine_kind,
+        prompt_file: prompt_file.as_deref(),
+        context_config: &context_config,
+    });
     if engine_name == "claude" {
         request.model = engine_model.clone();
         request.new_thread = (!new_thread.is_empty()).then(|| new_thread.clone());
@@ -3831,21 +3835,39 @@ fn effort_requested(o: &Options, _r: &Resolved) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn make_request(
-    o: &Options,
-    r: &Resolved,
-    id: &ReviewerIdentity,
-    effort: &EffortPlan,
-    transport: &Transport,
-    prompt_text: &str,
-    schema_path: &Option<PathBuf>,
-    last_msg_path: &Path,
+/// Inputs to [`make_request`]: the options/resolved/identity context, the effort and transport
+/// plans, the prompt and its optional file, the schema/last-message paths, the turn mode/engine and
+/// the context config. Borrowed so the caller passes without cloning.
+struct MakeRequest<'a> {
+    o: &'a Options,
+    r: &'a Resolved,
+    id: &'a ReviewerIdentity,
+    effort: &'a EffortPlan,
+    transport: &'a Transport,
+    prompt_text: &'a str,
+    schema_path: &'a Option<PathBuf>,
+    last_msg_path: &'a Path,
     mode: Mode,
     engine: EngineKind,
-    prompt_file: Option<&Path>,
-    context_config: &[String],
-) -> Request {
+    prompt_file: Option<&'a Path>,
+    context_config: &'a [String],
+}
+
+fn make_request(q: MakeRequest) -> Request {
+    let MakeRequest {
+        o,
+        r,
+        id,
+        effort,
+        transport,
+        prompt_text,
+        schema_path,
+        last_msg_path,
+        mode,
+        engine,
+        prompt_file,
+        context_config,
+    } = q;
     let sandbox = if o.sandbox.is_empty() {
         "read-only".to_string()
     } else {
@@ -4810,7 +4832,7 @@ fn run_live(mut ctx: Context) -> i32 {
 
     let base_record = rec_arc.lock().map(|r| r.clone()).unwrap_or_default();
     let register_failure = register_error.lock().ok().and_then(|g| g.clone());
-    let code = finish(
+    let code = finish(Finish {
         ctx,
         store,
         pending,
@@ -4821,7 +4843,7 @@ fn run_live(mut ctx: Context) -> i32 {
         when_iso,
         register_failure,
         kill_site,
-    );
+    });
     if let Some(hp) = &health_path {
         let _ = c3_core::health::unregister_machine_running(hp, bridge_pid, &|pid, st| {
             crate::liveness::proc::pid_alive(pid, st)
@@ -5555,9 +5577,11 @@ fn continuation_on_running(
 }
 
 /// Ingest the outcome, render, commit and print the summary.
-#[allow(clippy::too_many_arguments)]
-fn finish(
-    mut ctx: Context,
+/// Inputs to [`finish`]: the run context and its stores/records, the attempt outcome and engine
+/// detail, the pre-run collab snapshot, the commit timestamp and any registration failure / kill
+/// site. Owned and moved in (no clone).
+struct Finish {
+    ctx: Context,
     store: FilesStore,
     pending: PendingRef,
     outcome: AttemptOutcome,
@@ -5572,7 +5596,21 @@ fn finish(
     // (wave 3e, F30-2) where the run's kills write their records (the main turn's hook wrote its
     // record before the kill)
     kill_site: KillSite,
-) -> i32 {
+}
+
+fn finish(args: Finish) -> i32 {
+    let Finish {
+        mut ctx,
+        store,
+        pending,
+        outcome,
+        base_record,
+        detail,
+        collab_before,
+        when_iso,
+        register_failure,
+        kill_site,
+    } = args;
     let is_engine = !ctx.is_codex();
     let register_failure_text = register_failure.map(|err| {
         format!(
@@ -6070,18 +6108,18 @@ fn finish(
             }
         }
         sec.tree_problem = tree_problem;
-        run_engine_denial_retry(
-            &ctx,
-            &detail,
-            &sec.tree_problem.clone(),
-            &mut sec,
-            &mut bridge_outcome,
-            &mut raw_text,
-            &mut thread,
-            &mut thread_source,
-            &mut usable,
-            &mut engine_forced_class,
-        );
+        run_engine_denial_retry(DenialRetry {
+            ctx: &ctx,
+            detail: &detail,
+            tree_problem: &sec.tree_problem.clone(),
+            sec: &mut sec,
+            bridge_outcome: &mut bridge_outcome,
+            raw_text: &mut raw_text,
+            thread: &mut thread,
+            thread_source: &mut thread_source,
+            usable: &mut usable,
+            forced_class: &mut engine_forced_class,
+        });
     }
 
     // A failed main turn's outcome (`codex-consult.ps1:3840-3847`): `failed: codex exit N`, with
@@ -6119,25 +6157,25 @@ fn finish(
         } else {
             String::new()
         };
-        run_timeout_continuation(
-            &ctx,
-            &continue_candidate,
-            &drift,
-            &timeout_survivors,
-            kill_unconfirmed.as_ref(),
-            &main_stderr,
-            &main_event_error,
-            wall_seconds,
-            &mut sec,
-            &mut bridge_outcome,
-            &mut raw_text,
-            &mut thread,
-            &mut thread_source,
-            &mut usable,
-            &mut provider_failure,
-            stall_record.as_ref().map(|s| s.seconds),
-            Some(cont_on_running),
-        );
+        run_timeout_continuation(TimeoutContinuation {
+            ctx: &ctx,
+            candidate: &continue_candidate,
+            drift: &drift,
+            survivors: &timeout_survivors,
+            kill_unconfirmed: kill_unconfirmed.as_ref(),
+            main_stderr: &main_stderr,
+            main_event_error: &main_event_error,
+            main_wall: wall_seconds,
+            sec: &mut sec,
+            bridge_outcome: &mut bridge_outcome,
+            raw_text: &mut raw_text,
+            thread: &mut thread,
+            thread_source: &mut thread_source,
+            usable: &mut usable,
+            provider_failure: &mut provider_failure,
+            stalled_secs: stall_record.as_ref().map(|s| s.seconds),
+            on_running: Some(cont_on_running),
+        });
     }
     // (wave 27c, D2) a kick that cancelled the timeout continuation: warn, but keep the timeout
     // outcome and its salvage (bridge_outcome is left as the main turn's timeout text).
@@ -6163,19 +6201,19 @@ fn finish(
 
     // Format repair: a substantive prose reply on a verified thread earns ONE convert-only turn.
     if structured.is_none() {
-        run_format_repair(
-            &ctx,
-            &store,
-            &pending,
-            &base_record,
-            &thread,
-            &thread_source,
+        run_format_repair(FormatRepair {
+            ctx: &ctx,
+            store: &store,
+            pending: &pending,
+            base_record: &base_record,
+            thread: &thread,
+            thread_source: &thread_source,
             usable,
-            &mut sec,
-            &mut structured,
-            &mut raw_text,
-            &mut validation_error,
-        );
+            sec: &mut sec,
+            structured: &mut structured,
+            raw_text: &mut raw_text,
+            validation_error: &mut validation_error,
+        });
     }
 
     // (wave 26c, D1) the operator stopped only the FORMAT REPAIR: the first reply stands (not
@@ -6323,19 +6361,19 @@ fn finish(
 
     // Salvaged partial reply: a turn the bridge killed on its timeout with no usable
     // continuation leaves `handoffs/NN-codex-<slug>.partial.md` (`codex-consult.ps1:4108`).
-    build_partial_reply(
-        &ctx,
-        &main_events_text,
-        &mut sec,
+    build_partial_reply(PartialReply {
+        ctx: &ctx,
+        main_events_text: &main_events_text,
+        sec: &mut sec,
         main_timed_out,
-        wall_seconds,
-        stall_record.is_some(),
+        main_wall: wall_seconds,
+        stall: stall_record.is_some(),
         run_kicked,
         usable,
-        &bridge_outcome,
-        &thread,
-        budget_window.as_ref().map(|_| budget_stop_text.as_str()),
-    );
+        bridge_outcome: &bridge_outcome,
+        main_thread: &thread,
+        budget_stop: budget_window.as_ref().map(|_| budget_stop_text.as_str()),
+    });
 
     // Build the finding delta + ids for a structured reply.
     let mut finding_ids: Vec<String> = Vec::new();
@@ -6512,51 +6550,51 @@ fn finish(
     }
 
     // Render the handoff markdown (and the salvaged partial file, when a turn was killed).
-    let (handoff_md, partial_md) = render_handoff(
-        &ctx,
-        &bridge_outcome,
-        wall_seconds,
-        &usage,
-        &thread,
-        &thread_source,
-        &thread_candidate,
-        structured.as_ref(),
-        &finding_ids,
-        &base_validation_error,
-        provider_failure.as_ref(),
-        &raw_text,
-        &drift,
-        &sec,
-        &main_event_error,
-        &main_stderr,
-        &prior_blocker_lines,
-        verdict_warning_line.as_deref(),
-    );
+    let (handoff_md, partial_md) = render_handoff(RenderHandoff {
+        ctx: &ctx,
+        bridge_outcome: &bridge_outcome,
+        wall: wall_seconds,
+        usage: &usage,
+        thread: &thread,
+        thread_source: &thread_source,
+        thread_candidate: &thread_candidate,
+        structured: structured.as_ref(),
+        finding_ids: &finding_ids,
+        validation_error: &base_validation_error,
+        provider_failure: provider_failure.as_ref(),
+        raw_text: &raw_text,
+        drift: &drift,
+        sec: &sec,
+        main_event_error: &main_event_error,
+        main_stderr: &main_stderr,
+        prior_blockers: &prior_blocker_lines,
+        verdict_warning: verdict_warning_line.as_deref(),
+    });
     let handoff_rel = ctx.hf("md");
     let events_rel = ctx.hf("events.jsonl");
     // `.reply.json` was already written (or its failure handled as a total bridge failure) above,
     // before the format-repair/findings work, so `reply_json_rel` is final here.
 
     // Build the ledger entry.
-    let mut entry = build_entry(
-        &ctx,
-        &bridge_outcome,
-        wall_seconds,
-        &usage,
-        &thread,
-        &thread_source,
-        structured.as_ref(),
-        &finding_ids,
-        &counts,
-        &validation_error,
-        provider_failure.clone(),
-        &handoff_rel,
-        &reply_json_rel,
-        &events_rel,
-        &drift,
-        &sec,
-        stall_record.clone(),
-    );
+    let mut entry = build_entry(BuildEntry {
+        ctx: &ctx,
+        bridge_outcome: &bridge_outcome,
+        wall: wall_seconds,
+        usage: &usage,
+        thread: &thread,
+        thread_source: &thread_source,
+        structured: structured.as_ref(),
+        finding_ids: &finding_ids,
+        counts: &counts,
+        validation_error: &validation_error,
+        provider_failure: provider_failure.clone(),
+        handoff_rel: &handoff_rel,
+        reply_json_rel: &reply_json_rel,
+        events_rel: &events_rel,
+        drift: &drift,
+        sec: &sec,
+        stall: stall_record.clone(),
+    });
     // The ledger `when` is the run's START (`$startedAt`), not the commit time (`build_entry`
     // stamps `iso_now()` as a placeholder). This makes the panel's overlap check (last start <
     // first finish) hold for concurrent members.
@@ -7258,23 +7296,44 @@ pub(crate) fn format_repair_prompt(consult_id: &str) -> String {
 
 /// Run one secondary turn (`resume <thread>`) through the selected engine and return its outcome
 /// and measured wall. For a muse turn the prompt is written to a fresh temp `--prompt-file`.
-#[allow(clippy::too_many_arguments)]
-fn run_codex_secondary(
-    ctx: &Context,
+/// Inputs to [`run_codex_secondary`]: the run context and turn kind, the sandbox/effort/schema for
+/// the turn, the thread to resume, the prompt, the per-turn log paths, the timeout and the running/
+/// kill hooks. Borrows are shared; the owned fields are moved in.
+struct RunSecondary<'a> {
+    ctx: &'a Context,
     kind: TurnKind,
-    sandbox: &str,
+    sandbox: &'a str,
     effort: Option<String>,
     schema_arg: Option<PathBuf>,
-    thread: &str,
-    prompt_text: &str,
-    last_path: &Path,
-    events_path: &Path,
-    stderr_path: &Path,
+    thread: &'a str,
+    prompt_text: &'a str,
+    last_path: &'a Path,
+    events_path: &'a Path,
+    stderr_path: &'a Path,
     timeout_sec: f64,
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
     // (wave 3e, F30-2) the turn's kill writes its record BEFORE the kill
     on_kill: Option<crate::engines::subprocess::KillHook>,
+}
+
+fn run_codex_secondary(
+    args: RunSecondary,
 ) -> (AttemptOutcome, f64, String, Option<ClaudeRunDetail>) {
+    let RunSecondary {
+        ctx,
+        kind,
+        sandbox,
+        effort,
+        schema_arg,
+        thread,
+        prompt_text,
+        last_path,
+        events_path,
+        stderr_path,
+        timeout_sec,
+        on_running,
+        on_kill,
+    } = args;
     let engine = engine_kind_of(&ctx.engine);
     // muse takes its prompt through a fresh `--prompt-file` per turn (distinct from the main one).
     let prompt_file = if ctx.prompt_file.is_some() {
@@ -7459,27 +7518,29 @@ fn run_codex_secondary(
 /// The timeout continuation (`codex-consult.ps1:3626`): after a killed main turn, ONE
 /// `resume <thread>` turn — the main turn's options — asks the reviewer to finish now. Gated by
 /// the thread, survivors, files-changed and the killed turn's own failure evidence.
-#[allow(clippy::too_many_arguments)]
-fn run_timeout_continuation(
-    ctx: &Context,
+/// Inputs to [`run_timeout_continuation`]: the run context, the resume candidate/drift/survivors,
+/// the kill-confirmation state and the main turn's stderr/error/wall, plus the `&mut` run state the
+/// continuation updates and the stall/running hooks. Borrows and `&mut` slots are moved in.
+struct TimeoutContinuation<'a> {
+    ctx: &'a Context,
     // (0.6.0, wave 29) the claude killed turn's session (its minted id the init confirmed) when the
     // run has no verified thread; `""` for every other engine.
-    candidate: &str,
-    drift: &Drift,
-    survivors: &[u32],
+    candidate: &'a str,
+    drift: &'a Drift,
+    survivors: &'a [u32],
     // (wave 27c, D16) `Some((pid, why))` when the main turn's tree kill could not be confirmed:
     // no continuation is attempted (the orphan may still hold the thread).
-    kill_unconfirmed: Option<&(u32, String)>,
-    main_stderr: &str,
-    main_event_error: &str,
+    kill_unconfirmed: Option<&'a (u32, String)>,
+    main_stderr: &'a str,
+    main_event_error: &'a str,
     main_wall: f64,
-    sec: &mut Secondary,
-    bridge_outcome: &mut String,
-    raw_text: &mut String,
-    thread: &mut String,
-    thread_source: &mut String,
-    usable: &mut bool,
-    provider_failure: &mut Option<c3_core::ledger::ProviderFailure>,
+    sec: &'a mut Secondary,
+    bridge_outcome: &'a mut String,
+    raw_text: &'a mut String,
+    thread: &'a mut String,
+    thread_source: &'a mut String,
+    usable: &'a mut bool,
+    provider_failure: &'a mut Option<c3_core::ledger::ProviderFailure>,
     // (wave 26b, D12) `Some(n)` when the main turn was STOPPED by the stall cut (n s without an
     // event) rather than the wall-clock timeout — the console line says so.
     stalled_secs: Option<i64>,
@@ -7487,7 +7548,28 @@ fn run_timeout_continuation(
     // moment it spawns, so a concurrent `--kick` (and the liveness check) find a live child of this
     // run — the main turn's child was killed at the timeout.
     on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
-) {
+}
+
+fn run_timeout_continuation(args: TimeoutContinuation) {
+    let TimeoutContinuation {
+        ctx,
+        candidate,
+        drift,
+        survivors,
+        kill_unconfirmed,
+        main_stderr,
+        main_event_error,
+        main_wall,
+        sec,
+        bridge_outcome,
+        raw_text,
+        thread,
+        thread_source,
+        usable,
+        provider_failure,
+        stalled_secs,
+        on_running,
+    } = args;
     let continue_thread = if thread.is_empty() && !candidate.is_empty() {
         candidate.to_string()
     } else {
@@ -7647,24 +7729,25 @@ fn run_timeout_continuation(
     // The continuation event stream is a further turn (added before the run, like the plugin).
     sec.continue_events_rel = Some(continue_events_rel.clone());
 
-    let (outcome, wall, engine_outcome, claude_run) = run_codex_secondary(
+    let (outcome, wall, engine_outcome, claude_run) = run_codex_secondary(RunSecondary {
         ctx,
-        TurnKind::TimeoutContinuation,
-        &sandbox_label(&ctx.o),
-        ctx.effort.sent.clone(),
+        kind: TurnKind::TimeoutContinuation,
+        sandbox: &sandbox_label(&ctx.o),
+        effort: ctx.effort.sent.clone(),
         schema_arg,
-        &continue_thread,
-        &continue_prompt,
-        &continue_last,
-        &continue_events_path,
-        &continue_stderr,
-        ctx.r.continue_sec as f64,
+        thread: &continue_thread,
+        prompt_text: &continue_prompt,
+        last_path: &continue_last,
+        events_path: &continue_events_path,
+        stderr_path: &continue_stderr,
+        timeout_sec: ctx.r.continue_sec as f64,
         on_running,
         // (wave 3e, F30-2) its kill writes the record that names the tree BEFORE the kill
-        sec.kill_site
+        on_kill: sec
+            .kill_site
             .as_ref()
             .map(|s| s.hook("timeout continuation")),
-    );
+    });
     let is_engine = !ctx.is_codex();
     sec.continue_wall = wall;
     sec.claude_turns.extend(claude_run);
@@ -7791,20 +7874,37 @@ fn run_timeout_continuation(
 
 /// The format repair (`codex-consult.ps1:3845`): a substantive prose reply on a verified thread
 /// earns ONE convert-only `resume <thread>` turn at the lowest effort, no `--output-schema`.
-#[allow(clippy::too_many_arguments)]
-fn run_format_repair(
-    ctx: &Context,
-    store: &FilesStore,
-    pending: &PendingRef,
-    base_record: &PendingRecord,
-    thread: &str,
-    thread_source: &str,
+/// Inputs to [`run_format_repair`]: the run context and its store/records, the verified thread and
+/// whether the reply is usable, plus the `&mut` reply state the repair turn updates. Borrows and
+/// `&mut` slots are moved in.
+struct FormatRepair<'a> {
+    ctx: &'a Context,
+    store: &'a FilesStore,
+    pending: &'a PendingRef,
+    base_record: &'a PendingRecord,
+    thread: &'a str,
+    thread_source: &'a str,
     usable: bool,
-    sec: &mut Secondary,
-    structured: &mut Option<StructuredReply>,
-    raw_text: &mut String,
-    validation_error: &mut String,
-) {
+    sec: &'a mut Secondary,
+    structured: &'a mut Option<StructuredReply>,
+    raw_text: &'a mut String,
+    validation_error: &'a mut String,
+}
+
+fn run_format_repair(args: FormatRepair) {
+    let FormatRepair {
+        ctx,
+        store,
+        pending,
+        base_record,
+        thread,
+        thread_source,
+        usable,
+        sec,
+        structured,
+        raw_text,
+        validation_error,
+    } = args;
     let eligible = ctx.r.repair_enabled
         && structured.is_none()
         && usable
@@ -7889,22 +7989,22 @@ fn run_format_repair(
 
     let repair_prompt = format_repair_prompt(&ctx.consult_id);
 
-    let (outcome, wall, engine_outcome, claude_run) = run_codex_secondary(
+    let (outcome, wall, engine_outcome, claude_run) = run_codex_secondary(RunSecondary {
         ctx,
-        TurnKind::FormatRepair,
-        "read-only",
-        repair_effort(ctx),
-        repair_schema,
+        kind: TurnKind::FormatRepair,
+        sandbox: "read-only",
+        effort: repair_effort(ctx),
+        schema_arg: repair_schema,
         thread,
-        &repair_prompt,
-        &repair_last,
-        &repair_events,
-        &repair_stderr,
-        repair_timeout as f64,
-        Some(on_running),
+        prompt_text: &repair_prompt,
+        last_path: &repair_last,
+        events_path: &repair_events,
+        stderr_path: &repair_stderr,
+        timeout_sec: repair_timeout as f64,
+        on_running: Some(on_running),
         // (wave 3e, F30-2) its kill writes the record that names the tree BEFORE the kill
-        sec.kill_site.as_ref().map(|s| s.hook("format repair")),
-    );
+        on_kill: sec.kill_site.as_ref().map(|s| s.hook("format repair")),
+    });
     // (wave 3c, F23-3) a kill of this turn writes its record on the one this turn has on disk (it
     // names the saved prose and the repair's pid)
     if let (Some(site), Ok(r)) = (sec.kill_site.as_mut(), rec_arc.lock()) {
@@ -8469,19 +8569,34 @@ fn run_engine_secondary(
 /// The agy denial retry (F11): a tool was auto-denied and the turn produced nothing → one more
 /// `--conversation <thread>` turn telling the model not to call it. Gated by the engine's
 /// denial-retry capability, `--denial-retry 1`, a verified thread and no tree problem.
-#[allow(clippy::too_many_arguments)]
-fn run_engine_denial_retry(
-    ctx: &Context,
-    detail: &EngineDetail,
-    tree_problem: &str,
-    sec: &mut Secondary,
-    bridge_outcome: &mut String,
-    raw_text: &mut String,
-    thread: &mut String,
-    thread_source: &mut String,
-    usable: &mut bool,
-    forced_class: &mut String,
-) {
+/// Inputs to [`run_engine_denial_retry`]: the run context, the engine detail and tree-kill problem,
+/// plus the `&mut` run state the retry updates. Borrows and `&mut` slots are moved in.
+struct DenialRetry<'a> {
+    ctx: &'a Context,
+    detail: &'a EngineDetail,
+    tree_problem: &'a str,
+    sec: &'a mut Secondary,
+    bridge_outcome: &'a mut String,
+    raw_text: &'a mut String,
+    thread: &'a mut String,
+    thread_source: &'a mut String,
+    usable: &'a mut bool,
+    forced_class: &'a mut String,
+}
+
+fn run_engine_denial_retry(args: DenialRetry) {
+    let DenialRetry {
+        ctx,
+        detail,
+        tree_problem,
+        sec,
+        bridge_outcome,
+        raw_text,
+        thread,
+        thread_source,
+        usable,
+        forced_class,
+    } = args;
     let denial_ok = c3_core::lineage::engine_spec(&ctx.engine)
         .map(|s| s.denial_retry)
         .unwrap_or(false);
@@ -8697,11 +8812,13 @@ fn estimate_prompt_tokens(prompt: &str, brief_path: Option<&Path>) -> i64 {
     ((chars as f64) / 4.0).ceil() as i64
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_partial_reply(
-    ctx: &Context,
-    main_events_text: &str,
-    sec: &mut Secondary,
+/// Inputs to [`build_partial_reply`]: the run context, the main turn's events text and the `&mut`
+/// secondary state, the timeout/stall/kick/usable flags, the main wall and outcome/thread, and any
+/// budget-stop text. Borrows and the `&mut` slot are moved in.
+struct PartialReply<'a> {
+    ctx: &'a Context,
+    main_events_text: &'a str,
+    sec: &'a mut Secondary,
     main_timed_out: bool,
     main_wall: f64,
     // (wave 26b) extra context: a stall kill, an operator kick, whether the run is usable, the
@@ -8709,11 +8826,26 @@ fn build_partial_reply(
     stall: bool,
     run_kicked: bool,
     usable: bool,
-    bridge_outcome: &str,
-    main_thread: &str,
+    bridge_outcome: &'a str,
+    main_thread: &'a str,
     // (wave 8 = plugin wave 30, T15) the main turn was stopped at the quota budget: its stop text
-    budget_stop: Option<&str>,
-) {
+    budget_stop: Option<&'a str>,
+}
+
+fn build_partial_reply(args: PartialReply) {
+    let PartialReply {
+        ctx,
+        main_events_text,
+        sec,
+        main_timed_out,
+        main_wall,
+        stall,
+        run_kicked,
+        usable,
+        bridge_outcome,
+        main_thread,
+        budget_stop,
+    } = args;
     let killed_partial = (main_timed_out && !sec.continued)
         || sec.continue_killed
         || sec.repair_killed
@@ -9127,27 +9259,52 @@ pub(crate) fn fmt_wall(w: f64) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_handoff(
-    ctx: &Context,
-    bridge_outcome: &str,
+/// Inputs to [`render_handoff`]: the run context and outcome/wall/usage, the thread identity, the
+/// structured reply and finding ids, the validation/provider failure, the raw text and drift, the
+/// secondary state, the main turn's error/stderr, the prior blockers and any verdict warning.
+/// Borrowed so the caller passes without cloning.
+struct RenderHandoff<'a> {
+    ctx: &'a Context,
+    bridge_outcome: &'a str,
     wall: f64,
-    usage: &Option<Usage>,
-    thread: &str,
-    thread_source: &str,
-    thread_candidate: &str,
-    structured: Option<&StructuredReply>,
-    finding_ids: &[String],
-    validation_error: &str,
-    provider_failure: Option<&c3_core::ledger::ProviderFailure>,
-    raw_text: &str,
-    drift: &Drift,
-    sec: &Secondary,
-    main_event_error: &str,
-    main_stderr: &str,
-    prior_blockers: &[render::PriorBlockerLine],
-    verdict_warning: Option<&str>,
-) -> (String, Option<String>) {
+    usage: &'a Option<Usage>,
+    thread: &'a str,
+    thread_source: &'a str,
+    thread_candidate: &'a str,
+    structured: Option<&'a StructuredReply>,
+    finding_ids: &'a [String],
+    validation_error: &'a str,
+    provider_failure: Option<&'a c3_core::ledger::ProviderFailure>,
+    raw_text: &'a str,
+    drift: &'a Drift,
+    sec: &'a Secondary,
+    main_event_error: &'a str,
+    main_stderr: &'a str,
+    prior_blockers: &'a [render::PriorBlockerLine],
+    verdict_warning: Option<&'a str>,
+}
+
+fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
+    let RenderHandoff {
+        ctx,
+        bridge_outcome,
+        wall,
+        usage,
+        thread,
+        thread_source,
+        thread_candidate,
+        structured,
+        finding_ids,
+        validation_error,
+        provider_failure,
+        raw_text,
+        drift,
+        sec,
+        main_event_error,
+        main_stderr,
+        prior_blockers,
+        verdict_warning,
+    } = args;
     let events_rel = ctx.hf("events.jsonl");
     let spec = c3_core::lineage::engine_spec(&ctx.engine);
     let has_usage = spec.as_ref().map(|s| s.has_usage).unwrap_or(true);
@@ -9806,26 +9963,50 @@ fn brief_reviewed_line(ctx: &Context) -> String {
     format!("{brief_line} {reviewed_line}")
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_entry(
-    ctx: &Context,
-    bridge_outcome: &str,
+/// Inputs to [`build_entry`]: the run context and outcome/wall/usage, the thread identity, the
+/// structured reply and finding ids/counts, the validation/provider failure, the handoff/reply/
+/// events relative paths, the drift, the secondary state and any stall. Borrows are shared; the
+/// owned `provider_failure`/`stall` are moved in.
+struct BuildEntry<'a> {
+    ctx: &'a Context,
+    bridge_outcome: &'a str,
     wall: f64,
-    usage: &Option<Usage>,
-    thread: &str,
-    thread_source: &str,
-    structured: Option<&StructuredReply>,
-    finding_ids: &[String],
-    counts: &FindingCounts,
-    validation_error: &str,
+    usage: &'a Option<Usage>,
+    thread: &'a str,
+    thread_source: &'a str,
+    structured: Option<&'a StructuredReply>,
+    finding_ids: &'a [String],
+    counts: &'a FindingCounts,
+    validation_error: &'a str,
     provider_failure: Option<c3_core::ledger::ProviderFailure>,
-    handoff_rel: &str,
-    reply_json_rel: &str,
-    events_rel: &str,
-    drift: &Drift,
-    sec: &Secondary,
+    handoff_rel: &'a str,
+    reply_json_rel: &'a str,
+    events_rel: &'a str,
+    drift: &'a Drift,
+    sec: &'a Secondary,
     stall: Option<c3_core::ledger::Stall>,
-) -> LedgerEntry {
+}
+
+fn build_entry(args: BuildEntry) -> LedgerEntry {
+    let BuildEntry {
+        ctx,
+        bridge_outcome,
+        wall,
+        usage,
+        thread,
+        thread_source,
+        structured,
+        finding_ids,
+        counts,
+        validation_error,
+        provider_failure,
+        handoff_rel,
+        reply_json_rel,
+        events_rel,
+        drift,
+        sec,
+        stall,
+    } = args;
     let mut e = LedgerEntry {
         n: ctx.consult_n,
         when: iso_now(),
