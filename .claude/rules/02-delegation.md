@@ -3,7 +3,7 @@
 ## OPERATING MODE
 The flagship main session is the most expensive tier. Its job is **decisions**:
 understand the task, make architecture/security calls, brief workers, review their
-reports, integrate, and call `eck_finish_task`. Execution goes down-tier by default.
+reports, integrate, and call `c3_finish_task`. Execution goes down-tier by default.
 (If the main session is Opus/Sonnet instead, delegation is about context isolation, not
 cost: fan out separable chunks, do single sequential chunks yourself.)
 
@@ -45,5 +45,5 @@ choices you'd want to review → opus-worker. If the choices ARE the task → yo
 - Never delegate one-liners, renames, or quick lookups — the spawn costs more.
 
 ## AFTER WORKERS RETURN
-Review their reports, integrate, and decide next steps yourself. `eck_finish_task`
+Review their reports, integrate, and decide next steps yourself. `c3_finish_task`
 stays a **supervisor-only** action — workers never call it.

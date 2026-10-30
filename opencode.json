@@ -1,15 +1,4 @@
 {
-  "mcp": {
-    "eck-core": {
-      "type": "local",
-      "command": [
-        "node",
-        "C:\\Users\\Dmytro\\eckSnapshot\\scripts\\mcp-eck-core.js"
-      ],
-      "enabled": true,
-      "timeout": 30000
-    }
-  },
   "instructions": [
     "AGENTS.md"
   ],

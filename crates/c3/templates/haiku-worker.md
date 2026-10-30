@@ -27,5 +27,5 @@ Rules of engagement:
 - Keep the noise in YOUR context: big file reads and full command output stay here
   and never reach the supervisor.
 - Return a TIGHT factual report. No large dumps.
-- In eckSnapshot-managed workspaces, do NOT call eck_finish_task — starting/finishing
+- In C3-managed workspaces, do NOT call c3_finish_task — starting/finishing
   the overall task is supervisor-only.
