@@ -368,6 +368,7 @@ impl HttpReviewer {
             endpoint: None,
             // Recomputed by the loader's `Roster::apply_inactive` after this entry is appended.
             inactive: false,
+            unknown_engine: false,
         }
     }
 }

@@ -118,6 +118,12 @@ pub struct RosterEntry {
     /// the roster positions stay stable - an inactive entry keeps its position. Invisible to the
     /// plugin (`ext` is a free-form object there).
     pub inactive: bool,
+    /// (C3-only) The entry's `engine` is a syntactically valid engine name
+    /// (`^[a-z][a-z0-9-]{0,31}$`) that this c3 build does not know - a half-upgraded machine
+    /// reading a roster written by a newer one. The entry is parsed (so the roster still loads)
+    /// but kept `inactive` and skips every engine-specific check (model requirement,
+    /// `codex_config`/`auth` rules) that would otherwise refuse it.
+    pub unknown_engine: bool,
 }
 
 /// The roster (`Read-ReviewerRoster`'s result).
@@ -145,6 +151,10 @@ pub struct Roster {
     /// item`; the matched entries carry [`RosterEntry::inactive`]. Invisible to the plugin (`ext`
     /// is validated as an object only). Populated by [`validate_roster`].
     pub inactive: Vec<String>,
+    /// (C3-only) Non-fatal roster warnings - currently just the one per entry whose `engine`
+    /// this build does not know ([`RosterEntry::unknown_engine`]). The roster still loads; these
+    /// are surfaced by `c3 providers` as `warning: ...` lines.
+    pub warnings: Vec<String>,
     pub error: String,
 }
 
@@ -167,7 +177,8 @@ impl Roster {
     pub fn apply_inactive(&mut self) {
         for e in self.entries.iter_mut() {
             e.inactive = (!e.plan.is_empty() && self.inactive.iter().any(|i| i == &e.plan))
-                || self.inactive.iter().any(|i| i == &e.provider);
+                || self.inactive.iter().any(|i| i == &e.provider)
+                || e.unknown_engine;
         }
     }
 }
@@ -836,11 +847,26 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             // engine
             let mut engine = "codex".to_string();
             let mut engine_declared = false;
+            let mut unknown_engine = false;
             if let Some(ev) = iobj.get("engine") {
+                static ENGINE_NAME_RE: std::sync::OnceLock<regex::Regex> =
+                    std::sync::OnceLock::new();
                 match ev.as_str() {
                     Some(s) if ENGINE_NAMES.contains(&s) => {
                         engine = s.to_string();
                         engine_declared = true;
+                    }
+                    Some(s)
+                        if ENGINE_NAME_RE
+                            .get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9-]{0,31}$").unwrap())
+                            .is_match(s) =>
+                    {
+                        engine = s.to_string();
+                        engine_declared = true;
+                        unknown_engine = true;
+                        r.warnings.push(format!(
+                            "entry {pos}: engine \"{s}\" is unknown to this c3 build - entry skipped (upgrade c3 to use it)"
+                        ));
                     }
                     _ => {
                         why = format!(
@@ -852,58 +878,64 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                     }
                 }
             }
-            if engine != "codex" {
-                if model.is_empty() {
+            // (C3-only) an unknown-but-well-formed engine name (a half-upgraded machine reading a
+            // roster written by a newer c3) skips every engine-specific check below - they would
+            // refuse an entry this build simply does not recognize yet. The entry is still parsed
+            // and kept (as `inactive`) so the rest of the roster loads.
+            let mut entry_endpoint: Option<crate::claude::ClaudeEndpoint> = None;
+            if !unknown_engine {
+                if engine != "codex" {
+                    if model.is_empty() {
+                        why = format!(
+                            "{at}: engine {engine} needs a model (the full model id, e.g. {})",
+                            engine_spec(&engine).map(|s| s.model_example).unwrap_or("")
+                        );
+                        break;
+                    }
+                    if iobj.contains_key("codex_config") {
+                        why = format!("{at}: codex_config does not apply to engine {engine} (it configures codex exec)");
+                        break;
+                    }
+                    if iobj.contains_key("auth") && engine != "claude" {
+                        why = format!("{at}: auth does not apply to engine {engine} (the {engine} CLI keeps its own sign-in)");
+                        break;
+                    }
+                }
+                // (0.6.0, wave 29, item 8, D4) a claude entry: a model of the engine's table; auth
+                // defaults to subscription. (wave 29b, E1, E2) auth endpoint: the `endpoint` object is
+                // REQUIRED (and refused with every other auth and engine), the model the open id pattern.
+                if engine == "claude" {
+                    if auth.is_empty() {
+                        auth = "subscription".into();
+                    }
+                    let mp = crate::claude::model_problem(&model, &auth);
+                    if !mp.is_empty() {
+                        why = format!("{at}: the claude model '{model}' {mp}");
+                        break;
+                    }
+                }
+                if iobj.contains_key("endpoint") && !(engine == "claude" && auth == "endpoint") {
                     why = format!(
-                        "{at}: engine {engine} needs a model (the full model id, e.g. {})",
-                        engine_spec(&engine).map(|s| s.model_example).unwrap_or("")
+                        "{at}: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine {engine}{})",
+                        if engine == "claude" {
+                            format!(", auth {auth}")
+                        } else {
+                            String::new()
+                        }
                     );
                     break;
                 }
-                if iobj.contains_key("codex_config") {
-                    why = format!("{at}: codex_config does not apply to engine {engine} (it configures codex exec)");
-                    break;
-                }
-                if iobj.contains_key("auth") && engine != "claude" {
-                    why = format!("{at}: auth does not apply to engine {engine} (the {engine} CLI keeps its own sign-in)");
-                    break;
-                }
-            }
-            // (0.6.0, wave 29, item 8, D4) a claude entry: a model of the engine's table; auth
-            // defaults to subscription. (wave 29b, E1, E2) auth endpoint: the `endpoint` object is
-            // REQUIRED (and refused with every other auth and engine), the model the open id pattern.
-            let mut entry_endpoint: Option<crate::claude::ClaudeEndpoint> = None;
-            if engine == "claude" {
-                if auth.is_empty() {
-                    auth = "subscription".into();
-                }
-                let mp = crate::claude::model_problem(&model, &auth);
-                if !mp.is_empty() {
-                    why = format!("{at}: the claude model '{model}' {mp}");
-                    break;
-                }
-            }
-            if iobj.contains_key("endpoint") && !(engine == "claude" && auth == "endpoint") {
-                why = format!(
-                    "{at}: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine {engine}{})",
-                    if engine == "claude" {
-                        format!(", auth {auth}")
-                    } else {
-                        String::new()
-                    }
-                );
-                break;
-            }
-            if engine == "claude" && auth == "endpoint" {
-                let Some(ev) = iobj.get("endpoint") else {
-                    why = format!("{at}: auth \"endpoint\" needs an \"endpoint\" object {{\"base_url\": \"https://...\", \"env_key\": \"<VARIABLE NAME>\"}} - the Anthropic-compatible endpoint and the variable that holds its token");
-                    break;
-                };
-                match crate::claude::endpoint_from_value(ev, &plan) {
-                    Ok(ep) => entry_endpoint = Some(ep),
-                    Err(e) => {
-                        why = format!("{at}: {e}");
+                if engine == "claude" && auth == "endpoint" {
+                    let Some(ev) = iobj.get("endpoint") else {
+                        why = format!("{at}: auth \"endpoint\" needs an \"endpoint\" object {{\"base_url\": \"https://...\", \"env_key\": \"<VARIABLE NAME>\"}} - the Anthropic-compatible endpoint and the variable that holds its token");
                         break;
+                    };
+                    match crate::claude::endpoint_from_value(ev, &plan) {
+                        Ok(ep) => entry_endpoint = Some(ep),
+                        Err(e) => {
+                            why = format!("{at}: {e}");
+                            break;
+                        }
                     }
                 }
             }
@@ -952,7 +984,8 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 quota_window_sec,
                 unrestricted,
                 endpoint: entry_endpoint,
-                inactive: false,
+                inactive: unknown_engine,
+                unknown_engine,
             });
         }
     }
@@ -1640,5 +1673,43 @@ mod tests {
             assert!(w.contains(want), "{json}\n{w}");
             assert!(!w.contains("SECRETPW"));
         }
+    }
+
+    #[test]
+    fn unknown_engine_is_skipped_not_refused() {
+        // (half-upgraded machine) a roster written by a newer c3 names an engine this build does
+        // not know yet - the entry is parsed, kept (inactive), and loading goes on with a warning
+        // instead of refusing the whole roster.
+        let r = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"kimi","engine":"zork","model":"m"}]}"##,
+        );
+        assert!(r.error.is_empty());
+        assert_eq!(r.entries.len(), 1);
+        assert!(r.entries[0].unknown_engine);
+        assert!(r.entries[0].inactive);
+        assert_eq!(r.entries[0].engine, "zork");
+        assert_eq!(r.warnings.len(), 1);
+        assert_eq!(
+            r.warnings[0],
+            "entry 1: engine \"zork\" is unknown to this c3 build - entry skipped (upgrade c3 to use it)"
+        );
+    }
+
+    #[test]
+    fn a_non_string_engine_still_refuses() {
+        let w = why(r##"{"roster_version":1,"reviewers":[{"provider":"kimi","engine":5,"model":"m"}]}"##);
+        assert!(
+            w.contains("entry 1: engine must be one of: codex, agy, muse, claude, grok, kimi (got 5)"),
+            "{w}"
+        );
+    }
+
+    #[test]
+    fn unknown_engine_entry_stays_out_of_active_entries() {
+        let r = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"kimi","engine":"zork","model":"m"},{"provider":"openai","model":"gpt-6-astra"}]}"##,
+        );
+        let active: Vec<&str> = r.active_entries().map(|e| e.provider.as_str()).collect();
+        assert_eq!(active, vec!["openai"]);
     }
 }

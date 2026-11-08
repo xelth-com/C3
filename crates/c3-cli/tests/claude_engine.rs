@@ -1172,13 +1172,29 @@ fn the_roster_validates_the_claude_keys() {
         (r#"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-opus-9"}]}"#, "entry 1: the claude model 'claude-opus-9' is not in the claude engine's model table"),
         (r#"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"sonnet","endpoint":{"base_url":"https://a.example/v","env_key":"ABC"}}]}"#, "entry 1: endpoint applies only to engine claude with auth \"endpoint\" (this entry: engine claude, auth subscription)"),
         (r#"{"roster_version":1,"reviewers":[{"provider":"x","engine":"claude","model":"sonnet","auth":"endpoint","endpoint":{"base_url":"https://a.example/v","env_key":"ABC"}}]}"#, "is an Anthropic model id, which the endpoint route cannot carry"),
-        (r#"{"roster_version":1,"reviewers":[{"provider":"g","engine":"gemini-cli","model":"m"}]}"#, "entry 1: engine must be one of: codex, agy, muse, claude, grok, kimi (got \"gemini-cli\")"),
     ];
     for (json, want) in cases {
         let r = e.roster(json);
         let x = e.c3(&["providers"], &[("CODEX_CONSULT_ROSTER", &r)]);
         assert!(text(&x).contains(want), "{json}: {}", text(&x));
     }
+    // (unknown-engine skip) a syntactically valid but unrecognized engine name no longer refuses
+    // the whole roster - the entry is skipped (kept inactive) and `providers` exits 0 with a
+    // warning line instead.
+    let gemini_cli_roster =
+        e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"g","engine":"gemini-cli","model":"m"}]}"#);
+    let gemini_cli_run = e.c3(
+        &["providers"],
+        &[("CODEX_CONSULT_ROSTER", &gemini_cli_roster)],
+    );
+    assert_eq!(gemini_cli_run.status.code(), Some(0), "{}", text(&gemini_cli_run));
+    assert!(
+        text(&gemini_cli_run).contains(
+            "warning: entry 1: engine \"gemini-cli\" is unknown to this c3 build - entry skipped (upgrade c3 to use it)"
+        ),
+        "{}",
+        text(&gemini_cli_run)
+    );
     let ok = e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-opus-5-5[1m]","auth":"subscription","context_tokens":1000000},{"provider":"openai","model":"gpt-5.1"}],"parallel":{"anthropic":2}}"#);
     let j = e.c3(&["providers", "--json"], &[("CODEX_CONSULT_ROSTER", &ok)]);
     assert_eq!(j.status.code(), Some(0), "{}", text(&j));

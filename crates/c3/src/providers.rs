@@ -2159,6 +2159,13 @@ fn print_table(
             ctx.roster.path
         );
     }
+    // (unknown-engine skip) a half-upgraded machine reading a roster written by a newer c3: the
+    // entry is kept inactive rather than refusing the whole roster, and the operator sees why.
+    if with_roster {
+        for w in &ctx.roster.warnings {
+            println!("warning: {w}");
+        }
+    }
 }
 
 fn pad_right(s: String, w: usize) -> String {
@@ -2203,6 +2210,7 @@ fn print_short_json(
         "out": records.iter().filter(|r| r.state == "out").count(),
         "not_checked": records.iter().filter(|r| r.state == "not checked").count(),
         "roster": if roster.exists { Value::String(roster.path.clone()) } else { Value::Null },
+        "warnings": roster.warnings.clone(),
         "entries": entries,
     });
     println!("{}", serde_json::to_string_pretty(&obj).unwrap());
