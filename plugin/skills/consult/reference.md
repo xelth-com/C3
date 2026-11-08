@@ -100,8 +100,14 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   `GROK_CODE_XAI_API_KEY` are stripped from the child (they would bill the API per token) unless
   `C3_GROK_ALLOW_API_KEY=1`; `c3 providers` names the billing route. Reviewer use only (no `c3 work`).
   On a reviewing purpose (`acceptance`, `core-contract`, `diff-review`, `checkpoint`) a primary turn
-  that answers with zero tool calls read no file, so it is failed (class `capability`, no provider
-  outage) with `ask again` rather than recorded as a usable reply. The brief's text is inlined into
+  that answers with zero tool calls read no file, so rather than failing at once the bridge INSISTS:
+  it resumes the same thread with a firm re-ask to read the code, up to `CODEX_CONSULT_READ_INSIST`
+  times (default 2; `0` disables = fail at once). A re-ask that reads the code (tool calls > 0) makes
+  its reply the primary reply (usable); if every re-ask still reads nothing the guard failure stands
+  (class `capability`, no provider outage) with ` after N re-asks`. The handoff header records
+  `Read insist: <n> turn(s), tool calls 0 -> <k>` and the ledger entry gets
+  `read_insist: {attempts, final_tool_calls}`. The reviewing-purpose prompt also carries one
+  mandatory-tool-reading sentence for grok/kimi. The brief's text is inlined into
   a grok prompt only on the OTHER purposes (framing, decision, ...): inlined, grok answered a code
   review without opening a file (0 of 0 tool calls, 2 of 2 runs); pointed at the file, it read the
   code (59 tool calls).
@@ -120,7 +126,8 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   handoff header's `Isolation:` line records the path and HEAD sha, and notes when the main tree was
   dirty at launch). The strict tree check on the MAIN tree stays as the second guard: any
   working-tree or collab change there FAILS the run (stricter than grok/muse, which only warn). The
-  same zero-tool-call review guard as grok applies on the reviewing purposes. Reviewer use only (no
+  same zero-tool-call review guard as grok applies on the reviewing purposes, including the
+  read-insist re-ask (`CODEX_CONSULT_READ_INSIST`) before the guard fails. Reviewer use only (no
   `c3 work`).
 - **`http`** — an OpenAI-compatible `chat/completions` request built from a reviewer pack; no
   CLI, no subscription, no tools (OpenRouter by default). Wired via `setup-providers` section

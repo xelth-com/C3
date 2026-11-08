@@ -39,6 +39,11 @@ OpenRouter panel with an advisory judge, and the T-hub telemetry client.
    engine is the exception that proves the rule: Moonshot's CLI has no tool-restriction flag in `-p` mode and will execute
    writes, so c3 runs every kimi turn with its cwd set to a throwaway detached git worktree of HEAD (removed after the run;
    the handoff's `Isolation:` line records it), and the strict tree check on the main tree stays as the second guard.
+   Engines that count tool calls (grok, kimi) must read the code on a reviewing purpose: a primary turn with zero tool calls
+   cannot have checked anything, so the bridge resumes the same thread with a firm re-ask ("read the code, then answer again")
+   up to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` = fail at once). A re-ask that reads the code makes its reply the
+   primary reply; otherwise the `capability` guard failure stands with ` after N re-asks`. The handoff records
+   `Read insist: <n> turn(s), tool calls 0 -> <k>` and the ledger entry `read_insist: {attempts, final_tool_calls}`.
 3. **C3 never commits.** `git add`/`commit` and the eck finish loop stay with the coordinator and eckSnapshot.
 4. **Keys.** C3 reads a credential from the environment only for the `http` engine, never prints, stores, commits or
    transmits it anywhere but to that provider, redacts every error string, and refuses an API key where a subscription

@@ -302,6 +302,9 @@ pub enum TurnKind {
     DenialRetry,
     /// A repair turn that converts a prose reply into the structured object.
     FormatRepair,
+    /// (C3) A re-ask turn after a reviewing-purpose primary turn answered with zero tool calls:
+    /// the same thread is resumed with a firm insist to read the code before answering again.
+    ReadInsist,
 }
 
 /// How a continuation reaches the engine (F02-10/F04-7): a native thread resume, or - for

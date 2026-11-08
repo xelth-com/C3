@@ -1363,6 +1363,7 @@ fn turn_label(kind: c3_core::engine::TurnKind) -> Option<&'static str> {
         c3_core::engine::TurnKind::FormatRepair => Some("format-repair"),
         c3_core::engine::TurnKind::TimeoutContinuation => Some("retry"),
         c3_core::engine::TurnKind::DenialRetry => Some("denial-retry"),
+        c3_core::engine::TurnKind::ReadInsist => Some("read-insist"),
     }
 }
 

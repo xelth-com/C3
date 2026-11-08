@@ -35,6 +35,16 @@ pub(crate) fn format_repair_prompt(consult_id: &str) -> String {
     )
 }
 
+/// (C3) The read-insist re-ask prompt for one turn: a reviewing-purpose primary turn that answered
+/// with zero tool calls is re-asked on the same thread. `attempt` is the 1-based attempt number
+/// (carried for the caller's accounting; the insist text itself is the same each time). Shared by
+/// every engine that counts tool calls (grok, kimi).
+pub(crate) fn read_insist_prompt(consult_id: &str, _attempt: usize) -> String {
+    format!(
+        "Your reply is rejected: you read no file (0 tool calls). This is a code review; a verdict without reading the code is worthless. Before answering again, run `git diff <range> --stat` (the range is in the brief) and read the changed hunks of each path with your file-reading tool, one path at a time; where the brief names documents, read them too. Then answer again, in full, in the required format. A second reply without tool calls will be discarded.\r\n\r\nConsultation id: {consult_id}"
+    )
+}
+
 /// Run one secondary turn (`resume <thread>`) through the selected engine and return its outcome
 /// and measured wall. For a muse turn the prompt is written to a fresh temp `--prompt-file`.
 /// Inputs to [`run_codex_secondary`]: the run context and turn kind, the sandbox/effort/schema for
@@ -1280,6 +1290,116 @@ pub(super) fn run_engine_denial_retry(args: DenialRetry) {
         if succeeded { "succeeded" } else { "failed" },
         fmt_wall(wall)
     );
+}
+
+/// (C3) The read-insist re-ask (grok/kimi): a reviewing-purpose primary turn that answered with
+/// zero tool calls is resumed up to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` disables =
+/// the zero-tool-call guard fails at once, today's behaviour) with a firm re-ask to read the code.
+/// Each insist turn's OWN tool calls decide: `> 0` makes its reply the primary reply (the usual
+/// prose gate / format repair then apply to IT - `usable` is set and `raw_text` replaced); still
+/// `0` moves to the next attempt, and after the last the guard failure stands with " after N
+/// re-asks". Inputs are the run context and the `&mut` run state the re-ask updates.
+pub(super) struct ReadInsist<'a> {
+    pub(super) ctx: &'a Context,
+    pub(super) sec: &'a mut Secondary,
+    pub(super) bridge_outcome: &'a mut String,
+    pub(super) raw_text: &'a mut String,
+    pub(super) usage: &'a mut Option<Usage>,
+    pub(super) thread: &'a mut String,
+    pub(super) thread_source: &'a mut String,
+    pub(super) usable: &'a mut bool,
+    pub(super) engine_pf: &'a mut Option<c3_core::ledger::ProviderFailure>,
+    pub(super) forced_class: &'a mut String,
+}
+
+pub(super) fn run_read_insist(args: ReadInsist) {
+    let ReadInsist {
+        ctx,
+        sec,
+        bridge_outcome,
+        raw_text,
+        usage,
+        thread,
+        thread_source,
+        usable,
+        engine_pf,
+        forced_class,
+    } = args;
+    // Max attempts from the environment (default 2; 0 disables = the guard fails at once as today).
+    let max = std::env::var("CODEX_CONSULT_READ_INSIST")
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .unwrap_or(2);
+    if max == 0 || thread.is_empty() {
+        return;
+    }
+    // The guard's own failure text; " after N re-asks" is appended if every re-ask also read nothing.
+    let guard_outcome = bridge_outcome.clone();
+    let timeout = ctx.r.timeout_sec.min(600);
+    let mut insist_thread = thread.clone();
+    let mut final_tool_calls: usize = 0;
+    let mut attempt = 0usize;
+    let mut rescued = false;
+    while attempt < max {
+        attempt += 1;
+        let prompt = read_insist_prompt(&ctx.consult_id, attempt);
+        let suffix = format!("read-insist-{attempt}.events.jsonl");
+        let (outcome, det, _wall, events_rel) = run_engine_secondary(
+            ctx,
+            TurnKind::ReadInsist,
+            &insist_thread,
+            &prompt,
+            &suffix,
+            timeout as f64,
+        );
+        sec.engine_turns += 1;
+        sec.claude_turns.extend(det.claude.clone());
+        if !events_rel.is_empty() {
+            sec.read_insist_events.push(events_rel);
+        }
+        final_tool_calls = det.tool_calls;
+        match outcome {
+            AttemptOutcome::Completed(reply) => {
+                let rt = match &reply.conversation {
+                    c3_core::engine::ConversationTrust::Verified(c)
+                    | c3_core::engine::ConversationTrust::Candidate(c) => c.0.clone(),
+                    _ => String::new(),
+                };
+                if !rt.is_empty() {
+                    insist_thread = rt.clone();
+                }
+                if det.tool_calls > 0 {
+                    // Rescued: this re-ask read the code - treat its reply as the primary reply.
+                    *usable = true;
+                    *raw_text = reply.raw_text.clone();
+                    *usage = reply.usage.clone();
+                    if !rt.is_empty() {
+                        *thread = rt;
+                        *thread_source = "events".to_string();
+                    }
+                    *bridge_outcome = "usable reply".to_string();
+                    *engine_pf = None;
+                    *forced_class = String::new();
+                    rescued = true;
+                    break;
+                }
+                // Still zero tool calls: move to the next attempt.
+            }
+            _ => {
+                // The insist turn itself failed (a provider error / a timeout): stop re-asking; the
+                // guard failure stands (with the re-ask count below).
+                break;
+            }
+        }
+    }
+    if !rescued {
+        *bridge_outcome = format!("{guard_outcome} after {attempt} re-asks");
+    }
+    sec.read_insist = Some(c3_core::ledger::ReadInsist {
+        attempts: attempt as i64,
+        final_tool_calls: final_tool_calls as i64,
+        ..Default::default()
+    });
 }
 
 /// Inputs to [`build_partial_reply`]: the run context, the main turn's events text and the `&mut`

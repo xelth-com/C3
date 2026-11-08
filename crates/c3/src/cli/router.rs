@@ -264,7 +264,11 @@ fn run_explain(args: ExplainArgs) -> i32 {
             .map(|p| format!("{}/{}/{:.1}/{:.2}", p.prior_basis, p.support, p.m, p.mean))
             .unwrap_or_else(|| "-".to_string());
         let key = crate::budget::budget_key(e);
-        let mult = budget_mults.get(&key).copied().unwrap_or(1.0);
+        let mult = crate::budget::effective_multiplier(
+            scored.base.score,
+            crate::panel::routing::ROUTING_NEUTRAL,
+            budget_mults.get(&key).copied().unwrap_or(1.0),
+        );
         let budget_cell = budget_cells
             .get(&key)
             .map(|(_, cell)| cell.clone())

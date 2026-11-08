@@ -209,6 +209,7 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
         schema_transport_source: ctx.transport.source.clone(),
         validation_error: validation_error.to_string(),
         format_retry: sec.format_retry.clone(),
+        read_insist: sec.read_insist.clone(),
         denial_retry: sec.denial_retry.clone(),
         timeout_continue: sec.timeout_continue.clone(),
         // (wave 26b, D12) the stall kill's `{seconds, last_event}`, else `null` in position.

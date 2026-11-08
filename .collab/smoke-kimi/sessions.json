@@ -1,0 +1,169 @@
+{
+    "task_id":  "smoke-kimi",
+    "cwd":  "C:\\Users\\Dmytro\\C3",
+    "codex":  {
+                  "tool":  "codex-cli 0.155.1",
+                  "consults":  [
+                                   {
+                                       "n":  1,
+                                       "when":  "2026-11-08T21:59:34+01:00",
+                                       "purpose":  "chore",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "6d7e9a50-9ba5-4342-851d-e7b710a894b7",
+                                       "consult_ref":  "39bec201-b4d4-43e3-bf79-c329625163aa",
+                                       "reviewer":  {
+                                                        "provider":  "kimi",
+                                                        "provider_source":  "-Provider",
+                                                        "model":  "kimi-code/k3.1-pro",
+                                                        "model_source":  "-Model",
+                                                        "engine":  "kimi",
+                                                        "harness":  "kimi-cli (version unknown)",
+                                                        "provider_fingerprint":  "282da20c8e15fa3b2e3d94d02c27980b0bfa790097f334cf219708a6ddf6990b",
+                                                        "provider_config":  {
+                                                                                "engine":  "kimi",
+                                                                                "launcher":  "C:\\Users\\Dmytro\\.kimi-code\\bin\\kimi.exe"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "kimi :: kimi-code/k3.1-pro",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: signed in (~/.kimi-code/credentials) - Kimi Code plan (managed oauth)",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\.codex\\codex-consult-roster.json",
+                                                      "position":  10,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "engine"
+                                                                  ]
+                                                  },
+                                       "panel":  null,
+                                       "parent_thread":  "",
+                                       "thread":  "session_92fac7ee-750d-4399-a64f-1d35327ff162",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "kimi -p Your brief is the file C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-prompt-f7829a5ca76b4f2b96bb6e87828f54c1.txt. Read it completely first, then follow it; answer in the format it requires. --output-format stream-json -m kimi-code/k3.1-pro",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  "",
+                                       "range":  null,
+                                       "prompt_chars":  778,
+                                       "reply":  "handoffs/01-kimi-reply.md",
+                                       "reply_json":  "",
+                                       "events":  "handoffs/01-kimi-reply.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "kimi-code/k3.1-pro",
+                                       "effort":  null,
+                                       "effort_requested":  "low",
+                                       "effort_sent":  null,
+                                       "effort_mapping":  "model-tier",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  400,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  600,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  600,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-08T21:59:34+01:00",
+                                       "structured":  false,
+                                       "schema":  "",
+                                       "schema_transport":  "",
+                                       "schema_transport_source":  "",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "f686a1e45d41d89b11a1163b5a725c5dc3c13a56",
+                                       "reviewed_revision":  "f686a1e + uncommitted",
+                                       "tree_sha256":  "d3344bded37ebead09be63fedcec8208391574c07cbf4010d4be26557fb1d0fd",
+                                       "tree_sha256_after":  "d3344bded37ebead09be63fedcec8208391574c07cbf4010d4be26557fb1d0fd",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  23,
+                                       "brief_sha256":  "",
+                                       "brief_sha256_after":  "",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (12 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+
+                                                    ],
+                                       "verdict":  "",
+                                       "verdict_reason":  "",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  0,
+                                                        "minor":  0,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  28.8,
+                                       "finished_at":  "2026-11-08T22:00:22+01:00",
+                                       "commit_wait_ms":  0
+                                   }
+                               ]
+              }
+}

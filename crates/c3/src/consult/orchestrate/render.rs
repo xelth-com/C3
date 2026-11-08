@@ -220,6 +220,14 @@ pub(super) fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
         l.push('.');
         records.engine_turns = Some(l);
     }
+    // (C3) Read insist line (grok/kimi): a reviewing-purpose primary turn that read no file was
+    // re-asked on the same thread.
+    if let Some(ri) = &sec.read_insist {
+        records.read_insist = Some(format!(
+            "Read insist: {} turn(s), tool calls 0 -> {}.",
+            ri.attempts, ri.final_tool_calls
+        ));
+    }
     // (16) Denial retry line (agy).
     if let Some(dr) = &sec.denial_retry {
         records.denial_retry = Some(if dr.succeeded {
@@ -409,6 +417,8 @@ pub(super) fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
             further_turns.push(e.clone());
         }
     }
+    // (C3) the read-insist re-ask turns' event streams.
+    further_turns.extend(sec.read_insist_events.iter().cloned());
     further_turns.extend(sec.continue_events_rel.iter().cloned());
     if let Some(e) = &sec.repair_events_rel {
         further_turns.push(e.clone());

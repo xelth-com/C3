@@ -75,8 +75,9 @@ use member::{
 use render::{render_handoff, RenderHandoff};
 pub(crate) use secondary::format_repair_prompt;
 use secondary::{
-    build_partial_reply, run_engine_denial_retry, run_format_repair, run_timeout_continuation,
-    DenialRetry, FormatRepair, PartialReply, TimeoutContinuation,
+    build_partial_reply, run_engine_denial_retry, run_format_repair, run_read_insist,
+    run_timeout_continuation, DenialRetry, FormatRepair, PartialReply, ReadInsist,
+    TimeoutContinuation,
 };
 use tree::engine_tree_check;
 
@@ -284,6 +285,12 @@ struct Secondary {
     repair_kicked: bool,
     /// The `-ContinueSec` used, for the partial-footer `killed at ...` line.
     repair_timeout: i64,
+    // --- (C3) read insist ---
+    /// The read-insist record `{attempts, final_tool_calls}` when a reviewing-purpose primary turn
+    /// answered with zero tool calls and was re-asked; `None` when no insist ran.
+    read_insist: Option<c3_core::ledger::ReadInsist>,
+    /// The read-insist turns' event streams (one per attempt), for the handoff's further-turns list.
+    read_insist_events: Vec<String>,
     // --- format repair ---
     format_retry: Option<c3_core::ledger::FormatRetry>,
     repaired_ok: bool,
@@ -2406,6 +2413,9 @@ fn build_context(
         context_line: &context_line,
         prev_reply_line: &prev_reply_line,
         reread_line: &prompt::reread_line(context_tokens, &brief_ref, &o.prompt),
+        // (C3) grok/kimi count tool calls: on a reviewing purpose the tool-reading is mandatory
+        // (a zero-tool-call reply is rejected and re-asked). Never for codex (byte-parity).
+        tool_reading_required: code_review && matches!(engine_name.as_str(), "grok" | "kimi"),
     });
 
     // (0.6.0, wave 29, D4) the model the engine's turns send: the roster's on a new thread; on
@@ -3816,6 +3826,7 @@ fn run_primary_turn(
             let run = eng
                 .run_detailed(&turn)
                 .map_err(|e| format!("the grok run could not be planned: {e:?}"))?;
+            // `grok_detail` carries `review_guard`/`tool_calls` (the read-insist inputs).
             Ok((run.outcome, grok_detail(&run.turn)))
         }
         "kimi" => {
@@ -4673,6 +4684,24 @@ fn finish(args: Finish) -> i32 {
             usable: &mut usable,
             forced_class: &mut engine_forced_class,
         });
+        // (C3) Read insist: a reviewing-purpose primary turn that answered with zero tool calls is
+        // re-asked on the same thread (grok/kimi) before the guard fails. The engine already
+        // downgraded the reply to a `capability` failure (usable is false, thread/reply kept); a
+        // re-ask that reads the code makes its reply the primary reply.
+        if detail.review_guard && !usable {
+            run_read_insist(ReadInsist {
+                ctx: &ctx,
+                sec: &mut sec,
+                bridge_outcome: &mut bridge_outcome,
+                raw_text: &mut raw_text,
+                usage: &mut usage,
+                thread: &mut thread,
+                thread_source: &mut thread_source,
+                usable: &mut usable,
+                engine_pf: &mut engine_pf,
+                forced_class: &mut engine_forced_class,
+            });
+        }
     }
 
     // A failed main turn's outcome (`codex-consult.ps1:3840-3847`): `failed: codex exit N`, with

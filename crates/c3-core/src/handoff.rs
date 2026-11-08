@@ -139,6 +139,9 @@ pub struct OptionalRecords {
     pub isolation: Option<String>,
     /// `Warnings: ...`.
     pub warnings: Option<String>,
+    /// (C3) `Read insist: ...`, after the Engine turns line - a reviewing-purpose primary turn
+    /// that answered with zero tool calls was re-asked on the same thread.
+    pub read_insist: Option<String>,
     /// `Denial retry: ...`, immediately before the Timeout line.
     pub denial_retry: Option<String>,
     /// `Timeout continuation: ...`, immediately after the Timeout line.
@@ -265,6 +268,7 @@ impl HandoffHeader {
         push_opt(&mut lines, &r.quota);
         // 14-16.
         push_opt(&mut lines, &r.engine_turns);
+        push_opt(&mut lines, &r.read_insist);
         push_opt(&mut lines, &r.warnings);
         push_opt(&mut lines, &r.denial_retry);
         // 17-20.

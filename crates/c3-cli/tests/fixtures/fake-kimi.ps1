@@ -11,6 +11,8 @@
 #   FAKE_KIMI_REPLY=<file>      the reply text emitted as the final assistant content (first turn)
 #   FAKE_KIMI_RESUME_REPLY=<file>  on a `-S` turn (a continuation): this instead
 #   FAKE_KIMI_TOOLCALL=1        also emit a leading assistant tool-call line (tool_calls > 0)
+#   FAKE_KIMI_RESUME_TOOLCALL=<n>  on a `-S` turn (a read-insist re-ask): emit an assistant line
+#                               carrying n tool_calls (proving the re-ask read the code); 0/unset = none
 #   FAKE_KIMI_SESSION=other     the resume hint names a new session (a resume landed elsewhere);
 #                               =notsession: a non-`session_<uuid>` id
 #   FAKE_KIMI_ERROR=<text>      an `error: <text>` line on stderr; exit 1 (no resume hint)
@@ -111,6 +113,21 @@ if ($env:FAKE_KIMI_TOOLCALL) {
     $tc = [pscustomobject]@{ type = 'function'; id = 'tool_fakeread'; function = [pscustomobject]@{ name = 'Read'; arguments = '{"path":"app.txt"}' } }
     Out-Bytes ((J ([pscustomobject]@{ role = 'assistant'; content = 'Reading app.txt.'; tool_calls = @($tc) })) + "`n")
     Out-Bytes ((J ([pscustomobject]@{ role = 'tool'; tool_call_id = 'tool_fakeread'; content = "1`tone" })) + "`n")
+}
+
+# read-insist: on a `-S` (resume) turn emit an assistant line carrying N tool_calls (a Read each),
+# so the re-ask's tool_calls count is N - the evidence the model read the code this time.
+$rtc = 0
+if ($resume -and $env:FAKE_KIMI_RESUME_TOOLCALL) { $rtc = [int]$env:FAKE_KIMI_RESUME_TOOLCALL }
+if ($rtc -gt 0) {
+    $calls = @()
+    for ($j = 0; $j -lt $rtc; $j++) {
+        $calls += [pscustomobject]@{ type = 'function'; id = "tool_insist_$j"; function = [pscustomobject]@{ name = 'Read'; arguments = '{"path":"app.txt"}' } }
+    }
+    Out-Bytes ((J ([pscustomobject]@{ role = 'assistant'; content = 'Reading the changed files.'; tool_calls = @($calls) })) + "`n")
+    for ($j = 0; $j -lt $rtc; $j++) {
+        Out-Bytes ((J ([pscustomobject]@{ role = 'tool'; tool_call_id = "tool_insist_$j"; content = "1`tone" })) + "`n")
+    }
 }
 
 # the final answer as an assistant content line (no tool_calls).

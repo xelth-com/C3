@@ -131,8 +131,11 @@ left gets a weight below 1. The most constraining window of a plan governs.
   for 5 minutes; `network == false` (`providers --no-network`, MCP `no_network`) reads cache / snapshot
   only.
 - **Multiplier.** Per window `h = (1 - used_ratio) / max(1 - elapsed_ratio, 0.05)`,
-  `m_w = clamp(h, 0.25, 3.0)`; the plan multiplier is the **minimum** over the non-stale windows. No
-  windows → 1.0. A snapshot older than 7 days is `stale` (shown but ignored for the multiplier).
+  `m_w = clamp(h, 0.25, 2.0)`; the plan multiplier is the **minimum** over the non-stale windows. No
+  windows → 1.0. An idle plan at most doubles a seat, and it never boosts a lineage whose usefulness
+  score is below neutral (`budget::effective_multiplier`: the ratings say that reviewer is worse than
+  an unknown one, so its free quota is not worth seats - Grok 2026-11-08: 3 % of its week used after
+  30 consultations because it answered without reading); penalties always apply. A snapshot older than 7 days is `stale` (shown but ignored for the multiplier).
   `CODEX_CONSULT_BUDGET_ROUTING=off` pins every multiplier to 1.0.
 - **Draw.** `panel/plan.rs` weighs `score * m_plan` for the routed draw; the per-member multiplier is
   recorded in `panel.routing` (`budget_mult` on each `eligible`/`picked` row, present only when ≠ 1.0, so

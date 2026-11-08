@@ -13,6 +13,8 @@
 #   turn (--prompt-file):
 #   FAKE_GROK_REPLY=<file>      the reply text emitted as text events (first turn)
 #   FAKE_GROK_RESUME_REPLY=<file>  on a --resume turn (a format-repair / continuation): this instead
+#   FAKE_GROK_RESUME_TOOL_CALLS=<n>  on a --resume turn (a read-insist re-ask): emit n tool_call
+#                               events (proving the re-ask read the code); 0/unset = none
 #   FAKE_GROK_SESSION=other     the end names a new session (a resume landed elsewhere);
 #                               =notuuid: a non-uuid session id
 #   FAKE_GROK_ERROR=<text>      an error event with that message; exit 1 (no end), a start failure
@@ -105,6 +107,16 @@ if ($replyFile -and (Test-Path $replyFile)) { $reply = [IO.File]::ReadAllText($r
 
 # an optional thought, then the reply split across two text events (the bridge concatenates them).
 Out-Bytes ((J ([pscustomobject]@{ type = 'thought'; data = 'thinking about it' })) + "`n")
+
+# read-insist: on a --resume turn emit N tool_call events (a read_file + its completed update each),
+# so the re-ask's tool_calls count is N - the evidence the model read the code this time.
+$rtc = 0
+if ($resume -and $env:FAKE_GROK_RESUME_TOOL_CALLS) { $rtc = [int]$env:FAKE_GROK_RESUME_TOOL_CALLS }
+for ($j = 0; $j -lt $rtc; $j++) {
+    $cid = "insist-$j"
+    Out-Bytes ((J ([pscustomobject]@{ type = 'tool_call'; toolCallId = $cid; toolName = 'read_file'; status = 'pending' })) + "`n")
+    Out-Bytes ((J ([pscustomobject]@{ type = 'tool_call_update'; toolCallId = $cid; status = 'completed' })) + "`n")
+}
 if ($reply.Length -gt 1) {
     $mid = [int][Math]::Floor($reply.Length / 2)
     Out-Bytes ((J ([pscustomobject]@{ type = 'text'; data = $reply.Substring(0, $mid) })) + "`n")

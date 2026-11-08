@@ -373,6 +373,78 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
     );
 }
 
+// --------------------------------------------------- the read-insist re-ask (zero tool calls)
+
+#[test]
+fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
+    // The primary acceptance turn answers with 0 tool calls (the guard fires); the read-insist
+    // re-ask resumes the SAME session and reads 2 files, so its reply becomes the primary reply.
+    let e = setup("insist-rescue");
+    let o = e.consult(
+        &[
+            "--engine", "kimi", "--model", "kimi-code/k3", "--purpose", "acceptance",
+        ],
+        &[("FAKE_KIMI_RESUME_TOOLCALL", "2")],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "the re-ask rescued the run: {last}"
+    );
+    assert_eq!(last["structured"], true);
+    assert_eq!(last["read_insist"]["attempts"], 1, "one re-ask: {last}");
+    assert_eq!(last["read_insist"]["final_tool_calls"], 2, "it read 2 files: {last}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 2, "primary + one re-ask: {:?}", turns);
+    assert!(turns[0]["resume"].as_str().unwrap_or("").is_empty());
+    assert!(
+        is_session(turns[1]["resume"].as_str().unwrap_or("")),
+        "the re-ask resumes the session: {:?}",
+        turns[1]
+    );
+    let handoff = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("01-kimi-reply.md"),
+    )
+    .unwrap_or_default();
+    assert!(
+        handoff.contains("Read insist: 1 turn(s), tool calls 0 -> 2"),
+        "the handoff records the read-insist line: {handoff}"
+    );
+}
+
+#[test]
+fn read_insist_fails_after_two_re_asks_when_the_model_keeps_reading_nothing() {
+    // The primary and both re-asks all read 0 files: after the last the guard failure stands with
+    // " after 2 re-asks".
+    let e = setup("insist-stubborn");
+    let o = e.consult(
+        &[
+            "--engine", "kimi", "--model", "kimi-code/k3", "--purpose", "acceptance",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.contains("0 tool calls") && outcome.contains("after 2 re-asks"),
+        "a stubborn reviewer fails after 2 re-asks: {outcome}\n{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "capability");
+    assert_eq!(last["read_insist"]["attempts"], 2, "two re-asks: {last}");
+    assert_eq!(last["read_insist"]["final_tool_calls"], 0);
+    assert_eq!(e.turns().len(), 3, "primary + 2 re-asks: {:?}", e.turns());
+}
+
 // ------------------------------------------------------------------ the resume path
 
 #[test]

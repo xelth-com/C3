@@ -125,6 +125,12 @@ pub(super) struct EngineDetail {
     pub(super) thread: String,
     /// The reply text the turn produced, even on a failure (kept as `.reply.json`).
     pub(super) reply: String,
+    /// (C3, grok/kimi only) The number of tool calls the turn made - the review guard's input and
+    /// the read-insist decision; `0` for engines that do not count tool calls.
+    pub(super) tool_calls: usize,
+    /// (C3, grok/kimi only) The zero-tool-call review guard fired on this PRIMARY turn (the reply
+    /// was otherwise usable but read no file): the orchestrator runs the read-insist re-ask.
+    pub(super) review_guard: bool,
     /// The turn's warnings (denial notices, engine warnings).
     pub(super) warnings: Vec<String>,
     /// The MSP schema version of a muse stream (`None` for agy).
@@ -260,6 +266,8 @@ pub(super) fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
+        tool_calls: 0,
+        review_guard: false,
         warnings: t.warnings.clone(),
         msp_schema_version: None,
         http_provider_config: None,
@@ -284,6 +292,8 @@ pub(super) fn claude_detail(r: &crate::engines::claude::ClaudeRun) -> EngineDeta
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
+        tool_calls: 0,
+        review_guard: false,
         warnings: t.warnings.clone(),
         msp_schema_version: None,
         http_provider_config: None,
@@ -335,6 +345,8 @@ pub(super) fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
+        tool_calls: 0,
+        review_guard: false,
         warnings: t.warnings.clone(),
         msp_schema_version: None,
         http_provider_config: None,
@@ -357,6 +369,8 @@ pub(super) fn grok_detail(t: &crate::engines::grok::GrokTurn) -> EngineDetail {
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
+        tool_calls: t.tool_calls,
+        review_guard: t.review_guard_fired,
         warnings: t.warnings.clone(),
         msp_schema_version: None,
         http_provider_config: None,
@@ -379,6 +393,8 @@ pub(super) fn kimi_detail(t: &crate::engines::kimi::KimiTurn) -> EngineDetail {
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
+        tool_calls: t.tool_calls,
+        review_guard: t.review_guard_fired,
         warnings: t.warnings.clone(),
         msp_schema_version: None,
         http_provider_config: None,

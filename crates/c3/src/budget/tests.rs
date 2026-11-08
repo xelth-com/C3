@@ -171,3 +171,35 @@ fn providers_cell_openai_and_snapshot_styles() {
     assert!(cell.starts_with("mo 14% until "), "cell = {cell}");
     assert!(cell.contains("(seen 3d ago)"), "cell = {cell}");
 }
+
+#[test]
+fn effective_multiplier_never_boosts_a_below_neutral_lineage() {
+    let neutral = 1.125;
+    // below neutral + idle plan -> no boost
+    assert_eq!(effective_multiplier(0.95, neutral, 2.0), 1.0);
+    // below neutral + hot plan -> the penalty still applies
+    assert_eq!(effective_multiplier(0.95, neutral, 0.5), 0.5);
+    // at / above neutral -> the plan multiplier as is
+    assert_eq!(effective_multiplier(1.125, neutral, 1.45), 1.45);
+    assert_eq!(effective_multiplier(1.9, neutral, 0.4), 0.4);
+}
+
+#[test]
+fn an_idle_plan_at_most_doubles() {
+    assert_eq!(ROUTING_BUDGET_MAX, 2.0);
+}
+
+#[test]
+fn a_snapshot_whose_window_already_reset_is_stale() {
+    let now = Utc::now();
+    let v = serde_json::json!({
+        "window": "week", "used_ratio": 0.03,
+        "resets_at": (now - chrono::Duration::hours(2)).to_rfc3339(),
+        "observed_at": (now - chrono::Duration::days(1)).to_rfc3339(),
+        "period_days": 7
+    });
+    let w = window_from_snapshot("supergrok", &v, now).expect("window");
+    assert!(w.stale, "a rolled-over snapshot must not drive the multiplier");
+    assert_eq!(budget_multiplier(&[w.clone()]).0, 1.0);
+    assert!(providers_quota_cell(&[w], now).contains("window reset since - refresh"));
+}

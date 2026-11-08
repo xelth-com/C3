@@ -149,7 +149,15 @@ pub struct PromptInputs<'a> {
     /// (wave 28c D11, 28d D7, 28e E4) the re-read anchor ([`reread_line`]), the last line before
     /// the consultation id; empty otherwise.
     pub reread_line: &'a str,
+    /// (C3) An engine that COUNTS tool calls (grok, kimi) on a reviewing purpose: one extra sentence
+    /// after the purpose paragraph makes the tool-reading mandatory (a zero-tool-call reply is
+    /// rejected and re-asked). Never set for codex (byte-parity) or an engine that counts no tools.
+    pub tool_reading_required: bool,
 }
+
+/// (C3) The mandatory tool-reading sentence appended to a reviewing-purpose prompt for an engine
+/// that counts tool calls (grok, kimi): a reply that read no file is rejected and re-asked.
+pub const TOOL_READING_MANDATORY: &str = "Mandatory: this reply is accepted only if you read the code with your tools first; a reply without tool calls is rejected and re-asked.";
 
 const NL: &str = "\r\n";
 
@@ -208,11 +216,13 @@ pub fn assemble(inp: &PromptInputs) -> String {
         ));
     } else {
         if !inp.purpose.is_empty() {
-            parts.push(format!(
-                "Review purpose: {}. {}",
-                inp.purpose,
-                presets::text(inp.purpose)
-            ));
+            let mut p = format!("Review purpose: {}. {}", inp.purpose, presets::text(inp.purpose));
+            // (C3) an engine that counts tool calls is told the tool-reading is mandatory.
+            if inp.tool_reading_required {
+                p.push(' ');
+                p.push_str(TOOL_READING_MANDATORY);
+            }
+            parts.push(p);
         }
         if !inp.open_findings.is_empty() {
             parts.push(render_open_findings(inp.open_findings));
@@ -336,6 +346,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         context_line: "",
         prev_reply_line: "",
         reread_line: "",
+        tool_reading_required: false,
     };
     schema_block(&inp)
 }
@@ -398,6 +409,7 @@ mod tests {
             context_line: "",
             prev_reply_line: "",
             reread_line: "",
+            tool_reading_required: false,
         }
     }
 

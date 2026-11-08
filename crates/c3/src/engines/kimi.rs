@@ -394,6 +394,8 @@ impl KimiEngine {
         if is_primary && t.ok {
             if let Some((why, class)) = kimi_review_tool_guard(&self.purpose, events.tool_calls) {
                 fail(&mut t, &why, &class, &[]);
+                // (C3) the orchestrator reads this to drive the read-insist re-ask before failing.
+                t.review_guard_fired = true;
             }
         }
         let outcome = to_outcome(&t, files, result.wall_seconds, exit_code);
@@ -612,6 +614,9 @@ pub struct KimiTurn {
     pub structured: bool,
     /// The number of tool calls over the stream (the review guard's input).
     pub tool_calls: usize,
+    /// (C3) The zero-tool-call review guard fired on this PRIMARY turn: the reply was otherwise
+    /// usable but read no file, so the orchestrator may re-ask (read-insist) before failing.
+    pub review_guard_fired: bool,
     pub warnings: Vec<String>,
 }
 

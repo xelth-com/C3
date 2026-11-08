@@ -413,6 +413,122 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
     );
 }
 
+// --------------------------------------------------- the read-insist re-ask (zero tool calls)
+
+#[test]
+fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
+    // The primary acceptance turn answers with 0 tool calls (the guard fires); the read-insist
+    // re-ask resumes the SAME session and reads 2 files, so its reply becomes the primary reply and
+    // the run is usable. The handoff header records the insist.
+    let e = setup("insist-rescue");
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "acceptance",
+        ],
+        &[("FAKE_GROK_RESUME_TOOL_CALLS", "2")],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "the re-ask rescued the run: {last}"
+    );
+    assert_eq!(last["structured"], true);
+    assert_eq!(last["read_insist"]["attempts"], 1, "one re-ask: {last}");
+    assert_eq!(last["read_insist"]["final_tool_calls"], 2, "it read 2 files: {last}");
+    // a primary turn + one insist re-ask on the minted session.
+    let turns = e.turns();
+    assert_eq!(turns.len(), 2, "primary + one re-ask: {:?}", turns);
+    assert!(turns[0]["resume"].as_str().unwrap_or("").is_empty());
+    assert!(
+        is_uuid(turns[1]["resume"].as_str().unwrap_or("")),
+        "the re-ask resumes the session: {:?}",
+        turns[1]
+    );
+    let handoff = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("01-grok-reply.md"),
+    )
+    .unwrap_or_default();
+    assert!(
+        handoff.contains("Read insist: 1 turn(s), tool calls 0 -> 2"),
+        "the handoff records the read-insist line: {handoff}"
+    );
+}
+
+#[test]
+fn read_insist_fails_after_two_re_asks_when_the_model_keeps_reading_nothing() {
+    // The primary and both re-asks all read 0 files: after the last re-ask the guard failure stands
+    // with " after 2 re-asks".
+    let e = setup("insist-stubborn");
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "acceptance",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.contains("0 tool calls") && outcome.contains("after 2 re-asks"),
+        "a stubborn reviewer fails after 2 re-asks: {outcome}\n{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "capability");
+    assert_eq!(last["read_insist"]["attempts"], 2, "two re-asks: {last}");
+    assert_eq!(last["read_insist"]["final_tool_calls"], 0);
+    // primary + 2 insist re-asks = 3 turns.
+    assert_eq!(e.turns().len(), 3, "{:?}", e.turns());
+}
+
+#[test]
+fn read_insist_disabled_fails_on_the_first_turn() {
+    // CODEX_CONSULT_READ_INSIST=0 restores today's behaviour: the guard fails at once, no re-ask.
+    let e = setup("insist-off");
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "acceptance",
+        ],
+        &[("CODEX_CONSULT_READ_INSIST", "0")],
+    );
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.starts_with(
+            "failed: grok answered in one model call without reading any file (0 tool calls)"
+        ) && !outcome.contains("re-asks"),
+        "env 0 fails on the first turn as today: {outcome}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "capability");
+    assert!(
+        last["read_insist"].is_null(),
+        "no read_insist record when disabled: {last}"
+    );
+    assert_eq!(e.turns().len(), 1, "only the primary turn: {:?}", e.turns());
+}
+
 // ------------------------------------------------------------------ the resume path
 
 #[test]

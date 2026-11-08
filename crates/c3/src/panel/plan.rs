@@ -629,6 +629,7 @@ pub fn select_panel_routing_with(
             prior_uses.push(u);
         }
         let score = scored.base;
+        let score_value = score.score;
         seated.push(SeatedMember {
             position: m.entry.position as i64,
             lineage,
@@ -641,11 +642,16 @@ pub fn select_panel_routing_with(
             rule: String::new(),
             slot: 0,
             plan: m.entry.plan.clone(),
-            mult: if m.budget_mult.is_finite() && m.budget_mult > 0.0 {
-                m.budget_mult
-            } else {
-                1.0
-            },
+            // (wave 9) the plan multiplier, but never a boost for a below-neutral lineage.
+            mult: crate::budget::effective_multiplier(
+                score_value,
+                ROUTING_NEUTRAL,
+                if m.budget_mult.is_finite() && m.budget_mult > 0.0 {
+                    m.budget_mult
+                } else {
+                    1.0
+                },
+            ),
         });
     }
 

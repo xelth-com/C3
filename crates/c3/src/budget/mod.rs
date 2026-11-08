@@ -25,8 +25,9 @@ use c3_core::roster::RosterEntry;
 pub const STALE_DAYS: i64 = 7;
 /// The multiplier clamp: a window never pulls a weight below this.
 pub const ROUTING_BUDGET_MIN: f64 = 0.25;
-/// ... nor above this.
-pub const ROUTING_BUDGET_MAX: f64 = 3.0;
+/// ... nor above this: an idle plan at most doubles a seat's weight (a boost is cheaper evidence
+/// than a penalty - the usefulness score still has to carry the seat).
+pub const ROUTING_BUDGET_MAX: f64 = 2.0;
 /// Live readings are cached this long (seconds) so providers / explain / consult do not hit the
 /// network on every call.
 const CACHE_SECS: i64 = 300;
@@ -82,6 +83,17 @@ pub fn budget_multiplier(windows: &[BudgetWindow]) -> (f64, Option<String>) {
         (m, governing)
     } else {
         (1.0, None)
+    }
+}
+
+/// The multiplier that actually scales a seat: a plan's idle quota never BOOSTS a lineage whose
+/// usefulness score sits below `neutral` (the ratings say it is worse than an unknown reviewer, so
+/// its free quota is not worth seats); penalties (`mult < 1`) always apply.
+pub fn effective_multiplier(score: f64, neutral: f64, plan_mult: f64) -> f64 {
+    if plan_mult > 1.0 && score < neutral {
+        1.0
+    } else {
+        plan_mult
     }
 }
 
@@ -386,7 +398,9 @@ fn window_from_snapshot(plan: &str, v: &Value, now: DateTime<Utc>) -> Option<Bud
         Some(d) if d > 0 => (d * 86_400) as f64,
         _ => default_period_secs(&window, resets_at),
     };
-    let stale = (now - observed_at).num_days() > STALE_DAYS;
+    // Stale: observed too long ago, OR the window it describes has already reset (the figure
+    // belongs to a finished period; the new one starts at 0 and only a fresh reading knows it).
+    let stale = (now - observed_at).num_days() > STALE_DAYS || resets_at <= now;
     Some(BudgetWindow {
         plan: plan.to_string(),
         name: window,
@@ -598,7 +612,9 @@ pub fn providers_quota_cell(windows: &[BudgetWindow], now: DateTime<Utc>) -> Str
             let mut s = format!("{label} {pct}% until {until}");
             if w.source == "snapshot" {
                 let days = (now - w.observed_at).num_days().max(0);
-                if w.stale {
+                if w.resets_at <= now {
+                    s.push_str(&format!(" (seen {days}d ago, window reset since - refresh)"));
+                } else if w.stale {
                     s.push_str(&format!(" (seen {days}d ago, stale - refresh)"));
                 } else {
                     s.push_str(&format!(" (seen {days}d ago)"));

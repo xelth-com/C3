@@ -254,6 +254,11 @@ pub struct LedgerEntry {
     /// The format-repair record when a prose reply was converted; else `null`.
     #[serde(default)]
     pub format_retry: Option<FormatRetry>,
+    /// (C3) The read-insist record `{attempts, final_tool_calls}` when a reviewing-purpose primary
+    /// turn answered with zero tool calls and was re-asked on the same thread; absent (no key) when
+    /// no insist happened, so a pre-read-insist entry round-trips byte for byte.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_insist: Option<ReadInsist>,
     /// The denial-retry record (a tool was auto-denied and one more turn was run); `null`
     /// when no retry happened.
     #[serde(default)]
@@ -736,6 +741,20 @@ pub struct FormatRetry {
     pub events: Option<String>,
     #[serde(default)]
     pub schema_transport: String,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+/// (C3) `entry.read_insist`: the read-insist re-ask(s) after a reviewing-purpose primary turn
+/// answered with zero tool calls. `attempts` is how many insist turns ran; `final_tool_calls` is
+/// the tool-call count of the last insist turn (`> 0` = rescued, `0` = still refused after the last
+/// re-ask).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReadInsist {
+    #[serde(default)]
+    pub attempts: i64,
+    #[serde(default)]
+    pub final_tool_calls: i64,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
