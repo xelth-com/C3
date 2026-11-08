@@ -78,7 +78,9 @@ fn replay_one(n: i64, routing: &PanelRouting) -> Option<String> {
         .map(|e| Candidate {
             position: e.position,
             lab: e.lab.clone(),
-            weight: e.score,
+            // (wave 9) the draw weighed `score * budget_mult`; the record carries the multiplier
+            // (absent = 1.0) so the replay reproduces the seats without a fresh network read.
+            weight: e.score * recorded_mult(e),
             pinned: e.required,
         })
         .collect();
@@ -169,6 +171,15 @@ fn roster_seats(cands: &[Candidate], k: usize) -> Vec<Seat> {
         });
     }
     seats
+}
+
+/// The recorded budget multiplier of an eligible row (the `budget_mult` key); `1.0` when absent.
+fn recorded_mult(e: &c3_core::ledger::RoutingEligible) -> f64 {
+    e.extra
+        .get("budget_mult")
+        .and_then(|v| v.as_f64())
+        .filter(|m| m.is_finite() && *m > 0.0)
+        .unwrap_or(1.0)
 }
 
 /// The lineage recorded for a seat's position (for the explored comparison).

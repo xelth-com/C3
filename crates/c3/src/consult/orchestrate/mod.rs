@@ -57,8 +57,9 @@ mod tree;
 
 use engine::{
     agy_detail, claude_detail, claude_engine, claude_engine_run_extra, engine_kind_of, engine_turn,
-    entry_engine, fix_claude_lineage, grok_detail, make_live_request_engine, muse_detail,
-    muse_msp_version, resolve_engine_exe_binding, ClaudeRunDetail, ClaudeTurnFields, EngineDetail,
+    entry_engine, fix_claude_lineage, grok_detail, kimi_detail, make_live_request_engine,
+    muse_detail, muse_msp_version, resolve_engine_exe_binding, ClaudeRunDetail, ClaudeTurnFields,
+    EngineDetail,
 };
 use kill::{
     format_kill_text, kept_kill, kept_record, kept_what, kill_check_warning, kill_record_warning,
@@ -319,6 +320,9 @@ struct Secondary {
     /// The engine turn warnings (denial notices, engine stderr warnings) — the ledger `warnings`
     /// of an engine run and the `warning    : ...` summary lines.
     engine_warnings: Vec<String>,
+    /// (C3) the kimi engine's `Isolation:` handoff line (the throwaway worktree the reviewer ran
+    /// in); `None` for every other engine.
+    isolation: Option<String>,
     /// The repair turn's kept event-stream (engine repair keeps a real file, unlike codex).
     repair_events_rel: Option<String>,
     /// (wave 28c, D11) the compactions a codex repair turn's TEMP event stream reported, counted
@@ -3814,6 +3818,27 @@ fn run_primary_turn(
                 .map_err(|e| format!("the grok run could not be planned: {e:?}"))?;
             Ok((run.outcome, grok_detail(&run.turn)))
         }
+        "kimi" => {
+            let eng = crate::engines::kimi::KimiEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary,
+                secondary: TurnFiles::default(),
+                stall_sec: ctx.stall_sec,
+                purpose: ctx.o.purpose.clone(),
+                kick_path: Some(ctx.kick_path.clone()),
+                on_running,
+                on_kill,
+            };
+            let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
+            let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
+            let run = eng
+                .run_detailed(&turn)
+                .map_err(|e| format!("the kimi run could not be planned: {e:?}"))?;
+            let mut d = kimi_detail(&run.turn);
+            d.isolation = run.isolation;
+            Ok((run.outcome, d))
+        }
         "claude" => {
             let eng = claude_engine(
                 ctx,
@@ -4623,6 +4648,11 @@ fn finish(args: Finish) -> i32 {
             sec.original_prose = hs.original_prose.clone();
             sec.drift_notes = hs.drift_notes.clone();
             sec.format_retry = hs.format_retry.clone();
+        }
+        // (C3) the kimi isolation line (the throwaway worktree the reviewer ran in) - recorded
+        // whatever the outcome, so a failed/timed-out run still shows where it ran.
+        if detail.isolation.is_some() {
+            sec.isolation = detail.isolation.clone();
         }
         // The engine warnings of a usable primary turn (denial notices, engine stderr warnings).
         if usable {
@@ -6037,7 +6067,7 @@ pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
     // (<launcher>)`, `<command> CLI not found` without one - (wave 6) agy and muse as claude, not
     // the codex endpoint text - and (wave 29b, E5) a claude endpoint route's base URL and token
     // variable NAME. The http engine (C3's own) names its provider table's endpoint below.
-    if matches!(id.engine.as_str(), "agy" | "muse" | "claude" | "grok") {
+    if matches!(id.engine.as_str(), "agy" | "muse" | "claude" | "grok" | "kimi") {
         let launcher = id
             .provider_config
             .get("launcher")

@@ -49,3 +49,5 @@ pub mod work;
 pub mod finish;
 
 pub mod setup;
+
+pub mod budget;

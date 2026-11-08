@@ -105,6 +105,23 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   a grok prompt only on the OTHER purposes (framing, decision, ...): inlined, grok answered a code
   review without opening a file (0 of 0 tool calls, 2 of 2 runs); pointed at the file, it read the
   code (59 tool calls).
+- **`kimi`** — Moonshot's Kimi CLI (`kimi -p <pointer> --output-format stream-json`) on the Kimi
+  Code plan (managed oauth). Models `kimi-code/k3` (default), `kimi-code/k3-256k`,
+  `kimi-code/k3.1-pro`, `kimi-code/kimi-for-coding`, … (the ids kimi's `config.toml` declares). The
+  full assembled prompt is written to a temp file; the argv carries only a short POINTER to it
+  (`-p "Your brief is the file <abs>. Read it completely first …"`), which keeps a large review
+  prompt off the Windows command line (refused over 30000 argv chars, class `capability`). The reply
+  is the final assistant `content` line, the schema is PROMPT-ONLY (kimi has no schema flag), effort
+  is the model's own `default_effort` (no flag to override), the session id (`session_<uuid>`) is
+  read from the `session.resume_hint` line and resumed with `-S <id>`; files
+  `handoffs/<NN>-kimi-<slug>.*`. **Write isolation:** kimi `-p` has NO tool-restriction flag
+  (`--yolo`/`--auto`/`--plan` all refuse to combine with `--prompt`) and CAN write, so every kimi
+  turn runs with its cwd set to a throwaway detached git worktree of HEAD (removed after the run; the
+  handoff header's `Isolation:` line records the path and HEAD sha, and notes when the main tree was
+  dirty at launch). The strict tree check on the MAIN tree stays as the second guard: any
+  working-tree or collab change there FAILS the run (stricter than grok/muse, which only warn). The
+  same zero-tool-call review guard as grok applies on the reviewing purposes. Reviewer use only (no
+  `c3 work`).
 - **`http`** — an OpenAI-compatible `chat/completions` request built from a reviewer pack; no
   CLI, no subscription, no tools (OpenRouter by default). Wired via `setup-providers` section
   4b (`ext.c3.reviewers`). The key is read from an environment variable the user sets, bound to

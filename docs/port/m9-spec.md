@@ -111,8 +111,39 @@ only `sessions.json`; no priors file, no ratings, no network. A record written b
     c3 router explain  --purpose <p> [--topic <t>]...     # the score table the next draw would use
 
 `priors status` prints source, version, generated, age, cell count, key id, and why priors are off when
-they are. `explain` is read-only and prints one line per roster lineage: score, basis, local counts,
-prior mean/support/m.
+they are. `explain` is read-only and prints one line per roster lineage: score, **weight**, **mult**,
+**budget**, basis, local counts, prior mean/support/m.
+
+## 6b. Budget-aware routing (wave 9)
+
+Every roster lineage's draw weight is scaled by a **budget multiplier** derived from how much of its
+subscription plan is spent relative to how much of the plan's period has elapsed. A plan at 14 % used
+with 17 days left on a month gets a weight above 1 (headroom); a 5-hour window at 72 % with little time
+left gets a weight below 1. The most constraining window of a plan governs.
+
+- **Module** `crates/c3/src/budget/`. A `BudgetWindow { plan, name, used_ratio, elapsed_ratio,
+  resets_at, source, observed_at, stale }`. `plan_windows(plan, entries, now, network)` tries, per plan,
+  the first source that yields windows: **openai** (the codex rollouts' account window,
+  `c3_core::quota::account_window`; source `codex-rollout`), **kimi** (GET
+  `https://api.kimi.ai/coding/v1/usages` with the entry's env key — 5h + month windows, source
+  `kimi-usages`), then a **snapshot** file `<codex home>/c3-budget/<plan>.json` the operator writes by
+  hand (source `snapshot`). Live readings are cached under `<codex home>/c3-budget/.cache-<plan>.json`
+  for 5 minutes; `network == false` (`providers --no-network`, MCP `no_network`) reads cache / snapshot
+  only.
+- **Multiplier.** Per window `h = (1 - used_ratio) / max(1 - elapsed_ratio, 0.05)`,
+  `m_w = clamp(h, 0.25, 3.0)`; the plan multiplier is the **minimum** over the non-stale windows. No
+  windows → 1.0. A snapshot older than 7 days is `stale` (shown but ignored for the multiplier).
+  `CODEX_CONSULT_BUDGET_ROUTING=off` pins every multiplier to 1.0.
+- **Draw.** `panel/plan.rs` weighs `score * m_plan` for the routed draw; the per-member multiplier is
+  recorded in `panel.routing` (`budget_mult` on each `eligible`/`picked` row, present only when ≠ 1.0, so
+  a neutral record stays byte-identical to the plugin's). `c3 router replay` reads the recorded
+  multiplier back — it never reads the network — so a routed panel stays reproducible.
+- **Surfaces.** `c3 providers` fills **QUOTA** for every plan with windows in the openai style
+  (`5h 72% until 22:08; wk 56% until Nov 15`; month → `mo 14% until Nov 26`; a snapshot adds
+  `(seen Nd ago)`, a stale one `(seen Nd ago, stale - refresh)`). `c3 router explain` adds `budget`
+  (governing window as `month 14%/40%` = used/elapsed), `mult` and `weight` (= score·mult).
+- **`c3 budget set <plan> --window month --used 42% --resets 2026-11-26 [--period-days 30]`** writes a
+  snapshot; **`c3 budget show`** prints every snapshot with its live-computed elapsed share and age.
 
 ## 7. Telemetry side (allowlist only)
 

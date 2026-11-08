@@ -26,6 +26,7 @@ pub(super) fn engine_kind_of(engine: &str) -> EngineKind {
         "muse" => EngineKind::Muse,
         "claude" => EngineKind::Claude,
         "grok" => EngineKind::Grok,
+        "kimi" => EngineKind::Kimi,
         "http" => EngineKind::Http,
         _ => EngineKind::Codex,
     }
@@ -137,6 +138,9 @@ pub(super) struct EngineDetail {
     pub(super) http_secondary: Option<crate::consult::http::HttpSecondary>,
     /// (0.6.0, wave 29) a claude turn's events and outcome (its proof, its resolved model).
     pub(super) claude: Option<ClaudeRunDetail>,
+    /// (C3) the kimi engine's `Isolation:` handoff line (the throwaway worktree the turn ran in);
+    /// `None` for every other engine.
+    pub(super) isolation: Option<String>,
 }
 
 /// Build the request for a live primary/secondary turn of the selected engine.
@@ -261,6 +265,7 @@ pub(super) fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         http_provider_config: None,
         http_secondary: None,
         claude: None,
+        isolation: None,
     }
 }
 
@@ -288,6 +293,7 @@ pub(super) fn claude_detail(r: &crate::engines::claude::ClaudeRun) -> EngineDeta
             turn: r.turn.clone(),
             killed: r.killed,
         }),
+        isolation: None,
     }
 }
 
@@ -334,6 +340,7 @@ pub(super) fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         http_provider_config: None,
         http_secondary: None,
         claude: None,
+        isolation: None,
     }
 }
 
@@ -355,6 +362,29 @@ pub(super) fn grok_detail(t: &crate::engines::grok::GrokTurn) -> EngineDetail {
         http_provider_config: None,
         http_secondary: None,
         claude: None,
+        isolation: None,
+    }
+}
+
+pub(super) fn kimi_detail(t: &crate::engines::kimi::KimiTurn) -> EngineDetail {
+    EngineDetail {
+        turn_outcome: t.outcome.clone(),
+        forced_class: t.class.clone(),
+        denied_empty: false,
+        denial_line: String::new(),
+        permission: String::new(),
+        tool_name: String::new(),
+        denied_action: String::new(),
+        agy_tool_names: Vec::new(),
+        thread_candidate: t.thread_candidate.clone(),
+        thread: t.thread.clone(),
+        reply: t.reply.clone(),
+        warnings: t.warnings.clone(),
+        msp_schema_version: None,
+        http_provider_config: None,
+        http_secondary: None,
+        claude: None,
+        isolation: None,
     }
 }
 

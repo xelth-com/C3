@@ -113,7 +113,8 @@ pub(crate) static VENDORS: [Vendor; 11] = [
     Vendor {
         class: "moonshot",
         hosts: &["kimi.ai", "moonshot.ai"],
-        engine: "",
+        // (C3) the kimi engine's runs map here (the host first, else this engine row).
+        engine: "kimi",
         builtin: "",
         models: &[
             "k3",
@@ -122,6 +123,14 @@ pub(crate) static VENDORS: [Vendor; 11] = [
             "kimi-for-coding-highspeed",
             "kimi-k2.5",
             "kimi-k3",
+            // The ids the kimi engine sends (`-m <provider>/<model>`, as kimi's config.toml spells
+            // them): kept verbatim so a kimi reviewer's model is reported precisely, not `other`.
+            "kimi-code/k3",
+            "kimi-code/k3-256k",
+            "kimi-code/k3.1-pro",
+            "kimi-code/k3.1-pro-highspeed",
+            "kimi-code/kimi-for-coding",
+            "kimi-code/kimi-for-coding-highspeed",
         ],
     },
     Vendor {
@@ -330,7 +339,7 @@ pub(crate) fn vendor_of_reviewer(engine: &str, provider_config: &Value) -> Optio
 // --------------------------------------------------------------------------- the reviewer
 
 /// The engines an event may name (`$script:EngineNames` plus C3's `http`); anything else `other`.
-pub(crate) const ENGINES: [&str; 6] = ["codex", "agy", "muse", "claude", "grok", "http"];
+pub(crate) const ENGINES: [&str; 7] = ["codex", "agy", "muse", "claude", "grok", "kimi", "http"];
 
 /// `$script:ConsultPurposes`: the purposes an event may name; anything else `other`, none `none`.
 pub(crate) const PURPOSES: [&str; 8] = [

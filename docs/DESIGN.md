@@ -35,7 +35,10 @@ OpenRouter panel with an advisory judge, and the T-hub telemetry client.
    and written under its lock discipline (`.consult.lock`, `.consult.write.lock`, `.consult.pending*.json`). A repository
    with the plugin and C3 side by side reads one history.
 2. **Reviewers are read-only.** CLI engines run in their own sandboxes; the `http` engine never receives tools. C3 is the
-   only process that touches the file system, and it writes only under `.collab/` or an explicit output path.
+   only process that touches the file system, and it writes only under `.collab/` or an explicit output path. The `kimi`
+   engine is the exception that proves the rule: Moonshot's CLI has no tool-restriction flag in `-p` mode and will execute
+   writes, so c3 runs every kimi turn with its cwd set to a throwaway detached git worktree of HEAD (removed after the run;
+   the handoff's `Isolation:` line records it), and the strict tree check on the main tree stays as the second guard.
 3. **C3 never commits.** `git add`/`commit` and the eck finish loop stay with the coordinator and eckSnapshot.
 4. **Keys.** C3 reads a credential from the environment only for the `http` engine, never prints, stores, commits or
    transmits it anywhere but to that provider, redacts every error string, and refuses an API key where a subscription
@@ -59,7 +62,7 @@ OpenRouter panel with an advisory judge, and the T-hub telemetry client.
 - `c3-core` - contracts and formats, dependency-light: the domain types (brief, consultation, attempt, finding, ledger entry,
   roster, purpose, effort vocabulary, lineage, verdict), the file formats and their readers/writers, the reply schema, the
   redaction rules, path normalisation, ids.
-- `c3` - the runtime library as modules: `engines` (codex, agy, muse, http), `panel` (sizing, scheduler, detach/status per
+- `c3` - the runtime library as modules: `engines` (codex, agy, muse, claude, grok, kimi, http), `panel` (sizing, scheduler, detach/status per
   plugin R12), `router` (policy versions), `index` (SurrealDB, feature `index-surreal`), `pack` (snapshot, reviewer pack,
   explainer pack), `telemetry` (T-hub client, spool, priors download).
 - `c3-cli` - the `c3` binary: CLI commands and the stdio MCP server.

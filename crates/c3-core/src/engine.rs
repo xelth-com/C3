@@ -47,6 +47,12 @@ pub enum EngineKind {
     /// read-only reviewer turn, the schema TEXT in `--json-schema`, the thread id READ from the
     /// `end` event (never minted), resumed with `--resume`.
     Grok,
+    /// (C3) Moonshot Kimi CLI headless (`kimi -p <prompt> --output-format stream-json`): a reviewer
+    /// turn billed to the Kimi Code plan (managed oauth). The prompt rides in argv (`-p`), the reply
+    /// is the final assistant `content` line, the schema is prompt-only (kimi has no schema flag),
+    /// the session id (`session_<uuid>`) is READ from the `session.resume_hint` meta line (never
+    /// minted) and resumed with `-S <id>`.
+    Kimi,
     Http,
 }
 
@@ -157,6 +163,22 @@ pub fn capabilities(kind: EngineKind) -> Capabilities {
             sandbox: true,
             file_prefix: "grok",
         },
+        EngineKind::Kimi => Capabilities {
+            threads: true,
+            fork: false,
+            resume: true,
+            // The prompt rides in argv (`-p <prompt>`); stdin stays empty, so the subprocess
+            // runner is told PromptFile (write nothing to stdin) even though no file is used.
+            prompt_delivery: PromptDelivery::PromptFile,
+            // kimi -p has no schema flag, so the schema is described in the prompt only.
+            schema_transport: vec![SchemaTransport::PromptOnly],
+            effort_vocabulary: "model-tier",
+            // kimi -p has NO tool-restriction flag (--yolo/--auto/--plan all refuse to combine with
+            // --prompt), so read-only is REQUESTED in the prompt and ENFORCED by the bridge's tree
+            // check: any working-tree/collab change during the run fails the run.
+            sandbox: true,
+            file_prefix: "kimi",
+        },
         EngineKind::Http => Capabilities {
             threads: false,
             fork: false,
@@ -262,6 +284,7 @@ fn engine_token(kind: EngineKind) -> &'static str {
         EngineKind::Muse => "muse",
         EngineKind::Claude => "claude",
         EngineKind::Grok => "grok",
+        EngineKind::Kimi => "kimi",
         EngineKind::Http => "http",
     }
 }
@@ -998,6 +1021,23 @@ impl std::fmt::Display for EngineError {
 
 impl std::error::Error for EngineError {}
 
+/// (C3) The largest kimi argv prompt the bridge will launch: the pointer is short, so this only
+/// guards a pathological composed value (a clear capability refusal, never a silent truncation).
+pub const KIMI_MAX_ARGV_PROMPT: usize = 30_000;
+
+/// (C3) The short pointer text kimi receives in argv (`-p`), naming the absolute path of the
+/// prompt file that holds the full brief. `resume` adds a one-line continuation note (a
+/// format-repair / timeout-continuation turn names its own per-turn prompt file).
+pub fn kimi_pointer_prompt(brief_abs: &str, resume: bool) -> String {
+    let mut p = format!(
+        "Your brief is the file {brief_abs}. Read it completely first, then follow it; answer in the format it requires."
+    );
+    if resume {
+        p.push_str(" This continues our existing session; re-read that file and follow it.");
+    }
+    p
+}
+
 /// Muse would bill the subscription per token if one of these API-key variables is set; the
 /// launch guard refuses (`Get-MuseLaunchBlock`, `codex-consult-common.ps1:3838`).
 pub const MUSE_API_KEY_VARS: [&str; 2] = ["META_API_KEY", "MODEL_API_KEY"];
@@ -1339,6 +1379,49 @@ impl SubprocessEngine {
         })
     }
 
+    /// (C3) `New-KimiArgv`: a Moonshot Kimi CLI reviewer turn. The full assembled prompt is written
+    /// to `prompt_file` (the orchestrator does this for a `prompt_by_file` engine); the argv carries
+    /// only a SHORT POINTER to that file's absolute path (`-p "Your brief is the file <abs>. Read it
+    /// completely first, then follow it; answer in the format it requires."`), which keeps a large
+    /// review prompt off the Windows command line. Then `--output-format stream-json`, `-m <model>`,
+    /// and `-S <thread>` for a continuation (the pointer then names the per-turn repair prompt file).
+    /// kimi -p has no schema flag (prompt-only schema), no effort flag (the model's own
+    /// `default_effort` applies) and no tool-restriction flag (read-only is enforced by the bridge's
+    /// worktree isolation and tree check). No fork.
+    fn plan_kimi(&self, r: &Request) -> Result<Argv, EngineError> {
+        if let Mode::Fork { .. } = r.mode {
+            return Err(EngineError::UnsupportedMode {
+                engine: EngineKind::Kimi,
+                mode: "fork",
+            });
+        }
+        if r.model.is_empty() {
+            return Err(EngineError::MissingField("model"));
+        }
+        let prompt_file = r
+            .prompt_file
+            .as_ref()
+            .ok_or(EngineError::MissingField("prompt_file"))?;
+        let resume = matches!(r.mode, Mode::Resume { .. });
+        let pointer = kimi_pointer_prompt(&prompt_file.to_string_lossy(), resume);
+        let mut a: Vec<String> = vec![
+            "-p".into(),
+            pointer,
+            "--output-format".into(),
+            "stream-json".into(),
+            "-m".into(),
+            r.model.clone(),
+        ];
+        if let Mode::Resume { thread, .. } = &r.mode {
+            a.push("-S".into());
+            a.push(thread.clone());
+        }
+        Ok(Argv {
+            command: "kimi".into(),
+            args: a,
+        })
+    }
+
     fn plan_http(&self, r: &Request) -> Result<HttpPlan, EngineError> {
         if r.model.is_empty() {
             return Err(EngineError::MissingField("model"));
@@ -1366,6 +1449,7 @@ impl Engine for SubprocessEngine {
             EngineKind::Muse => Ok(LaunchPlan::Subprocess(self.plan_muse(request)?)),
             EngineKind::Claude => Ok(LaunchPlan::Subprocess(self.plan_claude(request)?)),
             EngineKind::Grok => Ok(LaunchPlan::Subprocess(self.plan_grok(request)?)),
+            EngineKind::Kimi => Ok(LaunchPlan::Subprocess(self.plan_kimi(request)?)),
             EngineKind::Http => Ok(LaunchPlan::Http(self.plan_http(request)?)),
         }
     }
@@ -1794,5 +1878,77 @@ mod tests {
                 value: "0".into()
             }
         );
+    }
+
+    // (C3) the kimi brief-pointer prompt and the argv-length guard.
+    #[test]
+    fn kimi_pointer_prompt_names_the_file_and_notes_a_resume() {
+        let p = kimi_pointer_prompt("C:\\tmp\\brief.txt", false);
+        assert!(p.starts_with("Your brief is the file C:\\tmp\\brief.txt."), "{p}");
+        assert!(p.contains("Read it completely first"), "{p}");
+        assert!(!p.contains("continues our existing session"), "{p}");
+        let r = kimi_pointer_prompt("C:\\tmp\\brief.txt", true);
+        assert!(r.contains("continues our existing session"), "{r}");
+    }
+
+    #[test]
+    fn kimi_argv_carries_the_pointer_not_the_inline_prompt() {
+        let mut r = base_request();
+        r.engine = EngineKind::Kimi;
+        r.model = "kimi-code/k3".into();
+        r.prompt = "THE FULL PROMPT BODY SHOULD NOT APPEAR IN ARGV".into();
+        r.prompt_file = Some(PathBuf::from("C:\\tmp\\codex-consult-prompt-abc.txt"));
+        let argv = subprocess_argv(EngineKind::Kimi, &r);
+        let cmd = argv.to_command_string();
+        assert!(cmd.contains("-p "), "{cmd}");
+        assert!(
+            cmd.contains("Your brief is the file C:\\tmp\\codex-consult-prompt-abc.txt."),
+            "the argv names the prompt file: {cmd}"
+        );
+        assert!(
+            !cmd.contains("THE FULL PROMPT BODY"),
+            "the full prompt must NOT ride in argv: {cmd}"
+        );
+        assert!(cmd.contains("--output-format stream-json"), "{cmd}");
+        assert!(cmd.contains("-m kimi-code/k3"), "{cmd}");
+    }
+
+    #[test]
+    fn kimi_plan_needs_a_prompt_file() {
+        let mut r = base_request();
+        r.engine = EngineKind::Kimi;
+        r.model = "kimi-code/k3".into();
+        r.prompt_file = None;
+        let err = SubprocessEngine::new(EngineKind::Kimi).plan(&r).unwrap_err();
+        assert_eq!(err, EngineError::MissingField("prompt_file"));
+    }
+
+    #[test]
+    fn kimi_resume_adds_the_session_flag() {
+        let mut r = base_request();
+        r.engine = EngineKind::Kimi;
+        r.model = "kimi-code/k3".into();
+        r.prompt_file = Some(PathBuf::from("/tmp/p.txt"));
+        r.mode = Mode::Resume {
+            thread: "session_11111111-2222-3333-4444-555555555555".into(),
+            lineage: r.lineage(),
+        };
+        let cmd = subprocess_argv(EngineKind::Kimi, &r).to_command_string();
+        assert!(
+            cmd.contains("-S session_11111111-2222-3333-4444-555555555555"),
+            "{cmd}"
+        );
+        assert!(cmd.contains("continues our existing session"), "{cmd}");
+    }
+
+    #[test]
+    fn kimi_argv_prompt_length_guard_constant() {
+        // The guard refuses a composed pointer longer than this; the pointer is short in practice.
+        assert_eq!(KIMI_MAX_ARGV_PROMPT, 30_000);
+        let short = kimi_pointer_prompt("/tmp/p.txt", false);
+        assert!(short.len() < KIMI_MAX_ARGV_PROMPT);
+        // A pathological absolute path would push the pointer over the limit.
+        let long_path = "/tmp/".to_string() + &"a".repeat(KIMI_MAX_ARGV_PROMPT);
+        assert!(kimi_pointer_prompt(&long_path, false).len() > KIMI_MAX_ARGV_PROMPT);
     }
 }

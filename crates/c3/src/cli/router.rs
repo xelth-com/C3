@@ -207,10 +207,37 @@ fn run_explain(args: ExplainArgs) -> i32 {
     let ctx = router::load_context();
     let now = Utc::now();
 
+    // (wave 9) budget-aware routing: each plan group's multiplier and governing window.
+    let active: Vec<c3_core::roster::RosterEntry> =
+        roster.active_entries().into_iter().cloned().collect();
+    let budget_mults = crate::budget::multipliers_for(&active, now, true);
+    // the governing-window cell and multiplier per budget key (recomputed once per key)
+    let mut budget_cells: std::collections::HashMap<String, (f64, String)> =
+        std::collections::HashMap::new();
+    for e in &active {
+        let key = crate::budget::budget_key(e);
+        if key.is_empty() || budget_cells.contains_key(&key) {
+            continue;
+        }
+        let group: Vec<c3_core::roster::RosterEntry> = active
+            .iter()
+            .filter(|x| crate::budget::budget_key(x) == key)
+            .cloned()
+            .collect();
+        let plan_arg = if key == "openai-account" {
+            ""
+        } else {
+            e.plan.as_str()
+        };
+        let windows = crate::budget::plan_windows(plan_arg, &group, now, true);
+        let (m, gov) = crate::budget::budget_multiplier(&windows);
+        budget_cells.insert(key, (m, crate::budget::explain_budget_cell(&windows, &gov)));
+    }
+
     println!("priors: {} (v{})", ctx.source.source, ctx.source.version);
     println!(
-        "{:<40} {:>6} {:>16} {:>10} prior(mean/support/m)",
-        "lineage", "score", "basis", "local n"
+        "{:<40} {:>6} {:>7} {:>5} {:<16} {:>16} {:>10} prior(mean/support/m)",
+        "lineage", "score", "weight", "mult", "budget", "basis", "local n"
     );
     // (ext.c3.inactive) an inactive entry is not a routing candidate.
     for e in roster.active_entries() {
@@ -236,9 +263,23 @@ fn run_explain(args: ExplainArgs) -> i32 {
             .prior
             .map(|p| format!("{}/{}/{:.1}/{:.2}", p.prior_basis, p.support, p.m, p.mean))
             .unwrap_or_else(|| "-".to_string());
+        let key = crate::budget::budget_key(e);
+        let mult = budget_mults.get(&key).copied().unwrap_or(1.0);
+        let budget_cell = budget_cells
+            .get(&key)
+            .map(|(_, cell)| cell.clone())
+            .unwrap_or_else(|| "-".to_string());
+        let weight = scored.base.score * mult;
         println!(
-            "{:<40} {:>6.3} {:>16} {:>10.2} {}",
-            lineage, scored.base.score, scored.base.basis, scored.base.ratings, prior
+            "{:<40} {:>6.3} {:>7.3} {:>5.2} {:<16} {:>16} {:>10.2} {}",
+            lineage,
+            scored.base.score,
+            weight,
+            mult,
+            budget_cell,
+            scored.base.basis,
+            scored.base.ratings,
+            prior
         );
     }
     0

@@ -181,9 +181,11 @@ pub fn model_unsupported_message(code: &str, message: &str) -> Option<String> {
 pub const MODEL_UNSUPPORTED_TEXT_MAX: usize = 100;
 
 /// The message shapes [`model_unsupported_message`] recognises (model-anchored, case-insensitive).
-const MODEL_UNSUPPORTED_MSG_PATTERNS: [&str; 7] = [
+const MODEL_UNSUPPORTED_MSG_PATTERNS: [&str; 8] = [
     // grok: Couldn't set model '...': Invalid params: "unknown model id".
     r"(?i)unknown model id",
+    // kimi: config.invalid: Model "..." is not configured in config.toml.
+    r"(?i)\bmodel\b.{0,40}?is not configured",
     // codex: ... model is not supported when using Codex with a ChatGPT account.
     r"(?i)\bmodel\b.{0,40}?not supported",
     // OpenAI / claude: The model `x` does not exist or you do not have access to it.
@@ -5830,6 +5832,14 @@ mod model_unsupported_tests {
     fn grok_unknown_model_id_is_model_unsupported() {
         let msg = "Couldn't set model 'grok-nonexistent-9': Invalid params: \"unknown model id\". Run 'grok models' to see available models.";
         assert!(model_unsupported_message("", msg).is_some());
+    }
+
+    #[test]
+    fn kimi_not_configured_model_is_model_unsupported() {
+        let msg = "failed to run prompt: config.invalid: Model \"kimi-code/does-not-exist-9\" is not configured in config.toml. Add a [models.\"...\"] entry with max_context_size.";
+        assert!(model_unsupported_message("", msg).is_some());
+        // A json_schema / feature refusal must NOT match (the pattern is model-anchored).
+        assert!(model_unsupported_message("", "json_schema is not configured").is_none());
     }
 
     #[test]

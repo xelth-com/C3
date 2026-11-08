@@ -437,6 +437,9 @@ pub struct MemberInput {
     /// The `Select-PanelMembers` skip kind (`weighty` / `light` matter: a required entry only
     /// that gate held back rejoins).
     pub skip_kind: String,
+    /// (wave 9) the budget multiplier of this member's plan (`1.0` = no budget signal); the caller
+    /// computes it from [`crate::budget`] so the seating stays a pure, network-free function.
+    pub budget_mult: f64,
 }
 
 /// A member after seating.
@@ -452,6 +455,10 @@ pub struct SeatedMember {
     pub reason: String,
     pub rule: String,
     pub slot: i32,
+    /// (wave 9) the member's roster `plan` and its budget multiplier (`1.0` = no signal); the
+    /// routed draw weighs `score * mult`.
+    pub plan: String,
+    pub mult: f64,
 }
 
 /// The routing record (the ledger's `panel.routing`).
@@ -487,6 +494,9 @@ pub struct EligibleRow {
     pub basis: String,
     pub ratings: f64,
     pub required: bool,
+    /// (wave 9) the budget multiplier of the member's plan (`1.0` = none); the draw weighs
+    /// `score * mult`, and `c3 router replay` reads it back.
+    pub mult: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -496,6 +506,8 @@ pub struct PickedRow {
     pub lineage: String,
     pub lab: String,
     pub rule: String,
+    /// (wave 9) the budget multiplier applied to this seat's draw weight (`1.0` = none).
+    pub mult: f64,
 }
 
 /// `Select-PanelRouting`'s result.
@@ -628,6 +640,12 @@ pub fn select_panel_routing_with(
             reason,
             rule: String::new(),
             slot: 0,
+            plan: m.entry.plan.clone(),
+            mult: if m.budget_mult.is_finite() && m.budget_mult > 0.0 {
+                m.budget_mult
+            } else {
+                1.0
+            },
         });
     }
 
@@ -698,7 +716,8 @@ pub fn select_panel_routing_with(
             .map(|&i| Candidate {
                 position: seated[i].position,
                 lab: seated[i].lab.clone(),
-                weight: seated[i].score.score,
+                // (wave 9) budget-aware: the lineage's score scaled by its plan's multiplier.
+                weight: seated[i].score.score * seated[i].mult,
                 pinned: seated[i].required,
             })
             .collect();
@@ -820,6 +839,7 @@ pub fn select_panel_routing_with(
                 basis: seated[i].score.basis.clone(),
                 ratings: round(seated[i].score.ratings, 2),
                 required: seated[i].required,
+                mult: round(seated[i].mult, 4),
             })
             .collect(),
         picked: seats
@@ -830,6 +850,7 @@ pub fn select_panel_routing_with(
                 lineage: seated[*mi].lineage.clone(),
                 lab: seated[*mi].lab.clone(),
                 rule: rule.clone(),
+                mult: round(seated[*mi].mult, 4),
             })
             .collect(),
         explored: seats
@@ -889,6 +910,7 @@ mod tests {
             state: state.into(),
             reason: String::new(),
             skip_kind: String::new(),
+            budget_mult: 1.0,
         }
     }
 

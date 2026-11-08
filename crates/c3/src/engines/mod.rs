@@ -13,6 +13,7 @@ pub mod claude;
 pub mod claude_auth;
 pub mod codex;
 pub mod grok;
+pub mod kimi;
 pub mod muse;
 pub mod subprocess;
 pub mod tree_check;
@@ -21,6 +22,7 @@ pub use agy::AgyEngine;
 pub use claude::ClaudeEngine;
 pub use codex::CodexEngine;
 pub use grok::GrokEngine;
+pub use kimi::KimiEngine;
 pub use muse::MuseEngine;
 
 /// (wave 27 / 27b) Remove the host markers from a child process's environment before it is

@@ -2068,16 +2068,42 @@ fn print_table(
         m.insert("credentials", r.credentials.clone());
         m.insert("effort", effort_column(r));
         m.insert("limit", limit);
-        // (wave 8 = plugin wave 30) QUOTA last: the newest observed windows of the endpoint
-        m.insert(
-            "quota",
-            r.quota
-                .as_ref()
-                .and_then(|q| q["text"].as_str())
-                .filter(|t| !t.is_empty())
-                .unwrap_or("-")
-                .to_string(),
-        );
+        // (wave 8 = plugin wave 30) QUOTA last: the newest observed windows of the endpoint.
+        // The built-in openai row keeps its live health text; every other plan with budget windows
+        // (wave 9: kimi `/usages`, a snapshot) fills QUOTA in the same style.
+        let quota_text = r
+            .quota
+            .as_ref()
+            .and_then(|q| q["text"].as_str())
+            .filter(|t| !t.is_empty())
+            .map(|t| t.to_string())
+            .or_else(|| {
+                let group: Vec<_> = ctx
+                    .roster
+                    .entries
+                    .iter()
+                    .filter(|e| e.provider == r.name && e.engine == r.engine)
+                    .cloned()
+                    .collect();
+                let e0 = group.first()?;
+                let key = crate::budget::budget_key(e0);
+                if key.is_empty() {
+                    return None;
+                }
+                let plan_arg = if key == "openai-account" {
+                    ""
+                } else {
+                    e0.plan.as_str()
+                };
+                let windows =
+                    crate::budget::plan_windows(plan_arg, &group, ctx.utc_now, !ctx.no_network);
+                if windows.is_empty() {
+                    return None;
+                }
+                Some(crate::budget::providers_quota_cell(&windows, ctx.utc_now))
+            })
+            .unwrap_or_else(|| "-".to_string());
+        m.insert("quota", quota_text);
         lines.push(m);
     }
     let mut width: HashMap<&str, usize> = HashMap::new();
@@ -3091,8 +3117,43 @@ pub(crate) fn get_muse_launch_block() -> String {
 fn local_engine_sign_in(engine: &str) -> CredentialResult {
     if engine == "grok" {
         get_grok_sign_in()
+    } else if engine == "kimi" {
+        get_kimi_sign_in()
     } else {
         get_muse_sign_in()
+    }
+}
+
+/// `Get-KimiSignIn`: a local check of `~/.kimi-code/credentials/` (never its contents) - kimi stores
+/// its managed-oauth token there and has no `models`/`login status` probe. Signed in when the
+/// directory holds at least one entry.
+fn get_kimi_sign_in() -> CredentialResult {
+    const SHOWN: &str = "~/.kimi-code/credentials";
+    let home = if cfg!(windows) {
+        std::env::var("USERPROFILE").ok().filter(|s| !s.is_empty())
+    } else {
+        std::env::var("HOME").ok().filter(|s| !s.is_empty())
+    }
+    .or_else(|| std::env::var("HOME").ok().filter(|s| !s.is_empty()));
+    let home = match home {
+        Some(h) => h,
+        None => {
+            return CredentialResult::unknown(
+                "sign-in not checkable: no home directory (USERPROFILE / HOME)".to_string(),
+            )
+        }
+    };
+    let creds = Path::new(&home).join(".kimi-code").join("credentials");
+    let signed = creds.is_dir()
+        && std::fs::read_dir(&creds)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+    if signed {
+        CredentialResult::ok(format!("signed in ({SHOWN}) - Kimi Code plan (managed oauth)"))
+    } else {
+        CredentialResult::missing(format!(
+            "not signed in: {SHOWN} is empty or missing (run `kimi login`)"
+        ))
     }
 }
 

@@ -167,6 +167,14 @@ pub fn caps(key: &str) -> Option<Caps> {
             models: Models::Any,
             schema_transport: "native",
         },
+        // (C3) the kimi engine: kimi -p has no effort flag (the model's own `default_effort`
+        // applies) and no schema flag, so effort is `model-tier` (nothing is sent) and the schema
+        // travels in the prompt (prompt-only).
+        "engine:kimi" => Caps {
+            vocabulary: "model-tier",
+            models: Models::Any,
+            schema_transport: "prompt-only",
+        },
         // (M7b-b) The http engine (OpenRouter / OpenAI-compatible): the OpenAI effort vocabulary
         // (low/medium/high/xhigh), any model, and prompt-only transport (the schema travels in the
         // pack; JSON mode is requested via `response_format`).

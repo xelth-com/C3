@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(blank.model.as_deref(), Some("gpt 5"));
         assert_eq!(
             parse("openai :: gpt-5.1 [bad]", None).unwrap_err(),
-            "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse, claude, grok)"
+            "'openai :: gpt-5.1 [bad]' names the engine 'bad' (known: codex, agy, muse, claude, grok, kimi)"
         );
         let ok = parse("openai :: gpt-5.1", None).unwrap();
         assert_eq!(ok.provider.as_deref(), Some("openai"));

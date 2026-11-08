@@ -12,8 +12,8 @@ This is the C3 port of the `codex-consult` plugin's `setup-providers` skill: the
 procedure, verified with the `c3` binary instead of `codex-providers.ps1` /
 `codex-consult.ps1`. `c3` runs these engines — `codex` (`codex exec`, the default), `agy`
 (Gemini through Google's Antigravity CLI), `muse` (Meta's Muse Code CLI), `claude` (Claude Code
-headless, section 4c), `grok` (xAI's Grok Build CLI as a read-only reviewer, section 4d) and
-`http` (an OpenAI-compatible API request, section 4b). The subscription engines never make an HTTP call
+headless, section 4c), `grok` (xAI's Grok Build CLI as a read-only reviewer, section 4d), `kimi` (Moonshot's Kimi CLI as a
+read-only reviewer, section 4e) and `http` (an OpenAI-compatible API request, section 4b). The subscription engines never make an HTTP call
 themselves; the `http` engine sends one request and reads its key from the environment.
 `<codex home>` is `$CODEX_HOME` when set, else `~/.codex`.
 
@@ -187,7 +187,7 @@ any endpoint that speaks the same wire shape.
 (e.g. `OPENROUTER_API_KEY`); you never ask for it, print it, echo it, log it, read it
 back, or write it to any file. You only ever confirm it is *set* through `c3 providers`.
 
-The plugin's roster validator knows only `codex`/`agy`/`muse`/`claude`/`grok` and refuses the whole
+The plugin's roster validator knows only `codex`/`agy`/`muse`/`claude`/`grok`/`kimi` and refuses the whole
 file on any other engine, so an `http` reviewer does **not** go in `reviewers[]`. It goes under
 the top-level `ext.c3.reviewers` array, which the plugin validates as an object and
 ignores — C3 reads and validates it and appends the reviewer after the plugin's entries:
@@ -331,6 +331,46 @@ SuperGrok subscription. Reviewer use only - `c3 work` (write mode) is out of sco
 8. **Conduct:** Grok Build advertises headless/CI use (x.ai/build), but its Acceptable Use Policy
    bans "unauthorized" automated access. Run it ONLY on the user's own signed-in SuperGrok
    subscription, at parallel 1, and never spoof identity or evade rate limits.
+
+## 4e. Kimi through the `kimi` engine (Moonshot Kimi CLI)
+
+The `kimi` engine drives Moonshot's Kimi CLI (`kimi`) as a READ-ONLY reviewer on the user's Kimi
+Code plan (managed oauth). Reviewer use only - `c3 work` (write mode) is out of scope. This replaces
+routing Kimi through the `claude` engine against an Anthropic-compatible endpoint.
+
+1. **Install** (ask the user): the Kimi Code CLI - it puts `kimi.exe` into
+   `%USERPROFILE%\.kimi-code\bin` (`~/.kimi-code/bin/kimi` elsewhere). c3 finds it by itself (PATH
+   names `kimi.exe`, `kimi.cmd`, `kimi`, then that location); otherwise `--engine-exe <path>` or
+   `CODEX_CONSULT_KIMI_EXE`. Check: `kimi --version`.
+2. **Sign in - the USER does it:** `kimi login` in their own terminal (the device-code flow that the
+   Kimi Code plan uses). You never handle a login, a token or a credential. There is no per-token
+   API-key billing route to guard.
+3. **The model - the USER decides:** required, one of the ids kimi's `config.toml` declares, e.g.
+   `kimi-code/k3` (default), `kimi-code/k3-256k`, `kimi-code/k3.1-pro`, `kimi-code/kimi-for-coding`.
+   A model the kimi config does not list fails with `... is not configured in config.toml` (marked
+   model-unsupported).
+4. **Roster entry:** `{ "provider": "kimi", "engine": "kimi", "model": "kimi-code/k3", "plan":
+   "kimi-code" }` - `auth`/`endpoint`/`codex_config` do not apply (the kimi CLI keeps its own
+   sign-in). The kimi members of one panel run one at a time (one plan, one scheduling group).
+5. **Prompt & schema (pointer):** the full assembled prompt is written to a temp file; the argv
+   carries only a short POINTER to its absolute path (`-p "Your brief is the file <abs>. Read it
+   completely first …"`), which keeps a large review prompt off the Windows command line (a composed
+   pointer over 30000 chars is refused, class `capability`). The reply schema is PROMPT-ONLY (kimi
+   `-p` has no `--json-schema` flag), so it is described in that file and the model answers with the
+   JSON object as its final `content` line. Effort is the model's own `default_effort` - there is no
+   CLI flag to override it.
+6. **Write isolation (IMPORTANT):** kimi `-p` has NO tool-restriction flag - `--yolo`, `--auto` and
+   `--plan` all REFUSE to combine with `--prompt`, and in `-p` mode kimi auto-approves and executes
+   tool calls INCLUDING writes. So c3 runs EVERY kimi turn with its cwd set to a **throwaway detached
+   git worktree** of HEAD (`git worktree add --detach <temp> HEAD`, removed after the run); the
+   reviewer can only ever touch that disposable checkout. read-only is also REQUESTED in the prompt
+   (`Read, Grep, Glob` only), and the strict tree check on the MAIN tree stays as the second guard:
+   any change there FAILS the run. The handoff header's `Isolation:` line records the worktree path
+   and HEAD sha (and notes when the main tree was dirty at launch - then the reviewer saw the
+   committed HEAD only).
+7. **Check:** a dry run: `c3 consult --task setup-check --prompt ping --dry-run --engine kimi
+   --model kimi-code/k3` - its `preflight :` and `command :` lines. `/usage` / quota reads from
+   `https://api.kimi.ai/coding/v1/usages` (the budget-routing module consumes it).
 
 ## 5. Verify
 

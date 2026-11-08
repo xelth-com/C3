@@ -13,6 +13,7 @@ pub(super) fn engine_prompt_via(engine: &str) -> &'static str {
     match engine {
         "agy" => "prompt on stdin as one NDJSON line",
         "muse" | "grok" => "prompt from a file: --prompt-file",
+        "kimi" => "a pointer to the prompt file, inline in argv: --prompt",
         "http" => "reviewer pack sent as the request body",
         _ => "prompt on stdin",
     }
@@ -112,6 +113,8 @@ pub(super) fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
             .iter()
             .map(|l| format!("Recovery record: {l}"))
             .collect(),
+        // (C3) the kimi isolation line (the throwaway worktree the reviewer ran in).
+        isolation: sec.isolation.clone(),
         ..Default::default()
     };
     if !ctx.peak_warning.is_empty() {

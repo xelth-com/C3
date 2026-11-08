@@ -2,6 +2,7 @@
 //! subcommand: its clap `Args` struct and a `run(args) -> i32` returning the process
 //! exit code. The binary in `c3-cli` only parses and dispatches.
 
+pub mod budget;
 pub mod consult;
 pub mod doctor;
 pub mod explain;

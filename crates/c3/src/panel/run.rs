@@ -358,11 +358,22 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         ));
     }
 
+    // (wave 9) budget-aware routing: each plan group's draw-weight multiplier, from its remaining
+    // subscription share vs. the remaining share of its period. Cached per group; network reads are
+    // cached on disk for 5 min, so this stays cheap on every panel.
+    let member_entries: Vec<c3_core::roster::RosterEntry> =
+        selection.members.iter().map(|m| m.entry.clone()).collect();
+    let budget_mults = crate::budget::multipliers_for(&member_entries, utc_now, true);
+
     // The seats (`Select-PanelRouting`) — routed by the real ratings, else roster order.
     let members: Vec<MemberInput> = selection
         .members
         .iter()
         .map(|m| MemberInput {
+            budget_mult: budget_mults
+                .get(&crate::budget::budget_key(&m.entry))
+                .copied()
+                .unwrap_or(1.0),
             entry: m.entry.clone(),
             provider: m.identity.provider.clone(),
             model: m.identity.model.clone(),
@@ -2514,13 +2525,27 @@ fn routing_value_plugin(rt: &RoutingRecord) -> Value {
         "size_asked": rt.size_asked,
         "size_source": rt.size_source,
         "reserve": rt.reserve,
-        "eligible": rt.eligible.iter().map(|e| json!({
-            "position": e.position, "lineage": e.lineage, "lab": e.lab, "lab_source": e.lab_source,
-            "score": e.score, "basis": e.basis, "ratings": e.ratings, "required": e.required,
-        })).collect::<Vec<_>>(),
-        "picked": rt.picked.iter().map(|p| json!({
-            "slot": p.slot, "position": p.position, "lineage": p.lineage, "lab": p.lab, "rule": p.rule,
-        })).collect::<Vec<_>>(),
+        "eligible": rt.eligible.iter().map(|e| {
+            let mut o = json!({
+                "position": e.position, "lineage": e.lineage, "lab": e.lab, "lab_source": e.lab_source,
+                "score": e.score, "basis": e.basis, "ratings": e.ratings, "required": e.required,
+            });
+            // (wave 9) only when budget routing moved the weight, so a neutral record stays
+            // byte-identical to the plugin's. `c3 router replay` reads it back.
+            if (e.mult - 1.0).abs() > 1e-9 {
+                o["budget_mult"] = json!(e.mult);
+            }
+            o
+        }).collect::<Vec<_>>(),
+        "picked": rt.picked.iter().map(|p| {
+            let mut o = json!({
+                "slot": p.slot, "position": p.position, "lineage": p.lineage, "lab": p.lab, "rule": p.rule,
+            });
+            if (p.mult - 1.0).abs() > 1e-9 {
+                o["budget_mult"] = json!(p.mult);
+            }
+            o
+        }).collect::<Vec<_>>(),
         "explored": rt.explored,
         "required": rt.required,
     })

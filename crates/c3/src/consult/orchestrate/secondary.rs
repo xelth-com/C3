@@ -235,6 +235,25 @@ fn run_codex_secondary(
                 Err(e) => (plan_err(e), String::new()),
             }
         }
+        "kimi" => {
+            let eng = crate::engines::kimi::KimiEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                stall_sec: 0,
+                // A secondary turn is exempt from the zero-tool-call review guard (primary-only);
+                // the purpose is carried for completeness.
+                purpose: ctx.o.purpose.clone(),
+                kick_path: secondary_kick.clone(),
+                on_running,
+                on_kill,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, r.turn.outcome),
+                Err(e) => (plan_err(e), String::new()),
+            }
+        }
         _ => {
             use c3_core::engine::Engine;
             let eng = CodexEngine {
@@ -1034,6 +1053,31 @@ fn run_engine_secondary(
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, grok_detail(&r.turn)),
+                Err(e) => (
+                    AttemptOutcome::LaunchFailed {
+                        child_exists: false,
+                        message: format!("{e:?}"),
+                    },
+                    EngineDetail::default(),
+                ),
+            }
+        }
+        "kimi" => {
+            let eng = crate::engines::kimi::KimiEngine {
+                launcher: ctx.engine_launcher.clone(),
+                cwd: ctx.repo_root.clone(),
+                primary: TurnFiles::default(),
+                secondary: files,
+                stall_sec: 0,
+                // A secondary turn is exempt from the review guard (primary-only); purpose carried
+                // for completeness.
+                purpose: ctx.o.purpose.clone(),
+                kick_path: None,
+                on_running: None,
+                on_kill: None,
+            };
+            match eng.run_detailed(&turn) {
+                Ok(r) => (r.outcome, kimi_detail(&r.turn)),
                 Err(e) => (
                     AttemptOutcome::LaunchFailed {
                         child_exists: false,

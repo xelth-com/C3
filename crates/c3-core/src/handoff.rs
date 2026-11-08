@@ -134,6 +134,9 @@ pub struct OptionalRecords {
     pub quota: Option<String>,
     /// `Engine turns: ...`, after Bridge outcome.
     pub engine_turns: Option<String>,
+    /// (C3) `Isolation: ...` (the kimi throwaway worktree the reviewer ran in), after the
+    /// Invocation/Argv line; `None` for every other engine.
+    pub isolation: Option<String>,
     /// `Warnings: ...`.
     pub warnings: Option<String>,
     /// `Denial retry: ...`, immediately before the Timeout line.
@@ -245,6 +248,8 @@ impl HandoffHeader {
             "Invocation: `codex-consult.ps1` (mode: {}, sandbox: {}, purpose: {}). Argv: `{}` ({}).",
             self.mode, self.sandbox, self.purpose, self.argv, self.prompt_via
         ));
+        // (C3) the kimi isolation line, right after the Invocation/Argv line.
+        push_opt(&mut lines, &r.isolation);
         lines.push(self.parent_result_line.clone());
         lines.push(self.brief_reviewed_line.clone());
         // 12. drift lines

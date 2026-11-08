@@ -1,0 +1,7 @@
+{"role":"assistant","content":"I'll grep for SECRET42 and read the file.","tool_calls":[{"type":"function","id":"tool_0MlKOJnVtrdh6iZawrhJVsTG","function":{"name":"Grep","arguments":"{\"pattern\":\"SECRET42\"}"}},{"type":"function","id":"tool_rzr7RA7MrLTifO9vd4fjJYCe","function":{"name":"Read","arguments":"{\"path\":\"multi.txt\"}"}}]}
+{"role":"tool","tool_call_id":"tool_0MlKOJnVtrdh6iZawrhJVsTG","content":"multi.txt"}
+{"role":"tool","tool_call_id":"tool_rzr7RA7MrLTifO9vd4fjJYCe","content":"1\tline one\n2\tline two SECRET42"}
+{"role":"assistant","content":"Retrying without the type filter, scoped to the file.","tool_calls":[{"type":"function","id":"tool_9P0H1jC248t3CYThAvGSDrEk","function":{"name":"Read","arguments":"{\"path\":\"multi.txt\"}"}}]}
+{"role":"tool","tool_call_id":"tool_9P0H1jC248t3CYThAvGSDrEk","content":"1\tline one\n2\tline two SECRET42"}
+{"role":"assistant","content":"Found it. SECRET42 appears once, on line 2 of multi.txt."}
+{"role":"meta","type":"session.resume_hint","session_id":"session_c6f82457-e408-4931-b986-a8e2edd596b1","command":"kimi -r session_c6f82457-e408-4931-b986-a8e2edd596b1","content":"To resume this session: kimi -r session_c6f82457-e408-4931-b986-a8e2edd596b1"}

@@ -82,6 +82,8 @@ enum Commands {
     Fetch(c3::cli::fetch::FetchArgs),
     /// Check for a newer C3 release and, only with `--apply`, install it (wave 11).
     Update(c3::cli::update::UpdateArgs),
+    /// Budget snapshots for budget-aware routing: `set` / `show` (wave 9).
+    Budget(c3::cli::budget::BudgetArgs),
 }
 
 #[derive(Parser)]
@@ -152,6 +154,7 @@ fn main() {
         Some(Commands::Scout(a)) => c3::cli::scout::run(a),
         Some(Commands::Fetch(a)) => c3::cli::fetch::run(a),
         Some(Commands::Update(a)) => c3::cli::update::run(a),
+        Some(Commands::Budget(a)) => c3::cli::budget::run(a),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).
             use clap::CommandFactory;

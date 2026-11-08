@@ -15,12 +15,12 @@ use crate::sha256_hex;
 /// deliberately the *subprocess* subset: `http` has no launcher, so it is not here (roster
 /// validation and launcher discovery iterate this list), but it does have a lineage row -
 /// see [`ALL_ENGINE_NAMES`] and [`engine_spec`], which know `http` too (F03-8, F08-7).
-pub const ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "grok"];
+pub const ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "grok", "kimi"];
 
 /// Every engine kind that has an identity/lineage row, including the non-subprocess `http`
 /// engine. The single source that keeps `engine.rs`'s `EngineKind` (four) and the lineage
 /// table (previously three) in agreement (F08-7).
-pub const ALL_ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "grok", "http"];
+pub const ALL_ENGINE_NAMES: &[&str] = &["codex", "agy", "muse", "claude", "grok", "kimi", "http"];
 
 /// A row of the engine table (the fields providers/preflight need).
 #[derive(Debug, Clone)]
@@ -131,6 +131,13 @@ pub fn launcher_names(engine: &str) -> Vec<&'static str> {
                 vec!["grok"]
             }
         }
+        "kimi" => {
+            if win {
+                vec!["kimi.exe", "kimi.cmd", "kimi"]
+            } else {
+                vec!["kimi"]
+            }
+        }
         _ => vec![],
     }
 }
@@ -148,6 +155,10 @@ pub fn install_launchers(engine: &str) -> Vec<(&'static str, &'static str)> {
         // shell open before the install may not have it on PATH yet.
         "grok" if cfg!(windows) => vec![("USERPROFILE", ".grok\\bin\\grok.exe")],
         "grok" => vec![("HOME", ".grok/bin/grok")],
+        // kimi installs to `%USERPROFILE%\.kimi-code\bin\kimi.exe` (`$HOME/.kimi-code/bin/kimi`
+        // elsewhere); a shell open before the install may not have it on PATH yet.
+        "kimi" if cfg!(windows) => vec![("USERPROFILE", ".kimi-code\\bin\\kimi.exe")],
+        "kimi" => vec![("HOME", ".kimi-code/bin/kimi")],
         _ => vec![],
     }
 }
@@ -324,6 +335,52 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: true,
             inline_brief: true,
+        }),
+        // (C3) Moonshot Kimi CLI headless (`kimi -p <prompt> --output-format stream-json`): a
+        // reviewer turn billed to the Kimi Code plan (managed oauth). The prompt rides in argv
+        // (`-p`), the reply is the final assistant `content` line, the schema is PROMPT-ONLY (kimi
+        // has no schema flag), the session id (`session_<uuid>`) is READ from the
+        // `session.resume_hint` meta line (never minted), resumed with `-S <id>`. kimi -p has NO
+        // tool-restriction flag, so read-only is requested in the prompt and enforced by the tree
+        // check.
+        "kimi" => Some(EngineSpec {
+            name: "kimi",
+            command: "kimi",
+            exe_env: "CODEX_CONSULT_KIMI_EXE",
+            host_name: "engine:kimi",
+            compat_string: "cc-engine-v1|kimi",
+            default_provider: "moonshot",
+            model_example: "kimi-code/k3",
+            // kimi's sign-in is a local oauth token under `~/.kimi-code/credentials/` (a
+            // deterministic file check; kimi has no `models`/`login status` probe).
+            local_sign_in: true,
+            label: "Kimi (kimi)",
+            prefix: "kimi",
+            // prompt-only: kimi -p has no schema flag.
+            schema_flag: "",
+            reply_source: "the final assistant content line of the stream-json stream (role:assistant without tool_calls)",
+            thread_flag: "-S",
+            thread_noun: "session",
+            read_only_note: "kimi -p has no tool-restriction flag (--yolo/--auto/--plan all refuse to combine with --prompt), so read-only is requested in the prompt and the bridge's tree check fails a run that changed anything",
+            sandbox_record: "read-only (requested in the prompt; kimi -p has no tool-restriction flag, so enforcement is the bridge's tree check: any working-tree or collab change during the run fails the run; not checked for gitignored paths, submodules or files outside the repository)",
+            tools_line: "Tools: you may read files of the repository (Read, Grep, Glob); do NOT create, edit or delete any file and do NOT run shell commands in this consultation - the bridge FAILS a review that changes the working tree; a check that needs a command belongs under `## Requested checks`.",
+            steps_flag: "",
+            denial_retry: false,
+            has_usage: false,
+            // (C3) the full assembled prompt is WRITTEN to a temp prompt file; kimi's argv carries
+            // only a short pointer to it (`-p "Your brief is the file <abs> ..."`), which keeps a
+            // large review prompt off the Windows command line.
+            prompt_by_file: true,
+            transports: &["native", "prompt-only"],
+            default_mode: "new",
+            fork: false,
+            auth_modes: &[],
+            mints_thread: false,
+            max_prompt_bytes: 0,
+            parallel_scope_engine: true,
+            add_dirs: false,
+            crt_quote: true,
+            inline_brief: false,
         }),
         // The `http` engine has a lineage row but no launcher: it sends an
         // OpenAI-compatible request (M7), so `command`/`exe_env` are empty and it never
@@ -772,7 +829,7 @@ fn resolve_engine_identity(
     // billing guard requires (oauth). The http engine keeps a null config (its endpoint is a
     // provider table). Built via an insertion-ordered map (serde_json preserve_order) so the
     // muse keys stay `engine, launcher, credential_mechanism`.
-    if engine == "agy" || engine == "muse" || engine == "grok" {
+    if engine == "agy" || engine == "muse" || engine == "grok" || engine == "kimi" {
         let mut pc = serde_json::Map::new();
         pc.insert(
             "engine".into(),
