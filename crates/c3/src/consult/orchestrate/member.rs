@@ -257,6 +257,9 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         native_effort: s("native_effort"),
         off_peak_only: b("off_peak_only"),
         skip_preflight: b("skip_preflight"),
+        // A panel member is already seated by the parent (which applied the reserve hold); it runs
+        // with --skip-preflight, so the hold is not re-evaluated here.
+        spend_reserve: false,
         codex_config: list("codex_config"),
         schema_transport: s("schema_transport"),
         // (0.6.1 parity) the panel run's own `--telemetry on|off`, else the environment decides.

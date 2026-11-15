@@ -70,6 +70,9 @@ pub struct Options {
     pub native_effort: String,
     pub off_peak_only: bool,
     pub skip_preflight: bool,
+    /// (0.2.4, reviewer-protection) `--spend-reserve`: seat a protected reviewer even when its
+    /// budget reserve would hold it back (single and panel).
+    pub spend_reserve: bool,
     pub codex_config: Vec<String>,
     pub schema_transport: String,
     /// Telemetry `--telemetry on|off`: `Some(false)` for off, `Some(true)` for on, `None`
@@ -336,9 +339,9 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
         if !o.panel_order.is_empty() {
             return Err("-PanelOrder goes with -Panel (or -PanelAll) only.".into());
         }
-        if !o.panel_seed.is_empty() {
-            return Err("-PanelSeed goes with -Panel (or -PanelAll) only.".into());
-        }
+        // (0.2.4, reviewer-protection) -PanelSeed also seeds the bare default's single routed pick,
+        // so it is allowed on a non-panel consult (it reproduces that draw); it is simply inert on
+        // an explicit --provider / --thread run, which does no draw.
         if !o.roles.is_empty() {
             return Err("-Roles goes with -Panel (or -PanelAll) only.".into());
         }

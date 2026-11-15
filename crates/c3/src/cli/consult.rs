@@ -110,6 +110,10 @@ pub struct ConsultArgs {
     /// Skip the availability preflight (then warn).
     #[arg(long)]
     pub skip_preflight: bool,
+    /// Spend a protected reviewer's reserve: seat it even when its budget hold would hold it back
+    /// (single and panel). Without it a held protected entry is kept for acceptance / core-contract.
+    #[arg(long)]
+    pub spend_reserve: bool,
     /// A per-run `-c key=value` override (repeatable); identity/effort keys are refused.
     #[arg(long)]
     pub codex_config: Vec<String>,
@@ -274,6 +278,7 @@ pub fn run(args: ConsultArgs) -> i32 {
         native_effort: args.native_effort,
         off_peak_only: args.off_peak_only,
         skip_preflight: args.skip_preflight,
+        spend_reserve: args.spend_reserve,
         codex_config: args.codex_config,
         schema_transport: args.schema_transport,
         telemetry: match args.telemetry.trim().to_ascii_lowercase().as_str() {

@@ -1071,6 +1071,632 @@
                                        "wall_seconds":  779.7,
                                        "finished_at":  "2026-11-15T13:51:12+01:00",
                                        "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  4,
+                                       "when":  "2026-11-15T16:37:51+01:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "c84c55c3-5772-4888-a39e-6328495792fa",
+                                       "consult_ref":  "2d878621-dc69-453a-80b6-0b5b03674045",
+                                       "reviewer":  {
+                                                        "provider":  "grok",
+                                                        "provider_source":  "roster",
+                                                        "model":  "grok-4.7",
+                                                        "model_source":  "roster",
+                                                        "engine":  "grok",
+                                                        "harness":  "grok-cli 1.0.77",
+                                                        "provider_fingerprint":  "8c4f8ce6de16cd9fec9b89efcf7813ca03b2d0f56e8ea351696d4778e10d692c",
+                                                        "provider_config":  {
+                                                                                "engine":  "grok",
+                                                                                "launcher":  "C:\\Users\\Dmytro\\.grok\\bin\\grok.exe",
+                                                                                "credential_mechanism":  "oauth"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "grok :: grok-4.7",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: signed in (~/.grok/auth.json) - subscription (grok.com oauth)",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\AppData\\Local\\Temp\\claude\\66aab2698810b170\\399ad207-ed4c-4f86-b5f4-512fdcb587fc\\scratchpad\\roster-review-routing.json",
+                                                      "position":  2,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  {
+                                                     "id":  "a692e443-9c8a-4710-9a0e-8f1a438052af",
+                                                     "position":  1,
+                                                     "of":  2,
+                                                     "members":  [
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-spark-1.3-contributor",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "grok",
+                                                                         "model":  "grok-4.7",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     }
+                                                                 ],
+                                                     "concurrency":  2,
+                                                     "limits":  {
+                                                                    "grok":  1,
+                                                                    "meta":  1
+                                                                },
+                                                     "asked":  2,
+                                                     "started":  2,
+                                                     "usable":  2,
+                                                     "routing":  {
+                                                                     "mode":  "routed",
+                                                                     "order":  "routed",
+                                                                     "fallback":  "",
+                                                                     "seed":  "e9f06b37496bdaf91db221c38f9308fd0d0436cb83f95f6e032e6ba684287fe2",
+                                                                     "nonce":  "2026-11-15",
+                                                                     "nonce_source":  "date",
+                                                                     "size":  2,
+                                                                     "size_asked":  2,
+                                                                     "size_source":  "-PanelSize",
+                                                                     "reserve":  2,
+                                                                     "eligible":  [
+                                                                                      {
+                                                                                          "position":  1,
+                                                                                          "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                          "lab":  "meta",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.4167,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  7,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  2
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  2,
+                                                                                          "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab_source":  "singleton",
+                                                                                          "score":  1.2222,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  7,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  2
+                                                                                      }
+                                                                                  ],
+                                                                     "picked":  [
+                                                                                    {
+                                                                                        "slot":  1,
+                                                                                        "position":  2,
+                                                                                        "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                        "lab":  "grok :: grok-4.7 [grok]",
+                                                                                        "rule":  "lab-draw",
+                                                                                        "budget_mult":  2
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  2,
+                                                                                        "position":  1,
+                                                                                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                        "lab":  "meta",
+                                                                                        "rule":  "lab-draw",
+                                                                                        "budget_mult":  2
+                                                                                    }
+                                                                                ],
+                                                                     "explored":  [
+
+                                                                                  ],
+                                                                     "required":  [
+
+                                                                                  ],
+                                                                     "ext":  {
+                                                                                 "c3":  {
+                                                                                            "router":  {
+                                                                                                           "router":  "v1",
+                                                                                                           "params":  {
+                                                                                                                          "m_min":  2,
+                                                                                                                          "kappa":  0.1,
+                                                                                                                          "m_max":  8,
+                                                                                                                          "half_life_days":  0,
+                                                                                                                          "outcome_weight":  0,
+                                                                                                                          "explore":  0.2
+                                                                                                                      },
+                                                                                                           "prior_use":  [
+                                                                                                                             {
+                                                                                                                                 "position":  1,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  2,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             }
+                                                                                                                         ],
+                                                                                                           "priors":  {
+                                                                                                                          "version":  1,
+                                                                                                                          "generated":  "2026-11-13T09:24:28Z",
+                                                                                                                          "sha256":  "47a556cb1e6513bdaff7ae5f3f7e95b5be70dbc5107a9dbf873f95270b6588ba",
+                                                                                                                          "source":  "hub",
+                                                                                                                          "key_id":  "xelth-2026-1"
+                                                                                                                      }
+                                                                                                       }
+                                                                                        }
+                                                                             }
+                                                                 },
+                                                     "roles_note":  ""
+                                                 },
+                                       "parent_thread":  "",
+                                       "thread":  "01a1dfdb-9c19-7990-ac5b-4fe25965332a",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "grok --prompt-file C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-prompt-0702ad1cce014dfaab27f4cfb7abbde7.txt --output-format streaming-json -m grok-4.7 --reasoning-effort high --disable-web-search --tools read_file,list_dir,grep --disallowed-tools use_tool,search_tool,write,run_terminal_command --permission-mode dontAsk --no-subagents",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/release-0.2.4/handoffs/05-claude-routing-review.md",
+                                       "range":  null,
+                                       "prompt_chars":  11246,
+                                       "reply":  "handoffs/06-grok-routing-review-grok.md",
+                                       "reply_json":  "handoffs/06-grok-routing-review-grok.reply.json",
+                                       "events":  "handoffs/06-grok-routing-review-grok.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "grok-4.7",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "grok-v1",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-15T16:37:51+01:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                       "reviewed_revision":  "d7ce658 + uncommitted",
+                                       "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf",
+                                       "tree_sha256_after":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  22,
+                                       "brief_sha256":  "2b41e3e8248e321d91b203e47821907b46bd4c178fe72548954f3001ed1886aa",
+                                       "brief_sha256_after":  "2b41e3e8248e321d91b203e47821907b46bd4c178fe72548954f3001ed1886aa",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (22 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+                                                        "routing: no lab known for #2 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a \"lab\""
+                                                    ],
+                                       "verdict":  "HOLD",
+                                       "verdict_reason":  "The ordinary protected-entry and on-request paths match the spec, but a light or weighty panel flag lets a held or on-request reviewer run, and a bare resume follows the new draw.",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  2,
+                                                        "minor":  2,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+                                                           "F06-1",
+                                                           "F06-2",
+                                                           "F06-3",
+                                                           "F06-4"
+                                                       ],
+                                       "prior_findings":  [
+                                                              {
+                                                                  "id":  "F02-1",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-4",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F03-9",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F03-12",
+                                                                  "status":  "still-open"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-7",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-8",
+                                                                  "status":  "fixed"
+                                                              }
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  {
+                                                     "input_tokens":  150054,
+                                                     "cached_input_tokens":  2026496,
+                                                     "output_tokens":  48605,
+                                                     "reasoning_output_tokens":  41674,
+                                                     "total_tokens":  2225155
+                                                 },
+                                       "compactions":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  824.1,
+                                       "finished_at":  "2026-11-15T16:51:42+01:00",
+                                       "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  5,
+                                       "when":  "2026-11-15T16:37:51+01:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "51c59dd2-1414-4c47-a82c-2609bfaa51b1",
+                                       "consult_ref":  "a2a78f8c-8ca2-4e79-9ba3-24f49cf4b0ee",
+                                       "reviewer":  {
+                                                        "provider":  "meta",
+                                                        "provider_source":  "roster",
+                                                        "model":  "muse-spark-1.3-contributor",
+                                                        "model_source":  "roster",
+                                                        "engine":  "muse",
+                                                        "harness":  "muse-cli 1.4.20-R8619.1",
+                                                        "provider_fingerprint":  "1c6f62bb040d089b87b18a8d8aa5b3e8af92429295979dd8efea418308333179",
+                                                        "provider_config":  {
+                                                                                "engine":  "muse",
+                                                                                "launcher":  "C:\\Users\\Dmytro\\AppData\\Local\\Programs\\muse\\muse.cmd",
+                                                                                "credential_mechanism":  "oauth"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "meta :: muse-spark-1.3-contributor",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: signed in (~/.config/muse/auth.json: providers.meta, mechanism oauth)",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\AppData\\Local\\Temp\\claude\\66aab2698810b170\\399ad207-ed4c-4f86-b5f4-512fdcb587fc\\scratchpad\\roster-review-routing.json",
+                                                      "position":  1,
+                                                      "skipped":  [
+
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  {
+                                                     "id":  "a692e443-9c8a-4710-9a0e-8f1a438052af",
+                                                     "position":  2,
+                                                     "of":  2,
+                                                     "members":  [
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-spark-1.3-contributor",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "grok",
+                                                                         "model":  "grok-4.7",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     }
+                                                                 ],
+                                                     "concurrency":  2,
+                                                     "limits":  {
+                                                                    "grok":  1,
+                                                                    "meta":  1
+                                                                },
+                                                     "asked":  2,
+                                                     "started":  2,
+                                                     "usable":  2,
+                                                     "routing":  {
+                                                                     "mode":  "routed",
+                                                                     "order":  "routed",
+                                                                     "fallback":  "",
+                                                                     "seed":  "e9f06b37496bdaf91db221c38f9308fd0d0436cb83f95f6e032e6ba684287fe2",
+                                                                     "nonce":  "2026-11-15",
+                                                                     "nonce_source":  "date",
+                                                                     "size":  2,
+                                                                     "size_asked":  2,
+                                                                     "size_source":  "-PanelSize",
+                                                                     "reserve":  2,
+                                                                     "eligible":  [
+                                                                                      {
+                                                                                          "position":  1,
+                                                                                          "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                          "lab":  "meta",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.4167,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  7,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  2
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  2,
+                                                                                          "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab_source":  "singleton",
+                                                                                          "score":  1.2222,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  7,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  2
+                                                                                      }
+                                                                                  ],
+                                                                     "picked":  [
+                                                                                    {
+                                                                                        "slot":  1,
+                                                                                        "position":  2,
+                                                                                        "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                        "lab":  "grok :: grok-4.7 [grok]",
+                                                                                        "rule":  "lab-draw",
+                                                                                        "budget_mult":  2
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  2,
+                                                                                        "position":  1,
+                                                                                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                        "lab":  "meta",
+                                                                                        "rule":  "lab-draw",
+                                                                                        "budget_mult":  2
+                                                                                    }
+                                                                                ],
+                                                                     "explored":  [
+
+                                                                                  ],
+                                                                     "required":  [
+
+                                                                                  ],
+                                                                     "ext":  {
+                                                                                 "c3":  {
+                                                                                            "router":  {
+                                                                                                           "router":  "v1",
+                                                                                                           "params":  {
+                                                                                                                          "m_min":  2,
+                                                                                                                          "kappa":  0.1,
+                                                                                                                          "m_max":  8,
+                                                                                                                          "half_life_days":  0,
+                                                                                                                          "outcome_weight":  0,
+                                                                                                                          "explore":  0.2
+                                                                                                                      },
+                                                                                                           "prior_use":  [
+                                                                                                                             {
+                                                                                                                                 "position":  1,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  2,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             }
+                                                                                                                         ],
+                                                                                                           "priors":  {
+                                                                                                                          "version":  1,
+                                                                                                                          "generated":  "2026-11-13T09:24:28Z",
+                                                                                                                          "sha256":  "47a556cb1e6513bdaff7ae5f3f7e95b5be70dbc5107a9dbf873f95270b6588ba",
+                                                                                                                          "source":  "hub",
+                                                                                                                          "key_id":  "xelth-2026-1"
+                                                                                                                      }
+                                                                                                       }
+                                                                                        }
+                                                                             }
+                                                                 },
+                                                     "roles_note":  ""
+                                                 },
+                                       "parent_thread":  "",
+                                       "thread":  "01a1dfdb-a293-70b1-bcc8-39eeb4acc070",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "muse exec --json --prompt-file C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-prompt-600b96feb36f48b281484a0a3817eff1.txt --output-schema C:\\Users\\Dmytro\\.codex\\c3\\schemas\\consult-reply.v1.json --model muse-spark-1.3-contributor --reasoning-effort high --no-foreign-personal-context --disable-web-tools --disable-write --disable-shell --approval-mode never",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/release-0.2.4/handoffs/05-claude-routing-review.md",
+                                       "range":  null,
+                                       "prompt_chars":  8384,
+                                       "reply":  "handoffs/07-muse-routing-review-meta.md",
+                                       "reply_json":  "handoffs/07-muse-routing-review-meta.reply.json",
+                                       "events":  "handoffs/07-muse-routing-review-meta.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "muse-spark-1.3-contributor",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "muse-v1",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-15T16:37:51+01:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "native",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                       "reviewed_revision":  "d7ce658 + uncommitted",
+                                       "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf",
+                                       "tree_sha256_after":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  22,
+                                       "brief_sha256":  "2b41e3e8248e321d91b203e47821907b46bd4c178fe72548954f3001ed1886aa",
+                                       "brief_sha256_after":  "2b41e3e8248e321d91b203e47821907b46bd4c178fe72548954f3001ed1886aa",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (22 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+                                                        "routing: no lab known for #2 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a \"lab\"",
+                                                        "muse: warning: rules file at \\\\?\\C:\\Users\\Dmytro\\C3\\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules"
+                                                    ],
+                                       "verdict":  "HOLD",
+                                       "verdict_reason":  "Stale fallback/cache data can drive the hold, and the hold is bypassable via --skip-preflight/--thread.",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  2,
+                                                        "minor":  1,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+                                                           "F07-1",
+                                                           "F07-2",
+                                                           "F07-3"
+                                                       ],
+                                       "prior_findings":  [
+                                                              {
+                                                                  "id":  "F02-1",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F02-4",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F03-9",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F03-12",
+                                                                  "status":  "not-checked"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-7",
+                                                                  "status":  "fixed"
+                                                              },
+                                                              {
+                                                                  "id":  "F04-8",
+                                                                  "status":  "not-checked"
+                                                              }
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  1
+                                                      },
+                                       "wall_seconds":  245.5,
+                                       "finished_at":  "2026-11-15T16:42:09+01:00",
+                                       "commit_wait_ms":  0
                                    }
                                ]
               }

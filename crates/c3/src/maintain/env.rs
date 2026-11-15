@@ -241,9 +241,15 @@ fn read_capped<R: std::io::Read>(r: R, cap: usize) -> Result<Vec<u8>, String> {
     Ok(buf)
 }
 
+/// The hosts a keyless download may be redirected to from another host: `(from, to)`, both exact.
+/// Seen live 2026-11-15: `code.kimi.ai` answers the version marker and the installer with a 302 to
+/// `cdn.kimi.ai`. Any other cross-host redirect is refused - "some subdomain of the same site" is
+/// not good enough for a script that is run after it is fetched.
+const REDIRECT_HOSTS: &[(&str, &str)] = &[("code.kimi.ai", "cdn.kimi.ai")];
+
 /// The URL a redirect from `from` to `location` leads to, or why it is refused: the target must be
-/// https and on the same site as `from` (the same last two host labels, `code.kimi.ai` ->
-/// `cdn.kimi.ai`). A relative `location` is resolved against `from`.
+/// https and either on the same host as `from` or on a host listed for it in [`REDIRECT_HOSTS`].
+/// A relative `location` is resolved against `from`.
 pub(crate) fn redirect_target(from: &str, location: &str) -> Result<String, String> {
     let location = location.trim();
     if location.is_empty() {
@@ -256,15 +262,17 @@ pub(crate) fn redirect_target(from: &str, location: &str) -> Result<String, Stri
     if next.scheme() != "https" {
         return Err(format!("refused a redirect to {}", next.scheme()));
     }
-    let site = |u: &url::Url| -> String {
-        let host = u.host_str().unwrap_or("").to_ascii_lowercase();
-        let labels: Vec<&str> = host.rsplit('.').take(2).collect();
-        labels.into_iter().rev().collect::<Vec<_>>().join(".")
-    };
-    if site(&base).is_empty() || site(&base) != site(&next) {
+    let from_host = base.host_str().unwrap_or("").to_ascii_lowercase();
+    let to_host = next.host_str().unwrap_or("").to_ascii_lowercase();
+    let allowed = !from_host.is_empty()
+        && (from_host == to_host
+            || REDIRECT_HOSTS
+                .iter()
+                .any(|(f, t)| *f == from_host && *t == to_host));
+    if !allowed {
         return Err(format!(
-            "refused a redirect to another site ({})",
-            next.host_str().unwrap_or("?")
+            "refused a redirect to another host ({})",
+            if to_host.is_empty() { "?" } else { &to_host }
         ));
     }
     Ok(next.to_string())
@@ -332,5 +340,17 @@ mod tests {
         )
         .is_err());
         assert!(redirect_target("https://code.kimi.ai/kimi-code/latest", "  ").is_err());
+        // another subdomain of the same site is not enough: only the listed mirror is accepted,
+        // and only from the host it is listed for
+        assert!(redirect_target(
+            "https://code.kimi.ai/kimi-code/install.ps1",
+            "https://files.kimi.ai/kimi-code/install.ps1"
+        )
+        .is_err());
+        assert!(redirect_target(
+            "https://cdn.kimi.ai/kimi-code/install.ps1",
+            "https://code.kimi.ai/kimi-code/install.ps1"
+        )
+        .is_err());
     }
 }

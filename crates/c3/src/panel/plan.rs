@@ -588,7 +588,13 @@ pub fn select_panel_routing_with(
         let mut state = m.state.clone();
         let mut reason = m.reason.clone();
         let is_req = required.contains(&(m.entry.position as i64));
-        if is_req && state == "skipped" && (m.skip_kind == "weighty" || m.skip_kind == "light") {
+        // A required member that only a soft gate held back rejoins: the weighty / light panel
+        // gate, or (0.2.4) `request` - an on-request entry a -Require names runs. A held protected
+        // entry (`reserve`) never reaches here: the required-outage check refuses the run first.
+        if is_req
+            && state == "skipped"
+            && (m.skip_kind == "weighty" || m.skip_kind == "light" || m.skip_kind == "request")
+        {
             state = "run".into();
             reason = String::new();
         }

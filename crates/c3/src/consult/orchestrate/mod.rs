@@ -1519,13 +1519,76 @@ fn build_context(
             if !engine_exe_engine.is_empty() {
                 walk_ctx.seed_engine_launcher(&engine_exe_engine, &engine_exe_launcher);
             }
-            let walk =
-                walk_ctx.walk_full_ctx(&o.model, &o.engine, o.skip_preflight, prompt_estimate);
-            if !walk.error.is_empty() {
-                return Err((walk.error, 1));
-            }
-            let e = walk.entry.expect("an available walk has an entry");
-            roster_skipped = walk.skipped;
+            // (0.2.4, D) On a non-standing purpose the bare default is ONE reviewer picked by the
+            // SAME seeded routed draw a panel uses (weight = usefulness score x effective budget
+            // multiplier), so repeated bare consultations spread and a drained/held first entry
+            // yields to another. On a standing purpose (acceptance / core-contract) it stays the
+            // first available roster entry - the standing partner. No candidate -> the plain walk.
+            //
+            // (F06-3) A bare run must not hop reviewers within a task: when the effective mode is
+            // resume/fork (never the C3 default `new`, nor a standing purpose), the reviewer is the
+            // task's latest verified consult IF that entry is still eligible here (the panel gates,
+            // available, not held) - its thread continues. Otherwise the draw picks and a fresh
+            // thread starts (so a resume/fork of a held reviewer does not refuse for a missing
+            // parent of the drawn lineage).
+            let want_continue = matches!(o.mode.trim(), "resume" | "fork");
+            let prev_position: Option<i64> =
+                if want_continue && !c3_core::purpose::is_standing(&o.purpose) {
+                    ledger_entries
+                        .iter()
+                        .rev()
+                        .find(|c| {
+                            !c.thread.trim().is_empty()
+                                && !c.reviewer.provider_fingerprint.trim().is_empty()
+                        })
+                        .and_then(|c| {
+                            providers::find_roster_entry(
+                                &roster,
+                                &c.reviewer.provider,
+                                &c.reviewer.model,
+                            )
+                            .map(|e| e.position as i64)
+                        })
+                } else {
+                    None
+                };
+            let routed = if c3_core::purpose::is_standing(&o.purpose) {
+                None
+            } else {
+                crate::panel::run::route_single_default(
+                    &walk_ctx,
+                    &o,
+                    utc_now,
+                    &collab_root,
+                    &cwd,
+                    prompt_estimate,
+                    prev_position,
+                )
+            };
+            let e = if let Some((e, skipped, line, continued)) = routed {
+                println!("{line}");
+                roster_skipped = skipped;
+                // (F06-3) a resume/fork that could not continue the previous reviewer draws a new
+                // one and starts a fresh thread (the drawn lineage has no parent in this task).
+                if want_continue && !continued {
+                    o.mode = "new".into();
+                }
+                e
+            } else {
+                let walk = walk_ctx.walk_full_ctx(
+                    &o.model,
+                    &o.engine,
+                    o.skip_preflight,
+                    prompt_estimate,
+                    &o.purpose,
+                    o.spend_reserve,
+                );
+                if !walk.error.is_empty() {
+                    return Err((walk.error, 1));
+                }
+                roster_skipped = walk.skipped;
+                walk.entry.expect("an available walk has an entry")
+            };
             identity_provider = e.provider.clone();
             provider_source_override = "roster".into();
             engine_name = entry_engine(&e);
@@ -1619,12 +1682,15 @@ fn build_context(
                     all: true,
                     skip_preflight: false,
                     estimate_tokens: 0,
+                    spend_reserve: o.spend_reserve,
                 },
             );
             let out: Vec<String> = sel
                 .members
                 .iter()
-                .filter(|m| m.state != "run")
+                // an on-request entry named by -Require runs (it is not an outage); a held protected
+                // entry (`reserve`) is an outage, naming the hold and --spend-reserve.
+                .filter(|m| m.state != "run" && m.skip_kind != "request")
                 .map(|m| providers::format_required_outage(m, utc_now))
                 .collect();
             if !out.is_empty() {
@@ -1994,6 +2060,39 @@ fn build_context(
             }
             (p, refusal, String::new(), label)
         };
+
+    // (0.2.4, reviewer-protection, F06-2/F07-2) ANY resolved PROTECTED reviewer held by its reserve,
+    // on a non-standing purpose, is refused before launch (same exit 1 / "nothing was started" shape
+    // as the other preflight refusals) - however it was pinned: an explicit --provider/--model, a
+    // --thread, or a --mode resume/fork of its thread, AND even with --skip-preflight (the hold is a
+    // budget protection, not a credential check). Only --spend-reserve and the standing purposes
+    // (acceptance / core-contract) lift it. The walk / routed bare default never lands here (it
+    // already skips held entries), so this never fires on an auto-selected reviewer. The windows are
+    // read live (a real run is always live), matching the panel draw and router explain (F07-3).
+    if preflight_refusal.is_none()
+        && member.is_none()
+        && !o.spend_reserve
+        && !c3_core::purpose::is_standing(&o.purpose)
+    {
+        // A panel member was already seated by the parent (which applied the hold / --spend-reserve);
+        // it is never re-litigated here.
+        if let Some(e) = &roster_entry {
+            if e.reserve_percent > 0 {
+                if let Some(note) = crate::budget::entry_reserve_hold(&roster, e, utc_now, true) {
+                    let refusal = format!(
+                        "{} is held: {note}; it is kept for acceptance and core-contract; nothing was started. Run with --spend-reserve to spend its reserve, or choose another reviewer (e.g. --provider meta / --provider grok).",
+                        c3_core::lineage::format_reviewer_lineage(
+                            &e.provider,
+                            &e.model,
+                            &entry_engine(e)
+                        )
+                    );
+                    preflight_refusal = Some((refusal, 1));
+                    preflight_label = "held (protected reserve)".into();
+                }
+            }
+        }
+    }
 
     // (0.6.0, wave 29) the claude provider_config fields known only after the preflight - auth_method
     // and api_provider as `claude auth status` reported them (null when it did not run)

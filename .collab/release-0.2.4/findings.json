@@ -61,7 +61,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-15T16:42:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "zai_get now builds with redirects(0) and treats 3xx as no data; same for kimi_get. Redirect-with-key path closed.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-15T16:51:42+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "zai_get builds the agent with redirects(0) and accepts a body only when status \u003c 300 (crates/c3/src/budget/mod.rs:620). A 3xx is no data, so the bearer token is not replayed.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 }
                                              ]
                      },
                      {
@@ -243,7 +258,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-15T16:42:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Swap path now checks seat_saturated || on_request || reserve_percent\u003e0 before smoking (maintain/mod.rs:1091); saturation guard applies.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-15T16:51:42+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The model-swap smoke now holds the seat when seat_saturated, on_request, or reserve_percent is set before it builds the Target (crates/c3/src/maintain/mod.rs:1091). seat_saturated is the same 90 percent plan_headroom guard as pick_target.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 }
                                              ]
                      },
                      {
@@ -952,7 +982,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-15T16:42:09+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Secondary re-ask accounting not in this diff surface; not examined in this review.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-15T16:51:42+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "A read-insist LaunchFailed is stored as launch_fail and breaks the loop. It is not written into the dead-attempt record, and the comment keeps the guard reply and pointers (crates/c3/src/consult/orchestrate/secondary.rs:1396 and :1453).",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 }
                                              ]
                      },
                      {
@@ -1130,7 +1175,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-15T16:42:09+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Smoke-target half fixed (smoke.rs:65 skips protected/on-request; kimi_get redirects(0)); scratch-dir-under-state half not examined read-only.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-15T16:51:42+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The smoke scratch repo is now under the OS temp dir and removed after the run (crates/c3/src/maintain/mod.rs:1026). redirect_target still treats any host with the same last two labels as the same site (crates/c3/src/maintain/env.rs:259), so a non-allowlisted kimi.ai subdomain is accepted.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 }
                                              ]
                      },
                      {
@@ -1624,7 +1684,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-15T16:42:09+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Same fix as F02-1: zai_get redirects(0), 3xx yields no window.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-15T16:51:42+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Same zai_get path as F02-1. redirects(0) plus status \u003c 300 means a 302 body is not cached or parsed as TOKENS_LIMIT (crates/c3/src/budget/mod.rs:620-631).",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 }
                                              ]
                      },
                      {
@@ -1682,7 +1757,22 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-15T16:42:09+01:00",
+                                                     "status":  "not-checked",
+                                                     "note":  "Windows detach spawn quoting not in this diff surface; not examined in this review.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-15T16:51:42+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The Windows hook spawn is CreateProcessW of the c3 exe. The parent opens the log and passes the handle. The command line is only the quoted exe plus maintain --run, not cmd.exe /c (crates/c3/src/maintain/mod.rs:1316-1443). CODEX_HOME is lpCurrentDirectory, so \u0026 and | in it do not start another process.",
+                                                     "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                                     "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 }
                                              ]
                      },
                      {
@@ -1890,6 +1980,508 @@
                          "reviewer_checks":  [
 
                                              ]
+                     },
+                     {
+                         "id":  "F06-1",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  850
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  859
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  867
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  952
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/plan.rs",
+                                               "line":  594
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  337
+                                           }
+                                       ],
+                         "claim":  "panel_members assigns skip kind light or weighty while the row is still run, so the later on_request and reserve checks never see it. stand_in_light_members then promotes a light row to run when no sibling of that provider label is running, which seats a light on-request entry on every weighty purpose and seats a light protected entry even when reserve_hold would hold it. A weighty protected entry on a light purpose is stored as weighty; the required-outage check treats weighty as soft and select_panel_routing rejoins it, so --require of a held weighty entry runs it.",
+                         "trigger":  "Purpose framing, decision, stuck, acceptance, or core-contract, with an entry whose panel is light and whose ext is on_request or a reserve_percent whose long window is over the line, and no other running entry of that provider label. Or purpose diff-review, panel weighty, reserve over the line, and --require of that entry.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/providers.rs:830-977",
+                                              "observation":  "The weighty gate and the light gate set state to skipped before the on_request and reserve blocks, both of which require state == run. stand_in_light_members sets skip_kind light back to run and clears skip_kind."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/plan.rs:591-599 and crates/c3/src/panel/run.rs:333-340",
+                                              "observation":  "A required member with skip_kind weighty, light, or request is rejoined as run. The outage filter ignores those three kinds, so reserve is the only protection skip that refuses."
+                                          }
+                                      ],
+                         "verification":  "Dry-run c3 consult --panel --purpose framing with one roster entry panel light and ext.on_request true, as the only entry of its label. Expect the member to stay skipped; today stand-in marks it run. Repeat with ext.reserve_percent 15 and a weekly snapshot at 97 percent used.",
+                         "remedy":  "Evaluate on_request and reserve_hold before the light and weighty gates, and keep those two skip kinds. Do not promote or rejoin a row that is on_request or currently held.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/06-grok-routing-review-grok.md",
+                                        "thread":  "01a1dfdb-9c19-7990-ac5b-4fe25965332a",
+                                        "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                        "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T16:51:42+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T17:19:09+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "on_request and the reserve hold are evaluated before the light/weighty gates; a row with either kind is never promoted as a stand-in nor rejoined; a required held entry refuses the run (tests a_light_on_request_entry_is_not_seated_as_a_stand_in, a_required_held_weighty_entry_on_a_light_purpose_refuses)",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F06-2",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  2035
+                                           }
+                                       ],
+                         "claim":  "The protected-reserve refusal for an explicit --provider is skipped when --skip-preflight is set, so naming a held reviewer starts the run on a non-standing purpose without --spend-reserve. The walk and the panel still apply the hold.",
+                         "trigger":  "A protected entry whose long window is over the reserve line, purpose diff-review, --provider and --model naming it, plus --skip-preflight, and no --spend-reserve.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:2035-2056",
+                                              "observation":  "The hold block requires preflight_refusal to be empty, skip_preflight false, spend_reserve false, a non-empty provider, and a non-standing purpose. skip_preflight short-circuits the whole refusal."
+                                          }
+                                      ],
+                         "verification":  "With a 97 percent weekly snapshot on a reserve_percent 15 entry, run consult --provider \u003clabel\u003e --model \u003cid\u003e --purpose diff-review --skip-preflight --dry-run and confirm it plans that reviewer.",
+                         "remedy":  "Apply the reserve refusal even when credential preflight is skipped. Leave --spend-reserve and standing purposes as the only overrides.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/06-grok-routing-review-grok.md",
+                                        "thread":  "01a1dfdb-9c19-7990-ac5b-4fe25965332a",
+                                        "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                        "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T16:51:42+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T17:19:10+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "the hold refusal fires for any resolved protected entry on a non-standing purpose, also with --skip-preflight (test a_held_entry_is_refused_even_with_skip_preflight)",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F06-3",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  1509
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  1527
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  3143
+                                           }
+                                       ],
+                         "claim":  "A consult with --mode resume or --mode fork and neither --provider nor --thread still selects the reviewer by the purpose-aware routed draw, then select_parent_thread continues only that drawn lineage. The task\u0027s latest verified thread is not the parent. The run can fork a different reviewer than the last consult, or refuse because the drawn lineage has no thread while another lineage in the ledger does.",
+                         "trigger":  "A task whose last consult was reviewer A with a live thread. Next command is c3 consult --mode resume --purpose diff-review with no --provider and no --thread, and the seeded draw picks reviewer B.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:1426-1556",
+                                              "observation":  "Only a non-empty provider or thread leaves the walk branch. Mode is not consulted there. Non-standing purposes call route_single_default before any parent lookup."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:3130-3218",
+                                              "observation":  "With an empty --thread, the automatic parent is the newest verified thread of the already chosen identity. Explicit resume or fork with no parent of that lineage returns an error."
+                                          }
+                                      ],
+                         "verification":  "Ledger a diff-review on reviewer A, then dry-run --mode resume --purpose diff-review --panel-seed chosen so the draw picks B. Observe either B\u0027s lineage or the parent-thread refusal, not A\u0027s thread.",
+                         "remedy":  "When mode is resume or fork and the user named neither provider nor thread, bind the reviewer from the latest verified ledger consult before the routed draw, or require --thread.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/06-grok-routing-review-grok.md",
+                                        "thread":  "01a1dfdb-9c19-7990-ac5b-4fe25965332a",
+                                        "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                        "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T16:51:42+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T17:19:11+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "a bare resume/fork continues the reviewer of the latest verified consult when still eligible and not held, else draws and starts a new thread, saying so (test a_fork_follow_up_continues_the_previous_reviewer_or_draws_when_held)",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F06-4",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  343
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  354
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  455
+                                           }
+                                       ],
+                         "claim":  "OpenAI fallback windows are built with stale false, so a used_percent up to about eight days old is compared with elapsed recomputed at now and also drives budget_multiplier. A low old share misses the reserve hold and boosts the seat. A non-empty two-day result is returned even when its reset has already passed, which skips the 8-day scan and the health-file fallback. A future observation timestamp wins merge_observation and can replace a real reading. The scan filters model_provider openai and does not separate accounts.",
+                         "trigger":  "No rollout in the last two days, and a six-day-old weekly observation at about 20 percent used whose resets_at is still ahead, while current account usage is over the reserve line. Or a two-day rollout whose weekly resets_at is already past while a newer health record has the new window.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:343-390 and :412-457",
+                                              "observation":  "account_window_at returns immediately when windows_from_quota is non-empty, with no keep_future. The 8-day and recorded paths use keep_future. windows_from_quota always sets stale false."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:71-84 and crates/c3-core/src/quota.rs:709-752",
+                                              "observation":  "budget_multiplier uses every non-stale window. merge_observation replaces a window when the candidate instant is strictly newer, with no future-timestamp cap."
+                                          }
+                                      ],
+                         "verification":  "Point CODEX_HOME at a fixture whose only weekly rollout is six days old at 20 percent used with resets_at still ahead, reserve_percent 15, and assert reserve_hold is none and the multiplier is above 1. Then add a health record at 97 percent and assert the 8-day rollout still wins.",
+                         "remedy":  "Treat a fallback window as stale when its observation is old relative to the period, and ignore it for both the hold and the multiplier. If every two-day window has resets_at in the past, fall through to the next source. Ignore observations whose time is in the future.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/06-grok-routing-review-grok.md",
+                                        "thread":  "01a1dfdb-9c19-7990-ac5b-4fe25965332a",
+                                        "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                        "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T16:51:42+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T17:19:12+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "a two-day result past its reset falls through to the older sources; future-dated observations are ignored; an old reading is a floor - it may hold but never boosts (tests an_old_high_reading_still_holds_and_names_its_age, an_old_low_reading_neither_holds_nor_boosts, a_future_dated_observation_is_ignored)",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F07-1",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  359
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  455
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  589
+                                           }
+                                       ],
+                         "claim":  "The 8-day openai fallback and the offline cache path drive the reserve hold with windows that are never marked stale: windows_from_quota always sets stale:false and the kimi/zai/muse parsers stamp observed_at=now even when the body came from a days-old cache, so week-old used% is judged against today\u0027s elapsed%.",
+                         "trigger":  "No Codex session for 3-8 days with a high weekly used% on record, or a stale kimi/zai cache on disk while offline; a protected entry is then refused (exit 1/5) on stale data, or held when live quota already reset.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:359-372,412-457",
+                                              "observation":  "windows_from_quota sets stale:false unconditionally; the 8-day fallback passes an 8-day-old observation through it and only filters by resets_at."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:586-590,795-824",
+                                              "observation":  "Cache-hit with network==false parses the cached body with observed_at=now and stale:false; snapshot is the only source that sets stale from observed_at age."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:122-139",
+                                              "observation":  "reserve_hold trusts stale==false and only checks resets_at\u003enow, so a stale-fed window holds."
+                                          }
+                                      ],
+                         "verification":  "Seed a codex home whose only rollout observation is 7 days old at 97% weekly with reset still ahead, run a bare non-standing consult naming the protected entry, and check whether it is held; repeat with a stale kimi cache and network off.",
+                         "remedy":  "Propagate the real observation age: set stale from (now-observed_at)\u003eSTALE_DAYS for the 8-day fallback, and thread the cache fetched_at through parse_kimi/parse_zai/parse_muse (or mark cache-fed windows stale when fetched_at is old).",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-muse-routing-review-meta.md",
+                                        "thread":  "01a1dfdb-a293-70b1-bcc8-39eeb4acc070",
+                                        "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                        "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T16:42:09+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T17:19:12+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "every window carries its real observation time (cache fetch time for kimi/z.ai/Muse); readings older than an hour never raise a multiplier above 1; not marked stale on purpose - a days-old 97 % weekly reading must still hold",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F07-2",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  2035
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  1507
+                                           }
+                                       ],
+                         "claim":  "The explicit-provider hold refusal is skipped with --skip-preflight, and a --thread/--mode resume|fork run that pins a held reviewer never checks the hold at all, so a protected reviewer runs when it should be refused.",
+                         "trigger":  "--provider \u003cprotected\u003e --model \u003cid\u003e --skip-preflight on a non-standing purpose while held; or --thread \u003cthread of held reviewer\u003e after the hold engages.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:2035-2056",
+                                              "observation":  "Hold refusal requires !o.skip_preflight and !o.provider.is_empty(); a held entry with --skip-preflight passes preflight."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:1479-1508",
+                                              "observation":  "The --thread branch resolves roster_entry from the ledger lineage but no hold check applies to that path (check is provider-gated)."
+                                          }
+                                      ],
+                         "verification":  "With the protected entry at 97% week / 57% elapsed, run explicit --provider with and without --skip-preflight and a --thread pinned to that lineage; compare refusal vs run.",
+                         "remedy":  "Apply the reserve-hold refusal to any resolved roster entry on a non-standing purpose without --spend-reserve regardless of skip_preflight/provider/thread, or document that --skip-preflight/--thread intentionally bypass the reserve.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-muse-routing-review-meta.md",
+                                        "thread":  "01a1dfdb-a293-70b1-bcc8-39eeb4acc070",
+                                        "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                        "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T16:42:09+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T17:19:11+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F06-2; also covers a reviewer pinned by --thread or a resume/fork",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F07-3",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  2681
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/cli/router.rs",
+                                               "line":  285
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  505
+                                           }
+                                       ],
+                         "claim":  "The hold decision and the routed draw/display disagree by network mode: panel_members and the walk evaluate the hold with network=false (cache only) while route_single_default weights with multipliers_for(network=true) and router explain marks [held] with network=true.",
+                         "trigger":  "Fresh live quota says idle but the 5-min disk cache still says 97%, or vice versa: the draw picks a seat the preflight then refuses, or explain shows [held] for a seat the run just used.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/providers.rs:505-522,872-880",
+                                              "observation":  "Hold inside panel_members and walk_full_ctx calls entry_reserve_hold(...,false)."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/panel/run.rs:2681-2701",
+                                              "observation":  "route_single_default weights with multipliers_for(...,true); router explain checks entry_reserve_hold(...,true)."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/cli/router.rs:283-288",
+                                              "observation":  "router explain uses network=true for the same mark."
+                                          }
+                                      ],
+                         "verification":  "Prime a stale held cache, refresh live quota to idle (or the reverse), then compare a bare routed pick, its preflight, and router explain on the same purpose.",
+                         "remedy":  "Evaluate hold, multiplier and explain from one window set per run (single network mode / one fetched snapshot), or document which surface is authoritative.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/07-muse-routing-review-meta.md",
+                                        "thread":  "01a1dfdb-a293-70b1-bcc8-39eeb4acc070",
+                                        "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                        "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T16:42:09+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T17:19:13+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "the hold, the draw weights and router explain read the windows with the same network mode per run; structural, no dedicated test",
+                                             "evidence":  "",
+                                             "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
+                                             "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
                      }
                  ],
     "ratings":  [
@@ -1961,6 +2553,52 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1794751496
+                    },
+                    {
+                        "n":  4,
+                        "consult_id":  "c84c55c3-5772-4888-a39e-6328495792fa",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-15T16:37:51+01:00",
+                        "useful":  "yes",
+                        "note":  "Grok on the prompt-only transport: found the light/weighty gate-order hole that let a held or on-request reviewer run, and the reviewer hop on a bare resume; both held",
+                        "when":  "2026-11-15T17:19:25+01:00",
+                        "rating_rev":  2,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1794759565
+                    },
+                    {
+                        "n":  5,
+                        "consult_id":  "51c59dd2-1414-4c47-a82c-2609bfaa51b1",
+                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                        "provider":  "meta",
+                        "model":  "muse-spark-1.3-contributor",
+                        "engine":  "muse",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-15T16:37:51+01:00",
+                        "useful":  "yes",
+                        "note":  "Muse contributor, 4 minutes: the stale-reading finding and the --skip-preflight / --thread bypass of the hold both held",
+                        "when":  "2026-11-15T17:19:26+01:00",
+                        "rating_rev":  2,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1794759566
                     }
                 ]
 }

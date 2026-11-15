@@ -82,15 +82,36 @@ reviewer: add `--provider <name> --model <id>`. Set `CODEX_CONSULT_COORDINATOR` 
 own model so the bridge warns when it seats it as a reviewer — keep the operator's value when
 set; do not guess your own.
 
-**Which reviewer.** Without `--provider` the roster's first entry answers - on this roster that is
-Astra, the scarcest quota. **So a single consultation always names its reviewer** (`--provider
-meta` or `--provider grok` by default); leave `--provider` out only for acceptance or
-core-contract, where the standing partner is meant. Measured 2026-10-30: Astra took 37 of 75
-consultations in two weeks (27 of 47 in the last one) and the Muse contributor 2 - the default
-answering, not a choice. Do not let one reviewer take every consultation: the track record that seats panels is built from marks, and a
-reviewer that is never asked never earns a seat. The operator's goal is to **drain every plan's
-allowance by the end of its window, not long before it** - a window spent on day one means days
-of waiting; one left half full is paid for nothing. So:
+**Which reviewer.** A bare consultation (no `--provider`) is routed by purpose:
+
+- **acceptance, core-contract** - the standing partner answers (the roster's first available entry,
+  on this roster Astra); its reserve is never held back on these purposes.
+- **every other purpose** (diff-review, checkpoint, framing, decision, stuck, chore, none) - the
+  router picks ONE reviewer by the same seeded weighted draw a panel uses, among the entries a panel
+  of that purpose would seat (usefulness score x remaining-budget multiplier). So repeated bare
+  consultations spread instead of draining the first entry, and a drained or held reviewer yields to
+  another. The bare run prints the pick, its weight and why the first entry was not it. Pass
+  `--provider`/`--model` to name a reviewer yourself, or `--panel-seed` to reproduce a draw.
+
+You can still name a reviewer explicitly (`--provider meta`, `--provider grok`) whenever you want a
+particular second opinion. The operator's goal is to **drain every plan's allowance by the end of
+its window, not long before it** - a window spent on day one means days of waiting; one left half
+full is paid for nothing. Two protections back this up:
+
+- **A protected entry** (`ext.reserve_percent: N` in the roster) is HELD on non-standing purposes
+  once its usage runs past the reserve line on a long budget window (`used% >= min(elapsed% + N,
+  100 - N)`) - it may not run more than N points ahead of the calendar, and its last N % is kept for
+  acceptance / core-contract. A held reviewer is skipped by the bare default and the panel, and an
+  explicit `--provider` naming it is refused ("is held ...; kept for acceptance and core-contract").
+  Pass `--spend-reserve` to spend the reserve anyway, or choose another reviewer.
+- **The heavy Muse model** (`meta :: muse-wonder-1.0`) is marked `ext.on_request` and is never seated
+  automatically - not by the bare default, a panel draw or `--panel-all`. Run it ONLY when the
+  operator's own prompt asks for the strongest models, and then name it explicitly
+  (`--provider meta --model muse-wonder-1.0`, or `--require` it into a panel). The **Muse
+  contributor** (`--provider meta`) stays the near-constant, near-free companion.
+
+Do not let one reviewer take every consultation: the track record that seats panels is built from
+marks, and a reviewer that is never asked never earns a seat. So:
 
 - A **cheap, near-free reviewer** (on this roster the Muse contributor, `--provider meta`) may be
   asked on almost every consultation, as the constant second opinion.

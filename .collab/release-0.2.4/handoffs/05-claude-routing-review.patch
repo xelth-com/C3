@@ -1,0 +1,1897 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b67318a..9b2b785 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -129,6 +129,30 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
+ 
+ ### Changed
+ 
++- **The bare default reviewer depends on the purpose, and two roster `ext` settings protect scarce
++  reviewers.** A single consultation with no `--provider` is no longer always the roster's first
++  entry: on the standing purposes **acceptance** and **core-contract** it stays the first available
++  entry (the standing partner); on every other purpose it is ONE reviewer picked by the same seeded
++  weighted draw a panel uses (usefulness score x effective budget multiplier), among the entries a
++  panel of that purpose would seat, so repeated bare consultations spread instead of draining the
++  first entry. The bare run prints the pick, its weight, the candidate count and why the first entry
++  was not it; `--panel-seed` reproduces the draw (now accepted on a single consult too). Two new
++  per-entry `ext` settings: `reserve_percent: N` (1..50) makes an entry **protected** - HELD on a
++  non-standing purpose once `used% >= min(elapsed% + N, 100 - N)` on any long budget window (24 h+,
++  non-stale, reset ahead), i.e. it may not run more than N points ahead of the calendar and keeps
++  its last N % for acceptance / core-contract; it is then skipped by the bare default and the panel
++  (skip kind `reserve`), refused when named explicitly, and an outage when `--require`d - unless
++  `--spend-reserve` (new flag, single and panel). `on_request: true` makes an entry **on-request** -
++  never seated automatically (not by the bare default, a panel draw or `--panel-all`); it runs only
++  when named exactly by `--provider`/`--model` or a `--require` matcher (skip kind `request`, "on
++  request only"). `c3 providers` notes the hold on the entry's row (VERDICT stays `available`) and
++  `c3 router explain` marks entries `[held: reserve]` / `[on request]`. `c3 maintain`'s smoke never
++  targets a protected or an on-request seat.
++- **The ChatGPT account's budget window is no longer forgotten after two idle days.** When today's
++  and yesterday's codex rollouts give nothing, `budget::openai_windows` falls back to the newest
++  observation in the rollouts of the last 8 days, then to the recorded quota of the machine-wide
++  health file / ledgers, keeping only windows whose reset is still ahead and showing the real
++  observation age ("seen Nd ago"). The health verdict's own two-day rule is unchanged.
+ - **Grok takes the reply schema in the prompt, not as `--json-schema`:** under the native flag
+   every text Grok writes must be schema-shaped, so its opening remark came out as a schema-valid
+   placeholder answer ("I am reading the brief before answering") and, carrying no tool call,
+diff --git a/crates/c3-cli/tests/reviewer_protection.rs b/crates/c3-cli/tests/reviewer_protection.rs
+new file mode 100644
+index 0000000..a26a996
+--- /dev/null
++++ b/crates/c3-cli/tests/reviewer_protection.rs
+@@ -0,0 +1,323 @@
++//! (0.2.4, reviewer-protection) The two per-entry roster settings end to end through the installed
++//! binary against fake CLIs: `ext.reserve_percent` (a PROTECTED entry held back by its budget
++//! reserve) and `ext.on_request` (an entry seated only when named exactly). Every check is a
++//! `--dry-run` or a pre-launch refusal, so no model turn runs.
++//!
++//! Windows only: the reviewers are codex custom providers on the z.ai host (known to the caps
++//! catalog), so a preflight needs only the provider env key - no real codex login. A protected
++//! plan's window is fed with `c3 budget set <plan> --window week --used 97% --resets <future>`.
++#![cfg(windows)]
++
++use std::path::{Path, PathBuf};
++use std::process::Command;
++
++fn c3_bin() -> PathBuf {
++    PathBuf::from(env!("CARGO_BIN_EXE_c3"))
++}
++
++fn scratch(tag: &str) -> PathBuf {
++    let nanos = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map(|d| d.as_nanos())
++        .unwrap_or(0);
++    let p = std::env::temp_dir().join(format!("c3-{tag}-{}-{nanos}", std::process::id()));
++    std::fs::create_dir_all(&p).unwrap();
++    p
++}
++
++fn git(repo: &Path, args: &[&str]) {
++    let st = Command::new("git")
++        .arg("-C")
++        .arg(repo)
++        .args(args)
++        .status()
++        .expect("git on PATH");
++    assert!(st.success(), "git {args:?}");
++}
++
++/// The fake codex: `--version` and `login status` only (preflight); no exec turn is reached (every
++/// test here dry-runs or refuses before launch).
++const FAKE_CMD: &str = "@echo off\r\nset \"FAKE_CODEX_ARGS=%*\"\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-codex.ps1\"\r\nexit /b %ERRORLEVEL%\r\n";
++const FAKE_PS1: &str = r#"$ErrorActionPreference = 'Stop'
++$raw = [string]$env:FAKE_CODEX_ARGS
++if ($raw -match '--version') { Write-Output 'codex-cli 0.155.1-fake'; exit 0 }
++if ($raw -match '^\s*login\s+status(\s|$)') { [Console]::Error.WriteLine('Logged in using ChatGPT'); exit 0 }
++exit 0
++"#;
++
++/// A scratch Codex config: the built-in openai (gpt-5.1) plus the z.ai custom provider ZAI.
++const CODEX_TOML: &str = "model = \"gpt-5.1\"\n\n[model_providers.ZAI]\nbase_url = \"https://api.z.ai/api/v1\"\nenv_key = \"RT_ZAI_KEY\"\nwire_api = \"responses\"\n";
++
++struct Fixture {
++    work: PathBuf,
++    repo: PathBuf,
++    home: PathBuf,
++    fake: PathBuf,
++    roster: PathBuf,
++}
++
++fn setup(tag: &str, roster_json: &str) -> Fixture {
++    let work = scratch(tag);
++    let repo = work.join("repo");
++    std::fs::create_dir_all(&repo).unwrap();
++    git(&repo, &["init", "-q"]);
++    git(&repo, &["config", "user.email", "t@e.com"]);
++    git(&repo, &["config", "user.name", "T"]);
++    std::fs::write(repo.join("app.txt"), "one\n").unwrap();
++    git(&repo, &["add", "-A"]);
++    git(&repo, &["commit", "-q", "-m", "init"]);
++    let home = work.join("home");
++    std::fs::create_dir_all(&home).unwrap();
++    std::fs::write(home.join("config.toml"), CODEX_TOML).unwrap();
++    let fake = work.join("fake-codex.cmd");
++    std::fs::write(&fake, FAKE_CMD).unwrap();
++    std::fs::write(work.join("fake-codex.ps1"), FAKE_PS1).unwrap();
++    let roster = work.join("roster.json");
++    std::fs::write(&roster, roster_json).unwrap();
++    Fixture {
++        work,
++        repo,
++        home,
++        fake,
++        roster,
++    }
++}
++
++impl Fixture {
++    fn cmd(&self) -> Command {
++        let mut cmd = Command::new(c3_bin());
++        for (k, _) in std::env::vars() {
++            if k.starts_with("CODEX_CONSULT_") || k.starts_with("FAKE_") || k.starts_with("C3_") {
++                cmd.env_remove(&k);
++            }
++        }
++        cmd.current_dir(&self.repo)
++            .env("CODEX_HOME", &self.home)
++            .env("RT_ZAI_KEY", "zai-test-key")
++            .env("CODEX_CONSULT_EXE", &self.fake)
++            .env("CODEX_CONSULT_ROSTER", &self.roster)
++            .env("CODEX_CONSULT_TELEMETRY", "off")
++            .env("C3_PRIORS", "off");
++        cmd
++    }
++
++    /// Run `c3 <args>` and return (code, stdout, stderr).
++    fn run(&self, args: &[&str]) -> (Option<i32>, String, String) {
++        let out = self
++            .cmd()
++            .args(args)
++            .arg("--codex-exe")
++            .arg(&self.fake)
++            .output()
++            .expect("run c3");
++        (
++            out.status.code(),
++            String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n"),
++            String::from_utf8_lossy(&out.stderr).replace("\r\n", "\n"),
++        )
++    }
++
++    /// Feed a plan's weekly window: used%, reset far in the future (so it is never dropped).
++    fn budget_set(&self, plan: &str, used: &str) {
++        let out = self
++            .cmd()
++            .args([
++                "budget",
++                "set",
++                plan,
++                "--window",
++                "week",
++                "--used",
++                used,
++                "--resets",
++                "2099-01-01T00:00:00Z",
++            ])
++            .output()
++            .expect("run c3 budget set");
++        assert_eq!(
++            out.status.code(),
++            Some(0),
++            "budget set failed: {}",
++            String::from_utf8_lossy(&out.stderr)
++        );
++    }
++
++    fn cleanup(self) {
++        let _ = std::fs::remove_dir_all(&self.work);
++    }
++}
++
++// #1 weighty, #2 and #3 ordinary (always) - no plans, so no budget hold anywhere.
++const ROSTER_ROUTE: &str = r#"{"roster_version":1,"reviewers":[
++    {"provider":"ZAI","model":"glm-5.3","panel":"weighty"},
++    {"provider":"ZAI","model":"glm-5.3-flash"},
++    {"provider":"ZAI","model":"glm-5.2"}
++]}"#;
++
++#[test]
++fn bare_diff_review_does_not_go_to_a_weighty_first_entry() {
++    let f = setup("rp-bare-diff", ROSTER_ROUTE);
++    let (code, out, err) = f.run(&[
++        "consult",
++        "--task",
++        "t",
++        "--purpose",
++        "diff-review",
++        "--prompt",
++        "x",
++        "--panel-seed",
++        "s1",
++        "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "stdout:\n{out}\nstderr:\n{err}");
++    // --panel-seed is accepted on a bare consult and seeds the single routed pick.
++    assert!(
++        out.contains("routed bare default (diff-review purpose) picked"),
++        "{out}"
++    );
++    // The weighty #1 glm-5.3 is not the pick; a non-weighty entry is.
++    assert!(
++        out.contains("glm-5.3-flash") || out.contains("glm-5.2"),
++        "a non-weighty entry was picked: {out}"
++    );
++    // The line explains that #1 was not eligible (weighty on a light purpose).
++    assert!(
++        out.contains("#1") && out.contains("weighty"),
++        "names why #1 was skipped: {out}"
++    );
++    f.cleanup();
++}
++
++#[test]
++fn bare_acceptance_takes_the_first_available_entry() {
++    let f = setup("rp-bare-acc", ROSTER_ROUTE);
++    let (code, out, err) = f.run(&[
++        "consult",
++        "--task",
++        "t",
++        "--purpose",
++        "acceptance",
++        "--prompt",
++        "x",
++        "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "stdout:\n{out}\nstderr:\n{err}");
++    // Standing purpose: no routed draw, the standing partner (first entry) is chosen.
++    assert!(
++        !out.contains("routed bare default"),
++        "acceptance must not route: {out}"
++    );
++    assert!(
++        out.contains("reviewer    : ZAI :: glm-5.3 ") && !out.contains("glm-5.3-flash"),
++        "first entry glm-5.3 chosen: {out}"
++    );
++    f.cleanup();
++}
++
++// #1 ordinary (no plan, never held), #2 protected on plan `zaiplan` (reserve 15).
++const ROSTER_PROTECT: &str = r#"{"roster_version":1,"reviewers":[
++    {"provider":"ZAI","model":"glm-5.3"},
++    {"provider":"ZAI","model":"glm-5.3-flash","plan":"zaiplan","ext":{"reserve_percent":15}}
++]}"#;
++
++#[test]
++fn a_held_protected_entry_is_skipped_refused_and_overridable() {
++    let f = setup("rp-held", ROSTER_PROTECT);
++    f.budget_set("zaiplan", "97%"); // 97% used, reset far ahead -> held (97 >= min(15,85))
++
++    // (a) a panel on a non-standing purpose does not seat the held entry (skip kind reserve).
++    let (code, out, err) = f.run(&[
++        "consult", "--task", "t", "--panel", "--purpose", "diff-review", "--prompt", "x",
++        "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "panel dry stdout:\n{out}\nstderr:\n{err}");
++    assert!(
++        out.contains("glm-5.3-flash") && out.to_lowercase().contains("reserve"),
++        "held entry shown with its reserve hold: {out}"
++    );
++
++    // (b) an explicit --provider/--model naming it, on a non-standing purpose, is refused before
++    //     launch (exit 1, nothing started), naming the hold and --spend-reserve.
++    let (code, _out, err) = f.run(&[
++        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--purpose",
++        "diff-review", "--prompt", "x",
++    ]);
++    assert_eq!(code, Some(1), "held refusal exit 1: {err}");
++    assert!(err.contains("is held"), "names the hold: {err}");
++    assert!(err.contains("--spend-reserve"), "offers the override: {err}");
++    assert!(
++        err.contains("acceptance and core-contract"),
++        "says what it is kept for: {err}"
++    );
++
++    // (c) --spend-reserve lets it through (preflight available on the dry run).
++    let (code, out, _err) = f.run(&[
++        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--purpose",
++        "diff-review", "--prompt", "x", "--spend-reserve", "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "spend-reserve dry: {out}");
++    assert!(!out.contains("held (protected reserve)"), "{out}");
++
++    // (d) a standing purpose (acceptance) is exempt - allowed without the override.
++    let (code, out, _err) = f.run(&[
++        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--purpose",
++        "acceptance", "--prompt", "x", "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "acceptance dry: {out}");
++    assert!(!out.contains("held (protected reserve)"), "{out}");
++
++    // (e) a panel that --requires the held entry on a non-standing purpose refuses (exit 5).
++    let (code, _out, err) = f.run(&[
++        "consult", "--task", "t", "--panel", "--purpose", "diff-review", "--require", "#2",
++        "--prompt", "x", "--dry-run",
++    ]);
++    assert_eq!(code, Some(5), "required held entry outage exit 5: {err}");
++    assert!(
++        err.to_lowercase().contains("reserve") || err.contains("--spend-reserve"),
++        "names the hold: {err}"
++    );
++    f.cleanup();
++}
++
++// #1 ordinary, #2 on-request (seated only when named).
++const ROSTER_ON_REQUEST: &str = r#"{"roster_version":1,"reviewers":[
++    {"provider":"ZAI","model":"glm-5.3"},
++    {"provider":"ZAI","model":"glm-5.3-flash","ext":{"on_request":true}}
++]}"#;
++
++#[test]
++fn an_on_request_entry_is_named_only_never_drawn() {
++    let f = setup("rp-onreq", ROSTER_ON_REQUEST);
++
++    // (a) --panel-all never seats the on-request entry (shown "on request only").
++    let (code, out, err) = f.run(&[
++        "consult", "--task", "t", "--panel-all", "--prompt", "x", "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "panel-all dry:\n{out}\n{err}");
++    assert!(
++        out.contains("on request only"),
++        "on-request entry shown skipped: {out}"
++    );
++
++    // (b) --provider/--model naming it runs it (preflight available on the dry run).
++    let (code, out, err) = f.run(&[
++        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--prompt",
++        "x", "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "named dry:\n{out}\n{err}");
++    assert!(
++        out.contains("reviewer    : ZAI :: glm-5.3-flash "),
++        "the named on-request entry is the reviewer: {out}"
++    );
++
++    // (c) a panel that --requires it by position seats it.
++    let (code, out, err) = f.run(&[
++        "consult", "--task", "t", "--panel", "--require", "#2", "--prompt", "x", "--dry-run",
++    ]);
++    assert_eq!(code, Some(0), "require #2 dry:\n{out}\n{err}");
++    assert!(
++        out.contains("glm-5.3-flash") && out.to_lowercase().contains("required"),
++        "the required on-request entry is seated: {out}"
++    );
++    f.cleanup();
++}
+diff --git a/crates/c3-core/src/purpose.rs b/crates/c3-core/src/purpose.rs
+index 5ac114f..d6baea7 100644
+--- a/crates/c3-core/src/purpose.rs
++++ b/crates/c3-core/src/purpose.rs
+@@ -13,3 +13,14 @@ pub const WEIGHTY_PURPOSES: &[&str] = &[
+ pub fn is_weighty(purpose: &str) -> bool {
+     WEIGHTY_PURPOSES.contains(&purpose)
+ }
++
++/// (0.2.4, reviewer-protection) The standing purposes: the acceptance work the standing partner is
++/// kept for. A protected reviewer's reserve hold does not apply on these, and the bare default on
++/// these purposes stays the first available roster entry (never a routed pick).
++pub const STANDING_PURPOSES: &[&str] = &["acceptance", "core-contract"];
++
++/// Whether a purpose is standing (acceptance / core-contract): the reserve hold is waived and the
++/// bare default is the standing partner.
++pub fn is_standing(purpose: &str) -> bool {
++    STANDING_PURPOSES.contains(&purpose)
++}
+diff --git a/crates/c3-core/src/quota.rs b/crates/c3-core/src/quota.rs
+index 273b26b..1e60564 100644
+--- a/crates/c3-core/src/quota.rs
++++ b/crates/c3-core/src/quota.rs
+@@ -1101,9 +1101,19 @@ pub fn account_window_at(codex_home: &str, now: DateTime<Utc>) -> Option<Account
+             v
+         }
+     };
++    select_account_window(&observations, now)
++}
++
++/// The newest-observation selection over a set of account observations (the shared body of
++/// [`account_window_at`] and [`account_window_within`]): fold [`merge_observation`] at `now`, then
++/// keep a result only when it names a window with a known instant.
++fn select_account_window(
++    observations: &[(Observation, PathBuf)],
++    now: DateTime<Utc>,
++) -> Option<AccountWindow> {
+     let mut best: Option<Observation> = None;
+     let mut best_path = PathBuf::new();
+-    for (o, p) in &observations {
++    for (o, p) in observations {
+         let before = best.clone();
+         best = merge_observation(best, Some(o), now);
+         if best != before {
+@@ -1122,6 +1132,57 @@ pub fn account_window_at(codex_home: &str, now: DateTime<Utc>) -> Option<Account
+         })
+ }
+ 
++/// (0.2.4, reviewer-protection) The account's windows from the rollouts of the last `days` days
++/// (local), judged at `now` - the budget module's fallback when today's and yesterday's rollouts
++/// give nothing (the operator had no Codex session in two days). Unlike [`account_window_at`] this
++/// scans a wider range, is NOT cached and takes no part in the health verdict's two-day rule. The
++/// caller keeps only windows whose reset is still ahead.
++pub fn account_window_within(
++    codex_home: &str,
++    now: DateTime<Utc>,
++    days: i64,
++) -> Option<AccountWindow> {
++    if codex_home.is_empty() || days < 1 {
++        return None;
++    }
++    let observations = read_account_observations_range(codex_home, days);
++    select_account_window(&observations, now)
++}
++
++/// The observations of the account's rollouts over the last `days` days (local) on the built-in
++/// `openai` provider that name a window - read from disk, no selection. A wider, uncached variant of
++/// [`read_account_observations`]; bounded to the 64 most recently written rollouts in the range.
++fn read_account_observations_range(codex_home: &str, days: i64) -> Vec<(Observation, PathBuf)> {
++    let mut out = Vec::new();
++    let root = Path::new(codex_home).join("sessions");
++    if !root.is_dir() {
++        return out;
++    }
++    let today = Local::now().date_naive();
++    let from = today
++        .checked_sub_signed(chrono::Duration::days((days - 1).max(0)))
++        .unwrap_or(today);
++    let mut files: Vec<(SystemTime, PathBuf)> = Vec::new();
++    for d in local_day_dirs(&root, from, today) {
++        rollouts_in(&d, None, &mut files);
++    }
++    files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
++    let provider_re = regex::Regex::new(r#""model_provider"\s*:\s*"([^"]*)""#).unwrap();
++    for (_, p) in files.into_iter().take(64) {
++        let head = read_rollout_head(&p);
++        if let Some(c) = provider_re.captures(&head) {
++            if &c[1] != "openai" {
++                continue;
++            }
++        }
++        let u = rollout_usage(&p, None, ROLLOUT_TAIL_BYTES);
++        if let Some(w) = u.window {
++            out.push((w, p));
++        }
++    }
++    out
++}
++
+ /// The observations of the account's last 16 rollouts (today and yesterday, local) on the built-in
+ /// `openai` provider that name a window - read from disk, no selection.
+ fn read_account_observations(codex_home: &str) -> Vec<(Observation, PathBuf)> {
+diff --git a/crates/c3-core/src/roster.rs b/crates/c3-core/src/roster.rs
+index c2171b2..2688513 100644
+--- a/crates/c3-core/src/roster.rs
++++ b/crates/c3-core/src/roster.rs
+@@ -109,6 +109,19 @@ pub struct RosterEntry {
+     /// without the `--allow` grammar and (for muse) with `--disable-sandbox`. `false` when the
+     /// entry names none. Invisible to the plugin (ext is an object).
+     pub unrestricted: bool,
++    /// (0.2.4, reviewer-protection) `ext.on_request` - the entry is never seated automatically
++    /// (not by the bare default, not by any panel draw, not by `--panel-all`). It runs only when
++    /// named exactly: `--provider <label> --model <its model>`, or a `--require` matcher that names
++    /// the entry itself (`#<n>` or `<provider> :: <model> [engine]`). `false` when the entry names
++    /// none. Invisible to the plugin (ext is an object).
++    pub on_request: bool,
++    /// (0.2.4, reviewer-protection) `ext.reserve_percent` - a PROTECTED entry keeps back its last
++    /// N % of every long budget window (1..=50); `0` when the entry names none. The entry is HELD
++    /// (skipped by the bare default and the panel, refused when named) when, on any long non-stale
++    /// window whose reset is still ahead, `used% >= min(elapsed% + N, 100 - N)` - unless the purpose
++    /// is standing (acceptance / core-contract) or `--spend-reserve` is given. Invisible to the
++    /// plugin (ext is an object).
++    pub reserve_percent: i64,
+     /// (0.6.0, wave 29b E1) The claude entry's endpoint (auth `endpoint` only; its `plan` is the
+     /// entry's).
+     pub endpoint: Option<crate::claude::ClaudeEndpoint>,
+@@ -628,6 +641,8 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
+             let mut reset_hint = String::new();
+             let mut quota_window_sec: i64 = 0;
+             let mut unrestricted = false;
++            let mut on_request = false;
++            let mut reserve_percent: i64 = 0;
+             if let Some(xv) = iobj.get("ext") {
+                 if !xv.is_object() {
+                     why = format!("{at}: ext must be an object (the extension point of other implementations; got {})", compact(xv));
+@@ -658,6 +673,34 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
+                         }
+                     }
+                 }
++                // (0.2.4, reviewer-protection) ext.on_request: the entry is seated only when named
++                // exactly (never by the bare default, a panel draw or --panel-all). A boolean.
++                if let Some(ov) = xv.get("on_request") {
++                    match ov.as_bool() {
++                        Some(b) => on_request = b,
++                        None => {
++                            why = format!(
++                                "{at}: ext.on_request must be a boolean (the entry is seated only when named exactly; got {})",
++                                compact(ov)
++                            );
++                            break;
++                        }
++                    }
++                }
++                // (0.2.4, reviewer-protection) ext.reserve_percent: the protected entry's reserve,
++                // an integer 1..=50 (the last N % of every long budget window kept back).
++                if let Some(rv) = xv.get("reserve_percent") {
++                    match rv.as_i64() {
++                        Some(n) if (1..=50).contains(&n) => reserve_percent = n,
++                        _ => {
++                            why = format!(
++                                "{at}: ext.reserve_percent must be an integer from 1 to 50 (the protected reserve kept back on every long budget window; got {})",
++                                compact(rv)
++                            );
++                            break;
++                        }
++                    }
++                }
+                 // (wave 9, D4) C3's own per-entry extension: the plan's cap windows and when they reset
+                 if let Some(c3x) = xv.get("c3").and_then(|c| c.as_object()) {
+                     if let Some(pc) = c3x.get("plan_caps") {
+@@ -983,6 +1026,8 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
+                 reset_hint,
+                 quota_window_sec,
+                 unrestricted,
++                on_request,
++                reserve_percent,
+                 endpoint: entry_endpoint,
+                 inactive: unknown_engine,
+                 unknown_engine,
+@@ -1438,6 +1483,41 @@ mod tests {
+         }
+     }
+ 
++    #[test]
++    fn on_request_and_reserve_percent_parse_under_ext() {
++        // (0.2.4, reviewer-protection) both settings live under the entry's ext object.
++        let r = ok(
++            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-6-astra","ext":{"reserve_percent":15}},{"provider":"meta","engine":"muse","model":"muse-wonder-1.0","ext":{"on_request":true}}]}"#,
++        );
++        assert_eq!(r.entries[0].reserve_percent, 15);
++        assert!(!r.entries[0].on_request);
++        assert!(r.entries[1].on_request);
++        assert_eq!(r.entries[1].reserve_percent, 0);
++        // Defaults when the keys are absent.
++        let plain = ok(r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m"}]}"#);
++        assert!(!plain.entries[0].on_request && plain.entries[0].reserve_percent == 0);
++        // Validation: on_request must be a boolean; reserve_percent an integer 1..=50.
++        assert!(why(
++            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m","ext":{"on_request":"yes"}}]}"#
++        )
++        .contains("ext.on_request must be a boolean"));
++        for bad in ["0", "51", "-1", "15.5", "\"15\""] {
++            let json = format!(
++                r#"{{"roster_version":1,"reviewers":[{{"provider":"openai","model":"m","ext":{{"reserve_percent":{bad}}}}}]}}"#
++            );
++            assert!(
++                why(&json).contains("ext.reserve_percent must be an integer from 1 to 50"),
++                "{bad}"
++            );
++        }
++        // The boundary values 1 and 50 are accepted.
++        let b = ok(
++            r#"{"roster_version":1,"reviewers":[{"provider":"a","model":"m","ext":{"reserve_percent":1}},{"provider":"b","model":"m","ext":{"reserve_percent":50}}]}"#,
++        );
++        assert_eq!(b.entries[0].reserve_percent, 1);
++        assert_eq!(b.entries[1].reserve_percent, 50);
++    }
++
+     fn why(json: &str) -> String {
+         let r = validate_roster("R.json", json, None);
+         assert!(!r.error.is_empty(), "expected a refusal: {json}");
+diff --git a/crates/c3-core/src/roster_ext.rs b/crates/c3-core/src/roster_ext.rs
+index 699aeb6..3978ed9 100644
+--- a/crates/c3-core/src/roster_ext.rs
++++ b/crates/c3-core/src/roster_ext.rs
+@@ -365,6 +365,8 @@ impl HttpReviewer {
+             reset_hint: String::new(),
+             quota_window_sec: 0,
+             unrestricted: false,
++            on_request: false,
++            reserve_percent: 0,
+             endpoint: None,
+             // Recomputed by the loader's `Roster::apply_inactive` after this entry is appended.
+             inactive: false,
+diff --git a/crates/c3/src/budget/mod.rs b/crates/c3/src/budget/mod.rs
+index 493c180..4995bcb 100644
+--- a/crates/c3/src/budget/mod.rs
++++ b/crates/c3/src/budget/mod.rs
+@@ -45,6 +45,10 @@ pub struct BudgetWindow {
+     pub used_ratio: f64,
+     /// 0..1 share of the window's period already elapsed.
+     pub elapsed_ratio: f64,
++    /// The window's full period in seconds (`5h` = 18000, `week` = 604800, ...); `0.0` when the
++    /// source could not fix it. A window is LONG (the protected reserve applies to it) when this is
++    /// 24 h or more.
++    pub period_secs: f64,
+     pub resets_at: DateTime<Utc>,
+     /// `codex-rollout` | `kimi-usages` | `snapshot`.
+     pub source: String,
+@@ -97,6 +101,64 @@ pub fn effective_multiplier(score: f64, neutral: f64, plan_mult: f64) -> f64 {
+     }
+ }
+ 
++/// A window is LONG when its period is 24 h or more (weekly, monthly): the protected reserve
++/// applies only to long windows (the 5-hour window is exempt). The threshold uses a small slack so
++/// a period expressed as exactly a day is not lost to float error.
++pub const LONG_WINDOW_SECS: f64 = 24.0 * 3600.0 - 1.0;
++
++impl BudgetWindow {
++    /// Whether this is a long window (period of 24 h or more).
++    pub fn is_long(&self) -> bool {
++        self.period_secs >= LONG_WINDOW_SECS
++    }
++}
++
++/// (0.2.4, reviewer-protection) Whether a protected entry with reserve `reserve_percent` (1..=50)
++/// is HELD at `now`, given its budget group's `windows`. The entry is held when, on ANY long window
++/// (period >= 24 h), non-stale, whose reset is still ahead, its usage has run past the reserve line:
++/// `used% >= min(elapsed% + N, 100 - N)`. In words, the route may not run more than N points ahead
++/// of the calendar, and its last N % is kept back. No long window with data -> not held. Returns the
++/// governing window (the first that holds) so the caller can name the hold; `None` when not held.
++pub fn reserve_hold<'a>(
++    windows: &'a [BudgetWindow],
++    reserve_percent: i64,
++    now: DateTime<Utc>,
++) -> Option<&'a BudgetWindow> {
++    if reserve_percent <= 0 {
++        return None;
++    }
++    let n = reserve_percent as f64;
++    windows.iter().find(|w| {
++        if !w.is_long() || w.stale || w.resets_at <= now {
++            return false;
++        }
++        let used = w.used_ratio * 100.0;
++        let elapsed = w.elapsed_ratio * 100.0;
++        used >= (elapsed + n).min(100.0 - n)
++    })
++}
++
++/// (0.2.4, reviewer-protection) The note a held entry shows on `c3 providers` / `c3 router explain`
++/// / the preflight refusal: `weekly window 97 % used at 55 % of the week, reserve 15 %`.
++pub fn reserve_hold_note(w: &BudgetWindow, reserve_percent: i64) -> String {
++    let (adjective, period) = long_window_phrase(&w.name);
++    format!(
++        "{adjective} {}% used at {}% of the {period}, reserve {reserve_percent}%",
++        (w.used_ratio * 100.0).round() as i64,
++        (w.elapsed_ratio * 100.0).round() as i64,
++    )
++}
++
++/// The human phrase for a long window's name: `(adjective window, period noun)`.
++fn long_window_phrase(name: &str) -> (String, &'static str) {
++    match name {
++        "wk" | "week" | "weekly" => ("weekly window".to_string(), "week"),
++        "mo" | "month" | "monthly" => ("monthly window".to_string(), "month"),
++        "day" | "daily" => ("daily window".to_string(), "day"),
++        other => (format!("{other} window"), "window"),
++    }
++}
++
+ /// The windows of one plan: the first source that yields any wins. `entries` are the roster
+ /// entries of this plan; `network == false` reads cache / snapshot only, never the network.
+ pub fn plan_windows(
+@@ -179,6 +241,52 @@ pub fn multipliers_for(
+     out
+ }
+ 
++/// (0.2.4, reviewer-protection) The budget-group windows of one roster entry (the group it shares
++/// through [`budget_key`]: all built-in openai entries share the ChatGPT account, every other entry
++/// its `plan`). `network == false` reads cache / snapshot only, never the network. Empty when the
++/// entry has no budget group or no reading is available. The reserve hold and the display both use
++/// this so they see exactly the windows the panel draw's multiplier saw.
++pub fn entry_windows(
++    roster: &c3_core::roster::Roster,
++    e: &RosterEntry,
++    now: DateTime<Utc>,
++    network: bool,
++) -> Vec<BudgetWindow> {
++    let key = budget_key(e);
++    if key.is_empty() {
++        return Vec::new();
++    }
++    let group: Vec<RosterEntry> = roster
++        .entries
++        .iter()
++        .filter(|x| budget_key(x) == key)
++        .cloned()
++        .collect();
++    let plan_arg = if key == "openai-account" {
++        ""
++    } else {
++        e.plan.as_str()
++    };
++    plan_windows(plan_arg, &group, now, network)
++}
++
++/// (0.2.4, reviewer-protection) Whether `e` is HELD by its protected reserve at `now`, and the note
++/// naming the hold. `None` when the entry is not protected (`reserve_percent == 0`) or not held.
++/// `network == false` reads cache / snapshot only. The standing-purpose exemption and the
++/// `--spend-reserve` override are the CALLER's to apply - this reports the budget fact only.
++pub fn entry_reserve_hold(
++    roster: &c3_core::roster::Roster,
++    e: &RosterEntry,
++    now: DateTime<Utc>,
++    network: bool,
++) -> Option<String> {
++    if e.reserve_percent <= 0 {
++        return None;
++    }
++    let windows = entry_windows(roster, e, now, network);
++    reserve_hold(&windows, e.reserve_percent, now).map(|w| reserve_hold_note(w, e.reserve_percent))
++}
++
+ // --------------------------------------------------------------------------- source detection
+ 
+ /// A roster entry on the built-in openai (codex) endpoint, whose quota is the ChatGPT account's.
+@@ -224,20 +332,79 @@ fn is_muse(e: &RosterEntry) -> bool {
+ 
+ // --------------------------------------------------------------------------- openai (codex)
+ 
+-/// Wrap [`c3_core::quota::account_window_at`]: the ChatGPT account's 5h / weekly windows.
++/// The ChatGPT account's 5h / weekly windows. The primary source is today's and yesterday's codex
++/// rollouts ([`c3_core::quota::account_window_at`], the same reading the health verdict uses). When
++/// that gives nothing - the operator had no Codex session in two days, so the account's window is
++/// "forgotten" and the budget would wrongly read as idle - two fallbacks step in, their windows
++/// kept only while their reset is still ahead and tagged with the real observation time (so the
++/// display can say "seen Nd ago"):
++///   1. the newest observation in the rollouts of the last 8 days;
++///   2. the recorded quota of the machine-wide health file / ledgers.
+ fn openai_windows(plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
+     let home = crate::providers::get_codex_home();
+-    let aw = match c3_core::quota::account_window_at(&home, now) {
+-        Some(a) => a,
+-        None => return Vec::new(),
+-    };
+-    windows_from_quota(
+-        plan,
+-        &aw.quota,
+-        aw.observed_at.with_timezone(&Utc),
+-        "codex-rollout",
+-        now,
+-    )
++    // 1. Today + yesterday (cached; the health verdict's two-day window). Unchanged.
++    if let Some(aw) = c3_core::quota::account_window_at(&home, now) {
++        let w = windows_from_quota(
++            plan,
++            &aw.quota,
++            aw.observed_at.with_timezone(&Utc),
++            "codex-rollout",
++            now,
++        );
++        if !w.is_empty() {
++            return w;
++        }
++    }
++    // 2. Fallback: the newest observation in the rollouts of the last 8 days.
++    if let Some(aw) = c3_core::quota::account_window_within(&home, now, 8) {
++        let w = keep_future(
++            windows_from_quota(
++                plan,
++                &aw.quota,
++                aw.observed_at.with_timezone(&Utc),
++                "codex-rollout-8d",
++                now,
++            ),
++            now,
++        );
++        if !w.is_empty() {
++            return w;
++        }
++    }
++    // 3. Fallback: the recorded quota of the machine-wide health file / ledgers.
++    if let Some(ew) = openai_recorded_window(now) {
++        let w = keep_future(
++            windows_from_quota(
++                plan,
++                &ew.quota,
++                ew.observed_at.with_timezone(&Utc),
++                "codex-recorded",
++                now,
++            ),
++            now,
++        );
++        if !w.is_empty() {
++            return w;
++        }
++    }
++    Vec::new()
++}
++
++/// Keep only the windows whose reset is still ahead of `now` (a fallback reading of a window that
++/// already reset carries no usage info for the current period).
++fn keep_future(windows: Vec<BudgetWindow>, now: DateTime<Utc>) -> Vec<BudgetWindow> {
++    windows.into_iter().filter(|w| w.resets_at > now).collect()
++}
++
++/// The built-in openai endpoint's most recent recorded window from the machine-wide health file and
++/// its ledgers (never the network). `None` when health is off, there is no record, or none names a
++/// window.
++fn openai_recorded_window(now: DateTime<Utc>) -> Option<c3_core::quota::EndpointWindow> {
++    let home = crate::providers::get_codex_home();
++    let hp = c3_core::health::machine_health_path(&home)?;
++    let consults = c3_core::health::machine_endpoint_consults_all(&hp);
++    let fp = c3_core::health::builtin_openai_fingerprint();
++    c3_core::quota::endpoint_window_at(&consults, &[&fp], &fp, now)
+ }
+ 
+ /// Convert a recorded `{primary, secondary}` quota (used_percent / window_minutes / resets_at ISO)
+@@ -267,15 +434,21 @@ fn windows_from_quota(
+             Some(r) => r.with_timezone(&Utc),
+             None => continue,
+         };
+-        let elapsed = match minutes {
+-            Some(m) if m > 0 => elapsed_ratio(resets_at, (m * 60) as f64, now),
++        let period_secs = match minutes {
++            Some(m) if m > 0 => (m * 60) as f64,
+             _ => 0.0,
+         };
++        let elapsed = if period_secs > 0.0 {
++            elapsed_ratio(resets_at, period_secs, now)
++        } else {
++            0.0
++        };
+         out.push(BudgetWindow {
+             plan: plan.to_string(),
+             name: c3_core::quota::window_name(minutes, true),
+             used_ratio: used / 100.0,
+             elapsed_ratio: elapsed,
++            period_secs,
+             resets_at,
+             source: source.to_string(),
+             observed_at,
+@@ -390,6 +563,7 @@ fn kimi_window(
+         name: name.to_string(),
+         used_ratio: used,
+         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
++        period_secs,
+         resets_at,
+         source: "kimi-usages".to_string(),
+         observed_at: now,
+@@ -495,6 +669,7 @@ fn zai_window(plan: &str, obj: &Value, now: DateTime<Utc>) -> Option<BudgetWindo
+         name: "5h".to_string(),
+         used_ratio: pct / 100.0,
+         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
++        period_secs,
+         resets_at,
+         source: "zai-quota".to_string(),
+         observed_at: now,
+@@ -583,6 +758,7 @@ fn muse_window(
+         name: name.to_string(),
+         used_ratio: pct / 100.0,
+         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
++        period_secs,
+         resets_at,
+         source: "muse-usage".to_string(),
+         observed_at: now,
+@@ -640,6 +816,7 @@ fn window_from_snapshot(plan: &str, v: &Value, now: DateTime<Utc>) -> Option<Bud
+         name: window,
+         used_ratio: used,
+         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
++        period_secs,
+         resets_at,
+         source: "snapshot".to_string(),
+         observed_at,
+@@ -870,6 +1047,11 @@ pub fn providers_quota_cell(windows: &[BudgetWindow], now: DateTime<Utc>) -> Str
+                 } else {
+                     s.push_str(&format!(" (seen {days}d ago)"));
+                 }
++            } else if w.source == "codex-rollout-8d" || w.source == "codex-recorded" {
++                // (0.2.4) the openai fallback window: the account's live window was not in the last
++                // two days' rollouts, so the real observation age is shown.
++                let days = (now - w.observed_at).num_days().max(0);
++                s.push_str(&format!(" (seen {days}d ago)"));
+             }
+             s
+         })
+diff --git a/crates/c3/src/budget/tests.rs b/crates/c3/src/budget/tests.rs
+index 0ca9dda..2ec0ee3 100644
+--- a/crates/c3/src/budget/tests.rs
++++ b/crates/c3/src/budget/tests.rs
+@@ -12,12 +12,23 @@ fn utc(s: &str) -> DateTime<Utc> {
+     DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+ }
+ 
++fn period_of(name: &str) -> f64 {
++    match name {
++        "5h" => 5.0 * 3600.0,
++        "week" | "wk" => 7.0 * 86_400.0,
++        "month" | "mo" => 30.0 * 86_400.0,
++        "day" | "daily" => 86_400.0,
++        _ => 0.0,
++    }
++}
++
+ fn win(name: &str, used: f64, elapsed: f64, stale: bool) -> BudgetWindow {
+     BudgetWindow {
+         plan: "p".into(),
+         name: name.into(),
+         used_ratio: used,
+         elapsed_ratio: elapsed,
++        period_secs: period_of(name),
+         resets_at: utc("2026-11-26T00:00:00Z"),
+         source: "test".into(),
+         observed_at: utc("2026-11-08T00:00:00Z"),
+@@ -267,6 +278,31 @@ fn a_snapshot_whose_window_already_reset_is_stale() {
+     assert!(providers_quota_cell(&[w], now).contains("window reset since - refresh"));
+ }
+ 
++#[test]
++fn openai_fallback_windows_keep_future_and_show_their_age() {
++    let now = utc("2026-11-15T12:00:00Z");
++    // A recorded quota whose weekly window reset is still ahead and whose 5h window already reset.
++    let quota = serde_json::json!({
++        "primary":   {"used_percent": 60, "window_minutes": 300,   "resets_at": "2026-11-15T10:00:00Z"},
++        "secondary": {"used_percent": 97, "window_minutes": 10080, "resets_at": "2026-11-20T00:00:00Z"},
++    });
++    let observed = utc("2026-11-13T00:00:00Z"); // 2 days before `now`
++    let w = windows_from_quota("", &quota, observed, "codex-recorded", now);
++    assert_eq!(w.len(), 2);
++    // keep_future drops the 5h window (reset in the past), keeps the weekly one.
++    let kept = keep_future(w, now);
++    assert_eq!(kept.len(), 1);
++    assert_eq!(kept[0].name, "wk");
++    assert!((kept[0].used_ratio - 0.97).abs() < 1e-9);
++    assert!(kept[0].is_long());
++    // The display names the real observation age.
++    let cell = providers_quota_cell(&kept, now);
++    assert!(cell.contains("(seen 2d ago)"), "cell = {cell}");
++    // The fallback window drives the multiplier (not stale) and a 15% reserve holds on it
++    // (97% used at ~71% of the week).
++    assert!(reserve_hold(&kept, 15, now).is_some());
++}
++
+ #[test]
+ fn parse_when_accepts_dates_instants_and_minute_precision() {
+     // A bare date is taken as midnight UTC.
+@@ -301,6 +337,75 @@ fn parse_when_accepts_dates_instants_and_minute_precision() {
+     assert!(parse_when("2026-11-16T15Z").is_none());
+ }
+ 
++// ------------------------------------------------------------------ reserve hold (0.2.4)
++
++/// A long (weekly) window with explicit used / elapsed, reset still ahead of `HOLD_NOW`.
++fn long_win(name: &str, used: f64, elapsed: f64) -> BudgetWindow {
++    let mut w = win(name, used, elapsed, false);
++    w.resets_at = utc("2026-11-26T00:00:00Z"); // ahead of HOLD_NOW below
++    w
++}
++
++const HOLD_NOW_STR: &str = "2026-11-20T00:00:00Z";
++fn hold_now() -> DateTime<Utc> {
++    utc(HOLD_NOW_STR)
++}
++
++#[test]
++fn reserve_hold_corners_for_15_percent() {
++    let now = hold_now();
++    let n = 15;
++    // start of the week: 0% used, 0% elapsed -> min(15, 85) = 15; 0 < 15 -> not held.
++    assert!(reserve_hold(&[long_win("week", 0.0, 0.0)], n, now).is_none());
++    // mid-week on pace: 50% used at 50% elapsed -> min(65, 85) = 65; 50 < 65 -> not held.
++    assert!(reserve_hold(&[long_win("week", 0.50, 0.50)], n, now).is_none());
++    // mid-week ahead: 70% used at 50% elapsed -> 70 >= 65 -> HELD.
++    assert!(reserve_hold(&[long_win("week", 0.70, 0.50)], n, now).is_some());
++    // the last N%: 86% used near the end (90% elapsed) -> min(105, 85) = 85; 86 >= 85 -> HELD.
++    assert!(reserve_hold(&[long_win("week", 0.86, 0.90)], n, now).is_some());
++    // just under the reserve line at the end: 84% used -> 84 < 85 -> not held.
++    assert!(reserve_hold(&[long_win("week", 0.84, 0.90)], n, now).is_none());
++}
++
++#[test]
++fn reserve_hold_ignores_short_windows_and_missing_data() {
++    let now = hold_now();
++    // a 5-hour window, nearly spent, is exempt (not long).
++    assert!(reserve_hold(&[long_win("5h", 0.99, 0.10)], 15, now).is_none());
++    // no data at all -> not held.
++    assert!(reserve_hold(&[], 15, now).is_none());
++    // reserve 0 is never a hold.
++    assert!(reserve_hold(&[long_win("week", 0.99, 0.10)], 0, now).is_none());
++}
++
++#[test]
++fn reserve_hold_ignores_stale_and_already_reset_windows() {
++    let now = hold_now();
++    // a stale window is not a live fact -> not held even though it is over the line.
++    let mut stale = long_win("week", 0.95, 0.10);
++    stale.stale = true;
++    assert!(reserve_hold(&[stale], 15, now).is_none());
++    // a window whose reset already passed carries no info for the new period -> ignored.
++    let mut past = long_win("week", 0.95, 0.10);
++    past.resets_at = now - chrono::Duration::hours(2);
++    assert!(reserve_hold(&[past], 15, now).is_none());
++}
++
++#[test]
++fn reserve_hold_note_reads_naturally() {
++    let w = long_win("wk", 0.97, 0.55);
++    assert_eq!(
++        reserve_hold_note(&w, 15),
++        "weekly window 97% used at 55% of the week, reserve 15%"
++    );
++    let mut mo = long_win("mo", 0.80, 0.40);
++    mo.name = "mo".into();
++    assert_eq!(
++        reserve_hold_note(&mo, 20),
++        "monthly window 80% used at 40% of the month, reserve 20%"
++    );
++}
++
+ #[test]
+ fn cache_path_is_keyed_by_source_and_plan() {
+     let _g = ENV_LOCK.lock().unwrap();
+diff --git a/crates/c3/src/cli/consult.rs b/crates/c3/src/cli/consult.rs
+index ff9569b..b0a7eb4 100644
+--- a/crates/c3/src/cli/consult.rs
++++ b/crates/c3/src/cli/consult.rs
+@@ -110,6 +110,10 @@ pub struct ConsultArgs {
+     /// Skip the availability preflight (then warn).
+     #[arg(long)]
+     pub skip_preflight: bool,
++    /// Spend a protected reviewer's reserve: seat it even when its budget hold would hold it back
++    /// (single and panel). Without it a held protected entry is kept for acceptance / core-contract.
++    #[arg(long)]
++    pub spend_reserve: bool,
+     /// A per-run `-c key=value` override (repeatable); identity/effort keys are refused.
+     #[arg(long)]
+     pub codex_config: Vec<String>,
+@@ -274,6 +278,7 @@ pub fn run(args: ConsultArgs) -> i32 {
+         native_effort: args.native_effort,
+         off_peak_only: args.off_peak_only,
+         skip_preflight: args.skip_preflight,
++        spend_reserve: args.spend_reserve,
+         codex_config: args.codex_config,
+         schema_transport: args.schema_transport,
+         telemetry: match args.telemetry.trim().to_ascii_lowercase().as_str() {
+diff --git a/crates/c3/src/cli/router.rs b/crates/c3/src/cli/router.rs
+index e52d0bd..237c449 100644
+--- a/crates/c3/src/cli/router.rs
++++ b/crates/c3/src/cli/router.rs
+@@ -274,6 +274,18 @@ fn run_explain(args: ExplainArgs) -> i32 {
+             .map(|(_, cell)| cell.clone())
+             .unwrap_or_else(|| "-".to_string());
+         let weight = scored.base.score * mult;
++        // (0.2.4, reviewer-protection) mark an on-request entry and a protected entry held by its
++        // reserve on this purpose (the routed draw would skip both).
++        let mut tail = prior;
++        if e.on_request {
++            tail.push_str("  [on request]");
++        }
++        if !c3_core::purpose::is_standing(&args.purpose)
++            && e.reserve_percent > 0
++            && crate::budget::entry_reserve_hold(&roster, e, now, true).is_some()
++        {
++            tail.push_str("  [held: reserve]");
++        }
+         println!(
+             "{:<40} {:>6.3} {:>7.3} {:>5.2} {:<16} {:>16} {:>10.2} {}",
+             lineage,
+@@ -283,7 +295,7 @@ fn run_explain(args: ExplainArgs) -> i32 {
+             budget_cell,
+             scored.base.basis,
+             scored.base.ratings,
+-            prior
++            tail
+         );
+     }
+     0
+diff --git a/crates/c3/src/consult/args.rs b/crates/c3/src/consult/args.rs
+index b16b906..79d0596 100644
+--- a/crates/c3/src/consult/args.rs
++++ b/crates/c3/src/consult/args.rs
+@@ -70,6 +70,9 @@ pub struct Options {
+     pub native_effort: String,
+     pub off_peak_only: bool,
+     pub skip_preflight: bool,
++    /// (0.2.4, reviewer-protection) `--spend-reserve`: seat a protected reviewer even when its
++    /// budget reserve would hold it back (single and panel).
++    pub spend_reserve: bool,
+     pub codex_config: Vec<String>,
+     pub schema_transport: String,
+     /// Telemetry `--telemetry on|off`: `Some(false)` for off, `Some(true)` for on, `None`
+@@ -336,9 +339,9 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
+         if !o.panel_order.is_empty() {
+             return Err("-PanelOrder goes with -Panel (or -PanelAll) only.".into());
+         }
+-        if !o.panel_seed.is_empty() {
+-            return Err("-PanelSeed goes with -Panel (or -PanelAll) only.".into());
+-        }
++        // (0.2.4, reviewer-protection) -PanelSeed also seeds the bare default's single routed pick,
++        // so it is allowed on a non-panel consult (it reproduces that draw); it is simply inert on
++        // an explicit --provider / --thread run, which does no draw.
+         if !o.roles.is_empty() {
+             return Err("-Roles goes with -Panel (or -PanelAll) only.".into());
+         }
+diff --git a/crates/c3/src/consult/detach.rs b/crates/c3/src/consult/detach.rs
+index 63ddb8e..e953381 100644
+--- a/crates/c3/src/consult/detach.rs
++++ b/crates/c3/src/consult/detach.rs
+@@ -212,6 +212,8 @@ struct DetachArgs {
+     #[serde(default)]
+     skip_preflight: bool,
+     #[serde(default)]
++    spend_reserve: bool,
++    #[serde(default)]
+     codex_config: Vec<String>,
+     #[serde(default)]
+     schema_transport: String,
+@@ -316,6 +318,7 @@ impl DetachArgs {
+             native_effort: o.native_effort.clone(),
+             off_peak_only: o.off_peak_only,
+             skip_preflight: o.skip_preflight,
++            spend_reserve: o.spend_reserve,
+             codex_config: o.codex_config.clone(),
+             schema_transport: o.schema_transport.clone(),
+             format_retry: o.format_retry,
+@@ -380,6 +383,7 @@ impl DetachArgs {
+             native_effort: self.native_effort,
+             off_peak_only: self.off_peak_only,
+             skip_preflight: self.skip_preflight,
++            spend_reserve: self.spend_reserve,
+             codex_config: self.codex_config,
+             schema_transport: self.schema_transport,
+             telemetry: Some(false),
+diff --git a/crates/c3/src/consult/orchestrate/member.rs b/crates/c3/src/consult/orchestrate/member.rs
+index ec64214..dfa3031 100644
+--- a/crates/c3/src/consult/orchestrate/member.rs
++++ b/crates/c3/src/consult/orchestrate/member.rs
+@@ -257,6 +257,9 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
+         native_effort: s("native_effort"),
+         off_peak_only: b("off_peak_only"),
+         skip_preflight: b("skip_preflight"),
++        // A panel member is already seated by the parent (which applied the reserve hold); it runs
++        // with --skip-preflight, so the hold is not re-evaluated here.
++        spend_reserve: false,
+         codex_config: list("codex_config"),
+         schema_transport: s("schema_transport"),
+         // (0.6.1 parity) the panel run's own `--telemetry on|off`, else the environment decides.
+diff --git a/crates/c3/src/consult/orchestrate/mod.rs b/crates/c3/src/consult/orchestrate/mod.rs
+index 3820789..c7fc1e9 100644
+--- a/crates/c3/src/consult/orchestrate/mod.rs
++++ b/crates/c3/src/consult/orchestrate/mod.rs
+@@ -1519,13 +1519,42 @@ fn build_context(
+             if !engine_exe_engine.is_empty() {
+                 walk_ctx.seed_engine_launcher(&engine_exe_engine, &engine_exe_launcher);
+             }
+-            let walk =
+-                walk_ctx.walk_full_ctx(&o.model, &o.engine, o.skip_preflight, prompt_estimate);
+-            if !walk.error.is_empty() {
+-                return Err((walk.error, 1));
+-            }
+-            let e = walk.entry.expect("an available walk has an entry");
+-            roster_skipped = walk.skipped;
++            // (0.2.4, D) On a non-standing purpose the bare default is ONE reviewer picked by the
++            // SAME seeded routed draw a panel uses (weight = usefulness score x effective budget
++            // multiplier), so repeated bare consultations spread and a drained/held first entry
++            // yields to another. On a standing purpose (acceptance / core-contract) it stays the
++            // first available roster entry - the standing partner. No candidate -> the plain walk.
++            let routed = if c3_core::purpose::is_standing(&o.purpose) {
++                None
++            } else {
++                crate::panel::run::route_single_default(
++                    &walk_ctx,
++                    &o,
++                    utc_now,
++                    &collab_root,
++                    &cwd,
++                    prompt_estimate,
++                )
++            };
++            let e = if let Some((e, skipped, line)) = routed {
++                println!("{line}");
++                roster_skipped = skipped;
++                e
++            } else {
++                let walk = walk_ctx.walk_full_ctx(
++                    &o.model,
++                    &o.engine,
++                    o.skip_preflight,
++                    prompt_estimate,
++                    &o.purpose,
++                    o.spend_reserve,
++                );
++                if !walk.error.is_empty() {
++                    return Err((walk.error, 1));
++                }
++                roster_skipped = walk.skipped;
++                walk.entry.expect("an available walk has an entry")
++            };
+             identity_provider = e.provider.clone();
+             provider_source_override = "roster".into();
+             engine_name = entry_engine(&e);
+@@ -1619,12 +1648,15 @@ fn build_context(
+                     all: true,
+                     skip_preflight: false,
+                     estimate_tokens: 0,
++                    spend_reserve: o.spend_reserve,
+                 },
+             );
+             let out: Vec<String> = sel
+                 .members
+                 .iter()
+-                .filter(|m| m.state != "run")
++                // an on-request entry named by -Require runs (it is not an outage); a held protected
++                // entry (`reserve`) is an outage, naming the hold and --spend-reserve.
++                .filter(|m| m.state != "run" && m.skip_kind != "request")
+                 .map(|m| providers::format_required_outage(m, utc_now))
+                 .collect();
+             if !out.is_empty() {
+@@ -1995,6 +2027,35 @@ fn build_context(
+             (p, refusal, String::new(), label)
+         };
+ 
++    // (0.2.4, reviewer-protection) An explicit --provider naming a PROTECTED reviewer that is held
++    // by its reserve, on a non-standing purpose, is refused in preflight (same exit 1 / "nothing was
++    // started" shape as the other preflight refusals) - unless --spend-reserve. The walk/routed and
++    // thread paths never land here (they do not name a provider). The hint names the hold, that the
++    // reviewer is kept for acceptance / core-contract, and the two ways on.
++    if preflight_refusal.is_none()
++        && !o.skip_preflight
++        && !o.spend_reserve
++        && !o.provider.is_empty()
++        && !c3_core::purpose::is_standing(&o.purpose)
++    {
++        if let Some(e) = &roster_entry {
++            if e.reserve_percent > 0 {
++                if let Some(note) = crate::budget::entry_reserve_hold(&roster, e, utc_now, false) {
++                    let refusal = format!(
++                        "{} is held: {note}; it is kept for acceptance and core-contract; nothing was started. Run with --spend-reserve to spend its reserve, or choose another reviewer (e.g. --provider meta / --provider grok).",
++                        c3_core::lineage::format_reviewer_lineage(
++                            &e.provider,
++                            &e.model,
++                            &entry_engine(e)
++                        )
++                    );
++                    preflight_refusal = Some((refusal, 1));
++                    preflight_label = "held (protected reserve)".into();
++                }
++            }
++        }
++    }
++
+     // (0.6.0, wave 29) the claude provider_config fields known only after the preflight - auth_method
+     // and api_provider as `claude auth status` reported them (null when it did not run)
+     if engine_name == "claude" && engine_auth != "endpoint" {
+diff --git a/crates/c3/src/maintain/mod.rs b/crates/c3/src/maintain/mod.rs
+index 47aed8b..ef49cd0 100644
+--- a/crates/c3/src/maintain/mod.rs
++++ b/crates/c3/src/maintain/mod.rs
+@@ -1082,12 +1082,13 @@ fn run_models(
+             }
+             let now = Utc::now();
+             // The candidate's smoke obeys the saturation rule pick_target applies: a swap on a plan
+-            // whose governing window is at 90 %+ is held, the roster untouched.
++            // whose governing window is at 90 %+ is held, the roster untouched. (0.2.4) a protected
++            // or on-request seat is never smoked either - its quota is kept / it runs only when named.
+             let saturated = roster
+                 .entries
+                 .iter()
+                 .find(|e| e.position == c.position)
+-                .map(|e| smoke::seat_saturated(roster, e, now))
++                .map(|e| smoke::seat_saturated(roster, e, now) || e.on_request || e.reserve_percent > 0)
+                 .unwrap_or(false);
+             if saturated {
+                 let msg = format!(
+diff --git a/crates/c3/src/maintain/smoke.rs b/crates/c3/src/maintain/smoke.rs
+index 5fb54bd..0430369 100644
+--- a/crates/c3/src/maintain/smoke.rs
++++ b/crates/c3/src/maintain/smoke.rs
+@@ -59,6 +59,12 @@ pub fn pick_target(
+         if engine_of(e) != name || e.model.is_empty() {
+             continue;
+         }
++        // (0.2.4, reviewer-protection) the smoke never spends a protected or an on-request seat: a
++        // protected reviewer's reserve is kept for acceptance work, and an on-request entry runs
++        // only when named by the operator.
++        if e.on_request || e.reserve_percent > 0 {
++            continue;
++        }
+         let (headroom, saturated) = plan_headroom(roster, e, now);
+         if saturated {
+             continue; // the governing window is at 90 % or more
+diff --git a/crates/c3/src/panel/plan.rs b/crates/c3/src/panel/plan.rs
+index fe8a53e..e808b54 100644
+--- a/crates/c3/src/panel/plan.rs
++++ b/crates/c3/src/panel/plan.rs
+@@ -588,7 +588,13 @@ pub fn select_panel_routing_with(
+         let mut state = m.state.clone();
+         let mut reason = m.reason.clone();
+         let is_req = required.contains(&(m.entry.position as i64));
+-        if is_req && state == "skipped" && (m.skip_kind == "weighty" || m.skip_kind == "light") {
++        // A required member that only a soft gate held back rejoins: the weighty / light panel
++        // gate, or (0.2.4) `request` - an on-request entry a -Require names runs. A held protected
++        // entry (`reserve`) never reaches here: the required-outage check refuses the run first.
++        if is_req
++            && state == "skipped"
++            && (m.skip_kind == "weighty" || m.skip_kind == "light" || m.skip_kind == "request")
++        {
+             state = "run".into();
+             reason = String::new();
+         }
+diff --git a/crates/c3/src/panel/run.rs b/crates/c3/src/panel/run.rs
+index 796346e..cf88f93 100644
+--- a/crates/c3/src/panel/run.rs
++++ b/crates/c3/src/panel/run.rs
+@@ -290,6 +290,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
+         o.panel_all,
+         o.skip_preflight,
+         panel_estimate,
++        o.spend_reserve,
+     );
+ 
+     // Required reviewers (exit 5 on an outage).
+@@ -329,10 +330,14 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
+                     filters.join(" ")
+                 ));
+             }
+-            // a required entry only the weighty or light gate held back is no outage (it takes
+-            // a seat first)
++            // a required entry only the weighty / light gate (or `request`: an on-request entry a
++            // -Require names) held back is no outage - it rejoins and takes a seat. A held protected
++            // entry (`reserve`) IS an outage, naming the hold and --spend-reserve.
+             Some(m)
+-                if m.state == "skipped" && m.skip_kind != "weighty" && m.skip_kind != "light" =>
++                if m.state == "skipped"
++                    && m.skip_kind != "weighty"
++                    && m.skip_kind != "light"
++                    && m.skip_kind != "request" =>
+             {
+                 required_problems.push(providers::format_required_outage(m, utc_now));
+             }
+@@ -2622,6 +2627,174 @@ fn brief_sha256(o: &Options, cwd: &Path) -> String {
+         .unwrap_or_else(|_| "missing".into())
+ }
+ 
++/// (0.2.4, reviewer-protection, D) The bare default's single routed pick on a non-standing purpose:
++/// ONE reviewer drawn by the SAME seeded weighted draw a panel uses, among the entries a panel of
++/// this purpose would seat (weighty only on weighty purposes, light only on the others, on-request
++/// never, unavailable and held skipped). The weight is `score * effective budget multiplier`; the
++/// seed is per consultation and reproducible with `--panel-seed`. Returns the picked entry, the
++/// skipped entries (walk format, for the ledger), and a one-line explanation; `None` when there is
++/// no candidate (the caller then falls back to the plain roster walk).
++#[allow(clippy::type_complexity)]
++pub(crate) fn route_single_default(
++    ctx: &providers::Ctx,
++    o: &Options,
++    utc_now: chrono::DateTime<chrono::Utc>,
++    collab_root: &Path,
++    cwd: &Path,
++    estimate: i64,
++) -> Option<(
++    c3_core::roster::RosterEntry,
++    Vec<(String, String, String, String)>,
++    String,
++)> {
++    let selection = ctx.panel_members(
++        &o.model,
++        &o.engine,
++        &o.purpose,
++        false, // not -PanelAll: weighty entries gate on the purpose
++        o.skip_preflight,
++        estimate,
++        o.spend_reserve,
++    );
++    // The skip list the ledger's roster walk records (every non-run member, walk tuple form).
++    let skipped: Vec<(String, String, String, String)> = selection
++        .members
++        .iter()
++        .filter(|m| m.state != "run")
++        .map(|m| {
++            let engine = if m.entry.engine.is_empty() {
++                "codex".to_string()
++            } else {
++                m.entry.engine.clone()
++            };
++            (
++                m.entry.provider.clone(),
++                m.identity.model.clone(),
++                engine,
++                m.reason.clone(),
++            )
++        })
++        .collect();
++
++    let member_entries: Vec<c3_core::roster::RosterEntry> =
++        selection.members.iter().map(|m| m.entry.clone()).collect();
++    let budget_mults = crate::budget::multipliers_for(&member_entries, utc_now, true);
++    let members: Vec<MemberInput> = selection
++        .members
++        .iter()
++        .map(|m| MemberInput {
++            budget_mult: budget_mults
++                .get(&crate::budget::budget_key(&m.entry))
++                .copied()
++                .unwrap_or(1.0),
++            entry: m.entry.clone(),
++            provider: m.identity.provider.clone(),
++            model: m.identity.model.clone(),
++            engine: if m.entry.engine.is_empty() {
++                "codex".into()
++            } else {
++                m.entry.engine.clone()
++            },
++            state: m.state.clone(),
++            reason: m.reason.clone(),
++            skip_kind: m.skip_kind.clone(),
++        })
++        .collect();
++
++    // The bare default spreads across repeated consultations: the nonce is per-consultation unless
++    // --panel-seed (or the test hook) pins it, so two identical bare consults need not pick the same
++    // reviewer, while --panel-seed reproduces the draw exactly.
++    let (nonce, nonce_source) = if !o.panel_seed.trim().is_empty() {
++        (o.panel_seed.trim().to_string(), "-PanelSeed")
++    } else if let Some(env) =
++        c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PANEL_SEED").filter(|s| !s.trim().is_empty())
++    {
++        (env.trim().to_string(), "CODEX_CONSULT_TEST_PANEL_SEED")
++    } else {
++        (
++            format!(
++                "{}-{}",
++                utc_now.timestamp_nanos_opt().unwrap_or(0),
++                std::process::id()
++            ),
++            "per-consultation",
++        )
++    };
++    let brief_sha = brief_sha256(o, cwd);
++    let (topics, _terr) = c3_core::roster::convert_to_slug_list(&o.topic, "-Topic");
++    let order = if o.panel_order.trim().is_empty() {
++        "routed".to_string()
++    } else {
++        o.panel_order.trim().to_lowercase()
++    };
++    let ratings: Vec<Rating> = super::routing::read_all_task_ratings(collab_root);
++    let router_ctx = crate::router::load_context();
++    let route = plan::select_panel_routing_with(
++        &router_ctx,
++        &plan::PanelRoutingInput {
++            members: &members,
++            size: 1,
++            size_source: "bare-default",
++            order: &order,
++            ratings: &ratings,
++            purpose: &o.purpose,
++            topics: &topics,
++            utc_now,
++            task: &o.task,
++            brief_sha: &brief_sha,
++            nonce: &nonce,
++            nonce_source,
++            required: &[],
++        },
++    );
++    let picked = route.picked.into_iter().next()?;
++    let candidates = route.routing.eligible.len();
++    let weight = picked.score.score * picked.mult;
++    // Why the roster's first entry is not the pick: when #1 was skipped (unavailable / held /
++    // on-request / weighty gate), name its reason; when it was eligible but another seat won the
++    // draw, say so.
++    let first_why = selection
++        .members
++        .iter()
++        .min_by_key(|m| m.entry.position)
++        .and_then(|m| {
++            if m.entry.position as i64 == picked.position {
++                None
++            } else if m.state != "run" {
++                Some(format!(
++                    "#{} {} not eligible: {}",
++                    m.entry.position,
++                    format_reviewer_lineage(
++                        &m.identity.provider,
++                        &m.identity.model,
++                        if m.entry.engine.is_empty() {
++                            "codex"
++                        } else {
++                            &m.entry.engine
++                        }
++                    ),
++                    m.reason
++                ))
++            } else {
++                Some(format!("#{} was not drawn", m.entry.position))
++            }
++        });
++    let mut line = format!(
++        "roster: routed bare default ({} purpose) picked {} (weight {:.3}, {candidates} candidate{})",
++        if o.purpose.is_empty() { "none" } else { &o.purpose },
++        picked.lineage,
++        weight,
++        if candidates == 1 { "" } else { "s" },
++    );
++    if let Some(why) = first_why {
++        line.push_str(&format!("; {why}"));
++    }
++    let entry = member_entries
++        .into_iter()
++        .find(|e| e.position as i64 == picked.position)?;
++    Some((entry, skipped, line))
++}
++
+ /// The `Range:` dry-run line + a size warning (a diff-review/acceptance panel).
+ fn range_lines(o: &Options, r: &Resolved, repo_root: &Path) -> (String, String) {
+     if o.range.is_empty() {
+diff --git a/crates/c3/src/providers.rs b/crates/c3/src/providers.rs
+index 5830163..33f3d32 100644
+--- a/crates/c3/src/providers.rs
++++ b/crates/c3/src/providers.rs
+@@ -444,17 +444,22 @@ impl Ctx {
+     /// available. `model` (an explicit `-Model` without `-Provider`) restricts the walk to the
+     /// entries that resolve to that model; `skip_preflight` takes the first unchecked entry.
+     pub(crate) fn walk_full(&self, model: &str, engine: &str, skip_preflight: bool) -> RosterWalk {
+-        self.walk_full_ctx(model, engine, skip_preflight, 0)
++        self.walk_full_ctx(model, engine, skip_preflight, 0, "", false)
+     }
+ 
+     /// [`walk_full`] with a prompt token estimate (`> 0`): an entry whose `context_tokens` the
+     /// brief alone would fill beyond 80% is skipped before its preflight (wave 26b, D16 b).
++    /// (0.2.4, reviewer-protection) `purpose`/`spend_reserve`: an on-request entry is never seated
++    /// by the walk, and a protected entry held by its reserve is skipped on a non-standing purpose
++    /// without `--spend-reserve` (the standing purposes acceptance / core-contract are exempt).
+     pub(crate) fn walk_full_ctx(
+         &self,
+         model: &str,
+         engine: &str,
+         skip_preflight: bool,
+         context_estimate: i64,
++        purpose: &str,
++        spend_reserve: bool,
+     ) -> RosterWalk {
+         let mut skipped: Vec<(String, String, String, String)> = Vec::new();
+         let mut listing: Vec<String> = Vec::new();
+@@ -476,6 +481,45 @@ impl Ctx {
+                 continue;
+             }
+             considered += 1;
++            // (0.2.4, reviewer-protection) an on-request entry is never seated by the walk (the bare
++            // default or a -Model walk); it runs only when named exactly (--provider --model / -Require).
++            if e.on_request {
++                let reason = "on request only".to_string();
++                skipped.push((
++                    e.provider.clone(),
++                    id.model.clone(),
++                    entry_engine.to_string(),
++                    reason.clone(),
++                ));
++                listing.push(format!(
++                    "#{} {} ({reason})",
++                    e.position,
++                    format_reviewer_lineage(&id.provider, &id.model, entry_engine)
++                ));
++                continue;
++            }
++            // (0.2.4, reviewer-protection) a protected entry held by its reserve on a non-standing
++            // purpose, without --spend-reserve, is skipped by the bare default too.
++            if !spend_reserve && !c3_core::purpose::is_standing(purpose) && e.reserve_percent > 0 {
++                if let Some(note) =
++                    crate::budget::entry_reserve_hold(&self.roster, e, self.utc_now, false)
++                {
++                    let reason =
++                        format!("{note}; kept for acceptance and core-contract (use --spend-reserve)");
++                    skipped.push((
++                        e.provider.clone(),
++                        id.model.clone(),
++                        entry_engine.to_string(),
++                        reason.clone(),
++                    ));
++                    listing.push(format!(
++                        "#{} {} ({reason})",
++                        e.position,
++                        format_reviewer_lineage(&id.provider, &id.model, entry_engine)
++                    ));
++                    continue;
++                }
++            }
+             // (wave 26b, D16 b) skip a reviewer whose context window the brief alone would overflow.
+             if context_estimate > 0
+                 && e.context_tokens > 0
+@@ -628,7 +672,7 @@ pub(crate) struct PanelMemberRow {
+     /// `run` | `skipped`.
+     pub state: String,
+     pub reason: String,
+-    /// `""` | `refused` | `unavailable` | `weighty` | `context` | `light`.
++    /// `""` | `refused` | `unavailable` | `weighty` | `context` | `light` | `request` | `reserve`.
+     pub skip_kind: String,
+     /// The verdict's `until` (an unavailable entry's way back), `None` otherwise.
+     pub until: Option<DateTime<FixedOffset>>,
+@@ -671,6 +715,8 @@ pub(crate) struct PanelQuery<'a> {
+     pub all: bool,
+     pub skip_preflight: bool,
+     pub estimate_tokens: i64,
++    /// (0.2.4, reviewer-protection) `--spend-reserve`: do not hold a protected entry back.
++    pub spend_reserve: bool,
+ }
+ 
+ impl Ctx {
+@@ -683,6 +729,7 @@ impl Ctx {
+     /// "stands in for #<p> (<that sibling's skip reason>)" or "stands in (no other entry of label
+     /// <label>)" - when no other member of its provider label (compared ordinally) runs; in roster
+     /// order, so a second light entry of the label sees the first one run.
++    #[allow(clippy::too_many_arguments)]
+     pub(crate) fn panel_members(
+         &self,
+         model: &str,
+@@ -691,6 +738,7 @@ impl Ctx {
+         all: bool,
+         skip_preflight: bool,
+         estimate_tokens: i64,
++        spend_reserve: bool,
+     ) -> PanelSelection {
+         self.panel_members_of(
+             None,
+@@ -701,6 +749,7 @@ impl Ctx {
+                 all,
+                 skip_preflight,
+                 estimate_tokens,
++                spend_reserve,
+             },
+         )
+     }
+@@ -720,6 +769,7 @@ impl Ctx {
+             all,
+             skip_preflight,
+             estimate_tokens,
++            spend_reserve,
+         } = query;
+         let purpose_label = if purpose.is_empty() { "none" } else { purpose };
+         let weighty_purpose = WEIGHTY_PURPOSES.contains(&purpose);
+@@ -804,6 +854,31 @@ impl Ctx {
+                 reason = format!("light reviewer; purpose {purpose_label} is weighty - it stands in only when no entry of its label runs");
+                 skip_kind = "light".into();
+             }
++            // (0.2.4, reviewer-protection) an on-request entry is never seated automatically - not
++            // by a panel draw, not by -PanelAll. A -Require naming it rejoins in `select_panel_routing`.
++            if state == "run" && e.on_request {
++                state = "skipped".into();
++                reason = "on request only".into();
++                skip_kind = "request".into();
++            }
++            // (0.2.4, reviewer-protection) a protected entry held by its reserve, on a non-standing
++            // purpose, without --spend-reserve. A -Require naming it then refuses the run (the
++            // required-outage check treats `reserve` as an outage).
++            if state == "run"
++                && !spend_reserve
++                && !c3_core::purpose::is_standing(purpose)
++                && e.reserve_percent > 0
++            {
++                if let Some(note) =
++                    crate::budget::entry_reserve_hold(&self.roster, e, self.utc_now, false)
++                {
++                    state = "skipped".into();
++                    reason = format!(
++                        "{note}; kept for acceptance and core-contract (use --spend-reserve)"
++                    );
++                    skip_kind = "reserve".into();
++                }
++            }
+             members.push(PanelMemberRow {
+                 entry: e.clone(),
+                 identity: id,
+@@ -2071,7 +2146,7 @@ fn print_table(
+         // (wave 8 = plugin wave 30) QUOTA last: the newest observed windows of the endpoint.
+         // The built-in openai row keeps its live health text; every other plan with budget windows
+         // (wave 9: kimi `/usages`, a snapshot) fills QUOTA in the same style.
+-        let quota_text = r
++        let mut quota_text = r
+             .quota
+             .as_ref()
+             .and_then(|q| q["text"].as_str())
+@@ -2103,6 +2178,25 @@ fn print_table(
+                 Some(crate::budget::providers_quota_cell(&windows, ctx.utc_now))
+             })
+             .unwrap_or_else(|| "-".to_string());
++        // (0.2.4, reviewer-protection) when an active protected entry of this row's group is held by
++        // its reserve, note it on the row (VERDICT stays available, like "low quota" is added).
++        if let Some(held_note) = ctx
++            .roster
++            .entries
++            .iter()
++            .find(|e| {
++                !e.inactive && e.provider == r.name && e.engine == r.engine && e.reserve_percent > 0
++            })
++            .and_then(|e| {
++                crate::budget::entry_reserve_hold(&ctx.roster, e, ctx.utc_now, !ctx.no_network)
++            })
++        {
++            if quota_text == "-" {
++                quota_text = format!("held (reserve): {held_note}");
++            } else {
++                quota_text.push_str(&format!("; held (reserve): {held_note}"));
++            }
++        }
+         m.insert("quota", quota_text);
+         lines.push(m);
+     }
+@@ -3595,7 +3689,7 @@ mod roster_walk_tests {
+         assert_ne!(s.entry.as_ref().map(|e| e.position), Some(1));
+         assert!(s.skipped.iter().all(|sk| sk.0 != "byteplus-claude"));
+         // the panel never includes the inactive entry (any purpose / -PanelAll).
+-        let sel = ctx.panel_members("", "", "checkpoint", true, true, 0);
++        let sel = ctx.panel_members("", "", "checkpoint", true, true, 0, false);
+         assert_eq!(sel.members.len(), 1);
+         assert!(sel.members.iter().all(|m| m.entry.position != 1));
+         // availability (the 'N of M reviewers available' source) counts only the active one.
+@@ -3678,7 +3772,7 @@ mod roster_walk_tests {
+             .3
+             .starts_with("plan zai (usage limit on ZAI until "));
+         // the panel skips both
+-        let sel = ctx.panel_members("", "", "checkpoint", false, false, 0);
++        let sel = ctx.panel_members("", "", "checkpoint", false, false, 0, false);
+         let states: Vec<(&str, &str)> = sel
+             .members
+             .iter()
+@@ -3867,7 +3961,7 @@ wire_api = \"responses\"
+             entry(3, "openai", "gpt-5.1"),
+         ]);
+         // a checkpoint: the light entry runs, its weighty sibling is held back
+-        let sel = ctx.panel_members("", "", "checkpoint", false, true, 0);
++        let sel = ctx.panel_members("", "", "checkpoint", false, true, 0, false);
+         assert_eq!(
+             plan(&sel),
+             vec![
+@@ -3877,7 +3971,7 @@ wire_api = \"responses\"
+             ]
+         );
+         // an acceptance: the weighty sibling runs, the light one is held back
+-        let sel = ctx.panel_members("", "", "acceptance", false, true, 0);
++        let sel = ctx.panel_members("", "", "acceptance", false, true, 0, false);
+         assert_eq!(
+             plan(&sel),
+             vec![
+@@ -3889,7 +3983,7 @@ wire_api = \"responses\"
+         assert_eq!(sel.members[1].skip_kind, "light");
+         // the weighty sibling skipped for its context window: the light entry stands in for it
+         let ctx_reason = "brief too large for this reviewer's context (est. 30001 of 32000 tokens)";
+-        let sel = ctx.panel_members("", "", "acceptance", false, true, 30001);
++        let sel = ctx.panel_members("", "", "acceptance", false, true, 30001, false);
+         assert_eq!(
+             plan(&sel),
+             vec![
+@@ -3901,7 +3995,7 @@ wire_api = \"responses\"
+         assert_eq!(sel.members[0].skip_kind, "context");
+         assert_eq!(sel.members[1].skip_kind, "");
+         // -PanelAll: every entry, the light one too
+-        let sel = ctx.panel_members("", "", "acceptance", true, true, 0);
++        let sel = ctx.panel_members("", "", "acceptance", true, true, 0, false);
+         assert!(
+             sel.members.iter().all(|m| m.state == "run"),
+             "{:?}",
+@@ -3915,7 +4009,7 @@ wire_api = \"responses\"
+             entry(1, "openai", "gpt-5.1"),
+             weighted(2, "mimo", "mimo-v2.6-pro", "light", 0),
+         ]);
+-        let sel = ctx.panel_members("", "", "decision", false, true, 0);
++        let sel = ctx.panel_members("", "", "decision", false, true, 0, false);
+         assert_eq!(
+             plan(&sel),
+             vec!["#1 run ", "#2 run stands in (no other entry of label mimo)",]
+@@ -3926,7 +4020,7 @@ wire_api = \"responses\"
+             weighted(1, "mimo", "mimo-a", "light", 0),
+             weighted(2, "mimo", "mimo-b", "light", 0),
+         ]);
+-        let sel = ctx.panel_members("", "", "stuck", false, true, 0);
++        let sel = ctx.panel_members("", "", "stuck", false, true, 0, false);
+         assert_eq!(sel.members[0].state, "run");
+         assert_eq!(
+             sel.members[0].reason,
+diff --git a/docs/DESIGN.md b/docs/DESIGN.md
+index 7b466cc..0e0eabb 100644
+--- a/docs/DESIGN.md
++++ b/docs/DESIGN.md
+@@ -148,6 +148,20 @@ hash.
+   published cell counts as evidence, so a fresh installation routes instead of falling back to roster order. What the
+   router used is recorded under one trailing `ext.c3` object of `panel.routing`; `c3 router replay` recomputes any
+   recorded draw, the plugin's included, from the ledger alone.
++- Bare default by purpose (0.2.4): a single consultation with no `--provider` is no longer always the roster's first
++  entry. On the standing purposes **acceptance** and **core-contract** it stays the first available entry (the standing
++  partner). On every other purpose it is ONE reviewer picked by the SAME seeded weighted draw a panel uses, among the
++  entries a panel of that purpose would seat, weight `score x effective budget multiplier`; the seed is per consultation
++  (reproducible with `--panel-seed`), so repeated bare consultations spread and a drained or held first entry yields.
++- Reviewer protection (0.2.4), two per-entry `ext` settings: `reserve_percent: N` (1..50) makes an entry PROTECTED - held
++  on non-standing purposes once `used% >= min(elapsed% + N, 100 - N)` on any long budget window (24 h+, non-stale, reset
++  ahead), i.e. it may not run more than N points ahead of the calendar and keeps its last N % for acceptance /
++  core-contract; `--spend-reserve` overrides. `on_request: true` makes an entry seated only when named exactly
++  (`--provider`/`--model` or a `--require` matcher) - never by the bare default, a panel draw or `--panel-all`. A held
++  entry is skipped (`reserve`) or refused when named / required; an on-request entry is skipped (`request`) but rejoins a
++  panel when `--require`d. The ChatGPT account's budget window is also no longer forgotten after two idle days: the
++  budget module falls back to the newest rollout of the last 8 days, then the recorded machine-health quota, keeping only
++  windows whose reset is still ahead.
+ - Policy v1: per (reviewer, purpose, topic tag) a smoothed score from the reward with a global prior from `priors.json`
+   (hierarchical: the server's aggregate is the prior, local evidence the posterior); exploration as a mixture over feasible
+   panels, not a per-member floor. Later policies (Thompson sampling once enough rated consultations exist; similarity over
+diff --git a/plugin/skills/consult/SKILL.md b/plugin/skills/consult/SKILL.md
+index 0b854f9..30afb3c 100644
+--- a/plugin/skills/consult/SKILL.md
++++ b/plugin/skills/consult/SKILL.md
+@@ -82,15 +82,36 @@ reviewer: add `--provider <name> --model <id>`. Set `CODEX_CONSULT_COORDINATOR`
+ own model so the bridge warns when it seats it as a reviewer — keep the operator's value when
+ set; do not guess your own.
+ 
+-**Which reviewer.** Without `--provider` the roster's first entry answers - on this roster that is
+-Astra, the scarcest quota. **So a single consultation always names its reviewer** (`--provider
+-meta` or `--provider grok` by default); leave `--provider` out only for acceptance or
+-core-contract, where the standing partner is meant. Measured 2026-10-30: Astra took 37 of 75
+-consultations in two weeks (27 of 47 in the last one) and the Muse contributor 2 - the default
+-answering, not a choice. Do not let one reviewer take every consultation: the track record that seats panels is built from marks, and a
+-reviewer that is never asked never earns a seat. The operator's goal is to **drain every plan's
+-allowance by the end of its window, not long before it** - a window spent on day one means days
+-of waiting; one left half full is paid for nothing. So:
++**Which reviewer.** A bare consultation (no `--provider`) is routed by purpose:
++
++- **acceptance, core-contract** - the standing partner answers (the roster's first available entry,
++  on this roster Astra); its reserve is never held back on these purposes.
++- **every other purpose** (diff-review, checkpoint, framing, decision, stuck, chore, none) - the
++  router picks ONE reviewer by the same seeded weighted draw a panel uses, among the entries a panel
++  of that purpose would seat (usefulness score x remaining-budget multiplier). So repeated bare
++  consultations spread instead of draining the first entry, and a drained or held reviewer yields to
++  another. The bare run prints the pick, its weight and why the first entry was not it. Pass
++  `--provider`/`--model` to name a reviewer yourself, or `--panel-seed` to reproduce a draw.
++
++You can still name a reviewer explicitly (`--provider meta`, `--provider grok`) whenever you want a
++particular second opinion. The operator's goal is to **drain every plan's allowance by the end of
++its window, not long before it** - a window spent on day one means days of waiting; one left half
++full is paid for nothing. Two protections back this up:
++
++- **A protected entry** (`ext.reserve_percent: N` in the roster) is HELD on non-standing purposes
++  once its usage runs past the reserve line on a long budget window (`used% >= min(elapsed% + N,
++  100 - N)`) - it may not run more than N points ahead of the calendar, and its last N % is kept for
++  acceptance / core-contract. A held reviewer is skipped by the bare default and the panel, and an
++  explicit `--provider` naming it is refused ("is held ...; kept for acceptance and core-contract").
++  Pass `--spend-reserve` to spend the reserve anyway, or choose another reviewer.
++- **The heavy Muse model** (`meta :: muse-wonder-1.0`) is marked `ext.on_request` and is never seated
++  automatically - not by the bare default, a panel draw or `--panel-all`. Run it ONLY when the
++  operator's own prompt asks for the strongest models, and then name it explicitly
++  (`--provider meta --model muse-wonder-1.0`, or `--require` it into a panel). The **Muse
++  contributor** (`--provider meta`) stays the near-constant, near-free companion.
++
++Do not let one reviewer take every consultation: the track record that seats panels is built from
++marks, and a reviewer that is never asked never earns a seat. So:
+ 
+ - A **cheap, near-free reviewer** (on this roster the Muse contributor, `--provider meta`) may be
+   asked on almost every consultation, as the constant second opinion.
+diff --git a/plugin/skills/consult/reference.md b/plugin/skills/consult/reference.md
+index a9514a0..26214c7 100644
+--- a/plugin/skills/consult/reference.md
++++ b/plugin/skills/consult/reference.md
+@@ -52,6 +52,7 @@ hand it to a cheap roster member. `--effort` and `--max-words` override the pres
+ | `--provider <name>` | a `[model_providers.<name>]` entry, or a roster label; needs `--model` unless a roster entry supplies one |
+ | `--off-peak-only` | refuse (not warn) inside the provider's peak window |
+ | `--skip-preflight` | bypass the preflight — only for an endpoint that needs no credential, or once after a rotation; never to push past a real refusal |
++| `--spend-reserve` | seat a PROTECTED reviewer even when its budget reserve would hold it back (single and panel); without it a held protected entry is kept for acceptance / core-contract |
+ | `--codex-config k=v` | repeatable; identity/effort keys (`model`, `model_provider`, `model_reasoning_effort`, `profile`, `model_providers.*`) are refused |
+ | `--schema-transport output-schema\|prompt-only` | empty = the caps-v1 default for the endpoint |
+ | `--format-retry 0\|1` | default 1: one recorded repair turn when the reply is not valid JSON |
+@@ -183,6 +184,26 @@ rules stay.
+ `--topic <slug>` (repeatable) — what the consultation is about; recorded on the ledger and its
+ rating, and a routed panel scores its members on those topics.
+ 
++## Protected and on-request reviewers (roster `ext`)
++
++Two per-entry settings live under a roster entry's `ext` object (invisible to the plugin, which
++treats `ext` as a free-form object):
++
++- `"ext": {"reserve_percent": N}` (integer 1..50) — a **protected** entry. On every LONG budget
++  window (24 h or more — weekly, monthly; the 5-hour window is exempt), non-stale, reset still ahead,
++  the entry is HELD when `used% >= min(elapsed% + N, 100 - N)`: it may not run more than N points
++  ahead of the calendar, and its last N % is kept back. The hold is waived on the standing purposes
++  **acceptance** and **core-contract**, and by `--spend-reserve`. A held entry is skipped by the bare
++  default and by a panel (skip kind `reserve`); an explicit `--provider`/`--model` naming it is
++  refused in preflight; a `--require` naming it refuses the run (exit 5). `c3 providers` adds the
++  hold to the entry's row (VERDICT stays `available`) and `c3 router explain` marks it `[held:
++  reserve]`.
++- `"ext": {"on_request": true}` — an **on-request** entry. It is never seated automatically: not by
++  the bare default, not by any panel draw, not by `--panel-all`. It runs only when named exactly —
++  `--provider <label> --model <its model>`, or a `--require` matcher that names the entry itself
++  (`#<n>` or `<provider> :: <model> [engine]`). In listings it shows as skipped with kind `request`
++  ("on request only"); `c3 router explain` marks it `[on request]`.
++
+ ## Parking a run (detach) and member control
+ 
+ A panel acceptance runs 15–60 minutes. Add `--detach` and carry on.

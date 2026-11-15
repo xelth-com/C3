@@ -21,5 +21,20 @@
     handles are made non-inheritable first); regression test `the_hook_returns_without_waiting_for_the_spawned_pass`
     fails without the fix and passes with it; live: hook 2.1 s with a due pass, the pass ran 20 s in the background,
     the next hook printed the report once.
+- 2026-11-15, second wave on top of d7ce658 - reviewer-protection routing (operator: "астра постоянно на передке
+  часто убивает её в ноль"; Muse Wonder only on his explicit request). Brief
+  `handoffs/05-claude-routing-review.md`, patch `05-claude-routing-review.patch`. Diff-review panel detach id
+  `01480f5d`: meta :: muse-spark-1.3-contributor and grok :: grok-4.7 (the cheap pair, by the operator's rule; no
+  Wonder, no Astra), run from a copy of the wave's debug build. Come back:
+  `c3 consult --task release-0.2.4 --status --id 01480f5d`.
+  Result: both HOLD (Grok 2 major / 2 minor, 14 min; Muse contributor 2 major / 1 minor, 4 min), 7 findings
+  F06-1..4, F07-1..3, all held and fixed (`implemented`, each with a named test except F07-3); both rated useful.
+  Full run after the fixes: c3-core 282, c3 lib 644, c3-cli 196 in 20 binaries, 0 failed.
+- Acceptance by the standing partner: brief READY at `handoffs/08-claude-acceptance.md`, NOT run. On 2026-11-15
+  the ChatGPT account was reset (weekly 25 % until Nov 22) but another session had its 5-hour window at 76 % until
+  21:08, so a full acceptance would have hit the budget stop; and spending the standing reviewer is the operator's
+  call the day he complained about it being drained. To run it:
+  `c3 consult --task release-0.2.4 --purpose acceptance --mode new --brief .collab/release-0.2.4/handoffs/08-claude-acceptance.md --reply-name acceptance --detach`
+  (no `--provider`: acceptance goes to the standing partner). Then `git tag v0.2.4` at the accepted commit.
 - Acceptance authority: these three are stand-ins. Their verdicts are recorded; the tag `v0.2.4`
   waits for the standing partner's acceptance after its window resets (rule of the consult skill).

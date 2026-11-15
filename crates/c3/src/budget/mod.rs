@@ -45,12 +45,34 @@ pub struct BudgetWindow {
     pub used_ratio: f64,
     /// 0..1 share of the window's period already elapsed.
     pub elapsed_ratio: f64,
+    /// The window's full period in seconds (`5h` = 18000, `week` = 604800, ...); `0.0` when the
+    /// source could not fix it. A window is LONG (the protected reserve applies to it) when this is
+    /// 24 h or more.
+    pub period_secs: f64,
     pub resets_at: DateTime<Utc>,
     /// `codex-rollout` | `kimi-usages` | `snapshot`.
     pub source: String,
     pub observed_at: DateTime<Utc>,
-    /// A snapshot older than [`STALE_DAYS`]: not used for the multiplier.
+    /// A snapshot older than [`STALE_DAYS`]: not used for the multiplier at all.
     pub stale: bool,
+    /// (0.2.4, F06-4/F07-1) The reading was observed within the last hour. An OLD reading (not
+    /// fresh) is a FLOOR on usage - usage can only have grown since - so it may HOLD a protected
+    /// reviewer and may PENALIZE a seat, but it must never BOOST one: [`budget_multiplier`] caps a
+    /// non-fresh window's contribution at 1.0. This is distinct from `stale`, which drops a window
+    /// entirely; a days-old 97 % weekly reading is not stale (it still holds) but not fresh (it
+    /// cannot boost).
+    pub fresh: bool,
+}
+
+/// (0.2.4) A reading observed within this many seconds of `now` is FRESH (may boost a seat); older
+/// readings are a usage floor (hold / penalize only).
+pub const FRESH_SECS: i64 = 3600;
+
+/// Whether an observation at `observed_at` is fresh at `now`: within [`FRESH_SECS`], and not dated
+/// in the future beyond a few minutes of clock skew.
+fn observed_fresh(observed_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    let age = (now - observed_at).num_seconds();
+    (-300..=FRESH_SECS).contains(&age)
 }
 
 /// `CODEX_CONSULT_BUDGET_ROUTING=off` turns the budget multiplier off for the whole process.
@@ -73,7 +95,11 @@ pub fn budget_multiplier(windows: &[BudgetWindow]) -> (f64, Option<String>) {
     for w in windows.iter().filter(|w| !w.stale) {
         let denom = (1.0 - w.elapsed_ratio).max(0.05);
         let h = (1.0 - w.used_ratio) / denom;
-        let mw = h.clamp(ROUTING_BUDGET_MIN, ROUTING_BUDGET_MAX);
+        let mut mw = h.clamp(ROUTING_BUDGET_MIN, ROUTING_BUDGET_MAX);
+        // (F06-4/F07-1) an old reading is a usage floor: it may penalize (mw < 1) but never boost.
+        if !w.fresh {
+            mw = mw.min(1.0);
+        }
         if mw < m {
             m = mw;
             governing = Some(w.name.clone());
@@ -94,6 +120,76 @@ pub fn effective_multiplier(score: f64, neutral: f64, plan_mult: f64) -> f64 {
         1.0
     } else {
         plan_mult
+    }
+}
+
+/// A window is LONG when its period is 24 h or more (weekly, monthly): the protected reserve
+/// applies only to long windows (the 5-hour window is exempt). The threshold uses a small slack so
+/// a period expressed as exactly a day is not lost to float error.
+pub const LONG_WINDOW_SECS: f64 = 24.0 * 3600.0 - 1.0;
+
+impl BudgetWindow {
+    /// Whether this is a long window (period of 24 h or more).
+    pub fn is_long(&self) -> bool {
+        self.period_secs >= LONG_WINDOW_SECS
+    }
+}
+
+/// (0.2.4, reviewer-protection) Whether a protected entry with reserve `reserve_percent` (1..=50)
+/// is HELD at `now`, given its budget group's `windows`. The entry is held when, on ANY long window
+/// (period >= 24 h), non-stale, whose reset is still ahead, its usage has run past the reserve line:
+/// `used% >= min(elapsed% + N, 100 - N)`. In words, the route may not run more than N points ahead
+/// of the calendar, and its last N % is kept back. No long window with data -> not held. Returns the
+/// governing window (the first that holds) so the caller can name the hold; `None` when not held.
+pub fn reserve_hold<'a>(
+    windows: &'a [BudgetWindow],
+    reserve_percent: i64,
+    now: DateTime<Utc>,
+) -> Option<&'a BudgetWindow> {
+    if reserve_percent <= 0 {
+        return None;
+    }
+    let n = reserve_percent as f64;
+    windows.iter().find(|w| {
+        if !w.is_long() || w.stale || w.resets_at <= now {
+            return false;
+        }
+        let used = w.used_ratio * 100.0;
+        let elapsed = w.elapsed_ratio * 100.0;
+        used >= (elapsed + n).min(100.0 - n)
+    })
+}
+
+/// (0.2.4, reviewer-protection) The note a held entry shows on `c3 providers` / `c3 router explain`
+/// / the preflight refusal: `weekly window 97 % used at 55 % of the week, reserve 15 %`. When the
+/// reading is not fresh (observed over an hour ago - an 8-day rollout fallback, a snapshot) the age
+/// is named, since the hold rests on a reading that is only a floor: `... reserve 15 % (seen 6d ago)`.
+pub fn reserve_hold_note(w: &BudgetWindow, reserve_percent: i64, now: DateTime<Utc>) -> String {
+    let (adjective, period) = long_window_phrase(&w.name);
+    let mut note = format!(
+        "{adjective} {}% used at {}% of the {period}, reserve {reserve_percent}%",
+        (w.used_ratio * 100.0).round() as i64,
+        (w.elapsed_ratio * 100.0).round() as i64,
+    );
+    if !w.fresh {
+        let days = (now - w.observed_at).num_days().max(0);
+        if days >= 1 {
+            note.push_str(&format!(" (seen {days}d ago)"));
+        } else {
+            let hours = (now - w.observed_at).num_hours().max(0);
+            note.push_str(&format!(" (seen {hours}h ago)"));
+        }
+    }
+    note
+}
+
+/// The human phrase for a long window's name: `(adjective window, period noun)`.
+fn long_window_phrase(name: &str) -> (String, &'static str) {
+    match name {
+        "wk" | "week" | "weekly" => ("weekly window".to_string(), "week"),
+        "mo" | "month" | "monthly" => ("monthly window".to_string(), "month"),
+        "day" | "daily" => ("daily window".to_string(), "day"),
+        other => (format!("{other} window"), "window"),
     }
 }
 
@@ -179,6 +275,53 @@ pub fn multipliers_for(
     out
 }
 
+/// (0.2.4, reviewer-protection) The budget-group windows of one roster entry (the group it shares
+/// through [`budget_key`]: all built-in openai entries share the ChatGPT account, every other entry
+/// its `plan`). `network == false` reads cache / snapshot only, never the network. Empty when the
+/// entry has no budget group or no reading is available. The reserve hold and the display both use
+/// this so they see exactly the windows the panel draw's multiplier saw.
+pub fn entry_windows(
+    roster: &c3_core::roster::Roster,
+    e: &RosterEntry,
+    now: DateTime<Utc>,
+    network: bool,
+) -> Vec<BudgetWindow> {
+    let key = budget_key(e);
+    if key.is_empty() {
+        return Vec::new();
+    }
+    let group: Vec<RosterEntry> = roster
+        .entries
+        .iter()
+        .filter(|x| budget_key(x) == key)
+        .cloned()
+        .collect();
+    let plan_arg = if key == "openai-account" {
+        ""
+    } else {
+        e.plan.as_str()
+    };
+    plan_windows(plan_arg, &group, now, network)
+}
+
+/// (0.2.4, reviewer-protection) Whether `e` is HELD by its protected reserve at `now`, and the note
+/// naming the hold. `None` when the entry is not protected (`reserve_percent == 0`) or not held.
+/// `network == false` reads cache / snapshot only. The standing-purpose exemption and the
+/// `--spend-reserve` override are the CALLER's to apply - this reports the budget fact only.
+pub fn entry_reserve_hold(
+    roster: &c3_core::roster::Roster,
+    e: &RosterEntry,
+    now: DateTime<Utc>,
+    network: bool,
+) -> Option<String> {
+    if e.reserve_percent <= 0 {
+        return None;
+    }
+    let windows = entry_windows(roster, e, now, network);
+    reserve_hold(&windows, e.reserve_percent, now)
+        .map(|w| reserve_hold_note(w, e.reserve_percent, now))
+}
+
 // --------------------------------------------------------------------------- source detection
 
 /// A roster entry on the built-in openai (codex) endpoint, whose quota is the ChatGPT account's.
@@ -224,20 +367,83 @@ fn is_muse(e: &RosterEntry) -> bool {
 
 // --------------------------------------------------------------------------- openai (codex)
 
-/// Wrap [`c3_core::quota::account_window_at`]: the ChatGPT account's 5h / weekly windows.
+/// The ChatGPT account's 5h / weekly windows. The primary source is today's and yesterday's codex
+/// rollouts ([`c3_core::quota::account_window_at`], the same reading the health verdict uses). When
+/// that gives nothing - the operator had no Codex session in two days, so the account's window is
+/// "forgotten" and the budget would wrongly read as idle - two fallbacks step in, their windows
+/// kept only while their reset is still ahead and tagged with the real observation time (so the
+/// display can say "seen Nd ago"):
+///   1. the newest observation in the rollouts of the last 8 days;
+///   2. the recorded quota of the machine-wide health file / ledgers.
 fn openai_windows(plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
     let home = crate::providers::get_codex_home();
-    let aw = match c3_core::quota::account_window_at(&home, now) {
-        Some(a) => a,
-        None => return Vec::new(),
-    };
-    windows_from_quota(
-        plan,
-        &aw.quota,
-        aw.observed_at.with_timezone(&Utc),
-        "codex-rollout",
-        now,
-    )
+    // (F06-4) Every source keeps only windows whose reset is still ahead and ignores a reading whose
+    // observation is dated in the future: if the two-day result has no live window (all reset in the
+    // past, or it is empty), fall through to the 8-day scan and then the recorded health quota.
+    // 1. Today + yesterday (cached; the health verdict's two-day window).
+    if let Some(aw) = c3_core::quota::account_window_at(&home, now) {
+        let observed = aw.observed_at.with_timezone(&Utc);
+        if observed_not_future(observed, now) {
+            let w = keep_future(
+                windows_from_quota(plan, &aw.quota, observed, "codex-rollout", now),
+                now,
+            );
+            if !w.is_empty() {
+                return w;
+            }
+        }
+    }
+    // 2. Fallback: the newest observation in the rollouts of the last 8 days.
+    if let Some(aw) = c3_core::quota::account_window_within(&home, now, 8) {
+        let observed = aw.observed_at.with_timezone(&Utc);
+        if observed_not_future(observed, now) {
+            let w = keep_future(
+                windows_from_quota(plan, &aw.quota, observed, "codex-rollout-8d", now),
+                now,
+            );
+            if !w.is_empty() {
+                return w;
+            }
+        }
+    }
+    // 3. Fallback: the recorded quota of the machine-wide health file / ledgers.
+    if let Some(ew) = openai_recorded_window(now) {
+        let observed = ew.observed_at.with_timezone(&Utc);
+        if observed_not_future(observed, now) {
+            let w = keep_future(
+                windows_from_quota(plan, &ew.quota, observed, "codex-recorded", now),
+                now,
+            );
+            if !w.is_empty() {
+                return w;
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Whether an observation at `observed_at` is NOT dated in the future beyond a few minutes of clock
+/// skew (F06-4: a future-dated reading is ignored - it would otherwise win a merge and hide a real
+/// one, and its "elapsed" would be nonsense).
+fn observed_not_future(observed_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    (now - observed_at).num_seconds() >= -300
+}
+
+/// Keep only the windows whose reset is still ahead of `now` (a fallback reading of a window that
+/// already reset carries no usage info for the current period).
+fn keep_future(windows: Vec<BudgetWindow>, now: DateTime<Utc>) -> Vec<BudgetWindow> {
+    windows.into_iter().filter(|w| w.resets_at > now).collect()
+}
+
+/// The built-in openai endpoint's most recent recorded window from the machine-wide health file and
+/// its ledgers (never the network). `None` when health is off, there is no record, or none names a
+/// window.
+fn openai_recorded_window(now: DateTime<Utc>) -> Option<c3_core::quota::EndpointWindow> {
+    let home = crate::providers::get_codex_home();
+    let hp = c3_core::health::machine_health_path(&home)?;
+    let consults = c3_core::health::machine_endpoint_consults_all(&hp);
+    let fp = c3_core::health::builtin_openai_fingerprint();
+    c3_core::quota::endpoint_window_at(&consults, &[&fp], &fp, now)
 }
 
 /// Convert a recorded `{primary, secondary}` quota (used_percent / window_minutes / resets_at ISO)
@@ -267,19 +473,26 @@ fn windows_from_quota(
             Some(r) => r.with_timezone(&Utc),
             None => continue,
         };
-        let elapsed = match minutes {
-            Some(m) if m > 0 => elapsed_ratio(resets_at, (m * 60) as f64, now),
+        let period_secs = match minutes {
+            Some(m) if m > 0 => (m * 60) as f64,
             _ => 0.0,
+        };
+        let elapsed = if period_secs > 0.0 {
+            elapsed_ratio(resets_at, period_secs, now)
+        } else {
+            0.0
         };
         out.push(BudgetWindow {
             plan: plan.to_string(),
             name: c3_core::quota::window_name(minutes, true),
             used_ratio: used / 100.0,
             elapsed_ratio: elapsed,
+            period_secs,
             resets_at,
             source: source.to_string(),
             observed_at,
             stale: false,
+            fresh: observed_fresh(observed_at, now),
         });
     }
     out
@@ -299,7 +512,8 @@ fn kimi_windows(
     if let Some((fetched_at, body)) = read_cache(cache.as_deref()) {
         let fresh = (now - fetched_at).num_seconds() < CACHE_SECS;
         if fresh || !network {
-            return parse_kimi(&body, plan, now);
+            // (F07-1) a cached body carries the cache's fetch time as its real observation time.
+            return parse_kimi(&body, plan, fetched_at, now);
         }
     } else if !network {
         return Vec::new();
@@ -324,7 +538,7 @@ fn kimi_windows(
         None => return Vec::new(),
     };
     write_cache(cache.as_deref(), now, &body);
-    parse_kimi(&body, plan, now)
+    parse_kimi(&body, plan, now, now)
 }
 
 /// GET `https://api.kimi.ai/coding/v1/usages` with the bearer token; the body on a 200, else None.
@@ -346,29 +560,36 @@ fn kimi_get(token: &str) -> Option<String> {
 }
 
 /// Parse the kimi `/usages` body into the 5h and month windows.
-fn parse_kimi(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
+fn parse_kimi(
+    body: &str,
+    plan: &str,
+    observed_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Vec<BudgetWindow> {
     let v: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
     let u = &v["usages"];
     let mut out = Vec::new();
-    if let Some(w) = kimi_window(plan, &u["limit_5h"], "5h", Some(300), now) {
+    if let Some(w) = kimi_window(plan, &u["limit_5h"], "5h", Some(300), observed_at, now) {
         out.push(w);
     }
-    if let Some(w) = kimi_window(plan, &u["limit_month_total"], "month", None, now) {
+    if let Some(w) = kimi_window(plan, &u["limit_month_total"], "month", None, observed_at, now) {
         out.push(w);
     }
     out
 }
 
 /// One kimi usage window: `{used_ratio, reset_time}`. `period_min` fixes the period (5h); `None`
-/// (month) computes it as `reset_time` minus one calendar month.
+/// (month) computes it as `reset_time` minus one calendar month. `observed_at` is the reading's real
+/// observation time (the cache fetch time, or `now` for a fresh fetch).
 fn kimi_window(
     plan: &str,
     obj: &Value,
     name: &str,
     period_min: Option<i64>,
+    observed_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Option<BudgetWindow> {
     let used = obj["used_ratio"].as_f64()?;
@@ -390,10 +611,12 @@ fn kimi_window(
         name: name.to_string(),
         used_ratio: used,
         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
+        period_secs,
         resets_at,
         source: "kimi-usages".to_string(),
-        observed_at: now,
+        observed_at,
         stale: false,
+        fresh: observed_fresh(observed_at, now),
     })
 }
 
@@ -412,7 +635,8 @@ fn zai_windows(
     if let Some((fetched_at, body)) = read_cache(cache.as_deref()) {
         let fresh = (now - fetched_at).num_seconds() < CACHE_SECS;
         if fresh || !network {
-            return parse_zai(&body, plan, now);
+            // (F07-1) a cached body is observed at the cache's fetch time, not now.
+            return parse_zai(&body, plan, fetched_at, now);
         }
     } else if !network {
         return Vec::new();
@@ -437,7 +661,7 @@ fn zai_windows(
         None => return Vec::new(),
     };
     write_cache(cache.as_deref(), now, &body);
-    parse_zai(&body, plan, now)
+    parse_zai(&body, plan, now, now)
 }
 
 /// GET `https://api.z.ai/api/monitor/usage/quota/limit` with the bearer token; the body on a 200,
@@ -461,7 +685,12 @@ fn zai_get(token: &str) -> Option<String> {
 /// Parse the z.ai quota/limit body into the 5-hour token window. `data.limits[]` holds a
 /// `TOKENS_LIMIT` item (the 5-hour model-token window: `percentage` used, `nextResetTime` in epoch
 /// ms) and a `TIME_LIMIT` item (a monthly MCP-tools allowance, NOT a model quota - ignored).
-fn parse_zai(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
+fn parse_zai(
+    body: &str,
+    plan: &str,
+    observed_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Vec<BudgetWindow> {
     let v: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
@@ -473,7 +702,7 @@ fn parse_zai(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
     let mut out = Vec::new();
     for item in limits {
         if item["type"].as_str() == Some("TOKENS_LIMIT") {
-            if let Some(w) = zai_window(plan, item, now) {
+            if let Some(w) = zai_window(plan, item, observed_at, now) {
                 out.push(w);
             }
         }
@@ -482,7 +711,12 @@ fn parse_zai(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
 }
 
 /// One z.ai `TOKENS_LIMIT` item -> the `5h` window: `{percentage (0-100), nextResetTime (epoch ms)}`.
-fn zai_window(plan: &str, obj: &Value, now: DateTime<Utc>) -> Option<BudgetWindow> {
+fn zai_window(
+    plan: &str,
+    obj: &Value,
+    observed_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Option<BudgetWindow> {
     let pct = c3_core::quota::finite_percent(&obj["percentage"])?;
     let resets_at = epoch_ms(obj["nextResetTime"].as_i64()?)?;
     // (F03-10) A live window past its reset carries no usage info for the current period: drop it.
@@ -495,10 +729,12 @@ fn zai_window(plan: &str, obj: &Value, now: DateTime<Utc>) -> Option<BudgetWindo
         name: "5h".to_string(),
         used_ratio: pct / 100.0,
         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
+        period_secs,
         resets_at,
         source: "zai-quota".to_string(),
-        observed_at: now,
+        observed_at,
         stale: false,
+        fresh: observed_fresh(observed_at, now),
     })
 }
 
@@ -512,7 +748,8 @@ fn muse_windows(plan: &str, now: DateTime<Utc>, network: bool) -> Vec<BudgetWind
     if let Some((fetched_at, body)) = read_cache(cache.as_deref()) {
         let fresh = (now - fetched_at).num_seconds() < CACHE_SECS;
         if fresh || !network {
-            return parse_muse(&body, plan, now);
+            // (F07-1) a cached body is observed at the cache's fetch time, not now.
+            return parse_muse(&body, plan, fetched_at, now);
         }
     } else if !network {
         return Vec::new();
@@ -522,7 +759,7 @@ fn muse_windows(plan: &str, now: DateTime<Utc>, network: bool) -> Vec<BudgetWind
         None => return Vec::new(),
     };
     write_cache(cache.as_deref(), now, &body);
-    parse_muse(&body, plan, now)
+    parse_muse(&body, plan, now, now)
 }
 
 /// Run `muse usage --json` (the muse launcher resolved as every muse turn resolves it) bounded to
@@ -545,7 +782,12 @@ fn muse_get() -> Option<String> {
 /// window `allowance` is null (`reason: "server_sent_no_usage"`) -> no windows (the snapshot, if any,
 /// still applies). A populated `allowance` carries `window` (5h) and `weekly`, each
 /// `{usedPercent (0-100), resetsAtMs (epoch ms)}`.
-fn parse_muse(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
+fn parse_muse(
+    body: &str,
+    plan: &str,
+    observed_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Vec<BudgetWindow> {
     let v: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return Vec::new(),
@@ -555,10 +797,17 @@ fn parse_muse(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
         return Vec::new();
     }
     let mut out = Vec::new();
-    if let Some(w) = muse_window(plan, &allowance["window"], "5h", 5.0 * 3600.0, now) {
+    if let Some(w) = muse_window(plan, &allowance["window"], "5h", 5.0 * 3600.0, observed_at, now) {
         out.push(w);
     }
-    if let Some(w) = muse_window(plan, &allowance["weekly"], "week", 7.0 * 86_400.0, now) {
+    if let Some(w) = muse_window(
+        plan,
+        &allowance["weekly"],
+        "week",
+        7.0 * 86_400.0,
+        observed_at,
+        now,
+    ) {
         out.push(w);
     }
     out
@@ -570,6 +819,7 @@ fn muse_window(
     obj: &Value,
     name: &str,
     period_secs: f64,
+    observed_at: DateTime<Utc>,
     now: DateTime<Utc>,
 ) -> Option<BudgetWindow> {
     let pct = c3_core::quota::finite_percent(&obj["usedPercent"])?;
@@ -583,10 +833,12 @@ fn muse_window(
         name: name.to_string(),
         used_ratio: pct / 100.0,
         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
+        period_secs,
         resets_at,
         source: "muse-usage".to_string(),
-        observed_at: now,
+        observed_at,
         stale: false,
+        fresh: observed_fresh(observed_at, now),
     })
 }
 
@@ -640,10 +892,14 @@ fn window_from_snapshot(plan: &str, v: &Value, now: DateTime<Utc>) -> Option<Bud
         name: window,
         used_ratio: used,
         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
+        period_secs,
         resets_at,
         source: "snapshot".to_string(),
         observed_at,
         stale,
+        // A hand-written snapshot is never "fresh" unless it was written within the hour: it may
+        // hold / penalize, but it does not boost a seat (F06-4/F07-1).
+        fresh: observed_fresh(observed_at, now),
     })
 }
 
@@ -870,6 +1126,11 @@ pub fn providers_quota_cell(windows: &[BudgetWindow], now: DateTime<Utc>) -> Str
                 } else {
                     s.push_str(&format!(" (seen {days}d ago)"));
                 }
+            } else if w.source == "codex-rollout-8d" || w.source == "codex-recorded" {
+                // (0.2.4) the openai fallback window: the account's live window was not in the last
+                // two days' rollouts, so the real observation age is shown.
+                let days = (now - w.observed_at).num_days().max(0);
+                s.push_str(&format!(" (seen {days}d ago)"));
             }
             s
         })

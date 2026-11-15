@@ -148,6 +148,20 @@ hash.
   published cell counts as evidence, so a fresh installation routes instead of falling back to roster order. What the
   router used is recorded under one trailing `ext.c3` object of `panel.routing`; `c3 router replay` recomputes any
   recorded draw, the plugin's included, from the ledger alone.
+- Bare default by purpose (0.2.4): a single consultation with no `--provider` is no longer always the roster's first
+  entry. On the standing purposes **acceptance** and **core-contract** it stays the first available entry (the standing
+  partner). On every other purpose it is ONE reviewer picked by the SAME seeded weighted draw a panel uses, among the
+  entries a panel of that purpose would seat, weight `score x effective budget multiplier`; the seed is per consultation
+  (reproducible with `--panel-seed`), so repeated bare consultations spread and a drained or held first entry yields.
+- Reviewer protection (0.2.4), two per-entry `ext` settings: `reserve_percent: N` (1..50) makes an entry PROTECTED - held
+  on non-standing purposes once `used% >= min(elapsed% + N, 100 - N)` on any long budget window (24 h+, non-stale, reset
+  ahead), i.e. it may not run more than N points ahead of the calendar and keeps its last N % for acceptance /
+  core-contract; `--spend-reserve` overrides. `on_request: true` makes an entry seated only when named exactly
+  (`--provider`/`--model` or a `--require` matcher) - never by the bare default, a panel draw or `--panel-all`. A held
+  entry is skipped (`reserve`) or refused when named / required; an on-request entry is skipped (`request`) but rejoins a
+  panel when `--require`d. The ChatGPT account's budget window is also no longer forgotten after two idle days: the
+  budget module falls back to the newest rollout of the last 8 days, then the recorded machine-health quota, keeping only
+  windows whose reset is still ahead.
 - Policy v1: per (reviewer, purpose, topic tag) a smoothed score from the reward with a global prior from `priors.json`
   (hierarchical: the server's aggregate is the prior, local evidence the posterior); exploration as a mixture over feasible
   panels, not a per-member floor. Later policies (Thompson sampling once enough rated consultations exist; similarity over

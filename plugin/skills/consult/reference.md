@@ -52,6 +52,7 @@ hand it to a cheap roster member. `--effort` and `--max-words` override the pres
 | `--provider <name>` | a `[model_providers.<name>]` entry, or a roster label; needs `--model` unless a roster entry supplies one |
 | `--off-peak-only` | refuse (not warn) inside the provider's peak window |
 | `--skip-preflight` | bypass the preflight — only for an endpoint that needs no credential, or once after a rotation; never to push past a real refusal |
+| `--spend-reserve` | seat a PROTECTED reviewer even when its budget reserve would hold it back (single and panel); without it a held protected entry is kept for acceptance / core-contract |
 | `--codex-config k=v` | repeatable; identity/effort keys (`model`, `model_provider`, `model_reasoning_effort`, `profile`, `model_providers.*`) are refused |
 | `--schema-transport output-schema\|prompt-only` | empty = the caps-v1 default for the endpoint |
 | `--format-retry 0\|1` | default 1: one recorded repair turn when the reply is not valid JSON |
@@ -182,6 +183,26 @@ rules stay.
 
 `--topic <slug>` (repeatable) — what the consultation is about; recorded on the ledger and its
 rating, and a routed panel scores its members on those topics.
+
+## Protected and on-request reviewers (roster `ext`)
+
+Two per-entry settings live under a roster entry's `ext` object (invisible to the plugin, which
+treats `ext` as a free-form object):
+
+- `"ext": {"reserve_percent": N}` (integer 1..50) — a **protected** entry. On every LONG budget
+  window (24 h or more — weekly, monthly; the 5-hour window is exempt), non-stale, reset still ahead,
+  the entry is HELD when `used% >= min(elapsed% + N, 100 - N)`: it may not run more than N points
+  ahead of the calendar, and its last N % is kept back. The hold is waived on the standing purposes
+  **acceptance** and **core-contract**, and by `--spend-reserve`. A held entry is skipped by the bare
+  default and by a panel (skip kind `reserve`); an explicit `--provider`/`--model` naming it is
+  refused in preflight; a `--require` naming it refuses the run (exit 5). `c3 providers` adds the
+  hold to the entry's row (VERDICT stays `available`) and `c3 router explain` marks it `[held:
+  reserve]`.
+- `"ext": {"on_request": true}` — an **on-request** entry. It is never seated automatically: not by
+  the bare default, not by any panel draw, not by `--panel-all`. It runs only when named exactly —
+  `--provider <label> --model <its model>`, or a `--require` matcher that names the entry itself
+  (`#<n>` or `<provider> :: <model> [engine]`). In listings it shows as skipped with kind `request`
+  ("on request only"); `c3 router explain` marks it `[on request]`.
 
 ## Parking a run (detach) and member control
 

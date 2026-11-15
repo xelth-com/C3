@@ -59,6 +59,12 @@ pub fn pick_target(
         if engine_of(e) != name || e.model.is_empty() {
             continue;
         }
+        // (0.2.4, reviewer-protection) the smoke never spends a protected or an on-request seat: a
+        // protected reviewer's reserve is kept for acceptance work, and an on-request entry runs
+        // only when named by the operator.
+        if e.on_request || e.reserve_percent > 0 {
+            continue;
+        }
         let (headroom, saturated) = plan_headroom(roster, e, now);
         if saturated {
             continue; // the governing window is at 90 % or more

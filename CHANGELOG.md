@@ -95,7 +95,7 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   when that fails. The smoke is two real turns through `c3 consult` in a throwaway repository
   (one plain, one that must read a file holding a random token). codex updates through npm
   (rollback by version), grok through `grok update` (`--version` pins), kimi through the vendor
-  installer (`KIMI_VERSION` pins; https only, redirects only within the vendor's site); agy has
+  installer (`KIMI_VERSION` pins; https only, a redirect only to the vendor's one listed mirror); agy has
   neither a check nor a pin and is report-only; muse and claude update themselves and are only
   recorded. An engine with a live run or process is skipped and retried the next day. A version
   released less than `C3_MAINTAIN_MIN_AGE_DAYS` (3) days ago is held when its date is known. The
@@ -129,6 +129,37 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **The bare default reviewer depends on the purpose, and two roster `ext` settings protect scarce
+  reviewers.** A single consultation with no `--provider` is no longer always the roster's first
+  entry: on the standing purposes **acceptance** and **core-contract** it stays the first available
+  entry (the standing partner); on every other purpose it is ONE reviewer picked by the same seeded
+  weighted draw a panel uses (usefulness score x effective budget multiplier), among the entries a
+  panel of that purpose would seat, so repeated bare consultations spread instead of draining the
+  first entry. The bare run prints the pick, its weight, the candidate count and why the first entry
+  was not it; `--panel-seed` reproduces the draw (now accepted on a single consult too). Two new
+  per-entry `ext` settings: `reserve_percent: N` (1..50) makes an entry **protected** - HELD on a
+  non-standing purpose once `used% >= min(elapsed% + N, 100 - N)` on any long budget window (24 h+,
+  non-stale, reset ahead), i.e. it may not run more than N points ahead of the calendar and keeps
+  its last N % for acceptance / core-contract; it is then skipped by the bare default and the panel
+  (skip kind `reserve`), refused when named explicitly, and an outage when `--require`d - unless
+  `--spend-reserve` (new flag, single and panel). `on_request: true` makes an entry **on-request** -
+  never seated automatically (not by the bare default, a panel draw or `--panel-all`); it runs only
+  when named exactly by `--provider`/`--model` or a `--require` matcher (skip kind `request`, "on
+  request only"). `c3 providers` notes the hold on the entry's row (VERDICT stays `available`) and
+  `c3 router explain` marks entries `[held: reserve]` / `[on request]`. `c3 maintain`'s smoke never
+  targets a protected or an on-request seat. After the wave's diff-review (Grok, Muse contributor;
+  7 findings): the hold and the on-request rule are evaluated before the light/weighty gates, so
+  neither a stand-in promotion nor a `--require` can seat such an entry; the hold also applies with
+  `--skip-preflight` and to a reviewer pinned by `--thread` or a resume/fork; a bare `--mode
+  resume|fork` continues the reviewer of the task's latest verified consultation when it is still
+  eligible and not held, and otherwise draws and starts a new thread, saying so; an old quota
+  reading is a floor - it may hold a protected reviewer but never raises a weight; the hold, the
+  draw and `router explain` read one set of windows per run.
+- **The ChatGPT account's budget window is no longer forgotten after two idle days.** When today's
+  and yesterday's codex rollouts give nothing, `budget::openai_windows` falls back to the newest
+  observation in the rollouts of the last 8 days, then to the recorded quota of the machine-wide
+  health file / ledgers, keeping only windows whose reset is still ahead and showing the real
+  observation age ("seen Nd ago"). The health verdict's own two-day rule is unchanged.
 - **Grok takes the reply schema in the prompt, not as `--json-schema`:** under the native flag
   every text Grok writes must be schema-shaped, so its opening remark came out as a schema-valid
   placeholder answer ("I am reading the brief before answering") and, carrying no tool call,

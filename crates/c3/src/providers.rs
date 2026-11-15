@@ -119,7 +119,7 @@ pub(crate) struct Ctx {
     launcher: String,
     openai_base_url: String,
     utc_now: DateTime<Utc>,
-    no_network: bool,
+    pub(crate) no_network: bool,
     login_cache: RefCell<HashMap<String, CredentialResult>>,
     engine_launchers: RefCell<HashMap<String, String>>,
     /// (wave 1b, E5) `Get-PlanQuota` per plan for this context's roster, consults and clock.
@@ -444,17 +444,22 @@ impl Ctx {
     /// available. `model` (an explicit `-Model` without `-Provider`) restricts the walk to the
     /// entries that resolve to that model; `skip_preflight` takes the first unchecked entry.
     pub(crate) fn walk_full(&self, model: &str, engine: &str, skip_preflight: bool) -> RosterWalk {
-        self.walk_full_ctx(model, engine, skip_preflight, 0)
+        self.walk_full_ctx(model, engine, skip_preflight, 0, "", false)
     }
 
     /// [`walk_full`] with a prompt token estimate (`> 0`): an entry whose `context_tokens` the
     /// brief alone would fill beyond 80% is skipped before its preflight (wave 26b, D16 b).
+    /// (0.2.4, reviewer-protection) `purpose`/`spend_reserve`: an on-request entry is never seated
+    /// by the walk, and a protected entry held by its reserve is skipped on a non-standing purpose
+    /// without `--spend-reserve` (the standing purposes acceptance / core-contract are exempt).
     pub(crate) fn walk_full_ctx(
         &self,
         model: &str,
         engine: &str,
         skip_preflight: bool,
         context_estimate: i64,
+        purpose: &str,
+        spend_reserve: bool,
     ) -> RosterWalk {
         let mut skipped: Vec<(String, String, String, String)> = Vec::new();
         let mut listing: Vec<String> = Vec::new();
@@ -476,6 +481,46 @@ impl Ctx {
                 continue;
             }
             considered += 1;
+            // (0.2.4, reviewer-protection) an on-request entry is never seated by the walk (the bare
+            // default or a -Model walk); it runs only when named exactly (--provider --model / -Require).
+            if e.on_request {
+                let reason = "on request only".to_string();
+                skipped.push((
+                    e.provider.clone(),
+                    id.model.clone(),
+                    entry_engine.to_string(),
+                    reason.clone(),
+                ));
+                listing.push(format!(
+                    "#{} {} ({reason})",
+                    e.position,
+                    format_reviewer_lineage(&id.provider, &id.model, entry_engine)
+                ));
+                continue;
+            }
+            // (0.2.4, reviewer-protection) a protected entry held by its reserve on a non-standing
+            // purpose, without --spend-reserve, is skipped by the bare default too.
+            if !spend_reserve && !c3_core::purpose::is_standing(purpose) && e.reserve_percent > 0 {
+                // (F07-3) same network mode as the draw / display, so the hold cannot disagree.
+                if let Some(note) =
+                    crate::budget::entry_reserve_hold(&self.roster, e, self.utc_now, !self.no_network)
+                {
+                    let reason =
+                        format!("{note}; kept for acceptance and core-contract (use --spend-reserve)");
+                    skipped.push((
+                        e.provider.clone(),
+                        id.model.clone(),
+                        entry_engine.to_string(),
+                        reason.clone(),
+                    ));
+                    listing.push(format!(
+                        "#{} {} ({reason})",
+                        e.position,
+                        format_reviewer_lineage(&id.provider, &id.model, entry_engine)
+                    ));
+                    continue;
+                }
+            }
             // (wave 26b, D16 b) skip a reviewer whose context window the brief alone would overflow.
             if context_estimate > 0
                 && e.context_tokens > 0
@@ -628,7 +673,7 @@ pub(crate) struct PanelMemberRow {
     /// `run` | `skipped`.
     pub state: String,
     pub reason: String,
-    /// `""` | `refused` | `unavailable` | `weighty` | `context` | `light`.
+    /// `""` | `refused` | `unavailable` | `weighty` | `context` | `light` | `request` | `reserve`.
     pub skip_kind: String,
     /// The verdict's `until` (an unavailable entry's way back), `None` otherwise.
     pub until: Option<DateTime<FixedOffset>>,
@@ -671,6 +716,8 @@ pub(crate) struct PanelQuery<'a> {
     pub all: bool,
     pub skip_preflight: bool,
     pub estimate_tokens: i64,
+    /// (0.2.4, reviewer-protection) `--spend-reserve`: do not hold a protected entry back.
+    pub spend_reserve: bool,
 }
 
 impl Ctx {
@@ -683,6 +730,7 @@ impl Ctx {
     /// "stands in for #<p> (<that sibling's skip reason>)" or "stands in (no other entry of label
     /// <label>)" - when no other member of its provider label (compared ordinally) runs; in roster
     /// order, so a second light entry of the label sees the first one run.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn panel_members(
         &self,
         model: &str,
@@ -691,6 +739,7 @@ impl Ctx {
         all: bool,
         skip_preflight: bool,
         estimate_tokens: i64,
+        spend_reserve: bool,
     ) -> PanelSelection {
         self.panel_members_of(
             None,
@@ -701,6 +750,7 @@ impl Ctx {
                 all,
                 skip_preflight,
                 estimate_tokens,
+                spend_reserve,
             },
         )
     }
@@ -720,6 +770,7 @@ impl Ctx {
             all,
             skip_preflight,
             estimate_tokens,
+            spend_reserve,
         } = query;
         let purpose_label = if purpose.is_empty() { "none" } else { purpose };
         let weighty_purpose = WEIGHTY_PURPOSES.contains(&purpose);
@@ -775,6 +826,35 @@ impl Ctx {
                     reason = verdict.reason.clone();
                     skip_kind = "unavailable".into();
                     until = verdict.until;
+                }
+            }
+            // (0.2.4, reviewer-protection, F06-1) on-request and the reserve hold are judged BEFORE
+            // the weighty / light gates and KEEP their own skip kinds, so a row that is on-request or
+            // held is never promoted by `stand_in_light_members` and never rejoined by
+            // `select_panel_routing` as a soft (weighty/light) skip. An on-request entry is never
+            // seated automatically (a -Require naming it rejoins via `request`); a held protected
+            // entry on a non-standing purpose refuses the run when `--require`d (`reserve` is a hard
+            // outage) - unless --spend-reserve.
+            if state == "run" && e.on_request {
+                state = "skipped".into();
+                reason = "on request only".into();
+                skip_kind = "request".into();
+            }
+            if state == "run"
+                && !spend_reserve
+                && !c3_core::purpose::is_standing(purpose)
+                && e.reserve_percent > 0
+            {
+                // (F07-3) read the windows with the same network mode the draw / display use, so the
+                // hold and the draw cannot disagree about a seat.
+                if let Some(note) =
+                    crate::budget::entry_reserve_hold(&self.roster, e, self.utc_now, !self.no_network)
+                {
+                    state = "skipped".into();
+                    reason = format!(
+                        "{note}; kept for acceptance and core-contract (use --spend-reserve)"
+                    );
+                    skip_kind = "reserve".into();
                 }
             }
             if state == "run" && e.panel == "weighty" && !all && !weighty_purpose {
@@ -2071,7 +2151,7 @@ fn print_table(
         // (wave 8 = plugin wave 30) QUOTA last: the newest observed windows of the endpoint.
         // The built-in openai row keeps its live health text; every other plan with budget windows
         // (wave 9: kimi `/usages`, a snapshot) fills QUOTA in the same style.
-        let quota_text = r
+        let mut quota_text = r
             .quota
             .as_ref()
             .and_then(|q| q["text"].as_str())
@@ -2103,6 +2183,25 @@ fn print_table(
                 Some(crate::budget::providers_quota_cell(&windows, ctx.utc_now))
             })
             .unwrap_or_else(|| "-".to_string());
+        // (0.2.4, reviewer-protection) when an active protected entry of this row's group is held by
+        // its reserve, note it on the row (VERDICT stays available, like "low quota" is added).
+        if let Some(held_note) = ctx
+            .roster
+            .entries
+            .iter()
+            .find(|e| {
+                !e.inactive && e.provider == r.name && e.engine == r.engine && e.reserve_percent > 0
+            })
+            .and_then(|e| {
+                crate::budget::entry_reserve_hold(&ctx.roster, e, ctx.utc_now, !ctx.no_network)
+            })
+        {
+            if quota_text == "-" {
+                quota_text = format!("held (reserve): {held_note}");
+            } else {
+                quota_text.push_str(&format!("; held (reserve): {held_note}"));
+            }
+        }
         m.insert("quota", quota_text);
         lines.push(m);
     }
@@ -3595,7 +3694,7 @@ mod roster_walk_tests {
         assert_ne!(s.entry.as_ref().map(|e| e.position), Some(1));
         assert!(s.skipped.iter().all(|sk| sk.0 != "byteplus-claude"));
         // the panel never includes the inactive entry (any purpose / -PanelAll).
-        let sel = ctx.panel_members("", "", "checkpoint", true, true, 0);
+        let sel = ctx.panel_members("", "", "checkpoint", true, true, 0, false);
         assert_eq!(sel.members.len(), 1);
         assert!(sel.members.iter().all(|m| m.entry.position != 1));
         // availability (the 'N of M reviewers available' source) counts only the active one.
@@ -3678,7 +3777,7 @@ mod roster_walk_tests {
             .3
             .starts_with("plan zai (usage limit on ZAI until "));
         // the panel skips both
-        let sel = ctx.panel_members("", "", "checkpoint", false, false, 0);
+        let sel = ctx.panel_members("", "", "checkpoint", false, false, 0, false);
         let states: Vec<(&str, &str)> = sel
             .members
             .iter()
@@ -3867,7 +3966,7 @@ wire_api = \"responses\"
             entry(3, "openai", "gpt-5.1"),
         ]);
         // a checkpoint: the light entry runs, its weighty sibling is held back
-        let sel = ctx.panel_members("", "", "checkpoint", false, true, 0);
+        let sel = ctx.panel_members("", "", "checkpoint", false, true, 0, false);
         assert_eq!(
             plan(&sel),
             vec![
@@ -3877,7 +3976,7 @@ wire_api = \"responses\"
             ]
         );
         // an acceptance: the weighty sibling runs, the light one is held back
-        let sel = ctx.panel_members("", "", "acceptance", false, true, 0);
+        let sel = ctx.panel_members("", "", "acceptance", false, true, 0, false);
         assert_eq!(
             plan(&sel),
             vec![
@@ -3889,7 +3988,7 @@ wire_api = \"responses\"
         assert_eq!(sel.members[1].skip_kind, "light");
         // the weighty sibling skipped for its context window: the light entry stands in for it
         let ctx_reason = "brief too large for this reviewer's context (est. 30001 of 32000 tokens)";
-        let sel = ctx.panel_members("", "", "acceptance", false, true, 30001);
+        let sel = ctx.panel_members("", "", "acceptance", false, true, 30001, false);
         assert_eq!(
             plan(&sel),
             vec![
@@ -3901,12 +4000,35 @@ wire_api = \"responses\"
         assert_eq!(sel.members[0].skip_kind, "context");
         assert_eq!(sel.members[1].skip_kind, "");
         // -PanelAll: every entry, the light one too
-        let sel = ctx.panel_members("", "", "acceptance", true, true, 0);
+        let sel = ctx.panel_members("", "", "acceptance", true, true, 0, false);
         assert!(
             sel.members.iter().all(|m| m.state == "run"),
             "{:?}",
             plan(&sel)
         );
+    }
+
+    // (0.2.4, F06-1) an on-request entry is judged BEFORE the light gate, so a light on-request
+    // entry on a weighty purpose keeps skip kind `request` and is NEVER promoted as a stand-in
+    // (even when it is the only entry of its label and no sibling runs).
+    #[test]
+    fn a_light_on_request_entry_is_not_seated_as_a_stand_in() {
+        let ctx = light_ctx(vec![
+            entry(1, "openai", "gpt-5.1"),
+            RosterEntry {
+                on_request: true,
+                ..weighted(2, "ZAIB", "glm-5.3-flash", "light", 0)
+            },
+        ]);
+        // acceptance is weighty: #2 would stand in (light, no sibling) - but on-request stops it.
+        let sel = ctx.panel_members("", "", "acceptance", false, true, 0, false);
+        assert_eq!(sel.members[1].state, "skipped");
+        assert_eq!(sel.members[1].skip_kind, "request");
+        assert_eq!(sel.members[1].reason, "on request only");
+        // -PanelAll does not seat it either.
+        let sel = ctx.panel_members("", "", "acceptance", true, true, 0, false);
+        assert_eq!(sel.members[1].state, "skipped");
+        assert_eq!(sel.members[1].skip_kind, "request");
     }
 
     #[test]
@@ -3915,7 +4037,7 @@ wire_api = \"responses\"
             entry(1, "openai", "gpt-5.1"),
             weighted(2, "mimo", "mimo-v2.6-pro", "light", 0),
         ]);
-        let sel = ctx.panel_members("", "", "decision", false, true, 0);
+        let sel = ctx.panel_members("", "", "decision", false, true, 0, false);
         assert_eq!(
             plan(&sel),
             vec!["#1 run ", "#2 run stands in (no other entry of label mimo)",]
@@ -3926,7 +4048,7 @@ wire_api = \"responses\"
             weighted(1, "mimo", "mimo-a", "light", 0),
             weighted(2, "mimo", "mimo-b", "light", 0),
         ]);
-        let sel = ctx.panel_members("", "", "stuck", false, true, 0);
+        let sel = ctx.panel_members("", "", "stuck", false, true, 0, false);
         assert_eq!(sel.members[0].state, "run");
         assert_eq!(
             sel.members[0].reason,

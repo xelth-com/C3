@@ -212,6 +212,8 @@ struct DetachArgs {
     #[serde(default)]
     skip_preflight: bool,
     #[serde(default)]
+    spend_reserve: bool,
+    #[serde(default)]
     codex_config: Vec<String>,
     #[serde(default)]
     schema_transport: String,
@@ -316,6 +318,7 @@ impl DetachArgs {
             native_effort: o.native_effort.clone(),
             off_peak_only: o.off_peak_only,
             skip_preflight: o.skip_preflight,
+            spend_reserve: o.spend_reserve,
             codex_config: o.codex_config.clone(),
             schema_transport: o.schema_transport.clone(),
             format_retry: o.format_retry,
@@ -380,6 +383,7 @@ impl DetachArgs {
             native_effort: self.native_effort,
             off_peak_only: self.off_peak_only,
             skip_preflight: self.skip_preflight,
+            spend_reserve: self.spend_reserve,
             codex_config: self.codex_config,
             schema_transport: self.schema_transport,
             telemetry: Some(false),

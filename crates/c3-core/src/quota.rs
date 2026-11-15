@@ -1101,9 +1101,19 @@ pub fn account_window_at(codex_home: &str, now: DateTime<Utc>) -> Option<Account
             v
         }
     };
+    select_account_window(&observations, now)
+}
+
+/// The newest-observation selection over a set of account observations (the shared body of
+/// [`account_window_at`] and [`account_window_within`]): fold [`merge_observation`] at `now`, then
+/// keep a result only when it names a window with a known instant.
+fn select_account_window(
+    observations: &[(Observation, PathBuf)],
+    now: DateTime<Utc>,
+) -> Option<AccountWindow> {
     let mut best: Option<Observation> = None;
     let mut best_path = PathBuf::new();
-    for (o, p) in &observations {
+    for (o, p) in observations {
         let before = best.clone();
         best = merge_observation(best, Some(o), now);
         if best != before {
@@ -1120,6 +1130,57 @@ pub fn account_window_at(codex_home: &str, now: DateTime<Utc>) -> Option<Account
             ],
             path: best_path,
         })
+}
+
+/// (0.2.4, reviewer-protection) The account's windows from the rollouts of the last `days` days
+/// (local), judged at `now` - the budget module's fallback when today's and yesterday's rollouts
+/// give nothing (the operator had no Codex session in two days). Unlike [`account_window_at`] this
+/// scans a wider range, is NOT cached and takes no part in the health verdict's two-day rule. The
+/// caller keeps only windows whose reset is still ahead.
+pub fn account_window_within(
+    codex_home: &str,
+    now: DateTime<Utc>,
+    days: i64,
+) -> Option<AccountWindow> {
+    if codex_home.is_empty() || days < 1 {
+        return None;
+    }
+    let observations = read_account_observations_range(codex_home, days);
+    select_account_window(&observations, now)
+}
+
+/// The observations of the account's rollouts over the last `days` days (local) on the built-in
+/// `openai` provider that name a window - read from disk, no selection. A wider, uncached variant of
+/// [`read_account_observations`]; bounded to the 64 most recently written rollouts in the range.
+fn read_account_observations_range(codex_home: &str, days: i64) -> Vec<(Observation, PathBuf)> {
+    let mut out = Vec::new();
+    let root = Path::new(codex_home).join("sessions");
+    if !root.is_dir() {
+        return out;
+    }
+    let today = Local::now().date_naive();
+    let from = today
+        .checked_sub_signed(chrono::Duration::days((days - 1).max(0)))
+        .unwrap_or(today);
+    let mut files: Vec<(SystemTime, PathBuf)> = Vec::new();
+    for d in local_day_dirs(&root, from, today) {
+        rollouts_in(&d, None, &mut files);
+    }
+    files.sort_by_key(|(t, _)| std::cmp::Reverse(*t));
+    let provider_re = regex::Regex::new(r#""model_provider"\s*:\s*"([^"]*)""#).unwrap();
+    for (_, p) in files.into_iter().take(64) {
+        let head = read_rollout_head(&p);
+        if let Some(c) = provider_re.captures(&head) {
+            if &c[1] != "openai" {
+                continue;
+            }
+        }
+        let u = rollout_usage(&p, None, ROLLOUT_TAIL_BYTES);
+        if let Some(w) = u.window {
+            out.push((w, p));
+        }
+    }
+    out
 }
 
 /// The observations of the account's last 16 rollouts (today and yesterday, local) on the built-in

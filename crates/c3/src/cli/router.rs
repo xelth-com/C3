@@ -274,6 +274,18 @@ fn run_explain(args: ExplainArgs) -> i32 {
             .map(|(_, cell)| cell.clone())
             .unwrap_or_else(|| "-".to_string());
         let weight = scored.base.score * mult;
+        // (0.2.4, reviewer-protection) mark an on-request entry and a protected entry held by its
+        // reserve on this purpose (the routed draw would skip both).
+        let mut tail = prior;
+        if e.on_request {
+            tail.push_str("  [on request]");
+        }
+        if !c3_core::purpose::is_standing(&args.purpose)
+            && e.reserve_percent > 0
+            && crate::budget::entry_reserve_hold(&roster, e, now, true).is_some()
+        {
+            tail.push_str("  [held: reserve]");
+        }
         println!(
             "{:<40} {:>6.3} {:>7.3} {:>5.2} {:<16} {:>16} {:>10.2} {}",
             lineage,
@@ -283,7 +295,7 @@ fn run_explain(args: ExplainArgs) -> i32 {
             budget_cell,
             scored.base.basis,
             scored.base.ratings,
-            prior
+            tail
         );
     }
     0

@@ -365,6 +365,8 @@ impl HttpReviewer {
             reset_hint: String::new(),
             quota_window_sec: 0,
             unrestricted: false,
+            on_request: false,
+            reserve_percent: 0,
             endpoint: None,
             // Recomputed by the loader's `Roster::apply_inactive` after this entry is appended.
             inactive: false,

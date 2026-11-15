@@ -109,6 +109,19 @@ pub struct RosterEntry {
     /// without the `--allow` grammar and (for muse) with `--disable-sandbox`. `false` when the
     /// entry names none. Invisible to the plugin (ext is an object).
     pub unrestricted: bool,
+    /// (0.2.4, reviewer-protection) `ext.on_request` - the entry is never seated automatically
+    /// (not by the bare default, not by any panel draw, not by `--panel-all`). It runs only when
+    /// named exactly: `--provider <label> --model <its model>`, or a `--require` matcher that names
+    /// the entry itself (`#<n>` or `<provider> :: <model> [engine]`). `false` when the entry names
+    /// none. Invisible to the plugin (ext is an object).
+    pub on_request: bool,
+    /// (0.2.4, reviewer-protection) `ext.reserve_percent` - a PROTECTED entry keeps back its last
+    /// N % of every long budget window (1..=50); `0` when the entry names none. The entry is HELD
+    /// (skipped by the bare default and the panel, refused when named) when, on any long non-stale
+    /// window whose reset is still ahead, `used% >= min(elapsed% + N, 100 - N)` - unless the purpose
+    /// is standing (acceptance / core-contract) or `--spend-reserve` is given. Invisible to the
+    /// plugin (ext is an object).
+    pub reserve_percent: i64,
     /// (0.6.0, wave 29b E1) The claude entry's endpoint (auth `endpoint` only; its `plan` is the
     /// entry's).
     pub endpoint: Option<crate::claude::ClaudeEndpoint>,
@@ -628,6 +641,8 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             let mut reset_hint = String::new();
             let mut quota_window_sec: i64 = 0;
             let mut unrestricted = false;
+            let mut on_request = false;
+            let mut reserve_percent: i64 = 0;
             if let Some(xv) = iobj.get("ext") {
                 if !xv.is_object() {
                     why = format!("{at}: ext must be an object (the extension point of other implementations; got {})", compact(xv));
@@ -653,6 +668,34 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                             why = format!(
                                 "{at}: ext.unrestricted must be a boolean (the work-run opt-in to run a worker without the --allow grammar; got {})",
                                 compact(uv)
+                            );
+                            break;
+                        }
+                    }
+                }
+                // (0.2.4, reviewer-protection) ext.on_request: the entry is seated only when named
+                // exactly (never by the bare default, a panel draw or --panel-all). A boolean.
+                if let Some(ov) = xv.get("on_request") {
+                    match ov.as_bool() {
+                        Some(b) => on_request = b,
+                        None => {
+                            why = format!(
+                                "{at}: ext.on_request must be a boolean (the entry is seated only when named exactly; got {})",
+                                compact(ov)
+                            );
+                            break;
+                        }
+                    }
+                }
+                // (0.2.4, reviewer-protection) ext.reserve_percent: the protected entry's reserve,
+                // an integer 1..=50 (the last N % of every long budget window kept back).
+                if let Some(rv) = xv.get("reserve_percent") {
+                    match rv.as_i64() {
+                        Some(n) if (1..=50).contains(&n) => reserve_percent = n,
+                        _ => {
+                            why = format!(
+                                "{at}: ext.reserve_percent must be an integer from 1 to 50 (the protected reserve kept back on every long budget window; got {})",
+                                compact(rv)
                             );
                             break;
                         }
@@ -983,6 +1026,8 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
                 reset_hint,
                 quota_window_sec,
                 unrestricted,
+                on_request,
+                reserve_percent,
                 endpoint: entry_endpoint,
                 inactive: unknown_engine,
                 unknown_engine,
@@ -1436,6 +1481,41 @@ mod tests {
             );
             assert!(why(&json).contains("ext.c3.reset_hint must be"), "{bad}");
         }
+    }
+
+    #[test]
+    fn on_request_and_reserve_percent_parse_under_ext() {
+        // (0.2.4, reviewer-protection) both settings live under the entry's ext object.
+        let r = ok(
+            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"gpt-6-astra","ext":{"reserve_percent":15}},{"provider":"meta","engine":"muse","model":"muse-wonder-1.0","ext":{"on_request":true}}]}"#,
+        );
+        assert_eq!(r.entries[0].reserve_percent, 15);
+        assert!(!r.entries[0].on_request);
+        assert!(r.entries[1].on_request);
+        assert_eq!(r.entries[1].reserve_percent, 0);
+        // Defaults when the keys are absent.
+        let plain = ok(r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m"}]}"#);
+        assert!(!plain.entries[0].on_request && plain.entries[0].reserve_percent == 0);
+        // Validation: on_request must be a boolean; reserve_percent an integer 1..=50.
+        assert!(why(
+            r#"{"roster_version":1,"reviewers":[{"provider":"openai","model":"m","ext":{"on_request":"yes"}}]}"#
+        )
+        .contains("ext.on_request must be a boolean"));
+        for bad in ["0", "51", "-1", "15.5", "\"15\""] {
+            let json = format!(
+                r#"{{"roster_version":1,"reviewers":[{{"provider":"openai","model":"m","ext":{{"reserve_percent":{bad}}}}}]}}"#
+            );
+            assert!(
+                why(&json).contains("ext.reserve_percent must be an integer from 1 to 50"),
+                "{bad}"
+            );
+        }
+        // The boundary values 1 and 50 are accepted.
+        let b = ok(
+            r#"{"roster_version":1,"reviewers":[{"provider":"a","model":"m","ext":{"reserve_percent":1}},{"provider":"b","model":"m","ext":{"reserve_percent":50}}]}"#,
+        );
+        assert_eq!(b.entries[0].reserve_percent, 1);
+        assert_eq!(b.entries[1].reserve_percent, 50);
     }
 
     fn why(json: &str) -> String {

@@ -290,6 +290,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         o.panel_all,
         o.skip_preflight,
         panel_estimate,
+        o.spend_reserve,
     );
 
     // Required reviewers (exit 5 on an outage).
@@ -329,10 +330,14 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
                     filters.join(" ")
                 ));
             }
-            // a required entry only the weighty or light gate held back is no outage (it takes
-            // a seat first)
+            // a required entry only the weighty / light gate (or `request`: an on-request entry a
+            // -Require names) held back is no outage - it rejoins and takes a seat. A held protected
+            // entry (`reserve`) IS an outage, naming the hold and --spend-reserve.
             Some(m)
-                if m.state == "skipped" && m.skip_kind != "weighty" && m.skip_kind != "light" =>
+                if m.state == "skipped"
+                    && m.skip_kind != "weighty"
+                    && m.skip_kind != "light"
+                    && m.skip_kind != "request" =>
             {
                 required_problems.push(providers::format_required_outage(m, utc_now));
             }
@@ -363,7 +368,9 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     // cached on disk for 5 min, so this stays cheap on every panel.
     let member_entries: Vec<c3_core::roster::RosterEntry> =
         selection.members.iter().map(|m| m.entry.clone()).collect();
-    let budget_mults = crate::budget::multipliers_for(&member_entries, utc_now, true);
+    // (F07-3) same network mode as the reserve hold `panel_members` applied, so the draw cannot
+    // weight a seat the hold would refuse.
+    let budget_mults = crate::budget::multipliers_for(&member_entries, utc_now, !ctx.no_network);
 
     // The seats (`Select-PanelRouting`) — routed by the real ratings, else roster order.
     let members: Vec<MemberInput> = selection
@@ -2620,6 +2627,216 @@ fn brief_sha256(o: &Options, cwd: &Path) -> String {
     std::fs::read(&p)
         .map(|b| c3_core::sha256_hex(&b))
         .unwrap_or_else(|_| "missing".into())
+}
+
+/// (0.2.4, reviewer-protection, D) The bare default's single routed pick on a non-standing purpose:
+/// ONE reviewer drawn by the SAME seeded weighted draw a panel uses, among the entries a panel of
+/// this purpose would seat (weighty only on weighty purposes, light only on the others, on-request
+/// never, unavailable and held skipped). The weight is `score * effective budget multiplier`; the
+/// seed is per consultation and reproducible with `--panel-seed`. Returns the picked entry, the
+/// skipped entries (walk format, for the ledger), and a one-line explanation; `None` when there is
+/// no candidate (the caller then falls back to the plain roster walk).
+/// `prefer_position` (F06-3): the roster position of the task's latest verified consult, when the
+/// effective mode is resume/fork and the reviewer must continue rather than hop. When that entry is
+/// still a `run` member (eligible, available, not held, not on-request) it is returned as-is
+/// (`continued = true`) so its thread continues; otherwise the routed draw picks and the line says
+/// the previous reviewer was not continued and why. The returned bool is `continued`.
+#[allow(clippy::type_complexity)]
+pub(crate) fn route_single_default(
+    ctx: &providers::Ctx,
+    o: &Options,
+    utc_now: chrono::DateTime<chrono::Utc>,
+    collab_root: &Path,
+    cwd: &Path,
+    estimate: i64,
+    prefer_position: Option<i64>,
+) -> Option<(
+    c3_core::roster::RosterEntry,
+    Vec<(String, String, String, String)>,
+    String,
+    bool,
+)> {
+    let selection = ctx.panel_members(
+        &o.model,
+        &o.engine,
+        &o.purpose,
+        false, // not -PanelAll: weighty entries gate on the purpose
+        o.skip_preflight,
+        estimate,
+        o.spend_reserve,
+    );
+    // The skip list the ledger's roster walk records (every non-run member, walk tuple form).
+    let skipped: Vec<(String, String, String, String)> = selection
+        .members
+        .iter()
+        .filter(|m| m.state != "run")
+        .map(|m| {
+            let engine = if m.entry.engine.is_empty() {
+                "codex".to_string()
+            } else {
+                m.entry.engine.clone()
+            };
+            (
+                m.entry.provider.clone(),
+                m.identity.model.clone(),
+                engine,
+                m.reason.clone(),
+            )
+        })
+        .collect();
+
+    // (F06-3) continue the task's previous reviewer when it is still eligible - no reviewer hop.
+    if let Some(pos) = prefer_position {
+        if let Some(m) = selection
+            .members
+            .iter()
+            .find(|m| m.entry.position as i64 == pos && m.state == "run")
+        {
+            let engine = if m.entry.engine.is_empty() {
+                "codex"
+            } else {
+                &m.entry.engine
+            };
+            let line = format!(
+                "roster: continuing the task's previous reviewer {} (#{pos})",
+                format_reviewer_lineage(&m.identity.provider, &m.identity.model, engine)
+            );
+            return Some((m.entry.clone(), skipped, line, true));
+        }
+    }
+
+    let member_entries: Vec<c3_core::roster::RosterEntry> =
+        selection.members.iter().map(|m| m.entry.clone()).collect();
+    // (F07-3) same network mode as the reserve hold inside `panel_members`.
+    let budget_mults = crate::budget::multipliers_for(&member_entries, utc_now, !ctx.no_network);
+    let members: Vec<MemberInput> = selection
+        .members
+        .iter()
+        .map(|m| MemberInput {
+            budget_mult: budget_mults
+                .get(&crate::budget::budget_key(&m.entry))
+                .copied()
+                .unwrap_or(1.0),
+            entry: m.entry.clone(),
+            provider: m.identity.provider.clone(),
+            model: m.identity.model.clone(),
+            engine: if m.entry.engine.is_empty() {
+                "codex".into()
+            } else {
+                m.entry.engine.clone()
+            },
+            state: m.state.clone(),
+            reason: m.reason.clone(),
+            skip_kind: m.skip_kind.clone(),
+        })
+        .collect();
+
+    // The bare default spreads across repeated consultations: the nonce is per-consultation unless
+    // --panel-seed (or the test hook) pins it, so two identical bare consults need not pick the same
+    // reviewer, while --panel-seed reproduces the draw exactly.
+    let (nonce, nonce_source) = if !o.panel_seed.trim().is_empty() {
+        (o.panel_seed.trim().to_string(), "-PanelSeed")
+    } else if let Some(env) =
+        c3_core::test_hooks::hook("CODEX_CONSULT_TEST_PANEL_SEED").filter(|s| !s.trim().is_empty())
+    {
+        (env.trim().to_string(), "CODEX_CONSULT_TEST_PANEL_SEED")
+    } else {
+        (
+            format!(
+                "{}-{}",
+                utc_now.timestamp_nanos_opt().unwrap_or(0),
+                std::process::id()
+            ),
+            "per-consultation",
+        )
+    };
+    let brief_sha = brief_sha256(o, cwd);
+    let (topics, _terr) = c3_core::roster::convert_to_slug_list(&o.topic, "-Topic");
+    let order = if o.panel_order.trim().is_empty() {
+        "routed".to_string()
+    } else {
+        o.panel_order.trim().to_lowercase()
+    };
+    let ratings: Vec<Rating> = super::routing::read_all_task_ratings(collab_root);
+    let router_ctx = crate::router::load_context();
+    let route = plan::select_panel_routing_with(
+        &router_ctx,
+        &plan::PanelRoutingInput {
+            members: &members,
+            size: 1,
+            size_source: "bare-default",
+            order: &order,
+            ratings: &ratings,
+            purpose: &o.purpose,
+            topics: &topics,
+            utc_now,
+            task: &o.task,
+            brief_sha: &brief_sha,
+            nonce: &nonce,
+            nonce_source,
+            required: &[],
+        },
+    );
+    let picked = route.picked.into_iter().next()?;
+    let candidates = route.routing.eligible.len();
+    let weight = picked.score.score * picked.mult;
+    // Why the roster's first entry is not the pick: when #1 was skipped (unavailable / held /
+    // on-request / weighty gate), name its reason; when it was eligible but another seat won the
+    // draw, say so.
+    let first_why = selection
+        .members
+        .iter()
+        .min_by_key(|m| m.entry.position)
+        .and_then(|m| {
+            if m.entry.position as i64 == picked.position {
+                None
+            } else if m.state != "run" {
+                Some(format!(
+                    "#{} {} not eligible: {}",
+                    m.entry.position,
+                    format_reviewer_lineage(
+                        &m.identity.provider,
+                        &m.identity.model,
+                        if m.entry.engine.is_empty() {
+                            "codex"
+                        } else {
+                            &m.entry.engine
+                        }
+                    ),
+                    m.reason
+                ))
+            } else {
+                Some(format!("#{} was not drawn", m.entry.position))
+            }
+        });
+    let mut line = format!(
+        "roster: routed bare default ({} purpose) picked {} (weight {:.3}, {candidates} candidate{})",
+        if o.purpose.is_empty() { "none" } else { &o.purpose },
+        picked.lineage,
+        weight,
+        if candidates == 1 { "" } else { "s" },
+    );
+    if let Some(why) = first_why {
+        line.push_str(&format!("; {why}"));
+    }
+    // (F06-3) the draw was reached although the task's previous reviewer was asked for (resume/fork):
+    // it is not eligible, so a fresh thread starts with the drawn reviewer - say which and why.
+    if let Some(pos) = prefer_position {
+        let why = selection
+            .members
+            .iter()
+            .find(|m| m.entry.position as i64 == pos)
+            .map(|m| m.reason.clone())
+            .filter(|r| !r.is_empty())
+            .unwrap_or_else(|| "not in this roster".to_string());
+        line.push_str(&format!(
+            "; the task's previous reviewer #{pos} was not continued ({why}) - a new thread starts"
+        ));
+    }
+    let entry = member_entries
+        .into_iter()
+        .find(|e| e.position as i64 == picked.position)?;
+    Some((entry, skipped, line, false))
 }
 
 /// The `Range:` dry-run line + a size warning (a diff-review/acceptance panel).

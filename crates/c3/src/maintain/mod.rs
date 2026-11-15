@@ -1082,12 +1082,13 @@ fn run_models(
             }
             let now = Utc::now();
             // The candidate's smoke obeys the saturation rule pick_target applies: a swap on a plan
-            // whose governing window is at 90 %+ is held, the roster untouched.
+            // whose governing window is at 90 %+ is held, the roster untouched. (0.2.4) a protected
+            // or on-request seat is never smoked either - its quota is kept / it runs only when named.
             let saturated = roster
                 .entries
                 .iter()
                 .find(|e| e.position == c.position)
-                .map(|e| smoke::seat_saturated(roster, e, now))
+                .map(|e| smoke::seat_saturated(roster, e, now) || e.on_request || e.reserve_percent > 0)
                 .unwrap_or(false);
             if saturated {
                 let msg = format!(
