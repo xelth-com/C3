@@ -45,6 +45,9 @@ pub struct GrokEngine {
     /// ([`grok_review_tool_guard`]) reads it on the PRIMARY turn; empty / irrelevant for a
     /// secondary (format-repair / continuation) turn.
     pub purpose: String,
+    /// (C3) A `raw` consultation (no reply contract): the soft read nudge ([`grok_read_nudge`]) is
+    /// suppressed for it. Irrelevant for a secondary turn.
+    pub raw: bool,
     /// The operator's kick file for the PRIMARY turn (`None` = no kick watch).
     pub kick_path: Option<PathBuf>,
     /// Called once per turn, right after the child spawns and before it is waited on.
@@ -252,13 +255,18 @@ impl GrokEngine {
         let exit_code = result.exit_code.unwrap_or(-1);
         let expect_thread = Self::expect_thread(turn);
         let mut t = grok_turn_outcome(&events, exit_code, &result.stderr, &expect_thread);
-        // The zero-tool-call review guard: a PRIMARY turn of a reviewing purpose that produced a
-        // usable reply without reading any file cannot have checked the code. Downgrade it to a
-        // `capability` failure, keeping the reply (and thread) for the record. Secondary turns (a
-        // convert-only format repair, a timeout continuation) are exempt - the review happened on
-        // the primary turn.
+        // The zero-tool-call guard: a PRIMARY turn that produced a usable reply without reading any
+        // file cannot have checked anything - on a review purpose it cannot have read the code, and
+        // on any other non-raw purpose it cannot have read the brief (live-tested: a no-read grok
+        // reply invents code and citations, it is not a weaker answer). Downgrade it to a
+        // `capability` failure, keeping the reply (and thread) for the record; the orchestrator then
+        // drives the read-insist re-ask. Secondary turns (a convert-only format repair, a timeout
+        // continuation) are exempt - the reading happened on the primary turn. Raw consultations are
+        // exempt on the non-review purposes (no reply contract, no brief duty).
         if is_primary && t.ok {
-            if let Some((why, class)) = grok_review_tool_guard(&self.purpose, events.tool_calls) {
+            if let Some((why, class)) =
+                grok_review_tool_guard(self.raw, &self.purpose, events.tool_calls)
+            {
                 fail(&mut t, &why, &class, &[]);
                 // (C3) the orchestrator reads this to drive the read-insist re-ask before failing.
                 t.review_guard_fired = true;
@@ -494,34 +502,52 @@ pub struct GrokTurn {
     pub structured: bool,
     /// The number of `tool_call` events over the stream (the review guard's input).
     pub tool_calls: usize,
-    /// (C3) The zero-tool-call review guard fired on this PRIMARY turn: the reply was otherwise
-    /// usable but read no file, so the orchestrator may re-ask (read-insist) before failing.
+    /// (C3) The zero-tool-call guard fired on this PRIMARY turn: the reply was otherwise usable but
+    /// read no file, so the orchestrator re-asks (read-insist) before the failure stands.
     pub review_guard_fired: bool,
     pub warnings: Vec<String>,
 }
 
 /// The consultation purposes whose grok reply must be backed by reading the code: a zero-tool-call
-/// answer to one of these cannot have checked anything, so it is not a usable review.
+/// answer to one of these cannot have checked anything, so it is not a usable review. (Every other
+/// non-raw purpose is also guarded - see [`grok_review_tool_guard`] - but these four keep the
+/// review-specific wording and apply even to a `raw` consultation.)
 pub const GROK_TOOL_REQUIRED_PURPOSES: [&str; 4] =
     ["acceptance", "core-contract", "diff-review", "checkpoint"];
 
-/// The zero-tool-call review guard decision (pure). For a turn of one of
-/// [`GROK_TOOL_REQUIRED_PURPOSES`] that made zero tool calls over the whole run, returns the forced
-/// `(why, class)`: `why` goes through [`fail`] as `failed: <why>`, and the class is `capability` -
-/// a reviewer-quality / capability failure (the same class as grok's `max_turn_requests`) that does
-/// NOT mark the provider unavailable (only `quota`/`auth` set a health outage window). `None` when
-/// the guard does not fire (another purpose, or at least one tool call).
-pub fn grok_review_tool_guard(purpose: &str, tool_calls: usize) -> Option<(String, String)> {
-    if tool_calls == 0 && GROK_TOOL_REQUIRED_PURPOSES.contains(&purpose) {
-        Some((
+/// The zero-tool-call guard decision (pure). A PRIMARY grok turn that made zero tool calls over the
+/// whole run is forced to a `capability` failure (`why`, `class`) - a reviewer-quality / capability
+/// failure (the same class as grok's `max_turn_requests`) that does NOT mark the provider
+/// unavailable (only `quota`/`auth` set a health outage window) - when either:
+///   * the purpose is one of [`GROK_TOOL_REQUIRED_PURPOSES`] (a review: it cannot have read the
+///     code), raw or not; or
+///   * the consultation is NOT `raw` (any other purpose: it cannot have read the brief - a no-read
+///     grok reply fabricates code and citations).
+/// A `raw` consultation of a non-review purpose is exempt. `None` when the guard does not fire (at
+/// least one tool call, or a raw non-review turn).
+pub fn grok_review_tool_guard(
+    raw: bool,
+    purpose: &str,
+    tool_calls: usize,
+) -> Option<(String, String)> {
+    if tool_calls != 0 {
+        return None;
+    }
+    if GROK_TOOL_REQUIRED_PURPOSES.contains(&purpose) {
+        return Some((
             format!(
                 "grok answered in one model call without reading any file (0 tool calls) - a {purpose} review must read the code; ask again"
             ),
             "capability".into(),
-        ))
-    } else {
-        None
+        ));
     }
+    if !raw {
+        return Some((
+            "grok answered in one model call without reading any file (0 tool calls) - it cannot have read the brief; ask again".to_string(),
+            "capability".into(),
+        ));
+    }
+    None
 }
 
 /// Judge one grok turn. `expect_thread` is the session a resume must land on.
@@ -838,29 +864,40 @@ mod tests {
     }
 
     #[test]
-    fn review_tool_guard_fires_only_on_a_reviewing_purpose_with_zero_tool_calls() {
-        // acceptance / 0 tool calls -> the guard fires (a failure with the capability class).
-        let (why, class) = grok_review_tool_guard("acceptance", 0).expect("acceptance/0 fires");
+    fn review_tool_guard_fires_for_reviews_raw_or_not_and_non_review_only_when_non_raw() {
+        // acceptance / 0 tool calls -> the guard fires with the review wording (raw or not).
+        let (why, class) = grok_review_tool_guard(false, "acceptance", 0).expect("acceptance/0");
         assert!(
             why.contains("0 tool calls") && why.contains("a acceptance review must read the code"),
             "message: {why}"
         );
         assert_eq!(class, "capability");
+        assert!(
+            grok_review_tool_guard(true, "acceptance", 0).is_some(),
+            "a review purpose fires even raw"
+        );
         // acceptance / 3 tool calls -> usable (it read the code).
-        assert!(grok_review_tool_guard("acceptance", 3).is_none());
-        // framing / 0 tool calls -> usable (a framing answer needs no tools; the brief carries it).
-        assert!(grok_review_tool_guard("framing", 0).is_none());
-        // the other reviewing purposes fire too.
+        assert!(grok_review_tool_guard(false, "acceptance", 3).is_none());
+        // the four review purposes fire at 0 tools (raw or not) and never at >= 1.
         for p in GROK_TOOL_REQUIRED_PURPOSES {
-            assert!(grok_review_tool_guard(p, 0).is_some(), "{p}/0 must fire");
-            assert!(
-                grok_review_tool_guard(p, 1).is_none(),
-                "{p}/1 must not fire"
-            );
+            assert!(grok_review_tool_guard(false, p, 0).is_some(), "{p}/0 fires");
+            assert!(grok_review_tool_guard(true, p, 0).is_some(), "{p}/0 raw fires");
+            assert!(grok_review_tool_guard(false, p, 1).is_none(), "{p}/1 usable");
         }
-        // an empty / unknown purpose is exempt.
-        assert!(grok_review_tool_guard("", 0).is_none());
-        assert!(grok_review_tool_guard("decision", 0).is_none());
+        // A non-review purpose fires only when NON-raw, with the brief wording.
+        for p in ["framing", "decision", "stuck", "chore", ""] {
+            let (why, class) = grok_review_tool_guard(false, p, 0).expect("non-raw non-review/0");
+            assert!(
+                why.contains("0 tool calls") && why.contains("it cannot have read the brief"),
+                "non-review wording for {p}: {why}"
+            );
+            assert_eq!(class, "capability");
+            // raw is exempt on a non-review purpose.
+            assert!(grok_review_tool_guard(true, p, 0).is_none(), "raw {p}/0 exempt");
+            // at least one tool call -> usable.
+            assert!(grok_review_tool_guard(false, p, 1).is_none(), "{p}/1 usable");
+            assert!(grok_review_tool_guard(false, p, 7).is_none(), "{p}/7 usable");
+        }
     }
 
     #[test]

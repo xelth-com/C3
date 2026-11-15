@@ -35,13 +35,22 @@ pub(crate) fn format_repair_prompt(consult_id: &str) -> String {
     )
 }
 
-/// (C3) The read-insist re-ask prompt for one turn: a reviewing-purpose primary turn that answered
-/// with zero tool calls is re-asked on the same thread. `attempt` is the 1-based attempt number
-/// (carried for the caller's accounting; the insist text itself is the same each time). Shared by
-/// every engine that counts tool calls (grok, kimi).
+/// (C3) The read-insist re-ask prompt for a REVIEW-purpose primary turn (acceptance, core-contract,
+/// diff-review, checkpoint) that answered with zero tool calls; re-asked on the same thread.
+/// `attempt` is the 1-based attempt number (carried for the caller's accounting; the insist text
+/// itself is the same each time). Shared by every engine that counts tool calls (grok, kimi).
 pub(crate) fn read_insist_prompt(consult_id: &str, _attempt: usize) -> String {
     format!(
         "Your reply is rejected: you read no file (0 tool calls). This is a code review; a verdict without reading the code is worthless. Before answering again, run `git diff <range> --stat` (the range is in the brief) and read the changed hunks of each path with your file-reading tool, one path at a time; where the brief names documents, read them too. Then answer again, in full, in the required format. A second reply without tool calls will be discarded.\r\n\r\nConsultation id: {consult_id}"
+    )
+}
+
+/// (C3) The read-insist re-ask prompt for a NON-review grok purpose (framing, decision, stuck,
+/// chore, ...) whose primary turn answered with zero tool calls: it cannot have read the brief. The
+/// re-ask tells it to open the brief, then the files it names.
+pub(crate) fn read_insist_other_prompt(consult_id: &str) -> String {
+    format!(
+        "Your reply is rejected: you read no file (0 tool calls), so you cannot have read the brief. Open the brief with your file-reading tool, then open the files and documents it names and check its claims against the code (read_file, list_dir, grep). Then answer again, in full, in the required format. A second reply without tool calls will be discarded.\r\n\r\nConsultation id: {consult_id}"
     )
 }
 
@@ -236,6 +245,7 @@ fn run_codex_secondary(
                 // A secondary turn is exempt from the zero-tool-call review guard (it only fires on
                 // the PRIMARY turn); the purpose is carried for completeness.
                 purpose: ctx.o.purpose.clone(),
+                raw: ctx.r.raw,
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
@@ -1057,6 +1067,7 @@ fn run_engine_secondary(
                 // A secondary turn is exempt from the review guard (primary-only); purpose carried
                 // for completeness.
                 purpose: ctx.o.purpose.clone(),
+                raw: ctx.r.raw,
                 kick_path: None,
                 on_running: None,
                 on_kill: None,
@@ -1292,13 +1303,15 @@ pub(super) fn run_engine_denial_retry(args: DenialRetry) {
     );
 }
 
-/// (C3) The read-insist re-ask (grok/kimi): a reviewing-purpose primary turn that answered with
-/// zero tool calls is resumed up to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` disables =
-/// the zero-tool-call guard fails at once, today's behaviour) with a firm re-ask to read the code.
-/// Each insist turn's OWN tool calls decide: `> 0` makes its reply the primary reply (the usual
-/// prose gate / format repair then apply to IT - `usable` is set and `raw_text` replaced); still
-/// `0` moves to the next attempt, and after the last the guard failure stands with " after N
-/// re-asks". Inputs are the run context and the `&mut` run state the re-ask updates.
+/// (C3) The read-insist re-ask (grok/kimi): a primary turn that the zero-tool-call guard failed is
+/// resumed up to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` disables = the guard fails at
+/// once, today's behaviour) with a firm re-ask to read. Each insist turn's OWN tool calls decide:
+/// `> 0` makes its reply the primary reply (the usual prose gate / format repair then apply to IT -
+/// `usable` is set and `raw_text` replaced); still `0` moves to the next attempt, and after the
+/// last the guard failure stands with " after N re-asks". The re-ask text is chosen by purpose: the
+/// four review purposes get [`read_insist_prompt`] (read the code), every other grok purpose gets
+/// [`read_insist_other_prompt`] (open the brief). Inputs are the run context and the `&mut` run
+/// state the re-ask updates.
 pub(super) struct ReadInsist<'a> {
     pub(super) ctx: &'a Context,
     pub(super) sec: &'a mut Secondary,
@@ -1333,6 +1346,10 @@ pub(super) fn run_read_insist(args: ReadInsist) {
     if max == 0 || thread.is_empty() {
         return;
     }
+    // The re-ask text depends on the purpose: a review purpose is told to read the code, every other
+    // (grok) purpose is told to open the brief it cannot have read.
+    let review_purpose = crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES
+        .contains(&ctx.o.purpose.as_str());
     // The guard's own failure text; " after N re-asks" is appended if every re-ask also read nothing.
     let guard_outcome = bridge_outcome.clone();
     let timeout = ctx.r.timeout_sec.min(600);
@@ -1342,7 +1359,11 @@ pub(super) fn run_read_insist(args: ReadInsist) {
     let mut rescued = false;
     while attempt < max {
         attempt += 1;
-        let prompt = read_insist_prompt(&ctx.consult_id, attempt);
+        let prompt = if review_purpose {
+            read_insist_prompt(&ctx.consult_id, attempt)
+        } else {
+            read_insist_other_prompt(&ctx.consult_id)
+        };
         let suffix = format!("read-insist-{attempt}.events.jsonl");
         let (outcome, det, _wall, events_rel) = run_engine_secondary(
             ctx,

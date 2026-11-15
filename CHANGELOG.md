@@ -76,9 +76,23 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   check is ON by default and silenced with `C3_UPDATE_CHECK=off` or `"update_check": false` in the
   C3 config; in `CODEX_CONSULT_TEST_MODE=1` no network is ever touched. There is no release
   signature yet: the install trusts GitHub's HTTPS transport and the API's release commit.
+- **Grok reading duty on every non-raw purpose (C3):** a live test showed Grok answering a brief in
+  one model call without opening a file and INVENTING code with line citations (a `RetryPolicy`
+  field and a loop that do not exist), while the same brief by reference drew 5 tool calls and a
+  grounded answer. For grok, the brief is now referenced by path on every non-raw purpose (never
+  inlined), and a primary turn with zero tool calls fails `capability` - "it cannot have read the
+  brief" on the non-review purposes (framing, decision, stuck, chore), the existing review wording
+  on the four review purposes. The failure drives the existing read-insist re-ask (up to
+  `CODEX_CONSULT_READ_INSIST`, default 2; `0` = fail at once; the non-review re-ask tells it to open
+  the brief), and a non-review prompt carries a `Reading duty` paragraph. `raw` grok consultations
+  keep the old inline and are exempt on non-review purposes; kimi and every other engine are
+  untouched.
 
 ### Fixed
 
+- **`c3 budget set --resets` accepts minute-precision instants:** `2026-11-16T15:18Z` and
+  `2026-11-16T15:18+01:00` - the shape `--help` advertises - were refused as "must be a date or ISO
+  instant"; only the form with seconds parsed.
 - **A grok code review that read nothing is no longer usable:** on `acceptance`, `core-contract`,
   `diff-review` and `checkpoint`, a grok reply with zero tool calls (one model call, e.g. "HOLD -
   I am still reading", 13.8 s) fails with class `capability` (no outage mark); framing and decision

@@ -153,11 +153,22 @@ pub struct PromptInputs<'a> {
     /// after the purpose paragraph makes the tool-reading mandatory (a zero-tool-call reply is
     /// rejected and re-asked). Never set for codex (byte-parity) or an engine that counts no tools.
     pub tool_reading_required: bool,
+    /// (C3) The grok reading-duty paragraph ([`GROK_READING_DUTY`]): added for engine `grok` on a
+    /// non-raw, NON-review purpose (the four review purposes already carry the reading discipline).
+    /// A zero-tool-call reply is not failed there, but the orchestrator soft-re-asks once.
+    pub reading_duty: bool,
 }
 
 /// (C3) The mandatory tool-reading sentence appended to a reviewing-purpose prompt for an engine
 /// that counts tool calls (grok, kimi): a reply that read no file is rejected and re-asked.
 pub const TOOL_READING_MANDATORY: &str = "Mandatory: this reply is accepted only if you read the code with your tools first; a reply without tool calls is rejected and re-asked.";
+
+/// (C3) The grok reading-duty paragraph for a NON-review purpose: a separate paragraph pushing Grok
+/// to open the brief (referenced by path, never inlined) before answering. Measured: a no-read grok
+/// reply answers from the brief alone and INVENTS code and citations, so the zero-tool guard rejects
+/// it. The four review purposes carry the stronger reading discipline instead and never get this
+/// paragraph.
+pub const GROK_READING_DUTY: &str = "Reading duty: you have file tools on this repository (read_file, list_dir, grep) - use them before you answer. Open the brief, then every file and document it names, and check its claims against the code. A reply made without opening any file is rejected.";
 
 const NL: &str = "\r\n";
 
@@ -223,6 +234,12 @@ pub fn assemble(inp: &PromptInputs) -> String {
                 p.push_str(TOOL_READING_MANDATORY);
             }
             parts.push(p);
+        }
+        // (C3) grok on a non-review purpose gets the reading-duty paragraph (a separate paragraph):
+        // it answers from the brief alone otherwise. The review purposes carry the stronger reading
+        // discipline and are excluded by the caller.
+        if inp.reading_duty {
+            parts.push(GROK_READING_DUTY.to_string());
         }
         if !inp.open_findings.is_empty() {
             parts.push(render_open_findings(inp.open_findings));
@@ -347,6 +364,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         prev_reply_line: "",
         reread_line: "",
         tool_reading_required: false,
+        reading_duty: false,
     };
     schema_block(&inp)
 }
@@ -410,6 +428,7 @@ mod tests {
             prev_reply_line: "",
             reread_line: "",
             tool_reading_required: false,
+            reading_duty: false,
         }
     }
 
@@ -434,6 +453,49 @@ mod tests {
         assert!(p.contains("keep reply_markdown under 700 words"));
         // output-schema transport: the schema text is NOT inlined.
         assert!(!p.contains("JSON Schema of the reply:"));
+    }
+
+    // (C3) The grok reading-duty paragraph: present for grok + a non-review purpose, a separate
+    // paragraph after the purpose line; absent for raw, for the review purposes, and for the engines
+    // that do not set the flag.
+    #[test]
+    fn reading_duty_paragraph_only_for_grok_non_review() {
+        // grok + framing: the caller sets reading_duty -> the paragraph is present, after the
+        // purpose line and before the consultation id.
+        // (base() has an empty brief_text: orchestrate now passes the grok brief by reference, never
+        // inlined on a non-raw purpose - so there is no <brief> block, only the pointer line.)
+        let mut i = base();
+        i.reading_duty = true;
+        let p = assemble(&i);
+        assert!(p.contains(GROK_READING_DUTY), "framing must carry it");
+        assert!(!p.contains("<brief"), "the brief is referenced, not inlined");
+        assert!(
+            p.contains("Read the brief at `.collab/t/handoffs/01.md`"),
+            "the brief is still referenced by path"
+        );
+        let purpose_at = p.find("Review purpose:").unwrap();
+        let duty_at = p.find(GROK_READING_DUTY).unwrap();
+        let id_at = p.find("Consultation id:").unwrap();
+        assert!(purpose_at < duty_at && duty_at < id_at);
+        // It is its own paragraph (double CRLF before it), not glued to the purpose line.
+        assert!(p.contains(&format!("\r\n\r\n{GROK_READING_DUTY}")));
+
+        // grok + acceptance (a review purpose): the caller leaves reading_duty false -> absent.
+        let mut acc = base();
+        acc.purpose = "acceptance";
+        acc.reading_duty = false;
+        assert!(!assemble(&acc).contains(GROK_READING_DUTY));
+
+        // another engine + framing: the caller leaves reading_duty false -> absent.
+        let other = base();
+        assert!(!assemble(&other).contains(GROK_READING_DUTY));
+
+        // raw: the paragraph never appears, even if the flag were set (the raw branch omits it).
+        let mut raw = base();
+        raw.raw = true;
+        raw.purpose = "";
+        raw.reading_duty = true;
+        assert!(!assemble(&raw).contains(GROK_READING_DUTY));
     }
 
     // Case 1: a non-blank brief_text inlines the brief after the pointer, before the purpose.

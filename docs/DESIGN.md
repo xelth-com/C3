@@ -44,6 +44,13 @@ OpenRouter panel with an advisory judge, and the T-hub telemetry client.
    up to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` = fail at once). A re-ask that reads the code makes its reply the
    primary reply; otherwise the `capability` guard failure stands with ` after N re-asks`. The handoff records
    `Read insist: <n> turn(s), tool calls 0 -> <k>` and the ledger entry `read_insist: {attempts, final_tool_calls}`.
+   For `grok` the guard covers EVERY non-raw purpose, not only the four reviews: the brief is referenced by path and never
+   inlined (a no-read grok reply answers from the brief alone and INVENTS code and line citations - a live test showed it
+   fabricating a `RetryPolicy.max_attempts` and a `range(3)` loop that do not exist; the same brief by reference drew 5 tool
+   calls and a grounded answer). A non-review, non-raw primary carries a "Reading duty" paragraph (open the brief, then the
+   files it names) and its zero-tool reply fails `capability` with the wording "it cannot have read the brief"; the re-ask
+   tells it to open the brief. `raw` consultations keep the old inline and are exempt on the non-review purposes. kimi and
+   every other engine are unchanged.
 3. **C3 never commits.** `git add`/`commit` and the eck finish loop stay with the coordinator and eckSnapshot.
 4. **Keys.** C3 reads a credential from the environment only for the `http` engine, never prints, stores, commits or
    transmits it anywhere but to that provider, redacts every error string, and refuses an API key where a subscription

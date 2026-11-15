@@ -281,7 +281,12 @@ fn a_dry_run_plans_the_read_only_grok_turn() {
 #[test]
 fn a_structured_run_is_usable_with_token_usage_and_a_subscription_prompt_note() {
     let e = setup("run");
-    let o = e.consult(&["--engine", "grok", "--model", "grok-4.7"], &[]);
+    // The default purpose is non-review, so a 0-tool-call reply fails the guard; a compliant run
+    // opens the brief, so the fake makes one tool call and the single turn stays usable.
+    let o = e.consult(
+        &["--engine", "grok", "--model", "grok-4.7"],
+        &[("FAKE_GROK_TOOL_CALLS", "1")],
+    );
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
     // the engine-turns note is written into the handoff record (SuperGrok subscription prompt).
@@ -321,10 +326,15 @@ fn a_structured_run_is_usable_with_token_usage_and_a_subscription_prompt_note() 
 #[test]
 fn the_billing_guard_strips_the_xai_api_key_from_the_child_unless_opted_in() {
     // default: the key is set in the bridge's environment but stripped from the child.
+    // (The default purpose is non-review; a compliant run opens the brief, so the fake makes one
+    // tool call and the single turn passes the guard.)
     let e = setup("guard-strip");
     let o = e.consult(
         &["--engine", "grok", "--model", "grok-4.7"],
-        &[("XAI_API_KEY", "xai-SECRET")],
+        &[
+            ("XAI_API_KEY", "xai-SECRET"),
+            ("FAKE_GROK_TOOL_CALLS", "1"),
+        ],
     );
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     let turns = e.turns();
@@ -342,6 +352,7 @@ fn the_billing_guard_strips_the_xai_api_key_from_the_child_unless_opted_in() {
         &[
             ("XAI_API_KEY", "xai-SECRET"),
             ("C3_GROK_ALLOW_API_KEY", "1"),
+            ("FAKE_GROK_TOOL_CALLS", "1"),
         ],
     );
     assert_eq!(o2.status.code(), Some(0), "{}", text(&o2));
@@ -357,10 +368,9 @@ fn the_billing_guard_strips_the_xai_api_key_from_the_child_unless_opted_in() {
 // --------------------------------------------------- the zero-tool-call review guard
 
 #[test]
-fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() {
-    // The fake grok emits no tool_call events. On a reviewing purpose (acceptance) a reply that
-    // read no file cannot have checked anything: the run is a capability failure. The SAME stream
-    // on a framing purpose is usable (the brief carries the question; no tools needed).
+fn a_zero_tool_call_reply_fails_the_guard_but_a_compliant_run_is_usable() {
+    // On a reviewing purpose (acceptance) a reply that read no file cannot have checked anything: a
+    // capability failure (disable the re-ask so the first-turn guard failure is observed directly).
     let e = setup("guard-acceptance");
     let o = e.consult(
         &[
@@ -371,7 +381,7 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
             "--purpose",
             "acceptance",
         ],
-        &[],
+        &[("CODEX_CONSULT_READ_INSIST", "0")],
     );
     let t = text(&o);
     let last = e.last();
@@ -389,7 +399,8 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
     // the reply is kept for the record even though the run failed.
     assert!(!e.turns().is_empty(), "the primary turn ran");
 
-    let e2 = setup("guard-framing");
+    // A compliant framing run opens the brief (one tool call): usable, a single turn.
+    let e2 = setup("guard-framing-ok");
     let o2 = e2.consult(
         &[
             "--engine",
@@ -399,7 +410,7 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
             "--purpose",
             "framing",
         ],
-        &[],
+        &[("FAKE_GROK_TOOL_CALLS", "1")],
     );
     let t2 = text(&o2);
     assert_eq!(o2.status.code(), Some(0), "{t2}");
@@ -408,9 +419,10 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
             .as_str()
             .unwrap_or("")
             .starts_with("usable"),
-        "framing/0-tools is usable: {}",
+        "a framing run that reads is usable: {}",
         e2.last()
     );
+    assert_eq!(e2.turns().len(), 1, "a single compliant turn: {:?}", e2.turns());
 }
 
 // --------------------------------------------------- the read-insist re-ask (zero tool calls)
@@ -529,17 +541,197 @@ fn read_insist_disabled_fails_on_the_first_turn() {
     assert_eq!(e.turns().len(), 1, "only the primary turn: {:?}", e.turns());
 }
 
+// ------------------------------ the hard guard on a non-review grok purpose (brief by reference)
+
+#[test]
+fn read_insist_rescues_a_zero_tool_framing_reply_with_the_re_asks_answer() {
+    // A framing primary answers with 0 tool calls: it cannot have read the brief, so the hard guard
+    // fails it. The re-ask reads 2 files, so its (distinct) reply becomes the primary reply and the
+    // run is usable; the ledger records one re-ask with 2 tool calls, driven by the brief re-ask text.
+    let e = setup("framing-rescue");
+    let resume = e.work.join("resume.json");
+    std::fs::write(
+        &resume,
+        r#"{"schema_version":"1","verdict":"ADVISE","verdict_reason":"reread","reply_markdown":"REASKED-ANSWER after reading the code","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#,
+    )
+    .unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "framing",
+        ],
+        &[
+            ("FAKE_GROK_RESUME_TOOL_CALLS", "2"),
+            ("FAKE_GROK_RESUME_REPLY", &resume.to_string_lossy()),
+        ],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "the re-ask rescued the framing run: {last}"
+    );
+    assert_eq!(last["structured"], true);
+    assert_eq!(last["read_insist"]["attempts"], 1, "one re-ask: {last}");
+    assert_eq!(
+        last["read_insist"]["final_tool_calls"], 2,
+        "the re-ask read 2 files: {last}"
+    );
+    // a primary framing turn + one re-ask on the minted session.
+    let turns = e.turns();
+    assert_eq!(turns.len(), 2, "primary + one re-ask: {:?}", turns);
+    assert!(turns[0]["resume"].as_str().unwrap_or("").is_empty());
+    assert!(
+        is_uuid(turns[1]["resume"].as_str().unwrap_or("")),
+        "the re-ask resumes the session: {:?}",
+        turns[1]
+    );
+    // the re-ask used the NON-review (brief) re-ask prompt, not the code-review one.
+    let reask_prompt = turns[1]["prompt"].as_str().unwrap_or("");
+    assert!(
+        reask_prompt.contains("you cannot have read the brief"),
+        "the brief re-ask prompt is used: {reask_prompt}"
+    );
+    // the re-ask's reply became the primary reply.
+    let handoff = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("01-grok-reply.md"),
+    )
+    .unwrap_or_default();
+    assert!(
+        handoff.contains("REASKED-ANSWER after reading the code"),
+        "the re-ask reply replaced the primary: {handoff}"
+    );
+    assert!(
+        handoff.contains("Read insist: 1 turn(s), tool calls 0 -> 2"),
+        "the handoff records the re-ask: {handoff}"
+    );
+}
+
+#[test]
+fn read_insist_fails_a_framing_run_after_two_re_asks_when_it_keeps_reading_nothing() {
+    // The framing primary and both re-asks all read nothing: after the last re-ask the guard failure
+    // (brief wording) stands with " after 2 re-asks".
+    let e = setup("framing-stubborn");
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.starts_with(
+            "failed: grok answered in one model call without reading any file (0 tool calls)"
+        ) && outcome.contains("it cannot have read the brief")
+            && outcome.contains("after 2 re-asks"),
+        "a stubborn framing run fails after 2 re-asks: {outcome}\n{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "capability");
+    assert_eq!(last["read_insist"]["attempts"], 2, "two re-asks: {last}");
+    assert_eq!(last["read_insist"]["final_tool_calls"], 0);
+    // primary + 2 re-asks = 3 turns.
+    assert_eq!(e.turns().len(), 3, "{:?}", e.turns());
+}
+
+#[test]
+fn read_insist_disabled_fails_a_framing_run_at_once() {
+    // CODEX_CONSULT_READ_INSIST=0: the guard fails the framing run at once, no re-ask.
+    let e = setup("framing-off");
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "framing",
+        ],
+        &[("CODEX_CONSULT_READ_INSIST", "0")],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.starts_with(
+            "failed: grok answered in one model call without reading any file (0 tool calls)"
+        ) && outcome.contains("it cannot have read the brief")
+            && !outcome.contains("re-asks"),
+        "env 0 fails the framing run at once: {outcome}\n{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "capability");
+    assert!(
+        last["read_insist"].is_null(),
+        "no read_insist record when disabled: {last}"
+    );
+    assert_eq!(e.turns().len(), 1, "only the primary turn: {:?}", e.turns());
+}
+
+#[test]
+fn a_raw_framing_run_with_zero_tools_is_usable_in_a_single_turn() {
+    // A `raw` consultation has no reply contract and no brief duty: a 0-tool framing reply is usable
+    // and never re-asked (the guard exempts raw on a non-review purpose).
+    let e = setup("framing-raw");
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "framing",
+            "--raw",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "a raw framing run is usable with no tools: {last}"
+    );
+    assert!(
+        last["read_insist"].is_null(),
+        "no re-ask for a raw run: {last}"
+    );
+    assert_eq!(e.turns().len(), 1, "a single turn: {:?}", e.turns());
+}
+
 // ------------------------------------------------------------------ the resume path
 
 #[test]
 fn a_prose_first_reply_is_repaired_on_a_resume_turn() {
     let e = setup("resume");
-    // first turn: prose (no JSON); the resume (format-repair) turn: the structured object.
+    // first turn: prose (no JSON) but a compliant tool call (so it passes the zero-tool guard); the
+    // resume (format-repair) turn: the structured object.
     let o = e.consult(
         &["--engine", "grok", "--model", "grok-4.7"],
         &[
             ("FAKE_GROK_REPLY", &e.prose.to_string_lossy()),
             ("FAKE_GROK_RESUME_REPLY", &e.reply.to_string_lossy()),
+            ("FAKE_GROK_TOOL_CALLS", "1"),
         ],
     );
     let t = text(&o);

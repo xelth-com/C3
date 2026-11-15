@@ -2383,14 +2383,14 @@ fn build_context(
     // (0.2.4) an engine whose spec says `inline_brief` (grok) gets the brief's text too. A failed
     // read must refuse before anything starts (Muse, review-2026-10-30): silently inlining nothing
     // would send the reviewer a brief-less prompt that looks complete.
-    // NOT on a code-review purpose: with the brief inlined grok answered an acceptance prompt in
-    // one model call with 0 tool calls (2 of 2), without it the same prompt made 59 tool calls
-    // (probe 2026-10-30) - there it must open the brief and the code itself, and the zero-tool
-    // guard (`grok_review_tool_guard`) rejects an answer that did not.
+    // Only on a `raw` consultation now: with the brief inlined grok answers from the brief alone in
+    // one model call with 0 tool calls and INVENTS code and citations (live test, grok-4.7); by
+    // reference it opens the brief and the files it names. Every non-raw purpose is referenced by
+    // path and backed by the zero-tool guard (`grok_review_tool_guard`); raw keeps today's inline.
     let code_review =
         crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES.contains(&o.purpose.as_str());
     let brief_text = match &brief_path {
-        Some(bp) if spec.inline_brief && !code_review => match std::fs::read_to_string(bp) {
+        Some(bp) if spec.inline_brief && r.raw && !code_review => match std::fs::read_to_string(bp) {
             Ok(t) => t,
             Err(e) => return Err((format!("the brief could not be read for inlining: {e}"), 1)),
         },
@@ -2416,6 +2416,11 @@ fn build_context(
         // (C3) grok/kimi count tool calls: on a reviewing purpose the tool-reading is mandatory
         // (a zero-tool-call reply is rejected and re-asked). Never for codex (byte-parity).
         tool_reading_required: code_review && matches!(engine_name.as_str(), "grok" | "kimi"),
+        // (C3) grok on a non-raw, NON-review purpose carries the reading-duty paragraph: it answers
+        // without opening a file otherwise (the zero-tool guard then rejects the reply and the
+        // orchestrator re-asks). The four review purposes carry the stronger reading discipline
+        // instead, so they are excluded here.
+        reading_duty: !r.raw && engine_name == "grok" && !code_review,
     });
 
     // (0.6.0, wave 29, D4) the model the engine's turns send: the roster's on a new thread; on
@@ -3817,6 +3822,7 @@ fn run_primary_turn(
                 secondary: TurnFiles::default(),
                 stall_sec: ctx.stall_sec,
                 purpose: ctx.o.purpose.clone(),
+                raw: ctx.r.raw,
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
                 on_kill,

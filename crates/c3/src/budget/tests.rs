@@ -203,3 +203,37 @@ fn a_snapshot_whose_window_already_reset_is_stale() {
     assert_eq!(budget_multiplier(&[w.clone()]).0, 1.0);
     assert!(providers_quota_cell(&[w], now).contains("window reset since - refresh"));
 }
+
+#[test]
+fn parse_when_accepts_dates_instants_and_minute_precision() {
+    // A bare date is taken as midnight UTC.
+    assert_eq!(
+        parse_when("2026-11-26").unwrap().with_timezone(&Utc),
+        utc("2026-11-26T00:00:00Z")
+    );
+    // A full RFC 3339 instant (the already-accepted form) still works.
+    assert_eq!(
+        parse_when("2026-11-16T15:18:00Z").unwrap().with_timezone(&Utc),
+        utc("2026-11-16T15:18:00Z")
+    );
+    // The `--help` example `2026-11-26T00:00Z` (no seconds) is now accepted.
+    assert_eq!(
+        parse_when("2026-11-26T00:00Z").unwrap().with_timezone(&Utc),
+        utc("2026-11-26T00:00:00Z")
+    );
+    // A minute-precision UTC instant.
+    assert_eq!(
+        parse_when("2026-11-16T15:18Z").unwrap().with_timezone(&Utc),
+        utc("2026-11-16T15:18:00Z")
+    );
+    // A minute-precision instant with an explicit offset.
+    assert_eq!(
+        parse_when("2026-11-16T15:18+02:00")
+            .unwrap()
+            .with_timezone(&Utc),
+        utc("2026-11-16T13:18:00Z")
+    );
+    // Garbage is still rejected.
+    assert!(parse_when("not-a-date").is_none());
+    assert!(parse_when("2026-11-16T15Z").is_none());
+}

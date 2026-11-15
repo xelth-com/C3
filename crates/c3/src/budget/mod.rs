@@ -455,13 +455,23 @@ fn days_in_month(year: i32, month: u32) -> u32 {
     (first_next - first_this).num_days() as u32
 }
 
-/// Parse an ISO datetime, or a bare `YYYY-MM-DD` (taken as `T00:00:00Z`).
+/// Parse an ISO datetime, or a bare `YYYY-MM-DD` (taken as `T00:00:00Z`). An instant without
+/// seconds is accepted too: `YYYY-MM-DDTHH:MMZ` (UTC) and `YYYY-MM-DDTHH:MM+HH:MM` (offset), which
+/// RFC 3339 itself rejects.
 pub fn parse_when(s: &str) -> Option<DateTime<chrono::FixedOffset>> {
     let s = s.trim();
     if let Ok(d) = DateTime::parse_from_rfc3339(s) {
         return Some(d);
     }
-    // bare date, or date with a 'Z' but no seconds etc.
+    // A minute-precision instant (no seconds): `...THH:MMZ` is UTC, `...THH:MM+HH:MM` carries its
+    // own offset. RFC 3339 requires the seconds, so these fall through to here.
+    if let Ok(nd) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%MZ") {
+        return Some(Utc.from_utc_datetime(&nd).fixed_offset());
+    }
+    if let Ok(d) = DateTime::parse_from_str(s, "%Y-%m-%dT%H:%M%:z") {
+        return Some(d);
+    }
+    // bare date, taken as `T00:00:00Z`.
     if let Ok(nd) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         let dt = nd.and_hms_opt(0, 0, 0)?;
         return Some(Utc.from_utc_datetime(&dt).fixed_offset());

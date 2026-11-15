@@ -99,18 +99,21 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   with `--resume`; files `handoffs/<NN>-grok-<slug>.*`. The tree check only WARNS. `XAI_API_KEY` /
   `GROK_CODE_XAI_API_KEY` are stripped from the child (they would bill the API per token) unless
   `C3_GROK_ALLOW_API_KEY=1`; `c3 providers` names the billing route. Reviewer use only (no `c3 work`).
-  On a reviewing purpose (`acceptance`, `core-contract`, `diff-review`, `checkpoint`) a primary turn
-  that answers with zero tool calls read no file, so rather than failing at once the bridge INSISTS:
-  it resumes the same thread with a firm re-ask to read the code, up to `CODEX_CONSULT_READ_INSIST`
-  times (default 2; `0` disables = fail at once). A re-ask that reads the code (tool calls > 0) makes
-  its reply the primary reply (usable); if every re-ask still reads nothing the guard failure stands
-  (class `capability`, no provider outage) with ` after N re-asks`. The handoff header records
-  `Read insist: <n> turn(s), tool calls 0 -> <k>` and the ledger entry gets
-  `read_insist: {attempts, final_tool_calls}`. The reviewing-purpose prompt also carries one
-  mandatory-tool-reading sentence for grok/kimi. The brief's text is inlined into
-  a grok prompt only on the OTHER purposes (framing, decision, ...): inlined, grok answered a code
-  review without opening a file (0 of 0 tool calls, 2 of 2 runs); pointed at the file, it read the
-  code (59 tool calls).
+  On EVERY non-raw purpose a primary grok turn that answers with zero tool calls read no file, so
+  rather than failing at once the bridge INSISTS: it resumes the same thread with a firm re-ask, up
+  to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` disables = fail at once). A re-ask that reads
+  (tool calls > 0) makes its reply the primary reply (usable); if every re-ask still reads nothing
+  the guard failure stands (class `capability`, no provider outage) with ` after N re-asks`. The
+  handoff header records `Read insist: <n> turn(s), tool calls 0 -> <k>` and the ledger entry gets
+  `read_insist: {attempts, final_tool_calls}`. The failure wording and re-ask text depend on the
+  purpose: the four review purposes (`acceptance`, `core-contract`, `diff-review`, `checkpoint`) say
+  "a <purpose> review must read the code" and the re-ask names `git diff`; every other purpose says
+  "it cannot have read the brief" and the re-ask says to open the brief. The review prompt also
+  carries one mandatory-tool-reading sentence (grok/kimi); every other non-raw grok prompt carries a
+  "Reading duty" paragraph (open the brief, then the files it names). The brief is ALWAYS referenced
+  by path for a non-raw grok turn, never inlined - inlined, grok answered from the brief alone and
+  invented code and line citations (live test, grok-4.7); by reference it opens the brief and reads
+  (5+ tool calls). `raw` grok consultations keep the inline and are exempt on non-review purposes.
 - **`kimi`** — Moonshot's Kimi CLI (`kimi -p <pointer> --output-format stream-json`) on the Kimi
   Code plan (managed oauth). Models `kimi-code/k3` (default), `kimi-code/k3-256k`,
   `kimi-code/k3.1-pro`, `kimi-code/kimi-for-coding`, … (the ids kimi's `config.toml` declares). The

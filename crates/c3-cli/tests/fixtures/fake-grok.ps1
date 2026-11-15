@@ -13,6 +13,9 @@
 #   turn (--prompt-file):
 #   FAKE_GROK_REPLY=<file>      the reply text emitted as text events (first turn)
 #   FAKE_GROK_RESUME_REPLY=<file>  on a --resume turn (a format-repair / continuation): this instead
+#   FAKE_GROK_TOOL_CALLS=<n>    emit n tool_call events on EVERY turn (a compliant run that opens the
+#                               brief and files); 0/unset = none. A --resume turn's count is
+#                               FAKE_GROK_RESUME_TOOL_CALLS when that is set (it overrides this).
 #   FAKE_GROK_RESUME_TOOL_CALLS=<n>  on a --resume turn (a read-insist re-ask): emit n tool_call
 #                               events (proving the re-ask read the code); 0/unset = none
 #   FAKE_GROK_SESSION=other     the end names a new session (a resume landed elsewhere);
@@ -108,9 +111,12 @@ if ($replyFile -and (Test-Path $replyFile)) { $reply = [IO.File]::ReadAllText($r
 # an optional thought, then the reply split across two text events (the bridge concatenates them).
 Out-Bytes ((J ([pscustomobject]@{ type = 'thought'; data = 'thinking about it' })) + "`n")
 
-# read-insist: on a --resume turn emit N tool_call events (a read_file + its completed update each),
-# so the re-ask's tool_calls count is N - the evidence the model read the code this time.
+# tool calls: emit N tool_call events (a read_file + its completed update each), so the turn's
+# tool_calls count is N - the evidence the model opened the brief/code. FAKE_GROK_TOOL_CALLS applies
+# to every turn (a compliant run); on a --resume turn FAKE_GROK_RESUME_TOOL_CALLS overrides it (a
+# read-insist re-ask that reads the code this time).
 $rtc = 0
+if ($env:FAKE_GROK_TOOL_CALLS) { $rtc = [int]$env:FAKE_GROK_TOOL_CALLS }
 if ($resume -and $env:FAKE_GROK_RESUME_TOOL_CALLS) { $rtc = [int]$env:FAKE_GROK_RESUME_TOOL_CALLS }
 for ($j = 0; $j -lt $rtc; $j++) {
     $cid = "insist-$j"
