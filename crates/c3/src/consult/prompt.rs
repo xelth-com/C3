@@ -157,6 +157,11 @@ pub struct PromptInputs<'a> {
     /// non-raw, NON-review purpose (the four review purposes already carry the reading discipline).
     /// A zero-tool-call reply is not failed there, but the orchestrator soft-re-asks once.
     pub reading_duty: bool,
+    /// (C3) The grok answer-once paragraph ([`GROK_ANSWER_ONCE`]): added for engine `grok` on any
+    /// non-raw purpose (review or not). Under `--json-schema` Grok may emit a schema-shaped PROGRESS
+    /// note before it reads and end the turn on it; this tells it to write the answer exactly once,
+    /// last, so a placeholder is never taken as the final reply.
+    pub grok_answer_once: bool,
 }
 
 /// (C3) The mandatory tool-reading sentence appended to a reviewing-purpose prompt for an engine
@@ -169,6 +174,12 @@ pub const TOOL_READING_MANDATORY: &str = "Mandatory: this reply is accepted only
 /// it. The four review purposes carry the stronger reading discipline instead and never get this
 /// paragraph.
 pub const GROK_READING_DUTY: &str = "Reading duty: you have file tools on this repository (read_file, list_dir, grep) - use them before you answer. Open the brief, then every file and document it names, and check its claims against the code. A reply made without opening any file is rejected.";
+
+/// (C3) The grok answer-once paragraph (every non-raw grok purpose). Grok under `--json-schema` has
+/// been seen to emit a schema-shaped PROGRESS note ("starting that read now") as the structured
+/// answer and end the turn on it. This tells it the answer is written exactly once, last, and that
+/// no progress note may be written in the answer format - so an interim placeholder is never ingested.
+pub const GROK_ANSWER_ONCE: &str = "Answer once: write your structured answer exactly ONCE, as the very last thing you output, after all your reading is finished. Do NOT write a progress note, status update, or placeholder in the answer format while you are still reading - an answer-shaped message sent before you have read the code is taken as your final answer and rejected. Read first, then answer.";
 
 const NL: &str = "\r\n";
 
@@ -240,6 +251,11 @@ pub fn assemble(inp: &PromptInputs) -> String {
         // discipline and are excluded by the caller.
         if inp.reading_duty {
             parts.push(GROK_READING_DUTY.to_string());
+        }
+        // (C3) grok (review or not): write the answer exactly once, last - no schema-shaped progress
+        // note that would be taken as the final reply.
+        if inp.grok_answer_once {
+            parts.push(GROK_ANSWER_ONCE.to_string());
         }
         if !inp.open_findings.is_empty() {
             parts.push(render_open_findings(inp.open_findings));
@@ -365,6 +381,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         reread_line: "",
         tool_reading_required: false,
         reading_duty: false,
+        grok_answer_once: false,
     };
     schema_block(&inp)
 }
@@ -429,6 +446,7 @@ mod tests {
             reread_line: "",
             tool_reading_required: false,
             reading_duty: false,
+            grok_answer_once: false,
         }
     }
 

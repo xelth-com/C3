@@ -38,6 +38,8 @@ pub struct C3Config {
     pub update_check: bool,
     /// A known C3 source checkout `c3 update --apply` may fast-forward (wave 11); default absent.
     pub source_checkout: Option<String>,
+    /// Automatic engine/model maintenance (`c3 maintain`); default ON, `"maintain": false` off.
+    pub maintain: bool,
 }
 
 impl Default for C3Config {
@@ -47,6 +49,7 @@ impl Default for C3Config {
             embedder: None,
             update_check: true,
             source_checkout: None,
+            maintain: true,
         }
     }
 }
@@ -197,7 +200,13 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         .ok_or_else(|| "c3 config: the top level must be a JSON object".to_string())?;
     check_keys(
         obj.keys(),
-        &["config_version", "index", "update_check", "source_checkout"],
+        &[
+            "config_version",
+            "index",
+            "update_check",
+            "source_checkout",
+            "maintain",
+        ],
         "config",
     )?;
 
@@ -221,10 +230,16 @@ fn validate(root: &Value) -> Result<C3Config, String> {
             }
         },
     };
+    let maintain = match obj.get("maintain") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("c3 config: maintain must be true or false".to_string()),
+    };
 
     let mut cfg = C3Config {
         update_check,
         source_checkout,
+        maintain,
         ..Default::default()
     };
     let Some(index) = obj.get("index") else {

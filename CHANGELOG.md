@@ -7,7 +7,7 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
-## [Unreleased / 0.2.4-dev]
+## [0.2.4] - 2026-11-15
 
 ### Added
 
@@ -87,9 +87,79 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   the brief), and a non-review prompt carries a `Reading duty` paragraph. `raw` grok consultations
   keep the old inline and are exempt on non-review purposes; kimi and every other engine are
   untouched.
+- **`c3 maintain` - C3 keeps the engine CLIs and the seated model ids fresh by itself:** once a
+  week the SessionStart hook starts a detached pass (never blocking the hook) and the next session
+  prints its one-line report (`c3: maintenance 2026-11-15 - codex 0.155.1 -> 0.169.0 ok; grok up
+  to date; ...`). Per engine: installed and latest version, and when an update exists - a smoke of
+  the INSTALLED version first, the update, the version re-read, a second smoke, and a rollback
+  when that fails. The smoke is two real turns through `c3 consult` in a throwaway repository
+  (one plain, one that must read a file holding a random token). codex updates through npm
+  (rollback by version), grok through `grok update` (`--version` pins), kimi through the vendor
+  installer (`KIMI_VERSION` pins; https only, redirects only within the vendor's site); agy has
+  neither a check nor a pin and is report-only; muse and claude update themselves and are only
+  recorded. An engine with a live run or process is skipped and retried the next day. A version
+  released less than `C3_MAINTAIN_MIN_AGE_DAYS` (3) days ago is held when its date is known. The
+  smoke never spends the ChatGPT allowance when a custom codex provider can carry it, and never a
+  plan whose window is at 90 % or more. Models: the lists of `grok models`, `agy models` and the
+  plan endpoints are stored and new ids announced; a seated id is replaced only by a successor
+  with the same prefix and suffix, the same major and a higher minor, only after it passed the
+  smoke, with the roster backed up (`.bak-maintain-<date>`); stamped ids, major jumps and new
+  families are announced only. `c3 maintain` reports, `--run [--engine] [--dry-run] [--force]`
+  runs a pass now, `--smoke [--engine] [--dry-run]` runs only the smoke. Hardened after the
+  wave's diff-review (GLM-5.3, Muse Wonder, Grok; 30 findings): the pass lock is taken by atomic
+  creation; an engine is re-checked for use right before its update, by command line as well as
+  image name, and an unreadable process table counts as in use; a pending-update record written
+  before every install lets the next pass verify or roll back an update interrupted by a crash;
+  an unparsable installed version is never updated; every update is pinned to the checked
+  version and every update and rollback is confirmed by re-reading `--version`; model ids are
+  accepted only in a strict shape, a dotted date stamp also makes an id unswappable, the roster
+  is written through a temp file and not at all when it changed during the pass; update and
+  installer children run without the provider keys in their environment; a download that
+  reaches the size cap is never run; the detached pass is started without a shell. ON by default;
+  `C3_MAINTAIN=off` or `"maintain": false` in the C3 config stops the hook's passes,
+  `C3_MAINTAIN_DAYS`, `C3_MAINTAIN_SKIP`, `C3_MAINTAIN_MODELS=swap|announce|off` and
+  `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` tune it.
+- **Live quota for z.ai and Muse:** the budget module reads the z.ai plan's 5-hour token window
+  from `GET https://api.z.ai/api/monitor/usage/quota/limit` (the plan key; the monthly tools
+  allowance is ignored) and the Muse 5-hour and weekly windows from `muse usage --json` (no model
+  turn; "no usage yet" yields nothing), cached like the kimi source, ahead of the operator's
+  snapshot. Both show in the QUOTA column of `c3 providers` and weigh the panel draw.
+- **`c3 --version` names the build commit:** `c3 0.2.4 (1a2b3c4)`, with `-dirty` when tracked
+  files differed from HEAD at build time, so an installed binary can be told from the tree.
+
+### Changed
+
+- **Grok takes the reply schema in the prompt, not as `--json-schema`:** under the native flag
+  every text Grok writes must be schema-shaped, so its opening remark came out as a schema-valid
+  placeholder answer ("I am reading the brief before answering") and, carrying no tool call,
+  ended the turn - the root of the "Grok answered without reading" failures. Live on one fixture
+  brief (grok-4.7, CLI 1.0.77): with the flag 3 of 5 fresh conversations ended on a placeholder
+  with 0 tool calls; without it every conversation read the files and closed with a valid JSON
+  answer. `--schema-transport native` restores the flag for one run.
+- **A grok read-insist re-ask is a new conversation:** it carries the whole original prompt with
+  one insisting line in front instead of resuming the thread that did not read; the recorded
+  thread is the accepted turn's, and a run whose every attempt read nothing records none. The
+  ledger's `read_insist` gains `new_conversation`. kimi keeps the same-thread re-ask.
 
 ### Fixed
 
+- **A run that died in a re-ask is described by that re-ask** (field report, xelixir, detached
+  run a7dde5eb): a grok diff-review whose re-ask made 57 tool calls over ten minutes and then
+  stopped without a final answer was recorded as "answered in one model call ... 0 tool calls
+  (wall 0 s)" with the first attempt's placeholder as the reply. Now the outcome is the last
+  attempt's own failure, classified like a primary turn's and named `read-insist attempt N after
+  a zero-tool primary; K tool calls`; the summary's events file is that attempt's stream; its
+  salvaged text is the reply; the member wall is the total of the attempts. The grok answer is
+  the text after the last tool call, so an interim note is never taken for it, and the grok
+  prompt says the structured answer is written once, at the end. From the wave's diff-review: a
+  grok turn that wrote a note, read files and ended without any text after its last tool call is
+  a failed turn (the note is kept as salvage, never as the answer); a re-ask that could not even
+  start keeps the zero-tool outcome and names the launch failure; the reply of a run that died in
+  a re-ask is that attempt's text after its last tool call, or empty - never the first attempt's
+  placeholder.
+- **Quota reads (from the same review):** a quota GET that carries a plan key (z.ai, kimi) never
+  follows a redirect; the live-source caches are keyed by source and plan; a live window whose
+  reset has passed is dropped instead of feeding the draw its pre-reset usage.
 - **`c3 budget set --resets` accepts minute-precision instants:** `2026-11-16T15:18Z` and
   `2026-11-16T15:18+01:00` - the shape `--help` advertises - were refused as "must be a date or ISO
   instant"; only the form with seconds parsed.

@@ -54,6 +54,15 @@ pub(crate) fn read_insist_other_prompt(consult_id: &str) -> String {
     )
 }
 
+/// (C3) The one short insisting line prepended to the ORIGINAL primary prompt when a grok read-insist
+/// re-ask runs in a FRESH conversation (no resume). Grok ignores a same-thread "you did not read"
+/// follow-up (live evidence 2026-11-15: 4 of 4 same-thread re-asks again made 0 tool calls), so the
+/// re-ask starts a new conversation that carries the whole original prompt (brief by reference and the
+/// reading-duty paragraph) with this line in front.
+pub(crate) fn read_insist_fresh_line() -> &'static str {
+    "A previous attempt at this consultation, in another conversation, answered without reading any file (0 tool calls) - so its review was worthless and was discarded. This is a NEW conversation with no memory of it. Before you answer you MUST read: open the brief with your file-reading tool, then the files and documents it names, and check its claims against the code (read_file, list_dir, grep). A reply with no tool calls will be discarded again. The original request follows."
+}
+
 /// Run one secondary turn (`resume <thread>`) through the selected engine and return its outcome
 /// and measured wall. For a muse turn the prompt is written to a fresh temp `--prompt-file`.
 /// Inputs to [`run_codex_secondary`]: the run context and turn kind, the sandbox/effort/schema for
@@ -977,6 +986,9 @@ fn repair_effort(ctx: &Context) -> Option<String> {
 
 /// Run one engine secondary turn (currently the agy denial retry) and return the outcome, the
 /// engine detail, the wall seconds and the kept events-file rel path.
+/// `new_conversation` runs the turn as a fresh thread (`Mode::New`, no resume / no continuation) -
+/// the grok read-insist re-ask uses it so a stubborn zero-tool thread is abandoned, not resumed;
+/// every other caller (the denial retry, the kimi read-insist) resumes `thread`.
 fn run_engine_secondary(
     ctx: &Context,
     kind: TurnKind,
@@ -984,6 +996,7 @@ fn run_engine_secondary(
     prompt_text: &str,
     events_suffix: &str,
     timeout_sec: f64,
+    new_conversation: bool,
 ) -> (AttemptOutcome, EngineDetail, f64, String) {
     let events_path = ctx.hpath(events_suffix);
     let id = uuid::Uuid::new_v4().simple().to_string();
@@ -1000,11 +1013,13 @@ fn run_engine_secondary(
     request.prompt = prompt_text.to_string();
     request.prompt_file = prompt_file;
     request.timeout_sec = timeout_sec;
-    let lineage = request.lineage();
-    request.mode = Mode::Resume {
-        thread: thread.to_string(),
-        lineage,
-    };
+    if !new_conversation {
+        let lineage = request.lineage();
+        request.mode = Mode::Resume {
+            thread: thread.to_string(),
+            lineage,
+        };
+    }
     let files = TurnFiles {
         events: events_path.clone(),
         stderr: stderr_path.clone(),
@@ -1014,9 +1029,13 @@ fn run_engine_secondary(
         consultation: ConsultationId(ctx.consult_id.clone()),
         attempt: c3_core::engine::AttemptId(ctx.consult_id.clone()),
         kind,
-        continuation: Some(c3_core::engine::Continuation::Native(
-            c3_core::engine::ConversationId(thread.to_string()),
-        )),
+        continuation: if new_conversation {
+            None
+        } else {
+            Some(c3_core::engine::Continuation::Native(
+                c3_core::engine::ConversationId(thread.to_string()),
+            ))
+        },
     };
     let start = std::time::Instant::now();
     let (outcome, detail) = match ctx.engine.as_str() {
@@ -1239,6 +1258,7 @@ pub(super) fn run_engine_denial_retry(args: DenialRetry) {
         &retry_prompt,
         "denial-retry.events.jsonl",
         timeout as f64,
+        false,
     );
     sec.engine_turns += 1;
     sec.claude_turns.extend(det.claude.clone());
@@ -1323,6 +1343,9 @@ pub(super) struct ReadInsist<'a> {
     pub(super) usable: &'a mut bool,
     pub(super) engine_pf: &'a mut Option<c3_core::ledger::ProviderFailure>,
     pub(super) forced_class: &'a mut String,
+    // (Item 4) the run's wall: the re-ask turns' time is added so a grok guard-failure run (whose
+    // ProviderFailure primary carried no wall) reports the total, not 0.
+    pub(super) wall_seconds: &'a mut f64,
 }
 
 pub(super) fn run_read_insist(args: ReadInsist) {
@@ -1337,6 +1360,7 @@ pub(super) fn run_read_insist(args: ReadInsist) {
         usable,
         engine_pf,
         forced_class,
+        wall_seconds,
     } = args;
     // Max attempts from the environment (default 2; 0 disables = the guard fails at once as today).
     let max = std::env::var("CODEX_CONSULT_READ_INSIST")
@@ -1346,8 +1370,14 @@ pub(super) fn run_read_insist(args: ReadInsist) {
     if max == 0 || thread.is_empty() {
         return;
     }
+    // (C3, grok) A grok re-ask starts a FRESH conversation (no resume): live evidence 2026-11-15
+    // showed 4 of 4 same-thread re-asks again made 0 tool calls, so a stubborn thread is abandoned,
+    // not resumed. Every other engine (kimi) keeps the same-thread re-ask.
+    let fresh = ctx.engine == "grok";
     // The re-ask text depends on the purpose: a review purpose is told to read the code, every other
-    // (grok) purpose is told to open the brief it cannot have read.
+    // (grok) purpose is told to open the brief it cannot have read. A fresh (grok) re-ask instead
+    // carries the WHOLE original prompt with one insisting line in front (the short same-thread
+    // follow-up only makes sense inside the old thread).
     let review_purpose = crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES
         .contains(&ctx.o.purpose.as_str());
     // The guard's own failure text; " after N re-asks" is appended if every re-ask also read nothing.
@@ -1357,22 +1387,36 @@ pub(super) fn run_read_insist(args: ReadInsist) {
     let mut final_tool_calls: usize = 0;
     let mut attempt = 0usize;
     let mut rescued = false;
+    let mut insist_wall = 0.0_f64;
+    // (Item 4) a re-ask that RAN the review (made tool calls) and then died for a reason other than
+    // "0 tool calls" (a crash with no final answer, a non-zero exit, a timeout) ends the run: its
+    // failure - classified like a primary turn - is the outcome, with its tool-call count; its stream
+    // and salvage become the run's pointers, so attempt 1's zero-tool placeholder does not stand.
+    let mut dead: Option<ReaskDeath> = None;
+    // (F03-9) A re-ask that could not START (LaunchFailed) never ran the review, so it is NOT the
+    // dead reviewing attempt: it stops the re-asking, keeps the zero-tool guard outcome, reply and
+    // pointers unchanged, and only notes why the re-ask could not start.
+    let mut launch_fail: Option<String> = None;
     while attempt < max {
         attempt += 1;
-        let prompt = if review_purpose {
+        let prompt = if fresh {
+            format!("{}\r\n\r\n{}", read_insist_fresh_line(), ctx.prompt_text)
+        } else if review_purpose {
             read_insist_prompt(&ctx.consult_id, attempt)
         } else {
             read_insist_other_prompt(&ctx.consult_id)
         };
         let suffix = format!("read-insist-{attempt}.events.jsonl");
-        let (outcome, det, _wall, events_rel) = run_engine_secondary(
+        let (outcome, det, wall, events_rel) = run_engine_secondary(
             ctx,
             TurnKind::ReadInsist,
             &insist_thread,
             &prompt,
             &suffix,
             timeout as f64,
+            fresh,
         );
+        insist_wall += wall;
         sec.engine_turns += 1;
         sec.claude_turns.extend(det.claude.clone());
         if !events_rel.is_empty() {
@@ -1406,21 +1450,113 @@ pub(super) fn run_read_insist(args: ReadInsist) {
                 }
                 // Still zero tool calls: move to the next attempt.
             }
-            _ => {
-                // The insist turn itself failed (a provider error / a timeout): stop re-asking; the
-                // guard failure stands (with the re-ask count below).
+            AttemptOutcome::LaunchFailed { message, .. } => {
+                // (F03-9) The re-ask could not start, so it did not review anything and is not the
+                // dead attempt. Stop re-asking, keep the guard outcome/reply/pointers, note why.
+                launch_fail = Some(c3_core::one_line(message.trim()));
+                break;
+            }
+            other => {
+                // (Item 4) THIS re-ask ended the run (it did not come back with a usable reply): a
+                // crash with no final answer, a non-zero exit or a timeout. Record it as the attempt
+                // that ended the run, classified the way a primary turn is, with its tool-call count.
+                let reason = det.turn_outcome.trim_start_matches("failed: ").trim();
+                let reason = if reason.is_empty() {
+                    format!("the {} re-ask ended without a final answer", ctx.engine)
+                } else {
+                    c3_core::one_line(reason)
+                };
+                let (pf, class) = match &other {
+                    AttemptOutcome::ProviderFailure { failure, .. } => {
+                        (Some(finalize_pf(failure.clone())), failure.class.clone())
+                    }
+                    AttemptOutcome::TimedOut { .. } | AttemptOutcome::Stopped { .. } => {
+                        (None, "transport".to_string())
+                    }
+                    _ => (None, String::new()),
+                };
+                // keep this attempt's partial (its interim review text) so the run's reply is the
+                // dead review, not attempt 1's placeholder; the full stream (thoughts and all) stays
+                // on disk and is named by the handoff's further-turns list and the summary pointer.
+                let salvage = if ctx.engine == "grok" {
+                    let text = std::fs::read_to_string(ctx.hpath(&suffix)).unwrap_or_default();
+                    crate::engines::grok::grok_salvage(&text).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                dead = Some(ReaskDeath {
+                    reason,
+                    pf,
+                    class,
+                    tool_calls: det.tool_calls,
+                    salvage,
+                    events_abs: ctx.hpath(&suffix).to_string_lossy().to_string(),
+                });
                 break;
             }
         }
     }
-    if !rescued {
+    *wall_seconds += insist_wall;
+    if let Some(d) = dead {
+        *bridge_outcome = format!(
+            "failed: {} (read-insist attempt {attempt} after a zero-tool primary; {} tool calls)",
+            d.reason, d.tool_calls
+        );
+        if let Some(pf) = d.pf {
+            *engine_pf = Some(pf);
+        }
+        if !d.class.is_empty() {
+            *forced_class = d.class;
+        }
+        // (F02-5/F04-5) The salvage is this dead attempt's text AFTER its last tool call only; when
+        // that tail is empty the reply is CLEARED (it renders as "no reply captured" downstream), so
+        // the primary turn's zero-tool placeholder is never the reply of a run that died later.
+        *raw_text = d.salvage;
+        // the summary's "events file:" line and the salvage follow this last attempt's stream.
+        sec.read_insist_dead_events = Some(d.events_abs);
+        // a crashed fresh grok thread is not resumed.
+        if fresh {
+            thread.clear();
+            *thread_source = "unknown".to_string();
+        }
+    } else if let Some(why) = launch_fail {
+        // (F03-9) The last re-ask could not start: keep the zero-tool guard outcome and append the
+        // launch reason; the reply, thread and events pointers are left exactly as the guard set them.
+        *bridge_outcome =
+            format!("{guard_outcome} after {attempt} re-asks (last re-ask could not start: {why})");
+        if fresh {
+            thread.clear();
+            *thread_source = "unknown".to_string();
+        }
+    } else if !rescued {
         *bridge_outcome = format!("{guard_outcome} after {attempt} re-asks");
+        if fresh {
+            // Every fresh re-ask ran in its own throwaway Grok conversation, and so did the abandoned
+            // primary turn: none may be resumed later, so the consultation records no thread.
+            thread.clear();
+            *thread_source = "unknown".to_string();
+        }
     }
     sec.read_insist = Some(c3_core::ledger::ReadInsist {
         attempts: attempt as i64,
         final_tool_calls: final_tool_calls as i64,
+        new_conversation: fresh,
         ..Default::default()
     });
+}
+
+/// (Item 4) A read-insist re-ask that RAN the review then died for a reason other than zero tool
+/// calls - the attempt that ended the run.
+struct ReaskDeath {
+    /// The attempt's own failure reason (one-lined), classified like a primary turn's.
+    reason: String,
+    pf: Option<c3_core::ledger::ProviderFailure>,
+    class: String,
+    tool_calls: usize,
+    /// The attempt's salvaged interim text (grok), kept so attempt 1's placeholder does not stand.
+    salvage: String,
+    /// The attempt's events file (absolute), for the summary's "events file:" pointer.
+    events_abs: String,
 }
 
 /// Inputs to [`build_partial_reply`]: the run context, the main turn's events text and the `&mut`

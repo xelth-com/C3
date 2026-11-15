@@ -1,0 +1,1966 @@
+{
+    "task_id":  "release-0.2.4",
+    "findings":  [
+                     {
+                         "id":  "F02-1",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  436
+                                           }
+                                       ],
+                         "claim":  "The new z.ai quota GET builds a default ureq agent (follows up to 5 redirects) with `Authorization: Bearer \u003ckey\u003e` attached, so a redirect from api.z.ai would be followed — unlike maintain/env.rs, which pins redirects(0) and re-targets by hand, same-site only, for keyless GETs; the wave\u0027s stated invariant is that a request carrying an API key never follows a redirect.",
+                         "trigger":  "api.z.ai (or an intermediary) answering GET /api/monitor/usage/quota/limit with a 3xx to another host while the ZAI key is set.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:436 (zai_get) and :332 (pre-existing kimi_get, same pattern)",
+                                              "observation":  "Both build `ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build()` with no redirects(0) and send the bearer token; contrast crates/c3/src/maintain/env.rs:122-157 which sets .redirects(0) and follows only keyless GETs, max 3 hops, same site."
+                                          },
+                                          {
+                                              "kind":  "assumed",
+                                              "reference":  "ureq 2.12.1 (Cargo.lock:5096)",
+                                              "observation":  "Not verified whether ureq\u0027s default strips Authorization on cross-host redirects; the follow itself is certain."
+                                          }
+                                      ],
+                         "verification":  "Inspect the vendored ureq 2.12.1 source (redirect_auth_headers default) or point the ZAI env key at a local server that 302s cross-host and observe whether the Authorization header arrives.",
+                         "remedy":  "Build the agent with .redirects(0) (and treat a 3xx as no data) in zai_get and kimi_get, matching the maintain env policy.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-claudecode-diff-review-zai-claude.md",
+                                        "thread":  "161a3cf8-7842-475a-8168-ba4e31065587",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:49:01+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:34+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "zai_get and kimi_get use redirects(0) and treat 3xx as no data",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-2",
+                         "status":  "verified",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  507
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  581
+                                           }
+                                       ],
+                         "claim":  "When the installed version cannot be parsed (`installed = None`, text \"unknown\"), the pass still updates and, on a post-update smoke failure, rolls back to the literal string \"unknown\" (npm install -g @openai/codex@unknown, grok update --version unknown), which cannot succeed — the engine is left on the version that failed its smoke although a rollback path existed.",
+                         "trigger":  "A CLI whose `--version` output stops parsing (format change across versions is exactly when this happens) plus an available update whose post-update smoke fails.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:507-512, :560-577, :581",
+                                              "observation":  "The up-to-date check is inside `if let Some(inst) = installed`, so None falls through to update with installed_text=\"unknown\"; do_rollback receives installed_text verbatim."
+                                          }
+                                      ],
+                         "verification":  "Point CODEX_CONSULT_GROK_EXE at a fake whose --version prints no version token, latest \u003e installed, smoke pass-then-fail: the pass reports \"rollback failed\" and the engine stays on the new version.",
+                         "remedy":  "Hold the update (report \"installed version unknown\") whenever `installed` is None for an engine with a rollback path.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-claudecode-diff-review-zai-claude.md",
+                                        "thread":  "161a3cf8-7842-475a-8168-ba4e31065587",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:49:01+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:40+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "unparsable installed version is held, nothing installed",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test an_unparsable_installed_version_is_held",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-3",
+                         "status":  "verified",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  624
+                                           }
+                                       ],
+                         "claim":  "The model step ignores both the `--engine` filter and C3_MAINTAIN_SKIP: `c3 maintain --run --engine codex` still collects and swaps models of grok/agy/claude seats, editing the roster and spending smoke turns outside the scope the operator selected.",
+                         "trigger":  "Any scoped or skip-configured pass (`--engine codex` or C3_MAINTAIN_SKIP=grok) with a roster seat whose source has a successor.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:445, :624-694",
+                                              "observation":  "run_models receives `opts` but reads only opts.dry_run; `skip` and `only` are computed in pass_inner and never passed to it."
+                                          }
+                                      ],
+                         "verification":  "With a roster holding a swappable grok seat, run `c3 maintain --run --dry-run --engine codex` and observe grok model candidate lines in the output.",
+                         "remedy":  "Filter swap candidates (and collect sources) by opts.engines and skip_set inside run_models.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-claudecode-diff-review-zai-claude.md",
+                                        "thread":  "161a3cf8-7842-475a-8168-ba4e31065587",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:49:01+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:44+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "model step honours --engine and C3_MAINTAIN_SKIP",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test the_model_step_honours_the_engine_filter",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-4",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  651
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  37
+                                           }
+                                       ],
+                         "claim":  "A model-swap smoke builds its Target directly from the candidate instead of going through pick_target, so the saturation guard (no plan whose governing window is at 90 %+ used) and the budget-headroom/codex-custom-provider preference never apply to swap smokes — they can spend quota on an exhausted plan.",
+                         "trigger":  "A swap candidate exists on a seat whose plan window is at or beyond 90 % used at pass time.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:651-656 vs crates/c3/src/maintain/smoke.rs:37-98, :150-177",
+                                              "observation":  "The saturation check and ranking exist only inside pick_target; the swap path constructs Target { provider, model } inline and calls run_one_smoke directly."
+                                          }
+                                      ],
+                         "verification":  "Set the seat\u0027s plan snapshot to 95 % used, offer a successor id, and run a non-dry pass: the smoke runs anyway.",
+                         "remedy":  "Route the swap target through pick_target\u0027s plan_headroom check (or skip the swap when the seat\u0027s plan is saturated).",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-claudecode-diff-review-zai-claude.md",
+                                        "thread":  "161a3cf8-7842-475a-8168-ba4e31065587",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:49:01+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:44+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "swap smoke obeys the saturation rule through smoke::seat_saturated; no dedicated test",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-5",
+                         "status":  "verified",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  1471
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/grok.rs",
+                                               "line":  740
+                                           }
+                                       ],
+                         "claim":  "The dead-re-ask salvage concatenates ALL text events, so the reply recorded for a run whose re-ask read and then died can still contain the interim placeholder written before the last tool call — inconsistent with grok_turn_outcome\u0027s final-text-after-last-tool-call rule the same change introduces.",
+                         "trigger":  "A grok re-ask that emits an answer-shaped interim note, makes tool calls, emits partial final text, then dies.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/secondary.rs:1471-1476; crates/c3/src/engines/grok.rs:740-762 vs :690-694",
+                                              "observation":  "grok_salvage pushes every `text` event; the outcome path keeps only final_text after the last tool_call."
+                                          }
+                                      ],
+                         "verification":  "Script a grok re-ask (fake stream) with a placeholder, a tool_call, then partial text and no end event: the .reply.json contains both the placeholder and the partial text.",
+                         "remedy":  "Make grok_salvage return the text after the last tool_call (fall back to all text only when there was none).",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-claudecode-diff-review-zai-claude.md",
+                                        "thread":  "161a3cf8-7842-475a-8168-ba4e31065587",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:49:01+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:34+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "salvage is the text after the last tool call",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test salvage_is_the_text_after_the_last_tool_call",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-6",
+                         "status":  "verified",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  265
+                                           }
+                                       ],
+                         "claim":  "The in-use guard is a one-shot match of process names against the launcher\u0027s file stem, checked before two smokes that take minutes: npm-shimmed CLIs may run under a different image name (node / codex-\u003ctarget\u003e) so a live consultation may not be detected, and there is a TOCTOU window between the check and do_update.",
+                         "trigger":  "A consultation on the engine starts while the pass is running its pre-update smoke, or the engine\u0027s real process name differs from the launcher stem.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:265-293, :413-431",
+                                              "observation":  "engine_in_use compares lowercased process-name stems; it runs once per engine before maintain_one_engine, which then smokes twice before updating."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "npm global install layout (engine.rs:42-56)",
+                                              "observation":  "Windows npm shims (.cmd) launch the package binary whose image name may not equal the shim stem; consequence is bounded (Windows file locks make the update fail cleanly; POSIX keeps the old inode)."
+                                          }
+                                      ],
+                         "verification":  "Start a real `c3 consult --engine grok` and, while it runs, run `c3 maintain --run --engine grok` in a sandbox: check whether the pass reports \"skipped: in use\".",
+                         "remedy":  "Re-check engine_in_use immediately before do_update, and match on the launcher\u0027s resolved binary path as well as the stem.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-claudecode-diff-review-zai-claude.md",
+                                        "thread":  "161a3cf8-7842-475a-8168-ba4e31065587",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:49:01+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:39+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F03-3",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test in_use_detects_name_and_command_line_and_fails_closed_on_a_snapshot_error",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-7",
+                         "status":  "verified",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  254
+                                           }
+                                       ],
+                         "claim":  "apply_swap writes the roster with a bare fs::write (no temp+rename), so a crash mid-write can leave a truncated roster file; the same-day .bak-maintain-\u003cdate\u003e backup stands, but recovery is manual. Separately, two seats sharing the same provider AND model value can never be swapped (replace_entry_model returns an ambiguity error) — safe, but a silent no-op.",
+                         "trigger":  "Power loss / kill during the roster write; or a roster with duplicate provider+model seats offered a successor.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:254 (fs::write), :237-241 (backup), :270-289 (ambiguity error)",
+                                              "observation":  "State files use tmp+rename (mod.rs:94-107) but the roster write does not; the disambiguation filter keeps every match when both entries name the provider."
+                                          }
+                                      ],
+                         "verification":  "Kill the process between the backup and the write (or construct duplicate seats) and inspect the roster / the pass report.",
+                         "remedy":  "Write the roster via temp file + rename like write_state; consider disambiguating duplicate seats by position.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-claudecode-diff-review-zai-claude.md",
+                                        "thread":  "161a3cf8-7842-475a-8168-ba4e31065587",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:49:01+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:43+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F03-8",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test commit_swap_aborts_on_a_concurrent_edit_and_writes_atomically",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-1",
+                         "status":  "verified",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/grok.rs",
+                                               "line":  707
+                                           }
+                                       ],
+                         "claim":  "Grok placeholder reply becomes usable when a turn reads then emits no post-tool text: final_text is empty, so the whole-stream text (the pre-read placeholder) is used and ok=true, bypassing the zero-tool guard because tool_calls\u003e0.",
+                         "trigger":  "text placeholder, then tool_call, then end_turn with no later text event.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/grok.rs:705-722, 266-274",
+                                              "observation":  "reply falls back to events.text when final_text is empty despite tool_calls\u003e0; guard only fires at 0 calls in run_detailed."
+                                          }
+                                      ],
+                         "verification":  "Unit-test read_grok_events/grok_turn_outcome with that stream; expect not ok and no usable reply.",
+                         "remedy":  "When tool_calls\u003e0 and final_text is blank, fail the turn (empty final answer) instead of falling back to whole-stream text; keep whole text only as salvage.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:32+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "a turn with tool calls and no text after the last one fails; the note is salvage only",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test tool_calls_then_no_post_tool_text_is_not_a_usable_reply + a_turn_that_reads_then_answers_nothing_is_not_usable_under_either_transport",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-2",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  232
+                                           }
+                                       ],
+                         "claim":  "Pass lock acquisition is racy: existence is checked then the lock is written with plain fs::write, so two concurrent passes can both acquire and update simultaneously.",
+                         "trigger":  "Two SessionStart hooks, or hook plus manual --run, start at the same time.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:232-257, 818-820, 842-851",
+                                              "observation":  "acquire_lock reads/checks pid_alive then fs::write overwrites; no create_new/O_EXCL or compare-and-swap. hook_line also checks lock_held before spawning, widening the race."
+                                          }
+                                      ],
+                         "verification":  "Spawn two maintain passes concurrently against fake CLIs and assert only one runs updates.",
+                         "remedy":  "Create the lock with create_new(true); on contention re-read and only take over a proven-dead lock via an atomic replace protocol.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:37+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "lock by atomic create_new, stale takeover retried once",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test two_racing_lock_takers_only_one_wins + a_stale_lock_is_taken_over",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-3",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  265
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  560
+                                           }
+                                       ],
+                         "claim":  "In-use protection is only a name match checked once before a minutes-long smoke/update, so an engine can be updated while in use.",
+                         "trigger":  "A consultation starts after the in-use scan but before npm/grok/kimi update, or the engine runs via node/cmd/powershell so its process name differs from the launcher stem.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:265-293, 412-426, 549-572, 624-681",
+                                              "observation":  "engine_in_use matches only process-name stem to launcher stem and comments that read failure means not-in-use; maintain_one_engine checks it once then smokes and updates much later with no recheck. Model swaps in run_models have no in-use check at all."
+                                          }
+                                      ],
+                         "verification":  "Fake-CLI test that starts a matching live process mid-smoke and asserts no update/swap occurs.",
+                         "remedy":  "Re-check immediately before do_update and before apply_swap using the live-run registry/pids as well as process names; skip and retry tomorrow on any doubt, including enumeration failure for updatable engines.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:38+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "command-line match, fail-closed snapshot, re-check right before the update",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test in_use_detects_name_and_command_line_and_fails_closed_on_a_snapshot_error",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-4",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  581
+                                           }
+                                       ],
+                         "claim":  "When the installed version cannot be parsed, the pass still updates and then tries to roll back to the literal string unknown, leaving a failed-smoke version installed despite an existing rollback path; rollback success is also never verified by re-reading/re-smoking.",
+                         "trigger":  "--version output has no parseable semver token, update succeeds, post-update smoke fails.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:392-396, 507-512, 574-595; crates/c3/src/maintain/engine.rs:251-268",
+                                              "observation":  "installed_text becomes \"unknown\"; the up-to-date guard requires Some(inst); do_rollback is called with installed_text; success is taken from exit code only."
+                                          }
+                                      ],
+                         "verification":  "Fake pass with unparseable installed version and failing post-update smoke; assert no update is attempted.",
+                         "remedy":  "Hold the update when installed is unknown; after rollback re-read the version, require equality with the previous version, and re-smoke or report rollback-unverified.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:40+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F02-2",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test an_unparsable_installed_version_is_held",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-5",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/engine.rs",
+                                               "line":  244
+                                           }
+                                       ],
+                         "claim":  "Grok update is unpinned, so it can install a version newer than the checked latest (and newer than any cool-down assessment) in a check/update race.",
+                         "trigger":  "A new grok release appears between `grok update --check` and `grok update`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/engine.rs:167-193, 230-247",
+                                              "observation":  "check_grok returns latestVersion with released=None, so min-age never applies to grok; do_update runs plain `grok update` and ignores the `to` argument, unlike codex/kimi pins."
+                                          }
+                                      ],
+                         "verification":  "Fake grok whose update installs a different version than --check reported; assert the pass rejects/rolls it back.",
+                         "remedy":  "Use `grok update --version \u003cchecked\u003e` for the update, or re-check after update and roll back when the installed version differs from the checked one.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:41+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "grok update pinned to the checked version; version re-read after every update and rollback",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test the_grok_update_is_pinned_to_the_checked_version + an_update_that_does_not_take_is_reported_not_smoked",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-6",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  290
+                                           }
+                                       ],
+                         "claim":  "A hostile or malformed model id from a model-list endpoint/CLI can break out of the roster JSON string because the successor id is spliced unescaped and validation only checks that the result loads.",
+                         "trigger":  "/v1/models or `grok models` returns an id containing a quote/backslash/newline crafted to remain parseable.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:146-159, 242-256, 290-295",
+                                              "observation":  "parse_models_json accepts arbitrary id strings; replace_entry_model inserts `new` raw between quotes; apply_swap validates loadability but does not verify exactly one intended field changed or that the parsed model equals `new`."
+                                          }
+                                      ],
+                         "verification":  "apply_swap/replace_entry_model test with a quote-bearing successor; expect refusal and an unchanged roster.",
+                         "remedy":  "Reject model ids outside a strict charset before candidacy, JSON-escape on splice, and post-validate that the parsed roster differs in exactly the target entry\u0027s model.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:42+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "strict id shape at collection and in the roster edit",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test model_id_shape_guard + replace_refuses_a_hostile_successor_id",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-7",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/version.rs",
+                                               "line":  144
+                                           }
+                                       ],
+                         "claim":  "The never-swap stamped-id rule is bypassable: a dotted date/build suffix is parsed as the model version itself.",
+                         "trigger":  "Seated model-5.3-2026.11 with candidate model-5.3-2026.12 in the same source list.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/version.rs:100-149, 156-177",
+                                              "observation":  "is_stamped only rejects a final -// segment that is all digits of length \u003e=3; parse_model_id takes the LAST digits.digits run, so model-5.3-2026.11 is treated as major 2026/minor 11 and a later date becomes its successor."
+                                          }
+                                      ],
+                         "verification":  "successor(\"model-5.3-2026.11\", [\"model-5.3-2026.12\"]) should be None.",
+                         "remedy":  "Reject ids with any trailing date/build-like segment (including dotted dates) and require the version run to be the model version, not a suffix stamp; add successor tests for dotted-date ids.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:42+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "first major.minor is the version; any further date/build segment makes an id stamped",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test dotted_date_stamps_are_never_swapped",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-8",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  233
+                                           }
+                                       ],
+                         "claim":  "Roster swaps can silently overwrite a concurrent roster edit: apply_swap reads, validates and writes with no lock, mtime or content check.",
+                         "trigger":  "Operator or another c3 process edits the roster between apply_swap\u0027s read and write (the smoke window makes this minutes long).",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:226-257",
+                                              "observation":  "apply_swap reads the file, optionally backs it up, validates the edited string, then fs::write replaces the path; nothing detects that the file changed after the read."
+                                          }
+                                      ],
+                         "verification":  "Test that mutates the roster file after the backup/read step and asserts apply_swap refuses to write.",
+                         "remedy":  "Hold the roster/commit lock during read-edit-write or compare the on-disk content/hash immediately before writing and abort on change.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:43+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "roster re-read before the write, abort on change; temp file + rename",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test commit_swap_aborts_on_a_concurrent_edit_and_writes_atomically",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-9",
+                         "status":  "implemented",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  1449
+                                           }
+                                       ],
+                         "claim":  "A read-insist re-ask that never actually ran (LaunchFailed, 0 tool calls) is recorded as the dead attempt that ended the run, and when its salvage is empty the reply record still holds the primary placeholder.",
+                         "trigger":  "Fresh grok re-ask fails to launch, or dies with no salvaged text after a zero-tool primary.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/secondary.rs:1449-1505; crates/c3/src/engines/grok.rs:738-762",
+                                              "observation":  "Any non-Completed outcome breaks the loop as ReaskDeath regardless of tool calls; raw_text is replaced only when salvage is non-empty. grok_salvage also concatenates all text events, including pre-tool interim text."
+                                          }
+                                      ],
+                         "verification":  "Fake-grok test with FAKE_GROK_RESUME_NO_END plus a launch-failure variant; assert outcome, final_tool_calls and reply file name the correct attempt.",
+                         "remedy":  "Only treat a re-ask as the dead reviewing attempt when it made tool calls or produced an engine-classified failure; otherwise keep the guard outcome/retry, and use final_text-based salvage.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:33+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "a re-ask that could not start keeps the zero-tool outcome and names the launch failure; no integration test - the fake cannot fail the launch of the re-ask alone",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-10",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  712
+                                           }
+                                       ],
+                         "claim":  "Budget live sources share one cache file per plan and past-reset live windows are never marked stale, so the panel can be fed another source\u0027s empty result or a pre-reset usage figure.",
+                         "trigger":  "Two vendors share a plan slug, or a cached zai/muse window crosses its reset within the 300 s cache life.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:401-430, 471-485, 492-507, 550-568, 613-615, 712-714",
+                                              "observation":  "cache_path is only .cache-{plan}.json for kimi/zai/muse; zai/muse/kimi windows set observed_at=now and stale=false even when resets_at is already past, unlike snapshot staleness at resets_at\u003c=now."
+                                          }
+                                      ],
+                         "verification":  "Unit tests: same-plan kimi cache must not suppress the muse probe; a past-reset TOKENS_LIMIT yields no governing window.",
+                         "remedy":  "Key caches by source+plan and drop/mark stale any window whose resets_at\u003c=now before multiplier/display use.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:36+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "cache keyed by source and plan; past-reset live windows dropped",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test cache_path_is_keyed_by_source_and_plan + a_past_reset_live_window_is_dropped",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-11",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  85
+                                           }
+                                       ],
+                         "claim":  "Maintenance child processes, including the downloaded kimi installer and npm install scripts, inherit the operator\u0027s full environment (minus host markers), exposing API keys to third-party install code.",
+                         "trigger":  "Any maintain update on a machine whose shell/hook environment contains ZAI_API_KEY, KIMI_API_KEY, xAI or cloud credentials.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:78-106; crates/c3/src/maintain/engine.rs:274-315",
+                                              "observation":  "SystemEnv::run builds Command from the inherited environment, scrubs only host markers, then runs npm/grok/kimi installer with that environment; the kimi script is executed with -ExecutionPolicy Bypass."
+                                          }
+                                      ],
+                         "verification":  "Fake installer that dumps its environment; assert no provider key names/values are present.",
+                         "remedy":  "Run update/install commands with a minimal allowlisted environment (PATH, home, temp, installer pin only), explicitly removing provider/API key variables.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:45+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "update, installer and probe children run without provider secrets",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test update_children_do_not_see_provider_secrets + the_secret_env_filter",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-12",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  616
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  178
+                                           }
+                                       ],
+                         "claim":  "The claimed --smoke/no-state invariant is not literal: a non-dry --smoke creates its scratch repo under the maintain state directory, and kimi redirects accept any subdomain of the registrable site.",
+                         "trigger":  "`c3 maintain --smoke` on a fresh home; or a kimi CDN redirect to a different kimi.ai subdomain.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:603-620, 701-746; crates/c3/src/maintain/smoke.rs:247-265; crates/c3/src/maintain/env.rs:166-190",
+                                              "observation":  "run_one_smoke builds work under the state dir and run_consult_smoke creates it (removed afterwards, but the state dir remains); redirect_target compares only the last two host labels, so code.kimi.ai may redirect to any *.kimi.ai host whose script is then executed."
+                                          }
+                                      ],
+                         "verification":  "Assert no maintain directory is created by --smoke, and redirect_target refuses a non-allowlisted kimi.ai subdomain.",
+                         "remedy":  "Use the OS temp dir for smoke scratch; pin kimi redirects to an allowlist (code.kimi.ai/cdn.kimi.ai) rather than the whole registrable domain.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a1df37-21b6-7351-8a58-bb7e545404eb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:45:10+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:46+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "smoke repository lives under the OS temp directory and is removed",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-1",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  559
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  507
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  454
+                                           }
+                                       ],
+                         "claim":  "A crash after do_update returns success and before the post-update smoke returns leaves the new CLI installed. The next pass treats that version as current because the pre-update version was never written to state.json.",
+                         "trigger":  "Kill the maintain process after the update command exits 0 and before run_one_smoke for the new version returns.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:549-599 and 441-461",
+                                              "observation":  "Smoke of the installed binary runs, then do_update, then a second smoke and optional rollback. write_state runs only after maintain_one_engine returns. The up-to-date branch at 507-510 returns when the parsed installed version is greater than or equal to latest."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:216-247",
+                                              "observation":  "Drop removes the lock only when the recorded pid is still this process. acquire_lock takes over a lock whose pid is not alive. A hard-killed pass therefore loses the lock and the in-memory old version together."
+                                          }
+                                      ],
+                         "verification":  "Run RC1 and confirm the second pass prints up to date while the fake installed version is still the post-update pin.",
+                         "remedy":  "Before do_update, atomically record the engine name and the parsed previous version as an in-progress journal. On the next pass, if that journal exists, roll back to it or re-smoke before treating the binary as current.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:39+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "pending-update journal written before the install, resolved by the next pass",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test a_pending_update_whose_install_never_took_is_cleared + the two sibling pending-update tests",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-2",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  265
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/liveness/proc.rs",
+                                               "line":  934
+                                           }
+                                       ],
+                         "claim":  "The in-use guard misses a live engine whose process image name is not the launcher file stem, and a failed process-table read is treated as not in use, so the pass can npm-install or run the kimi installer while a consultation is running.",
+                         "trigger":  "A codex.cmd or grok.cmd shim is on PATH and the live reviewer process is node.exe, or enumerate_processes fails.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:265-292",
+                                              "observation":  "engine_in_use compares Path file_stem of the launcher with each process name minus .exe. The comment says a read failure proceeds."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/lineage.rs:99-131",
+                                              "observation":  "Windows launcher candidates include codex.cmd, grok.cmd, and the other *.cmd shims ahead of a bare name."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/liveness/proc.rs:934-935",
+                                              "observation":  "enumerate_processes returns an empty Vec when the platform snapshot returns Err."
+                                          }
+                                      ],
+                         "verification":  "Run RC2. The pass log updates the engine instead of printing skipped: in use.",
+                         "remedy":  "Match the launcher stem and node/cmd children by command line, and skip the engine when the process snapshot fails.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:38+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F03-3",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test in_use_detects_name_and_command_line_and_fails_closed_on_a_snapshot_error",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-3",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  232
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  818
+                                           }
+                                       ],
+                         "claim":  "Two SessionStart hooks can both decide the lock is free and both run a pass, so two npm installs or two kimi installers can run at once.",
+                         "trigger":  "Two hook processes call hook_line before either child has written \u003cstate\u003e/lock.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:232-257",
+                                              "observation":  "acquire_lock reads the lock, then writes it with std::fs::write. There is no create-new or exclusive create."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:815-819 and 855-878",
+                                              "observation":  "hook_line spawns a detached c3 maintain --run when lock_held is false. The child acquires the lock only after it starts."
+                                          }
+                                      ],
+                         "verification":  "Start two c3 maintain --run processes in the same CODEX_HOME at the same moment under the fake CLIs and count how many update commands the fake records.",
+                         "remedy":  "Create the lock with create_new (or a directory exclusive create) and have the hook spawn only after that create succeeds, or write a pending lock in the parent before spawn.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:37+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F03-2",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test two_racing_lock_takers_only_one_wins",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-4",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/grok.rs",
+                                               "line":  707
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  1432
+                                           }
+                                       ],
+                         "claim":  "A grok turn that emitted a schema-shaped placeholder, then at least one tool call, then no further text, is a usable reply whose body is that placeholder. A tool_call after the real answer clears final_text and takes the same fallback.",
+                         "trigger":  "Streaming events: text (placeholder JSON), tool_call, end with stopReason end_turn, and no text event after the last tool_call. The re-ask path then sets usable.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/grok.rs:444-447 and 705-710",
+                                              "observation":  "tool_call clears final_text. If tool_calls \u003e 0 and final_text is empty, reply is events.text, which still holds the pre-tool placeholder."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/grok.rs:266-273 and 538-544",
+                                              "observation":  "The zero-tool guard runs only on a primary turn and only when tool_calls == 0. A secondary re-ask is exempt."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/secondary.rs:1432-1441",
+                                              "observation":  "Completed re-ask with det.tool_calls \u003e 0 sets usable true and replaces raw_text with reply.raw_text."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/grok.rs:883-912",
+                                              "observation":  "The unit test covers a placeholder that is followed by a later text answer. It does not cover an empty final_text."
+                                          }
+                                      ],
+                         "verification":  "Run RC3. grok_turn_outcome returns ok with reply equal to the placeholder.",
+                         "remedy":  "When tool_calls \u003e 0 and final_text is empty, fail the turn (or keep it unusable) instead of falling back to events.text. Do not mark a read-insist re-ask usable unless final_text is non-empty.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:32+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F03-1",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test a_turn_that_reads_then_answers_nothing_is_not_usable_under_either_transport",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-5",
+                         "status":  "verified",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  1471
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/grok.rs",
+                                               "line":  740
+                                           }
+                                       ],
+                         "claim":  "A grok read-insist re-ask that dies with no text events leaves the primary zero-tool placeholder in the reply file while bridge_outcome describes the later attempt. A re-ask that did emit text stores every text event, including the pre-tool placeholder, not the post-tool tail.",
+                         "trigger":  "Primary turn is the zero-tool guard failure. The fresh re-ask makes tool calls and then times out or exits non-zero with no text events, or with a placeholder text event before the tools.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/secondary.rs:1468-1509",
+                                              "observation":  "On a non-Completed re-ask, salvage is grok_salvage of that attempt. raw_text is replaced only when salvage is non-empty. The outcome string names read-insist attempt N. For a fresh re-ask the thread is cleared."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/grok.rs:740-760",
+                                              "observation":  "grok_salvage concatenates every text event and does not clear on tool_call."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/render.rs:330-333",
+                                              "observation":  "A non-empty raw_text is written to reply.json for a non-raw run."
+                                          }
+                                      ],
+                         "verification":  "Fixture a zero-tool primary and a read-insist events file with tool_call and end and no text event. Confirm reply.json is still the primary placeholder and the handoff outcome names the re-ask.",
+                         "remedy":  "On a dead re-ask, set raw_text from final_text of that attempt only. If that tail is empty, clear raw_text so the primary placeholder is not the recorded reply.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:33+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "dead re-ask reply = its text after the last tool call, else empty",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test a_dead_reask_with_only_pre_tool_text_clears_the_reply_not_the_placeholder",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-6",
+                         "status":  "verified",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/engine.rs",
+                                               "line":  244
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  582
+                                           }
+                                       ],
+                         "claim":  "Grok\u0027s forward update ignores the checked version and runs grok update. Rollback success is the child exit code, so a zero exit that leaves the new binary in place is reported as rolled back.",
+                         "trigger":  "grok update installs a build other than latestVersion, the post-update smoke fails, and grok update --version \u003cold\u003e exits 0 without changing the installed version.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/engine.rs:230-268",
+                                              "observation":  "do_update for grok is env.run(launcher, [\"update\"], ...) and does not pass to. do_rollback passes --version with the previous text."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:574-589",
+                                              "observation":  "after is read before the second smoke. After rollback, rolled is matches!(res, Ok(ref r) if r.ok()). installed_version is not called again."
+                                          }
+                                      ],
+                         "verification":  "Point the grok fake at an update that exits 0 and a --version rollback that exits 0 while --version stays on the new pin. Confirm the report says rolled back.",
+                         "remedy":  "Pass the checked version into grok update when the CLI accepts it, and after rollback re-read --version and report rollback failed when it still shows the new pin.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:41+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "rollback confirmed by re-reading the version",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test a_rollback_that_does_not_restore_is_reported_failed",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-7",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  435
+                                           }
+                                       ],
+                         "claim":  "The z.ai quota GET follows redirects. ureq 2.12 does not attach Authorization to the next hop, but the followed body is cached and parsed as the plan window.",
+                         "trigger":  "https://api.z.ai/api/monitor/usage/quota/limit returns 302 to another host that returns TOKENS_LIMIT JSON.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:435-444",
+                                              "observation":  "zai_get uses AgentBuilder::new().timeout(HTTP_TIMEOUT).build() and sets Authorization. It does not call redirects(0)."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "ureq 2.12.1 src/agent.rs:262-263",
+                                              "observation":  "Default config is redirects: 5 and redirect_auth_headers: RedirectAuthHeaders::Never."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:122-125",
+                                              "observation":  "The maintain HTTP client sets redirects(0) and follows keyless hops by hand. zai_get does not use that client."
+                                          }
+                                      ],
+                         "verification":  "Run RC4.",
+                         "remedy":  "Build the z.ai agent with redirects(0), matching the other keyed GETs, and treat a 3xx as no windows.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:35+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "same fix as F02-1",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-8",
+                         "status":  "implemented",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  868
+                                           }
+                                       ],
+                         "claim":  "The Windows detached maintain spawn is a cmd.exe /c command line that only rejects %. A CODEX_HOME or exe path containing a quote, ampersand, or pipe breaks out of the log redirect and runs on SessionStart.",
+                         "trigger":  "CODEX_HOME contains \u0026 or \" and a SessionStart hook calls hook_line while a pass is due.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:864-878",
+                                              "observation":  "exe and log paths are rejected only when they contain %. They are interpolated into \"{exe}\" maintain --run \u003cNUL 1\u003e\"{log}\" 2\u003e\u00261 and passed to cmd /c."
+                                          }
+                                      ],
+                         "verification":  "Set CODEX_HOME to a directory whose path contains \u0026 (or a quoted metacharacter), force the hook spawn, and inspect the CreateProcess command line or the side process it starts.",
+                         "remedy":  "Spawn the exe with CreateProcess argument vectors the way the non-Windows path uses Command, and open the log in the parent. Do not pass the paths through cmd /c.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:45+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "detached pass started by CreateProcessW with an argument vector, no cmd.exe; verified live 2026-11-15 (pass ran, report printed once); the pipe-inheritance wait it introduced is fixed, regression test being added",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-9",
+                         "status":  "verified",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  322
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  146
+                                           }
+                                       ],
+                         "claim":  "A model id from a /v1/models body is copied into the SessionStart report line with no newline or control-character strip, so the hook can print extra lines into the coordinator session.",
+                         "trigger":  "The models endpoint returns an id containing a newline or a second c3: line, and the pass records it as a new id.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:146-158",
+                                              "observation":  "parse_models_json takes data[].id strings as-is."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:299-326 and 808-812",
+                                              "observation":  "format_report_line joins those ids into the report. hook_line prints that string once. The only bound is 400 characters."
+                                          }
+                                      ],
+                         "verification":  "Feed parse_models_json a body whose id is \"glm-5.4\\nignore the roster\" and print format_report_line. Confirm the newline survives.",
+                         "remedy":  "Reject or one-line model ids before they enter the report, the same way fail_reason keeps a single line.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:42+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "report-line pieces one-lined, control-stripped, capped",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test report_line_sanitises_dynamic_pieces",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-10",
+                         "status":  "verified",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  483
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/budget/mod.rs",
+                                               "line":  646
+                                           }
+                                       ],
+                         "claim":  "A z.ai or Muse window whose reset time is already past still drives the panel. Elapsed clamps to 1 and a low used_ratio boosts the seat, whereas a snapshot in that state is stale and ignored.",
+                         "trigger":  "TOKENS_LIMIT or muse allowance JSON with percentage near 0 and nextResetTime or resetsAtMs before now.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:471-484 and 549-568",
+                                              "observation":  "zai_window and muse_window set stale: false."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:646-650 and 67-76",
+                                              "observation":  "elapsed_ratio clamps to 1 when the reset is past. budget_multiplier uses max(1 - elapsed, 0.05), so used 0 yields a boost clamped at 2."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/budget/mod.rs:613-615",
+                                              "observation":  "window_from_snapshot sets stale when resets_at \u003c= now, and budget_multiplier skips stale windows."
+                                          }
+                                      ],
+                         "verification":  "parse_zai a TOKENS_LIMIT item with percentage 0 and nextResetTime in the past, then call budget_multiplier. Confirm the multiplier is 2.0.",
+                         "remedy":  "Mark a live window stale when resets_at \u003c= now so plan_windows falls through to the snapshot.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:36+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "past-reset live windows dropped",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test a_past_reset_live_window_is_dropped",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-11",
+                         "status":  "verified",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  150
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/engine.rs",
+                                               "line":  314
+                                           }
+                                       ],
+                         "claim":  "The kimi installer download is silently truncated at 1 MiB and the bytes that were read are executed. A script longer than the cap can run as a prefix of itself.",
+                         "trigger":  "The installer URL returns a 200 body longer than 1_000_000 bytes.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:146-151",
+                                              "observation":  "into_reader().take(1_000_000).read_to_end ignores whether the cap was hit and returns the partial body as success."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/engine.rs:284-314",
+                                              "observation":  "Any 2xx body is written to kimi-install.ps1 or kimi-install.sh and executed."
+                                          }
+                                      ],
+                         "verification":  "Serve an install.ps1 larger than 1 MiB that prints its length, and run the kimi update path under a fake Env or a local URL override. Confirm the executed file is shorter than the server body.",
+                         "remedy":  "If the read hits the cap, return an error and do not execute. Prefer a size check against Content-Length before running.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a1df37-15fa-7d43-9548-f8706cd5effb",
+                                        "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                        "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-15T13:51:12+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "ee6cabaa6aa40769c1d88a14971f36d546b2b6da8ca88e73f2ac2c2aaff0639f"
+                                         },
+                                         {
+                                             "when":  "2026-11-15T15:04:45+01:00",
+                                             "status":  "verified",
+                                             "by":  "coordinator",
+                                             "note":  "a body that reaches the cap is an error, never written or run",
+                                             "evidence":  "full run 2026-11-15 after the fixes: c3-core 281, c3 lib 634, c3-cli 188 passed in 19 binaries; test a_truncated_kimi_download_is_never_written_or_run",
+                                             "base_commit":  "035d386ce163ce33a9933fd99a106bf36ad1f768",
+                                             "tree_sha256":  "3eead875fb7dd68f213e87f7375a2f3f5eee8a9c1e977e8fb9b91fd1043943c1"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     }
+                 ],
+    "ratings":  [
+                    {
+                        "n":  1,
+                        "consult_id":  "14228dcb-1f38-4b6c-80c7-f6893584338b",
+                        "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                        "provider":  "ZAI-claude",
+                        "model":  "glm-5.3",
+                        "engine":  "claude",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-15T13:38:01+01:00",
+                        "useful":  "yes",
+                        "note":  "GLM-5.3: ACCEPT with 7 real minor points (keyed GET following redirects, unknown installed version, model step ignoring --engine); all held on inspection",
+                        "when":  "2026-11-15T15:04:56+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1794751496
+                    },
+                    {
+                        "n":  2,
+                        "consult_id":  "17828f6f-20b5-4e8a-bc79-7a12f21c5ae9",
+                        "lineage":  "meta :: muse-wonder-1.0 [muse]",
+                        "provider":  "meta",
+                        "model":  "muse-wonder-1.0",
+                        "engine":  "muse",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-15T13:38:01+01:00",
+                        "useful":  "yes",
+                        "note":  "Muse Wonder: the blocker (a placeholder taken as the answer when tool calls are followed by no text) and 10 majors (racy lock, unpinned grok update, id injection into the roster, env secrets to installers) all held",
+                        "when":  "2026-11-15T15:04:56+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1794751496
+                    },
+                    {
+                        "n":  3,
+                        "consult_id":  "5a21f30f-752b-43d5-a621-08303f4d345d",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-15T13:38:01+01:00",
+                        "useful":  "yes",
+                        "note":  "Grok on the prompt-only transport: 84 tool calls on the first turn, no re-ask; found the crash window after an update and the in-use guard gaps; all 11 held",
+                        "when":  "2026-11-15T15:04:56+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1794751496
+                    }
+                ]
+}

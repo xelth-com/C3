@@ -6,18 +6,25 @@
 # {usage}, and the ONE end {stopReason, sessionId, requestId, cwd, usage}; an error {message} on a
 # start failure.
 #   FAKE_GROK_ARGV_LOG=<path>   EVERY start appends one JSON line: {kind (turn | version | other),
-#                               argv, prompt, prompt_len, cwd, resume, env (the variable NAMES,
-#                               sorted)} - the harness reads it (the env NAMES prove the billing
-#                               guard stripped the xAI API key).
+#                               argv, prompt, prompt_len, cwd, resume, sid (the session id this turn
+#                               minted or echoed), env (the variable NAMES, sorted)} - the harness
+#                               reads it (the env NAMES prove the billing guard stripped the xAI API
+#                               key; the per-turn sid proves which thread the consultation recorded).
 #   `--version`                 "grok 1.0.70-fake"
 #   turn (--prompt-file):
 #   FAKE_GROK_REPLY=<file>      the reply text emitted as text events (first turn)
-#   FAKE_GROK_RESUME_REPLY=<file>  on a --resume turn (a format-repair / continuation): this instead
+#   FAKE_GROK_PRETOOL_REPLY=<file>  a PLACEHOLDER text event emitted BEFORE the tool calls (the
+#                               prompt-only transport's interim note); with an empty FAKE_GROK_REPLY
+#                               this is the F03-1 shape: placeholder, tool call, no final answer
+#   FAKE_GROK_RESUME_REPLY=<file>  on a SECONDARY turn (a --resume format-repair, or a grok read-insist
+#                               re-ask - a fresh conversation at turn index >= 2): this reply instead
 #   FAKE_GROK_TOOL_CALLS=<n>    emit n tool_call events on EVERY turn (a compliant run that opens the
-#                               brief and files); 0/unset = none. A --resume turn's count is
+#                               brief and files); 0/unset = none. A SECONDARY turn's count is
 #                               FAKE_GROK_RESUME_TOOL_CALLS when that is set (it overrides this).
-#   FAKE_GROK_RESUME_TOOL_CALLS=<n>  on a --resume turn (a read-insist re-ask): emit n tool_call
+#   FAKE_GROK_RESUME_TOOL_CALLS=<n>  on a SECONDARY turn (a read-insist re-ask): emit n tool_call
 #                               events (proving the re-ask read the code); 0/unset = none
+#   FAKE_GROK_RESUME_NO_END=1   on a SECONDARY turn: emit the tool calls + interim text, then CRASH
+#                               mid-stream (no end event, exit 1) - the thick-poll incident shape
 #   FAKE_GROK_SESSION=other     the end names a new session (a resume landed elsewhere);
 #                               =notuuid: a non-uuid session id
 #   FAKE_GROK_ERROR=<text>      an error event with that message; exit 1 (no end), a start failure
@@ -76,11 +83,20 @@ $promptFile = Get-Flag '--prompt-file'
 $prompt = ''
 if ($promptFile -and (Test-Path $promptFile)) { $prompt = [IO.File]::ReadAllText($promptFile, $u8) }
 
+# the session id: grok echoes a --resume id, else mints its own (printed only in the end event). It
+# is computed BEFORE the argv-log append so the log can record it (`sid`) - a read-insist re-ask now
+# runs in a FRESH conversation (no --resume), so the harness reads each turn's minted sid from the
+# log to prove the recorded thread is the accepted re-ask's, not the abandoned primary's.
+$id = if ($resume) { $resume } else { [guid]::NewGuid().ToString() }
+$smode = [string]$env:FAKE_GROK_SESSION
+if ($smode -eq 'other') { $id = [guid]::NewGuid().ToString() }
+if ($smode -eq 'notuuid') { $id = 'session-1' }
+
 if ($env:FAKE_GROK_ARGV_LOG) {
     $names = @([Environment]::GetEnvironmentVariables().Keys | ForEach-Object { [string]$_ } | Where-Object { $_ -ne 'FAKE_GROK_ARGS' })
     $names = [string[]]$names
     [Array]::Sort($names, [StringComparer]::OrdinalIgnoreCase)
-    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; env = [object[]]$names; pid = $PID }
+    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; sid = [string]$id; env = [object[]]$names; pid = $PID }
     $line = (J $rec) + "`n"
     Invoke-FakeWrite { [IO.File]::AppendAllText($env:FAKE_GROK_ARGV_LOG, $line, $u8) }
 }
@@ -96,28 +112,43 @@ if ($env:FAKE_GROK_ERROR) {
     exit 1
 }
 
-# the session id: grok echoes a --resume id, else mints its own (printed only in the end event).
-$id = if ($resume) { $resume } else { [guid]::NewGuid().ToString() }
-$smode = [string]$env:FAKE_GROK_SESSION
-if ($smode -eq 'other') { $id = [guid]::NewGuid().ToString() }
-if ($smode -eq 'notuuid') { $id = 'session-1' }
+# the 1-based turn index: count the 'turn' lines already in the argv log (this turn included). A
+# SECONDARY turn is a format-repair/continuation (--resume) OR a grok read-insist re-ask (a fresh
+# conversation, no --resume, so turn index >= 2 marks it). FAKE_GROK_RESUME_* apply to it.
+$turnIdx = if ($resume) { 2 } else { 1 }
+if ($env:FAKE_GROK_ARGV_LOG -and (Test-Path $env:FAKE_GROK_ARGV_LOG)) {
+    $cnt = @([IO.File]::ReadAllLines($env:FAKE_GROK_ARGV_LOG, $u8) | Where-Object { $_ -match '"kind":"turn"' }).Count
+    if ($cnt -ge 1) { $turnIdx = $cnt }
+}
+$secondary = ($turnIdx -ge 2) -or ($resume -ne '')
 
-# the reply: the resume reply on a --resume turn, else the first-turn reply.
+# the reply: the resume/re-ask reply on a secondary turn, else the first-turn reply.
 $replyFile = $env:FAKE_GROK_REPLY
-if ($resume -and $env:FAKE_GROK_RESUME_REPLY) { $replyFile = $env:FAKE_GROK_RESUME_REPLY }
+if ($secondary -and $env:FAKE_GROK_RESUME_REPLY) { $replyFile = $env:FAKE_GROK_RESUME_REPLY }
 $reply = ''
 if ($replyFile -and (Test-Path $replyFile)) { $reply = [IO.File]::ReadAllText($replyFile, $u8) }
 
 # an optional thought, then the reply split across two text events (the bridge concatenates them).
 Out-Bytes ((J ([pscustomobject]@{ type = 'thought'; data = 'thinking about it' })) + "`n")
 
+# FAKE_GROK_PRETOOL_REPLY=<file>: a PLACEHOLDER text event emitted BEFORE the tool calls (the
+# prompt-only transport's interim prose/schema note). The real final answer is the POST-tool reply;
+# with an empty FAKE_GROK_REPLY this reproduces the F03-1 incident shape: a placeholder, a tool
+# call, then NO final answer after the last tool call.
+$pretool = ''
+if ($env:FAKE_GROK_PRETOOL_REPLY -and (Test-Path $env:FAKE_GROK_PRETOOL_REPLY)) { $pretool = [IO.File]::ReadAllText($env:FAKE_GROK_PRETOOL_REPLY, $u8) }
+if ($pretool.Length -ge 1) {
+    Out-Bytes ((J ([pscustomobject]@{ type = 'text'; data = $pretool })) + "`n")
+}
+
 # tool calls: emit N tool_call events (a read_file + its completed update each), so the turn's
 # tool_calls count is N - the evidence the model opened the brief/code. FAKE_GROK_TOOL_CALLS applies
-# to every turn (a compliant run); on a --resume turn FAKE_GROK_RESUME_TOOL_CALLS overrides it (a
-# read-insist re-ask that reads the code this time).
+# to every turn (a compliant run); on a SECONDARY turn (a --resume format-repair, or a fresh grok
+# read-insist re-ask at turn index >= 2) FAKE_GROK_RESUME_TOOL_CALLS overrides it (the re-ask reads
+# the code this time).
 $rtc = 0
 if ($env:FAKE_GROK_TOOL_CALLS) { $rtc = [int]$env:FAKE_GROK_TOOL_CALLS }
-if ($resume -and $env:FAKE_GROK_RESUME_TOOL_CALLS) { $rtc = [int]$env:FAKE_GROK_RESUME_TOOL_CALLS }
+if ($secondary -and $env:FAKE_GROK_RESUME_TOOL_CALLS) { $rtc = [int]$env:FAKE_GROK_RESUME_TOOL_CALLS }
 for ($j = 0; $j -lt $rtc; $j++) {
     $cid = "insist-$j"
     Out-Bytes ((J ([pscustomobject]@{ type = 'tool_call'; toolCallId = $cid; toolName = 'read_file'; status = 'pending' })) + "`n")
@@ -133,6 +164,11 @@ if ($reply.Length -gt 1) {
 
 $usage = [pscustomobject]@{ input_tokens = 5820; output_tokens = 83; cache_read_input_tokens = 3840; cache_creation_input_tokens = 0; reasoning_tokens = 82 }
 Out-Bytes ((J ([pscustomobject]@{ type = 'usage'; usage = $usage; signature = 'FAKESIG' })) + "`n")
+
+# FAKE_GROK_RESUME_NO_END=1: a SECONDARY turn (a read-insist re-ask) CRASHES mid-stream - it made
+# tool calls and emitted interim text but dies with NO end event and a non-zero exit (the real
+# thick-poll-path incident: a 10-minute review that stopped mid-thought, child exit 1).
+if ($secondary -and $env:FAKE_GROK_RESUME_NO_END) { exit 1 }
 
 $stop = if ($env:FAKE_GROK_STOP) { [string]$env:FAKE_GROK_STOP } else { 'end_turn' }
 $endUsage = [pscustomobject]@{ input_tokens = 5820; cache_read_input_tokens = 3840; cache_creation_input_tokens = 0; output_tokens = 83; reasoning_tokens = 82; total_tokens = 9743 }

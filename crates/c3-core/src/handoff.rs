@@ -139,8 +139,8 @@ pub struct OptionalRecords {
     pub isolation: Option<String>,
     /// `Warnings: ...`.
     pub warnings: Option<String>,
-    /// (C3) `Read insist: ...`, after the Engine turns line - a reviewing-purpose primary turn
-    /// that answered with zero tool calls was re-asked on the same thread.
+    /// (C3) `Read insist: ...`, after the Engine turns line - a primary turn that answered with
+    /// zero tool calls was re-asked (kimi: on the same thread; grok: in a fresh conversation each).
     pub read_insist: Option<String>,
     /// `Denial retry: ...`, immediately before the Timeout line.
     pub denial_retry: Option<String>,

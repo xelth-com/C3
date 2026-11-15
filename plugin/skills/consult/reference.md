@@ -99,13 +99,21 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   with `--resume`; files `handoffs/<NN>-grok-<slug>.*`. The tree check only WARNS. `XAI_API_KEY` /
   `GROK_CODE_XAI_API_KEY` are stripped from the child (they would bill the API per token) unless
   `C3_GROK_ALLOW_API_KEY=1`; `c3 providers` names the billing route. Reviewer use only (no `c3 work`).
+  The reply schema travels in the prompt (`prompt-only`, the default since 0.2.4;
+  `--schema-transport native` passes `--json-schema` for one run): with the native flag Grok's
+  opening remark came out as a schema-shaped placeholder answer that ended the turn before any file
+  was read.
   On EVERY non-raw purpose a primary grok turn that answers with zero tool calls read no file, so
-  rather than failing at once the bridge INSISTS: it resumes the same thread with a firm re-ask, up
+  rather than failing at once the bridge INSISTS: it asks again in a NEW grok conversation (the
+  whole original prompt with one insisting line in front; kimi resumes the same thread), up
   to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` disables = fail at once). A re-ask that reads
   (tool calls > 0) makes its reply the primary reply (usable); if every re-ask still reads nothing
   the guard failure stands (class `capability`, no provider outage) with ` after N re-asks`. The
   handoff header records `Read insist: <n> turn(s), tool calls 0 -> <k>` and the ledger entry gets
-  `read_insist: {attempts, final_tool_calls}`. The failure wording and re-ask text depend on the
+  `read_insist: {attempts, final_tool_calls, new_conversation}`. A re-ask that read and then died
+  (no final answer, non-zero exit, timeout) ends the run under its own failure, named
+  `read-insist attempt N after a zero-tool primary; K tool calls`, with its stream as the events
+  file and its salvaged text as the reply. The failure wording and re-ask text depend on the
   purpose: the four review purposes (`acceptance`, `core-contract`, `diff-review`, `checkpoint`) say
   "a <purpose> review must read the code" and the re-ask names `git diff`; every other purpose says
   "it cannot have read the brief" and the re-ask says to open the brief. The review prompt also

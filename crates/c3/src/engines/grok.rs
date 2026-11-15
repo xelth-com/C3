@@ -380,8 +380,13 @@ pub struct GrokEvents {
     pub tool_calls: usize,
     /// Why the stream is malformed (`''` when well-formed).
     pub malformed: String,
-    /// The reply text: the concatenated `text` events, in order.
+    /// The reply text: the concatenated `text` events, in order (the whole stream, for salvage).
     pub text: String,
+    /// (C3) The FINAL answer text: the `text` events that follow the LAST `tool_call` (all of them
+    /// when the turn made no tool call). Grok under `--json-schema` may emit a schema-shaped PROGRESS
+    /// note before it reads, then the real answer after reading; the reply is this tail so an interim
+    /// placeholder is never taken as the answer when a later final one exists.
+    pub final_text: String,
     /// The session id of the `end` event (`''` when none).
     pub session: String,
     /// The `stopReason` of the `end` event (`end_turn`, `max_turn_requests`, ...).
@@ -436,11 +441,16 @@ pub fn read_grok_events(events_text: &str, allow_partial_last: bool) -> GrokEven
         r.records += 1;
         let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
         match kind {
-            "tool_call" => r.tool_calls += 1,
+            "tool_call" => {
+                r.tool_calls += 1;
+                // a new read begins: any text so far was an interim note, not the final answer.
+                r.final_text.clear();
+            }
             "available_commands" | "thought" | "tool_call_update" | "max_turns_reached" => {}
             "text" => {
                 if let Some(d) = obj.get("data").and_then(|v| v.as_str()) {
                     r.text.push_str(d);
+                    r.final_text.push_str(d);
                 }
             }
             "error" => {
@@ -692,7 +702,27 @@ pub fn grok_turn_outcome(
         return o;
     }
     o.thread = session.clone();
-    o.reply = events.text.clone();
+    // (F03-1) A turn that made tool calls but produced NO text after the last one has no final
+    // answer: the pre-tool text was an interim schema-shaped progress note, never the reply. Fail it
+    // the way a stream that ended without an answer is failed - keep the whole text only as salvage,
+    // do not let the placeholder stand in as the answer. A zero-tool turn keeps `final_text == text`
+    // and is owned by the zero-tool review guard (run_detailed).
+    if events.tool_calls > 0 && events.final_text.trim().is_empty() {
+        fail(
+            &mut o,
+            "the grok turn made tool calls but produced no answer after the last one",
+            "",
+            std::slice::from_ref(&events.text),
+        );
+        return o;
+    }
+    // The reply is the FINAL answer (the text after the last tool call); an interim schema-shaped
+    // progress note written before the reading is dropped. With no tool call `final_text == text`.
+    o.reply = if events.tool_calls > 0 {
+        events.final_text.clone()
+    } else {
+        events.text.clone()
+    };
     if o.reply.trim().is_empty() {
         fail(&mut o, "empty reply", "", &[]);
         return o;
@@ -719,10 +749,14 @@ fn fail(o: &mut GrokTurn, why: &str, class: &str, texts: &[String]) {
 
 // --------------------------------------------------------------------------- salvage
 
-/// Salvage the reply text of a killed turn: the `text` events, concatenated. `None` when nothing
-/// was produced.
+/// Salvage the reply text of a killed turn: the final answer, i.e. the `text` events AFTER the last
+/// `tool_call` (an interim schema-shaped progress note written before the reading is never salvaged).
+/// With no tool call it is all the text. `None` when that tail is empty - so a turn that read and
+/// then died with only pre-tool text salvages nothing, and its placeholder never becomes the reply.
 pub fn grok_salvage(events_text: &str) -> Option<String> {
-    let mut out = String::new();
+    let mut all = String::new();
+    let mut tail = String::new();
+    let mut saw_tool_call = false;
     for line in events_text.split(['\r', '\n']) {
         let t = line.trim();
         if !t.starts_with('{') {
@@ -732,16 +766,26 @@ pub fn grok_salvage(events_text: &str) -> Option<String> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if obj.get("type").and_then(|v| v.as_str()) == Some("text") {
-            if let Some(d) = obj.get("data").and_then(|v| v.as_str()) {
-                out.push_str(d);
+        match obj.get("type").and_then(|v| v.as_str()) {
+            Some("tool_call") => {
+                saw_tool_call = true;
+                // a new read begins: any text so far was an interim note, not the final answer.
+                tail.clear();
             }
+            Some("text") => {
+                if let Some(d) = obj.get("data").and_then(|v| v.as_str()) {
+                    all.push_str(d);
+                    tail.push_str(d);
+                }
+            }
+            _ => {}
         }
     }
-    if out.trim().is_empty() {
+    let chosen = if saw_tool_call { tail } else { all };
+    if chosen.trim().is_empty() {
         None
     } else {
-        Some(out)
+        Some(chosen)
     }
 }
 
@@ -864,6 +908,70 @@ mod tests {
     }
 
     #[test]
+    fn reply_is_the_final_answer_after_the_last_tool_call_not_an_interim_placeholder() {
+        // Grok under --json-schema may write a schema-shaped PROGRESS note first, then read, then
+        // the real answer. The reply must be the answer after the last tool call, not the
+        // placeholder; the whole-stream text still keeps both (for salvage).
+        let stream = concat!(
+            r#"{"type":"text","data":"{\"verdict\":\"HOLD\",\"reply_markdown\":\"reading now\"}"}"#,
+            "\n",
+            r#"{"type":"tool_call","toolCallId":"c1","toolName":"read_file","status":"pending"}"#,
+            "\n",
+            r#"{"type":"tool_call_update","toolCallId":"c1","status":"completed"}"#,
+            "\n",
+            r#"{"type":"text","data":"{\"verdict\":\"ADVISE\",\"reply_markdown\":\"the real review\"}"}"#,
+            "\n",
+            r#"{"type":"end","stopReason":"end_turn","sessionId":"11111111-2222-3333-4444-555555555555","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}"#,
+        );
+        let e = read_grok_events(stream, false);
+        assert_eq!(e.tool_calls, 1);
+        assert!(
+            e.final_text.contains("ADVISE") && !e.final_text.contains("HOLD"),
+            "final_text = {}",
+            e.final_text
+        );
+        assert!(e.text.contains("HOLD") && e.text.contains("ADVISE"), "{}", e.text);
+        let t = grok_turn_outcome(&e, 0, "", "");
+        assert!(t.ok, "outcome: {}", t.outcome);
+        assert!(
+            t.reply.contains("ADVISE") && !t.reply.contains("HOLD"),
+            "reply = {}",
+            t.reply
+        );
+    }
+
+    #[test]
+    fn tool_calls_then_no_post_tool_text_is_not_a_usable_reply() {
+        // (F03-1) A turn that wrote a placeholder, made a tool call, then ended with NO text after
+        // the last tool call has no final answer. It must FAIL (not take the placeholder as the
+        // answer), and keep the whole text only as salvage. tool_calls > 0 so the zero-tool guard
+        // does not own this case - grok_turn_outcome must.
+        let stream = concat!(
+            r#"{"type":"text","data":"{\"verdict\":\"HOLD\",\"reply_markdown\":\"reading now\"}"}"#,
+            "\n",
+            r#"{"type":"tool_call","toolCallId":"c1","toolName":"read_file","status":"pending"}"#,
+            "\n",
+            r#"{"type":"tool_call_update","toolCallId":"c1","status":"completed"}"#,
+            "\n",
+            r#"{"type":"end","stopReason":"end_turn","sessionId":"11111111-2222-3333-4444-555555555555","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}"#,
+        );
+        let e = read_grok_events(stream, false);
+        assert_eq!(e.tool_calls, 1);
+        assert!(e.final_text.trim().is_empty(), "no text after the last tool call");
+        let t = grok_turn_outcome(&e, 0, "", "");
+        assert!(!t.ok, "a turn with no answer after its last tool call is not usable");
+        assert!(t.reply.trim().is_empty(), "the placeholder is not the reply");
+        // the placeholder survives only as salvage text on the failed turn.
+        assert!(
+            t.texts.iter().any(|x| x.contains("HOLD")),
+            "the pre-tool text is kept for salvage: {:?}",
+            t.texts
+        );
+        // The thread is still recorded (the stream named a valid session).
+        assert_eq!(t.thread, e.session);
+    }
+
+    #[test]
     fn review_tool_guard_fires_for_reviews_raw_or_not_and_non_review_only_when_non_raw() {
         // acceptance / 0 tool calls -> the guard fires with the review wording (raw or not).
         let (why, class) = grok_review_tool_guard(false, "acceptance", 0).expect("acceptance/0");
@@ -913,7 +1021,8 @@ mod tests {
     }
 
     #[test]
-    fn salvage_concatenates_text_events() {
+    fn salvage_is_the_text_after_the_last_tool_call() {
+        // With no tool call, salvage is all the text.
         let s = concat!(
             r#"{"type":"text","data":"half "}"#,
             "\n",
@@ -923,6 +1032,26 @@ mod tests {
         );
         assert_eq!(grok_salvage(s).as_deref(), Some("half reply"));
         assert!(grok_salvage("").is_none());
+
+        // (F02-5) A placeholder, a tool call, then a partial final answer: salvage is only the tail
+        // after the last tool call - the pre-read placeholder is never salvaged.
+        let read_then_tail = concat!(
+            r#"{"type":"text","data":"placeholder note"}"#,
+            "\n",
+            r#"{"type":"tool_call","toolCallId":"c1","toolName":"read_file","status":"pending"}"#,
+            "\n",
+            r#"{"type":"text","data":"the real review"}"#,
+        );
+        assert_eq!(grok_salvage(read_then_tail).as_deref(), Some("the real review"));
+
+        // A placeholder, a tool call, then NOTHING: the tail is empty, so salvage is None (the
+        // placeholder is not resurrected as the reply).
+        let read_then_nothing = concat!(
+            r#"{"type":"text","data":"placeholder note"}"#,
+            "\n",
+            r#"{"type":"tool_call","toolCallId":"c1","toolName":"read_file","status":"pending"}"#,
+        );
+        assert!(grok_salvage(read_then_nothing).is_none());
     }
 
     #[test]

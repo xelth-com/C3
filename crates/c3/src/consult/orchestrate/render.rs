@@ -224,8 +224,14 @@ pub(super) fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
     // re-asked on the same thread.
     if let Some(ri) = &sec.read_insist {
         records.read_insist = Some(format!(
-            "Read insist: {} turn(s), tool calls 0 -> {}.",
-            ri.attempts, ri.final_tool_calls
+            "Read insist: {} turn(s){}, tool calls 0 -> {}.",
+            ri.attempts,
+            if ri.new_conversation {
+                " in a fresh conversation each"
+            } else {
+                ""
+            },
+            ri.final_tool_calls
         ));
     }
     // (16) Denial retry line (agy).

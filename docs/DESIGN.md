@@ -51,6 +51,17 @@ OpenRouter panel with an advisory judge, and the T-hub telemetry client.
    files it names) and its zero-tool reply fails `capability` with the wording "it cannot have read the brief"; the re-ask
    tells it to open the brief. `raw` consultations keep the old inline and are exempt on the non-review purposes. kimi and
    every other engine are unchanged.
+   Since 0.2.4 three more things hold for `grok`. (a) The reply schema travels in the prompt (`prompt-only`), not as
+   `--json-schema`: under the native flag every text Grok writes must be schema-shaped, so its opening remark ("I'll read the
+   brief first") came out as a schema-valid placeholder answer and, carrying no tool call, ended the turn - that was the
+   "answered without reading" failure (live, one fixture brief: 3 of 5 fresh conversations with the flag ended on a
+   placeholder; without it every one read the files). (b) A read-insist re-ask is a NEW conversation carrying the whole
+   original prompt with one insisting line in front, not a resume of the stubborn thread; the recorded thread is the one of
+   the accepted turn, and a run whose every attempt read nothing records no thread. (c) The outcome describes the attempt
+   that ENDED the run: a re-ask that read and then died (no final answer, non-zero exit, timeout) is classified like a
+   primary turn and named `read-insist attempt N after a zero-tool primary; K tool calls`, its stream is the summary's
+   events file, its salvaged text replaces the placeholder as the reply, and the member wall is the total of the attempts.
+   The answer is the text after the last tool call, so an interim note is never taken for it.
 3. **C3 never commits.** `git add`/`commit` and the eck finish loop stay with the coordinator and eckSnapshot.
 4. **Keys.** C3 reads a credential from the environment only for the `http` engine, never prints, stores, commits or
    transmits it anywhere but to that provider, redacts every error string, and refuses an API key where a subscription

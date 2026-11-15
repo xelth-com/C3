@@ -161,11 +161,18 @@ pub fn caps(key: &str) -> Option<Caps> {
             schema_transport: "native",
         },
         // (C3) the grok engine: vocabulary grok (mapping grok-v1) for any grok model, sent as
-        // `--reasoning-effort <v>`; the schema TEXT travels natively (`--json-schema`).
+        // `--reasoning-effort <v>`. The schema travels in the PROMPT (prompt-only) since 0.2.4:
+        // under `--json-schema` every text Grok writes must be schema-shaped, so its usual opening
+        // remark ("I'll read the brief first") comes out as a schema-valid placeholder answer, and
+        // when that message carries no tool call the turn ends on it - the "answered without
+        // reading" failure. Measured live on 2026-11-15 (grok-4.7, CLI 1.0.77, one fixture brief):
+        // with `--json-schema` 3 of 5 fresh conversations ended on such a placeholder with 0 tool
+        // calls; without it 10 of 10 read the files and closed with a valid JSON answer. `native`
+        // stays available as a one-run override (`--schema-transport native`).
         "engine:grok" => Caps {
             vocabulary: "grok",
             models: Models::Any,
-            schema_transport: "native",
+            schema_transport: "prompt-only",
         },
         // (C3) the kimi engine: kimi -p has no effort flag (the model's own `default_effort`
         // applies) and no schema flag, so effort is `model-tier` (nothing is sent) and the schema

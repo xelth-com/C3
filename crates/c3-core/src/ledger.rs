@@ -755,6 +755,10 @@ pub struct ReadInsist {
     pub attempts: i64,
     #[serde(default)]
     pub final_tool_calls: i64,
+    /// (C3, grok) Each re-ask ran in a FRESH conversation (no resume of the zero-tool thread); the
+    /// field is omitted for the same-thread engines (kimi) so their record shape is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub new_conversation: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }

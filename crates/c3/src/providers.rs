@@ -2636,7 +2636,7 @@ pub(crate) fn read_reviewer_roster() -> Result<Roster, String> {
 
 // ---- launcher discovery
 
-fn find_on_path(name: &str) -> Option<String> {
+pub(crate) fn find_on_path(name: &str) -> Option<String> {
     let path = std::env::var_os("PATH")?;
     let has_ext = Path::new(name).extension().is_some();
     let pathext: Vec<String> = if cfg!(windows) && !has_ext {

@@ -50,6 +50,13 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     if let Some(l) = crate::update::hook_line(chrono::Utc::now()) {
         println!("{l}");
     }
+    // (c3 maintain) one extra line when a finished maintenance pass has not been reported yet; the
+    // hook also starts a detached pass when one is due and the feature is on. Silent on any error,
+    // nothing printed when there is nothing to say, so startup/resume/compact output is otherwise
+    // unchanged and never blocked.
+    if let Some(l) = crate::maintain::hook_line(chrono::Utc::now()) {
+        println!("{l}");
+    }
     0
 }
 

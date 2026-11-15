@@ -119,7 +119,21 @@ pub fn plan_windows(
             return w;
         }
     }
-    // 3. snapshot: a file the operator writes with `c3 budget set`.
+    // 3. z.ai: the live quota/limit endpoint (cached).
+    if entries.iter().any(is_zai) {
+        let w = zai_windows(plan, entries, now, network);
+        if !w.is_empty() {
+            return w;
+        }
+    }
+    // 4. muse: the local `muse usage --json` probe (cached).
+    if entries.iter().any(is_muse) {
+        let w = muse_windows(plan, now, network);
+        if !w.is_empty() {
+            return w;
+        }
+    }
+    // 5. snapshot: a file the operator writes with `c3 budget set`.
     snapshot_windows(plan, now)
 }
 
@@ -190,6 +204,23 @@ fn is_kimi(e: &RosterEntry) -> bool {
 /// The env var holding the Kimi Code key: the endpoint entry's `env_key`, else `KIMI_API_KEY`
 /// (the native engine entry carries no endpoint).
 const KIMI_ENV_KEY_DEFAULT: &str = "KIMI_API_KEY";
+
+/// A roster entry on the z.ai (GLM coding) plan: an endpoint entry whose base URL host is
+/// `api.z.ai`.
+fn is_zai(e: &RosterEntry) -> bool {
+    e.endpoint
+        .as_ref()
+        .map(|ep| ep.host_name.eq_ignore_ascii_case("api.z.ai"))
+        .unwrap_or(false)
+}
+
+/// The env var holding the z.ai key: the endpoint entry's `env_key`, else `ZAI_API_KEY`.
+const ZAI_ENV_KEY_DEFAULT: &str = "ZAI_API_KEY";
+
+/// A roster entry on the Meta Muse Code plan: the native `muse` engine.
+fn is_muse(e: &RosterEntry) -> bool {
+    e.engine.eq_ignore_ascii_case("muse")
+}
 
 // --------------------------------------------------------------------------- openai (codex)
 
@@ -264,7 +295,7 @@ fn kimi_windows(
     now: DateTime<Utc>,
     network: bool,
 ) -> Vec<BudgetWindow> {
-    let cache = cache_path(plan);
+    let cache = cache_path("kimi", plan);
     if let Some((fetched_at, body)) = read_cache(cache.as_deref()) {
         let fresh = (now - fetched_at).num_seconds() < CACHE_SECS;
         if fresh || !network {
@@ -297,15 +328,20 @@ fn kimi_windows(
 }
 
 /// GET `https://api.kimi.ai/coding/v1/usages` with the bearer token; the body on a 200, else None.
+/// A keyed GET never follows a redirect (`redirects(0)`): a 3xx is treated as no data, so the
+/// `Authorization` header is never replayed to a redirect target.
 fn kimi_get(token: &str) -> Option<String> {
-    let agent = ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build();
+    let agent = ureq::AgentBuilder::new()
+        .timeout(HTTP_TIMEOUT)
+        .redirects(0)
+        .build();
     match agent
         .get("https://api.kimi.ai/coding/v1/usages")
         .set("Authorization", &format!("Bearer {token}"))
         .call()
     {
-        Ok(resp) => resp.into_string().ok(),
-        Err(_) => None,
+        Ok(resp) if resp.status() < 300 => resp.into_string().ok(),
+        _ => None,
     }
 }
 
@@ -340,6 +376,11 @@ fn kimi_window(
         .as_str()
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())?
         .with_timezone(&Utc);
+    // (F03-10) A live window whose reset is already past describes a finished period (the new one
+    // starts at 0 and only a fresh reading knows it): drop it, so a snapshot or "no data" applies.
+    if resets_at <= now {
+        return None;
+    }
     let period_secs = match period_min {
         Some(m) => (m * 60) as f64,
         None => (resets_at - minus_one_month(resets_at)).num_seconds() as f64,
@@ -351,6 +392,199 @@ fn kimi_window(
         elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
         resets_at,
         source: "kimi-usages".to_string(),
+        observed_at: now,
+        stale: false,
+    })
+}
+
+// --------------------------------------------------------------------------- z.ai (quota/limit)
+
+/// The z.ai (GLM coding) plan's 5-hour token window. Cached under
+/// `<codex home>/c3-budget/.cache-<plan>.json` for [`CACHE_SECS`]; `network == false` reads the
+/// cache only.
+fn zai_windows(
+    plan: &str,
+    entries: &[RosterEntry],
+    now: DateTime<Utc>,
+    network: bool,
+) -> Vec<BudgetWindow> {
+    let cache = cache_path("zai", plan);
+    if let Some((fetched_at, body)) = read_cache(cache.as_deref()) {
+        let fresh = (now - fetched_at).num_seconds() < CACHE_SECS;
+        if fresh || !network {
+            return parse_zai(&body, plan, now);
+        }
+    } else if !network {
+        return Vec::new();
+    }
+    let env_key = entries
+        .iter()
+        .find_map(|e| {
+            e.endpoint
+                .as_ref()
+                .filter(|ep| ep.host_name.eq_ignore_ascii_case("api.z.ai"))
+                .map(|ep| ep.env_key.clone())
+        })
+        .filter(|k| !k.is_empty())
+        .unwrap_or_else(|| ZAI_ENV_KEY_DEFAULT.to_string());
+    let token = std::env::var(&env_key).ok().filter(|v| !v.is_empty());
+    let token = match token {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    let body = match zai_get(&token) {
+        Some(b) => b,
+        None => return Vec::new(),
+    };
+    write_cache(cache.as_deref(), now, &body);
+    parse_zai(&body, plan, now)
+}
+
+/// GET `https://api.z.ai/api/monitor/usage/quota/limit` with the bearer token; the body on a 200,
+/// else None. A keyed GET never follows a redirect (`redirects(0)`): a 3xx is treated as no data, so
+/// the `Authorization` header is never replayed to a redirect target.
+fn zai_get(token: &str) -> Option<String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout(HTTP_TIMEOUT)
+        .redirects(0)
+        .build();
+    match agent
+        .get("https://api.z.ai/api/monitor/usage/quota/limit")
+        .set("Authorization", &format!("Bearer {token}"))
+        .call()
+    {
+        Ok(resp) if resp.status() < 300 => resp.into_string().ok(),
+        _ => None,
+    }
+}
+
+/// Parse the z.ai quota/limit body into the 5-hour token window. `data.limits[]` holds a
+/// `TOKENS_LIMIT` item (the 5-hour model-token window: `percentage` used, `nextResetTime` in epoch
+/// ms) and a `TIME_LIMIT` item (a monthly MCP-tools allowance, NOT a model quota - ignored).
+fn parse_zai(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
+    let v: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let limits = match v["data"]["limits"].as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for item in limits {
+        if item["type"].as_str() == Some("TOKENS_LIMIT") {
+            if let Some(w) = zai_window(plan, item, now) {
+                out.push(w);
+            }
+        }
+    }
+    out
+}
+
+/// One z.ai `TOKENS_LIMIT` item -> the `5h` window: `{percentage (0-100), nextResetTime (epoch ms)}`.
+fn zai_window(plan: &str, obj: &Value, now: DateTime<Utc>) -> Option<BudgetWindow> {
+    let pct = c3_core::quota::finite_percent(&obj["percentage"])?;
+    let resets_at = epoch_ms(obj["nextResetTime"].as_i64()?)?;
+    // (F03-10) A live window past its reset carries no usage info for the current period: drop it.
+    if resets_at <= now {
+        return None;
+    }
+    let period_secs = 5.0 * 3600.0;
+    Some(BudgetWindow {
+        plan: plan.to_string(),
+        name: "5h".to_string(),
+        used_ratio: pct / 100.0,
+        elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
+        resets_at,
+        source: "zai-quota".to_string(),
+        observed_at: now,
+        stale: false,
+    })
+}
+
+// --------------------------------------------------------------------------- muse (usage --json)
+
+/// The Meta Muse Code plan's 5-hour and weekly windows. Cached under
+/// `<codex home>/c3-budget/.cache-<plan>.json` for [`CACHE_SECS`]; `network == false` reads the
+/// cache only (the probe spawns `muse usage --json`, which makes no model turn).
+fn muse_windows(plan: &str, now: DateTime<Utc>, network: bool) -> Vec<BudgetWindow> {
+    let cache = cache_path("muse", plan);
+    if let Some((fetched_at, body)) = read_cache(cache.as_deref()) {
+        let fresh = (now - fetched_at).num_seconds() < CACHE_SECS;
+        if fresh || !network {
+            return parse_muse(&body, plan, now);
+        }
+    } else if !network {
+        return Vec::new();
+    }
+    let body = match muse_get() {
+        Some(b) => b,
+        None => return Vec::new(),
+    };
+    write_cache(cache.as_deref(), now, &body);
+    parse_muse(&body, plan, now)
+}
+
+/// Run `muse usage --json` (the muse launcher resolved as every muse turn resolves it) bounded to
+/// ~10 s and return its stdout on a clean exit; any failure (no launcher, a non-zero exit, a
+/// timeout) yields None.
+fn muse_get() -> Option<String> {
+    let launcher = crate::providers::resolve_engine_launcher("muse", "")
+        .ok()
+        .flatten()
+        .filter(|l| !l.trim().is_empty())?;
+    let (code, out, _err) =
+        crate::providers::run_with_timeout(&launcher, &["usage", "--json"], HTTP_TIMEOUT)?;
+    if code != 0 {
+        return None;
+    }
+    Some(out)
+}
+
+/// Parse the `muse usage --json` body into the 5-hour and weekly windows. Before the first use in a
+/// window `allowance` is null (`reason: "server_sent_no_usage"`) -> no windows (the snapshot, if any,
+/// still applies). A populated `allowance` carries `window` (5h) and `weekly`, each
+/// `{usedPercent (0-100), resetsAtMs (epoch ms)}`.
+fn parse_muse(body: &str, plan: &str, now: DateTime<Utc>) -> Vec<BudgetWindow> {
+    let v: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let allowance = &v["allowance"];
+    if !allowance.is_object() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if let Some(w) = muse_window(plan, &allowance["window"], "5h", 5.0 * 3600.0, now) {
+        out.push(w);
+    }
+    if let Some(w) = muse_window(plan, &allowance["weekly"], "week", 7.0 * 86_400.0, now) {
+        out.push(w);
+    }
+    out
+}
+
+/// One muse allowance window: `{usedPercent (0-100), resetsAtMs (epoch ms)}` over a fixed period.
+fn muse_window(
+    plan: &str,
+    obj: &Value,
+    name: &str,
+    period_secs: f64,
+    now: DateTime<Utc>,
+) -> Option<BudgetWindow> {
+    let pct = c3_core::quota::finite_percent(&obj["usedPercent"])?;
+    let resets_at = epoch_ms(obj["resetsAtMs"].as_i64()?)?;
+    // (F03-10) A live window past its reset carries no usage info for the current period: drop it.
+    if resets_at <= now {
+        return None;
+    }
+    Some(BudgetWindow {
+        plan: plan.to_string(),
+        name: name.to_string(),
+        used_ratio: pct / 100.0,
+        elapsed_ratio: elapsed_ratio(resets_at, period_secs, now),
+        resets_at,
+        source: "muse-usage".to_string(),
         observed_at: now,
         stale: false,
     })
@@ -425,6 +659,11 @@ fn default_period_secs(window: &str, resets_at: DateTime<Utc>) -> f64 {
 
 // --------------------------------------------------------------------------- shared math / io
 
+/// An epoch-milliseconds instant (z.ai `nextResetTime`, muse `resetsAtMs`) as a UTC datetime.
+fn epoch_ms(ms: i64) -> Option<DateTime<Utc>> {
+    Utc.timestamp_millis_opt(ms).single()
+}
+
 /// `1 - (resets - now) / period`, clamped to 0..1.
 fn elapsed_ratio(resets_at: DateTime<Utc>, period_secs: f64, now: DateTime<Utc>) -> f64 {
     if period_secs <= 0.0 {
@@ -492,8 +731,10 @@ fn snapshot_path(plan: &str) -> Option<PathBuf> {
     budget_dir().map(|d| d.join(format!("{plan}.json")))
 }
 
-fn cache_path(plan: &str) -> Option<PathBuf> {
-    budget_dir().map(|d| d.join(format!(".cache-{plan}.json")))
+/// The live-reading cache of one source on one plan: `.cache-<source>-<plan>.json`. Keyed by source
+/// AND plan so two sources that happen to share a plan slug never read each other's cached body.
+fn cache_path(source: &str, plan: &str) -> Option<PathBuf> {
+    budget_dir().map(|d| d.join(format!(".cache-{source}-{plan}.json")))
 }
 
 /// Read a live-reading cache file: `{fetched_at, body}`.

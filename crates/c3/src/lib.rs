@@ -42,6 +42,8 @@ pub mod telemetry;
 
 pub mod update;
 
+pub mod maintain;
+
 pub mod mcp;
 
 pub mod work;

@@ -19,7 +19,9 @@ use c3::providers;
 #[derive(Parser)]
 #[command(
     name = "c3",
-    version,
+    // `C3_VERSION` is stamped by build.rs: `0.2.3 (035d386)` (`-dirty` when tracked files differ
+    // from HEAD at build time), or the plain `CARGO_PKG_VERSION` when git/.git is absent.
+    version = env!("C3_VERSION"),
     about = "C3 — claude-codex-consult in Rust",
     disable_help_subcommand = true
 )]
@@ -82,6 +84,8 @@ enum Commands {
     Fetch(c3::cli::fetch::FetchArgs),
     /// Check for a newer C3 release and, only with `--apply`, install it (wave 11).
     Update(c3::cli::update::UpdateArgs),
+    /// Keep the engine CLIs and seated model ids fresh by itself (`--run` / `--dry-run`).
+    Maintain(c3::cli::maintain::MaintainArgs),
     /// Budget snapshots for budget-aware routing: `set` / `show` (wave 9).
     Budget(c3::cli::budget::BudgetArgs),
 }
@@ -154,6 +158,7 @@ fn main() {
         Some(Commands::Scout(a)) => c3::cli::scout::run(a),
         Some(Commands::Fetch(a)) => c3::cli::fetch::run(a),
         Some(Commands::Update(a)) => c3::cli::update::run(a),
+        Some(Commands::Maintain(a)) => c3::cli::maintain::run(a),
         Some(Commands::Budget(a)) => c3::cli::budget::run(a),
         None => {
             // No subcommand: print help (clap prints to stderr on error; here to stdout).

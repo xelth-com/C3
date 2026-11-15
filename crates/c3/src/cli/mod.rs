@@ -13,6 +13,7 @@ pub mod finish;
 pub mod hook;
 pub mod index;
 pub mod init;
+pub mod maintain;
 pub mod manifest;
 pub mod mcp;
 pub mod pack;

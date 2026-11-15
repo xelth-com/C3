@@ -291,6 +291,12 @@ struct Secondary {
     read_insist: Option<c3_core::ledger::ReadInsist>,
     /// The read-insist turns' event streams (one per attempt), for the handoff's further-turns list.
     read_insist_events: Vec<String>,
+    /// (C3, Item 4) When a read-insist re-ask RAN the review (made tool calls) and then died for a
+    /// reason other than "0 tool calls" (a crash with no final answer, a non-zero exit, a timeout),
+    /// this is that last attempt's events file (ABSOLUTE path): the summary's "events file:" line
+    /// follows it, so the run's outcome and pointers describe the attempt that ended it, not attempt
+    /// 1's zero-tool placeholder. `None` otherwise.
+    read_insist_dead_events: Option<String>,
     // --- format repair ---
     format_retry: Option<c3_core::ledger::FormatRetry>,
     repaired_ok: bool,
@@ -2421,6 +2427,9 @@ fn build_context(
         // orchestrator re-asks). The four review purposes carry the stronger reading discipline
         // instead, so they are excluded here.
         reading_duty: !r.raw && engine_name == "grok" && !code_review,
+        // (C3) grok (review or not): the answer is written exactly once, last - no schema-shaped
+        // progress note that the CLI would end the turn on and the bridge would take as the reply.
+        grok_answer_once: !r.raw && engine_name == "grok",
     });
 
     // (0.6.0, wave 29, D4) the model the engine's turns send: the roster's on a new thread; on
@@ -4706,6 +4715,7 @@ fn finish(args: Finish) -> i32 {
                 usable: &mut usable,
                 engine_pf: &mut engine_pf,
                 forced_class: &mut engine_forced_class,
+                wall_seconds: &mut wall_seconds,
             });
         }
     }
@@ -5793,7 +5803,12 @@ fn finish(args: Finish) -> i32 {
         } else {
             ctx.reply_json_path.to_string_lossy().to_string()
         },
-        events_path: ctx.events_path.to_string_lossy().to_string(),
+        // (Item 4) when a read-insist re-ask ran the review and then died, the "events file:" line
+        // points to that last attempt's stream (the review that ended the run), not the primary's.
+        events_path: sec
+            .read_insist_dead_events
+            .clone()
+            .unwrap_or_else(|| ctx.events_path.to_string_lossy().to_string()),
         reply_body,
         section,
         engine_warnings: {

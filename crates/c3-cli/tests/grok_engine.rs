@@ -429,9 +429,10 @@ fn a_zero_tool_call_reply_fails_the_guard_but_a_compliant_run_is_usable() {
 
 #[test]
 fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
-    // The primary acceptance turn answers with 0 tool calls (the guard fires); the read-insist
-    // re-ask resumes the SAME session and reads 2 files, so its reply becomes the primary reply and
-    // the run is usable. The handoff header records the insist.
+    // The primary acceptance turn answers with 0 tool calls (the guard fires); the grok read-insist
+    // re-ask starts a FRESH conversation (no resume) carrying the original prompt, reads 2 files, so
+    // its reply becomes the primary reply and the run is usable. The thread recorded is the re-ask's
+    // own session, never the abandoned primary one. The handoff header records the insist.
     let e = setup("insist-rescue");
     let o = e.consult(
         &[
@@ -457,14 +458,37 @@ fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
     assert_eq!(last["structured"], true);
     assert_eq!(last["read_insist"]["attempts"], 1, "one re-ask: {last}");
     assert_eq!(last["read_insist"]["final_tool_calls"], 2, "it read 2 files: {last}");
-    // a primary turn + one insist re-ask on the minted session.
+    assert_eq!(
+        last["read_insist"]["new_conversation"], true,
+        "the grok re-ask ran in a fresh conversation: {last}"
+    );
+    // a primary turn + one insist re-ask, both FRESH (no --resume).
     let turns = e.turns();
     assert_eq!(turns.len(), 2, "primary + one re-ask: {:?}", turns);
     assert!(turns[0]["resume"].as_str().unwrap_or("").is_empty());
     assert!(
-        is_uuid(turns[1]["resume"].as_str().unwrap_or("")),
-        "the re-ask resumes the session: {:?}",
+        turns[1]["resume"].as_str().unwrap_or("").is_empty(),
+        "the re-ask is a NEW conversation, not a resume: {:?}",
         turns[1]
+    );
+    // the recorded thread is the re-ask's own session, not the abandoned primary's.
+    let primary_sid = turns[0]["sid"].as_str().unwrap_or("");
+    let reask_sid = turns[1]["sid"].as_str().unwrap_or("");
+    assert!(is_uuid(primary_sid) && is_uuid(reask_sid) && primary_sid != reask_sid);
+    assert_eq!(
+        last["thread"].as_str().unwrap_or(""),
+        reask_sid,
+        "the consultation records the re-ask's thread: {last}"
+    );
+    // the re-ask carried the WHOLE original primary prompt (not the short same-thread follow-up)
+    // with the insist line in front.
+    let reask_prompt = turns[1]["prompt"].as_str().unwrap_or("");
+    let primary_prompt = turns[0]["prompt"].as_str().unwrap_or("");
+    assert!(
+        reask_prompt.contains("This is a NEW conversation")
+            && !primary_prompt.is_empty()
+            && reask_prompt.contains(primary_prompt),
+        "the fresh re-ask carries the whole original prompt plus the insist line: {reask_prompt}"
     );
     let handoff = std::fs::read_to_string(
         e.repo
@@ -475,7 +499,7 @@ fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
     )
     .unwrap_or_default();
     assert!(
-        handoff.contains("Read insist: 1 turn(s), tool calls 0 -> 2"),
+        handoff.contains("Read insist: 1 turn(s) in a fresh conversation each, tool calls 0 -> 2"),
         "the handoff records the read-insist line: {handoff}"
     );
 }
@@ -506,8 +530,18 @@ fn read_insist_fails_after_two_re_asks_when_the_model_keeps_reading_nothing() {
     assert_eq!(last["provider_failure"]["class"], "capability");
     assert_eq!(last["read_insist"]["attempts"], 2, "two re-asks: {last}");
     assert_eq!(last["read_insist"]["final_tool_calls"], 0);
+    assert_eq!(last["read_insist"]["new_conversation"], true);
+    // every attempt ran in a throwaway conversation: no thread is recorded (none may be resumed).
+    assert_eq!(
+        last["thread"].as_str().unwrap_or(""),
+        "",
+        "no abandoned zero-tool thread is recorded for a resume: {last}"
+    );
+    // all three turns are fresh (no --resume).
+    let turns = e.turns();
+    assert!(turns.iter().all(|t| t["resume"].as_str().unwrap_or("").is_empty()));
     // primary + 2 insist re-asks = 3 turns.
-    assert_eq!(e.turns().len(), 3, "{:?}", e.turns());
+    assert_eq!(turns.len(), 3, "{:?}", turns);
 }
 
 #[test]
@@ -585,20 +619,28 @@ fn read_insist_rescues_a_zero_tool_framing_reply_with_the_re_asks_answer() {
         last["read_insist"]["final_tool_calls"], 2,
         "the re-ask read 2 files: {last}"
     );
-    // a primary framing turn + one re-ask on the minted session.
+    // a primary framing turn + one re-ask, both FRESH conversations (no --resume).
     let turns = e.turns();
     assert_eq!(turns.len(), 2, "primary + one re-ask: {:?}", turns);
     assert!(turns[0]["resume"].as_str().unwrap_or("").is_empty());
     assert!(
-        is_uuid(turns[1]["resume"].as_str().unwrap_or("")),
-        "the re-ask resumes the session: {:?}",
+        turns[1]["resume"].as_str().unwrap_or("").is_empty(),
+        "the re-ask is a NEW conversation, not a resume: {:?}",
         turns[1]
     );
-    // the re-ask used the NON-review (brief) re-ask prompt, not the code-review one.
+    // the recorded thread is the re-ask's own session, not the abandoned primary's.
+    let reask_sid = turns[1]["sid"].as_str().unwrap_or("");
+    assert!(is_uuid(reask_sid) && turns[0]["sid"].as_str().unwrap_or("") != reask_sid);
+    assert_eq!(last["thread"].as_str().unwrap_or(""), reask_sid, "{last}");
+    // the fresh re-ask carries the WHOLE original primary prompt (brief by reference) with the
+    // insist line, not the short same-thread "you cannot have read the brief" follow-up.
     let reask_prompt = turns[1]["prompt"].as_str().unwrap_or("");
+    let primary_prompt = turns[0]["prompt"].as_str().unwrap_or("");
     assert!(
-        reask_prompt.contains("you cannot have read the brief"),
-        "the brief re-ask prompt is used: {reask_prompt}"
+        reask_prompt.contains("This is a NEW conversation")
+            && !primary_prompt.is_empty()
+            && reask_prompt.contains(primary_prompt),
+        "the fresh re-ask carries the whole original prompt plus the insist line: {reask_prompt}"
     );
     // the re-ask's reply became the primary reply.
     let handoff = std::fs::read_to_string(
@@ -614,7 +656,7 @@ fn read_insist_rescues_a_zero_tool_framing_reply_with_the_re_asks_answer() {
         "the re-ask reply replaced the primary: {handoff}"
     );
     assert!(
-        handoff.contains("Read insist: 1 turn(s), tool calls 0 -> 2"),
+        handoff.contains("Read insist: 1 turn(s) in a fresh conversation each, tool calls 0 -> 2"),
         "the handoff records the re-ask: {handoff}"
     );
 }
@@ -717,6 +759,238 @@ fn a_raw_framing_run_with_zero_tools_is_usable_in_a_single_turn() {
         "no re-ask for a raw run: {last}"
     );
     assert_eq!(e.turns().len(), 1, "a single turn: {:?}", e.turns());
+}
+
+// ------------------------------ a read-insist re-ask that runs the review and then dies (Item 4)
+
+#[test]
+fn read_insist_death_describes_the_dead_reask_not_the_zero_tool_primary() {
+    // The primary diff-review turn answers with 0 tool calls (a schema-shaped PLACEHOLDER); the
+    // guard fires. The fresh re-ask reads 2 files, emits interim review text, then CRASHES mid-stream
+    // (no end event, exit 1). The run's outcome must describe THAT dead attempt - classified like a
+    // primary turn, named as read-insist attempt 1 with its real tool-call count - not attempt 1's
+    // "0 tool calls". The member wall is non-zero, the events pointer is the re-ask's stream, and the
+    // re-ask's salvage (not the placeholder) is the reply.
+    let e = setup("insist-death");
+    let placeholder = e.work.join("placeholder.json");
+    std::fs::write(
+        &placeholder,
+        r#"{"schema_version":"1","verdict":"HOLD","verdict_reason":"PLACEHOLDER-starting the read now","reply_markdown":"PLACEHOLDER-reading before answering","findings":[],"prior_findings":[],"unproven":["placeholder must not be ingested"],"first_run_checklist":[]}"#,
+    )
+    .unwrap();
+    let interim = e.work.join("interim.txt");
+    std::fs::write(&interim, "INTERIM-REVIEW-TEXT the real review got this far before it died").unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "diff-review",
+        ],
+        &[
+            ("FAKE_GROK_REPLY", &placeholder.to_string_lossy()),
+            ("FAKE_GROK_RESUME_REPLY", &interim.to_string_lossy()),
+            ("FAKE_GROK_RESUME_TOOL_CALLS", "2"),
+            ("FAKE_GROK_RESUME_NO_END", "1"),
+        ],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    // the outcome describes the attempt that ENDED the run, with its real tool-call count.
+    assert!(
+        outcome.contains("read-insist attempt 1 after a zero-tool primary")
+            && outcome.contains("2 tool calls")
+            && !outcome.contains("0 tool calls)"),
+        "the outcome must name the dead re-ask, not the zero-tool primary: {outcome}\n{t}"
+    );
+    // it carries the grok exit (4d: why it stopped is answerable).
+    assert!(outcome.contains("exit 1"), "the grok exit is in the outcome: {outcome}");
+    // member wall is the total across attempts, never 0.
+    assert!(
+        last["wall_seconds"].as_f64().unwrap_or(0.0) > 0.0,
+        "the member wall must be non-zero: {last}"
+    );
+    // the read-insist record keeps the real tool-call count of the dead attempt.
+    assert_eq!(last["read_insist"]["final_tool_calls"], 2, "{last}");
+    assert_eq!(last["read_insist"]["attempts"], 1);
+    // the summary's events-file line points to the re-ask's stream, not the primary's.
+    assert!(
+        t.contains("read-insist-1.events.jsonl"),
+        "the events pointer follows the dead re-ask: {t}"
+    );
+    // the reply is the dead re-ask's salvage, NOT attempt 1's placeholder.
+    let reply_md = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("14-grok-agent-result-size.md"),
+    )
+    .or_else(|_| {
+        std::fs::read_to_string(
+            e.repo
+                .join(".collab")
+                .join("t")
+                .join("handoffs")
+                .join("01-grok-reply.md"),
+        )
+    })
+    .unwrap_or_default();
+    let reply_json = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("01-grok-reply.reply.json"),
+    )
+    .unwrap_or_default();
+    let kept = format!("{reply_md}{reply_json}");
+    assert!(
+        kept.contains("INTERIM-REVIEW-TEXT") && !kept.contains("PLACEHOLDER-reading"),
+        "the dead re-ask salvage is the reply, not attempt 1's placeholder: {kept}"
+    );
+    // two turns: primary + one re-ask (both fresh).
+    assert_eq!(e.turns().len(), 2, "{:?}", e.turns());
+}
+
+// ------------------------------ F03-1: a turn that reads then answers nothing is not usable
+
+#[test]
+fn a_turn_that_reads_then_answers_nothing_is_not_usable_under_either_transport() {
+    // (F03-1) A turn that wrote a placeholder, made a tool call, then ended with NO text after the
+    // last tool call has no final answer. The run must FAIL - the pre-tool placeholder is never
+    // ingested as the reply - under BOTH the default prompt-only transport and the selectable native
+    // one. One tool call is made, so the zero-tool guard does not own this case: grok_turn_outcome
+    // must fail it.
+    for transport in ["prompt-only", "native"] {
+        let e = setup(&format!("no-final-{transport}"));
+        let placeholder = e.work.join("placeholder.json");
+        std::fs::write(
+            &placeholder,
+            r#"{"schema_version":"1","verdict":"HOLD","verdict_reason":"PLACEHOLDER-starting the read","reply_markdown":"PLACEHOLDER-reading before answering","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#,
+        )
+        .unwrap();
+        let o = e.consult(
+            &[
+                "--engine",
+                "grok",
+                "--model",
+                "grok-4.7",
+                "--purpose",
+                "diff-review",
+                "--schema-transport",
+                transport,
+            ],
+            &[
+                ("FAKE_GROK_PRETOOL_REPLY", &placeholder.to_string_lossy()),
+                ("FAKE_GROK_REPLY", ""), // no text after the last tool call
+                ("FAKE_GROK_TOOL_CALLS", "1"),
+            ],
+        );
+        let t = text(&o);
+        let last = e.last();
+        assert!(
+            !last["bridge_outcome"]
+                .as_str()
+                .unwrap_or("")
+                .starts_with("usable"),
+            "[{transport}] a turn with no post-tool answer is not usable: {last}\n{t}"
+        );
+        assert_ne!(last["structured"], true, "[{transport}] not structured: {last}");
+        // the placeholder is never written as the reply.
+        let reply_json = std::fs::read_to_string(
+            e.repo
+                .join(".collab")
+                .join("t")
+                .join("handoffs")
+                .join("01-grok-reply.reply.json"),
+        )
+        .unwrap_or_default();
+        assert!(
+            !reply_json.contains("PLACEHOLDER-reading"),
+            "[{transport}] the placeholder must not be ingested as the reply: {reply_json}"
+        );
+        // a non-guard primary failure drives no read-insist re-ask: a single turn.
+        assert_eq!(e.turns().len(), 1, "[{transport}] single turn: {:?}", e.turns());
+    }
+}
+
+// ------------------------------ F02-5: a dead re-ask with only pre-tool text clears the reply
+
+#[test]
+fn a_dead_reask_with_only_pre_tool_text_clears_the_reply_not_the_placeholder() {
+    // (F02-5) The primary diff-review turn answers with 0 tool calls (a placeholder; the guard
+    // fires). The fresh re-ask reads 2 files, emits ONLY a pre-tool interim note, then CRASHES with
+    // no text after the last tool call. The salvage is the text AFTER the last tool call only - here
+    // empty - so the recorded reply is CLEARED ("no reply captured"), never the primary's placeholder
+    // nor the pre-tool note.
+    let e = setup("insist-death-pretool");
+    let placeholder = e.work.join("placeholder.json");
+    std::fs::write(
+        &placeholder,
+        r#"{"schema_version":"1","verdict":"HOLD","verdict_reason":"r","reply_markdown":"PLACEHOLDER-reading before answering","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#,
+    )
+    .unwrap();
+    let pretool = e.work.join("pretool.txt");
+    std::fs::write(&pretool, "PRETOOL-NOTE about to read the files now before I answer").unwrap();
+    // an EMPTY reply FILE (not an unset env, which the fake would treat as "fall back to the primary
+    // reply"): the re-ask emits its pre-tool note, reads 2 files, then NO text after the last one.
+    let empty_reply = e.work.join("empty-reply.txt");
+    std::fs::write(&empty_reply, "").unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "diff-review",
+        ],
+        &[
+            ("FAKE_GROK_REPLY", &placeholder.to_string_lossy()),
+            ("FAKE_GROK_RESUME_REPLY", &empty_reply.to_string_lossy()),
+            ("FAKE_GROK_PRETOOL_REPLY", &pretool.to_string_lossy()),
+            ("FAKE_GROK_RESUME_TOOL_CALLS", "2"),
+            ("FAKE_GROK_RESUME_NO_END", "1"),
+        ],
+    );
+    let t = text(&o);
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    // the re-ask DID make tool calls, so it still ends the run, named attempt 1 with its count.
+    assert!(
+        outcome.contains("read-insist attempt 1 after a zero-tool primary")
+            && outcome.contains("2 tool calls"),
+        "the dead re-ask still ends the run: {outcome}\n{t}"
+    );
+    let reply_md = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("01-grok-reply.md"),
+    )
+    .unwrap_or_default();
+    let reply_json = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("01-grok-reply.reply.json"),
+    )
+    .unwrap_or_default();
+    let kept = format!("{reply_md}{reply_json}");
+    assert!(
+        !kept.contains("PLACEHOLDER-reading") && !kept.contains("PRETOOL-NOTE"),
+        "neither the placeholder nor the pre-tool note is the reply: {kept}"
+    );
+    assert!(
+        reply_md.contains("no reply captured"),
+        "an empty dead-reask salvage renders as 'no reply captured': {reply_md}"
+    );
 }
 
 // ------------------------------------------------------------------ the resume path

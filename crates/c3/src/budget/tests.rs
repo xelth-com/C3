@@ -121,6 +121,69 @@ fn kimi_bad_body_yields_nothing() {
     assert!(parse_kimi("{}", "kimi", now).is_empty());
 }
 
+/// The verified live z.ai `quota/limit` response shape (nothing secret). The `TIME_LIMIT` item is a
+/// monthly MCP-tools allowance (ignored); the `TOKENS_LIMIT` item is the 5-hour model-token window.
+const ZAI_FIXTURE: &str = r#"{"code":200,"msg":"Operation successful","data":{"limits":[{"type":"TIME_LIMIT","unit":5,"number":1,"usage":100,"currentValue":2,"remaining":98,"percentage":2,"nextResetTime":1795471745995,"usageDetails":[{"modelCode":"search-prime","usage":1},{"modelCode":"web-reader","usage":1},{"modelCode":"zread","usage":0}]},{"type":"TOKENS_LIMIT","unit":3,"number":5,"percentage":1,"nextResetTime":1794757032954}],"level":"lite"},"success":true}"#;
+
+#[test]
+fn zai_parse_yields_only_the_tokens_5h_window() {
+    let resets = epoch_ms(1_794_757_032_954).unwrap();
+    let now = resets - chrono::Duration::hours(1);
+    let w = parse_zai(ZAI_FIXTURE, "zai", now);
+    // only TOKENS_LIMIT becomes a window; TIME_LIMIT (the MCP-tools allowance) is ignored.
+    assert_eq!(w.len(), 1, "{w:?}");
+    assert_eq!(w[0].name, "5h");
+    assert!((w[0].used_ratio - 0.01).abs() < 1e-9);
+    assert_eq!(w[0].source, "zai-quota");
+    assert_eq!(w[0].resets_at, resets);
+    // period 5h, remain 1h -> elapsed = 1 - 1/5 = 0.8
+    assert!((w[0].elapsed_ratio - 0.8).abs() < 1e-6, "{}", w[0].elapsed_ratio);
+}
+
+#[test]
+fn zai_bad_body_yields_nothing() {
+    let now = utc("2026-11-08T12:00:00Z");
+    assert!(parse_zai("not json", "zai", now).is_empty());
+    assert!(parse_zai("{}", "zai", now).is_empty());
+    // no TOKENS_LIMIT item -> nothing.
+    assert!(parse_zai(
+        r#"{"data":{"limits":[{"type":"TIME_LIMIT","percentage":2,"nextResetTime":1795471745995}]}}"#,
+        "zai",
+        now
+    )
+    .is_empty());
+}
+
+/// The verified live `muse usage --json` shape with a populated allowance.
+const MUSE_FIXTURE: &str = r#"{"schemaVersion":1,"allowance":{"tier":"Muse Code Everyday Usage","window":{"usedPercent":0,"resetsAtMs":1794757194000},"weekly":{"usedPercent":8,"resetsAtMs":1794787200000},"asOfMs":1794739221336,"source":"mint"},"reason":null,"hint":null}"#;
+/// The `muse usage --json` shape before the first use in a window (no usage data).
+const MUSE_NODATA: &str = r#"{"schemaVersion":1,"allowance":null,"reason":"server_sent_no_usage","hint":"the server sent no usage data for this subscription; this can happen before your first use in a new window"}"#;
+
+#[test]
+fn muse_parse_yields_5h_and_weekly() {
+    let now = epoch_ms(1_794_757_194_000).unwrap() - chrono::Duration::hours(1);
+    let w = parse_muse(MUSE_FIXTURE, "meta", now);
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert_eq!(w[0].name, "5h");
+    assert_eq!(w[0].used_ratio, 0.0);
+    assert_eq!(w[0].source, "muse-usage");
+    // period 5h, remain 1h -> elapsed 0.8
+    assert!((w[0].elapsed_ratio - 0.8).abs() < 1e-6, "{}", w[0].elapsed_ratio);
+    assert_eq!(w[1].name, "week");
+    assert!((w[1].used_ratio - 0.08).abs() < 1e-9);
+    assert_eq!(w[1].source, "muse-usage");
+}
+
+#[test]
+fn muse_no_usage_data_yields_nothing() {
+    // a null allowance (before the first use in a window) yields no windows, so a snapshot still
+    // applies.
+    let now = utc("2026-11-08T12:00:00Z");
+    assert!(parse_muse(MUSE_NODATA, "meta", now).is_empty());
+    assert!(parse_muse("not json", "meta", now).is_empty());
+    assert!(parse_muse("{}", "meta", now).is_empty());
+}
+
 #[test]
 fn snapshot_round_trip() {
     let resets = utc("2026-11-26T00:00:00Z");
@@ -236,4 +299,41 @@ fn parse_when_accepts_dates_instants_and_minute_precision() {
     // Garbage is still rejected.
     assert!(parse_when("not-a-date").is_none());
     assert!(parse_when("2026-11-16T15Z").is_none());
+}
+
+#[test]
+fn cache_path_is_keyed_by_source_and_plan() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let dir = std::env::temp_dir().join("c3-budget-cachekey-test");
+    std::env::set_var("CODEX_HOME", &dir);
+    let kimi = cache_path("kimi", "shared").expect("home set");
+    let zai = cache_path("zai", "shared").expect("home set");
+    let muse = cache_path("muse", "shared").expect("home set");
+    // Two sources on ONE plan slug get distinct cache files, so neither reads the other's body.
+    assert_ne!(kimi, zai);
+    assert_ne!(kimi, muse);
+    assert_ne!(zai, muse);
+    assert!(kimi.to_string_lossy().contains("kimi"));
+    assert!(kimi.to_string_lossy().contains("shared"));
+    std::env::remove_var("CODEX_HOME");
+}
+
+#[test]
+fn a_past_reset_live_window_is_dropped() {
+    // A live reading whose window has already reset carries no info for the new period: drop it, so
+    // a snapshot or "no data" applies instead of a pre-reset usage figure driving the multiplier.
+    // kimi: 5h reset 2026-11-08T17:16:53Z and month reset 2026-11-26; `now` after both -> no windows.
+    let now = utc("2026-11-27T00:00:00Z");
+    assert!(parse_kimi(KIMI_FIXTURE, "kimi", now).is_empty(), "kimi past reset");
+    // zai: TOKENS_LIMIT nextResetTime 1794757032954 ms, now one hour later -> no windows.
+    let zai_resets = epoch_ms(1_794_757_032_954).unwrap();
+    assert!(
+        parse_zai(ZAI_FIXTURE, "zai", zai_resets + chrono::Duration::hours(1)).is_empty(),
+        "zai past reset"
+    );
+    // muse: 5h resetsAtMs 1794757194000 past, weekly resetsAtMs 1794787200000 still future.
+    let muse_5h = epoch_ms(1_794_757_194_000).unwrap();
+    let w = parse_muse(MUSE_FIXTURE, "meta", muse_5h + chrono::Duration::hours(1));
+    assert_eq!(w.len(), 1, "only the still-open weekly window survives: {w:?}");
+    assert_eq!(w[0].name, "week");
 }
