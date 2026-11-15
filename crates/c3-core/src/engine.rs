@@ -248,9 +248,11 @@ pub struct Request {
     pub schema_path: Option<PathBuf>,
     /// Applied `-CodexConfig` items (`key=value`); codex `-c` args, passed through verbatim.
     pub extra_config: Vec<String>,
-    /// (wave 8 = plugin wave 30) The bridge's own codex `-c` items placed right after `-m`, before
-    /// the identity pins and the user's items: `features.multi_agent=false` unless the user's
-    /// `-CodexConfig` names `features.multi_agent` (theirs wins). Empty for every other engine.
+    /// (wave 8 = plugin wave 30; C3 0.2.4) The bridge's own codex `-c` items placed right after
+    /// `-m`, before the identity pins and the user's items: the sub-agent off switches
+    /// ([`crate::quota::SUBAGENT_OFF`] - `features.multi_agent=false` AND `agents.enabled=false`)
+    /// unless the user's `-CodexConfig` names `features.multi_agent` or `agents.enabled` (theirs
+    /// wins). Empty for every other engine.
     pub agent_config: Vec<String>,
     /// codex `-o <path>`: where the last agent message is written.
     pub output_last_message: Option<PathBuf>,
@@ -498,6 +500,11 @@ pub enum StopKind {
     /// (wave 8 = plugin wave 30, T15) The quota budget stopped the main turn: the 5-hour window of
     /// the run's rollout, observed during the turn, reached `-Budget` with its reset ahead.
     Budget { window: crate::quota::PrimaryWindow },
+    /// (C3 0.2.4) The sub-agent guard stopped the turn: a codex run with sub-agents OFF spawned one
+    /// anyway (the `-c` switch no longer bit - a CLI update). `signal` names the evidence.
+    Subagent {
+        signal: crate::quota::SubagentSignal,
+    },
 }
 
 // --------------------------------------------------------------------------- v1 reply schema

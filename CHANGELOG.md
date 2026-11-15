@@ -271,6 +271,53 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `C3_UPDATE_TEST_FETCH_COUNT_FILE` (test-mode only, no network) and the test asserts exactly one
   fetch across two hook runs, so a throttle miss can no longer hide behind whole-second timestamps
   (F99-2).
+- **Codex sub-agents stay off on codex-cli 0.169.0 (and a guard catches it if they don't):** the
+  CLI update moved the live subsystem to multi-agent v2, whose `spawn_agent` tool surface
+  `-c features.multi_agent=false` no longer removes (a model's `multi_agent_version` metadata
+  outranks the feature flag), so an acceptance run still spawned three sub-agents and burned ~14 %
+  of the ChatGPT weekly allowance in minutes. Every codex turn now also passes
+  `-c agents.enabled=false` (proven live on a GLM reviewer with a forced-v2 model: the tool surface
+  is present without it and gone with it); the legacy switch is kept for older CLIs and both are
+  harmless on a CLI that does not know the key (codex ignores an unknown `-c` key without
+  `--strict-config`, which the bridge never passes). The user's opt-in still wins: a
+  `--codex-config` that turns sub-agents ON (`agents.enabled=true`, or `features.multi_agent=true`
+  with `agents.enabled` unnamed) passes none of the off switches; one that turns them OFF by a
+  single key still gets the switch it did not name, so "off" means off on every CLI.
+  As defence in depth, the watch that already polls a run's rollout for the quota budget (every
+  15 s) now also notices a sub-agent - a `spawn_agent` call in the rollout, or a child rollout
+  naming this thread as parent - and stops the main, continuation or repair turn at once, keeping
+  the partial exactly as the budget stop does; the outcome names the codex version, and the failure
+  is class `operator` (a tooling failure, not counted against the reviewer's quota health or its
+  capability).
+- **Acceptance findings of the standing partner (task release-0.2.4, handoff 09, recovered from
+  its rollouts after the run above was stopped; R1-R7):**
+  - `c3 maintain` keeps its recovery journal after a failed install or rollback (R1): a nonzero
+    installer, an update that did not take, or a rollback that did not restore now retains the
+    pending-update record, so the next pass re-probes and smokes or rolls back the result instead
+    of reading a half-installed CLI as "up to date".
+  - `c3 maintain` fails closed when the pending record cannot be written (R2): `write_pending` /
+    `set_pending` propagate directory, write and rename errors, and the pass holds without running
+    the installer when the write-before-install record was not persisted.
+  - The `c3 maintain` model swap is immune to a roster edit during the smoke (R3): the protection
+    and saturation gate and the swap's comparison basis are read from one fresh pre-smoke
+    snapshot, and `apply_swap` refuses to write when the roster on disk changed since it, so
+    protecting the entry or re-pointing its old model during the smoke aborts the swap.
+  - A protected on-request reviewer is no longer spent by an exact `--require` (R4): the reserve
+    hold is evaluated before the on-request gate, so an entry that is both `on_request` and over
+    its `reserve_percent` carries the hard `reserve` skip and a non-standing panel that requires
+    it refuses (exit 5) unless `--spend-reserve`.
+  - Budget windows keep their own observation age (R5): a merged quota reading uses each window's
+    own `primary_observed_at` / `secondary_observed_at`, so a recent 5-hour reading no longer makes
+    a retained old weekly reading look fresh and raise a routing weight above 1.
+  - A future-dated quota observation can no longer evict a real one (R6, the open part of F06-4):
+    future-dated per-window candidates are dropped before the account merge, so a clock-skewed
+    reading cannot win on recency and discard a genuine held reading (a 97 % weekly whose reserve
+    hold would vanish).
+  - An uncommitted brief reaches the `kimi` reviewer (R7): the brief is staged into kimi's
+    throwaway HEAD worktree at its repo-relative path, so a brief that exists only in the caller's
+    working tree is the one the reviewer reads. The other R7 question was refuted: a skipped
+    unknown-engine roster entry keeps its position, so `#n`, the first entry and `--provider`
+    resolve as the file shows them.
 
 ## [0.2.3] - 2026-10-22
 

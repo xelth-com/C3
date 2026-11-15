@@ -456,7 +456,7 @@ fn windows_from_quota(
     now: DateTime<Utc>,
 ) -> Vec<BudgetWindow> {
     let mut out = Vec::new();
-    for key in ["primary", "secondary"] {
+    for (kind, key) in ["primary", "secondary"].into_iter().enumerate() {
         let w = &quota[key];
         if !w.is_object() {
             continue;
@@ -482,6 +482,16 @@ fn windows_from_quota(
         } else {
             0.0
         };
+        // (R5) each window keeps its OWN observation instant (primary_observed_at /
+        // secondary_observed_at), so a recent primary reading never makes a retained OLD weekly
+        // reading look fresh and raise a routing weight above 1. Fall back to the aggregate
+        // observed_at only for a legacy record that carries no per-window instant.
+        let win_observed = quota
+            .get(c3_core::quota::WINDOW_AT_KEYS[kind])
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|t| t.with_timezone(&Utc))
+            .unwrap_or(observed_at);
         out.push(BudgetWindow {
             plan: plan.to_string(),
             name: c3_core::quota::window_name(minutes, true),
@@ -490,9 +500,9 @@ fn windows_from_quota(
             period_secs,
             resets_at,
             source: source.to_string(),
-            observed_at,
+            observed_at: win_observed,
             stale: false,
-            fresh: observed_fresh(observed_at, now),
+            fresh: observed_fresh(win_observed, now),
         });
     }
     out

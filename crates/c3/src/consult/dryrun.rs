@@ -673,7 +673,7 @@ fn preview(ctx: &Context) -> Value {
 
 /// (wave 8 = plugin wave 30, T15) The dry run's `quota`, `budget`, `sub-agents` and `replay` lines
 /// of a codex run: the newest observed windows of the endpoint (`(observed HH:mm, recorded |
-/// rollout)`), the budget and its source, whether `-c features.multi_agent=false` is passed, and the
+/// rollout)`), the budget and its source, whether the sub-agent off switches are passed, and the
 /// parent rollout's size of a fork / resume.
 fn quota_lines(ctx: &Context) -> Vec<String> {
     let mut out = Vec::new();
@@ -709,18 +709,15 @@ fn quota_lines(ctx: &Context) -> Vec<String> {
             format!("off ({})", ctx.budget.source)
         }
     ));
-    let off_passed = ctx
-        .argv
-        .iter()
-        .any(|a| a == c3_core::quota::MULTI_AGENT_OFF);
+    let off_passed = ctx.argv.iter().any(|a| a == c3_core::quota::AGENTS_OFF);
     out.push(format!(
         "sub-agents  : {}",
         if ctx.subagents_allowed == Some(true) {
-            "allowed (-CodexConfig names features.multi_agent)"
+            "allowed (-CodexConfig names features.multi_agent / agents.enabled)"
         } else if off_passed {
-            "off - -c features.multi_agent=false (-CodexConfig features.multi_agent=true allows them)"
+            "off - -c features.multi_agent=false -c agents.enabled=false + the guard (-CodexConfig features.multi_agent=true allows them)"
         } else {
-            "off (-CodexConfig names features.multi_agent)"
+            "off (-CodexConfig names features.multi_agent / agents.enabled)"
         }
     ));
     if let Some(g) = ctx.fork_guard.as_ref().filter(|g| g.path.is_some()) {

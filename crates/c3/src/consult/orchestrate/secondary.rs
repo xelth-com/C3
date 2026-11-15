@@ -277,6 +277,8 @@ fn run_codex_secondary(
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
+                // (R7) a continuation turn resumes the session that already read the brief.
+                brief: None,
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, r.turn.outcome),
@@ -294,7 +296,13 @@ fn run_codex_secondary(
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
-                budget: None,
+                // (C3 0.2.4) the sub-agent guard watches the continuation / repair turns too
+                // (percent 0 = guard only, no budget stop on a secondary turn).
+                budget: crate::engines::subprocess::BudgetWatch::of(
+                    0,
+                    &providers::get_codex_home(),
+                    ctx.subagents_allowed == Some(false),
+                ),
             };
             (eng.run(&turn).unwrap_or_else(plan_err), String::new())
         }
@@ -1115,6 +1123,8 @@ fn run_engine_secondary(
                 kick_path: None,
                 on_running: None,
                 on_kill: None,
+                // (R7) a continuation turn resumes the session that already read the brief.
+                brief: None,
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, kimi_detail(&r.turn)),
@@ -1577,6 +1587,8 @@ pub(super) struct PartialReply<'a> {
     pub(super) main_thread: &'a str,
     // (wave 8 = plugin wave 30, T15) the main turn was stopped at the quota budget: its stop text
     pub(super) budget_stop: Option<&'a str>,
+    // (C3 0.2.4) the turn was stopped by the sub-agent guard: its stop text
+    pub(super) subagent_stop: Option<&'a str>,
 }
 
 pub(super) fn build_partial_reply(args: PartialReply) {
@@ -1592,12 +1604,14 @@ pub(super) fn build_partial_reply(args: PartialReply) {
         bridge_outcome,
         main_thread,
         budget_stop,
+        subagent_stop,
     } = args;
     let killed_partial = (main_timed_out && !sec.continued)
         || sec.continue_killed
         || sec.repair_killed
         || run_kicked
-        || budget_stop.is_some();
+        || budget_stop.is_some()
+        || subagent_stop.is_some();
     // (wave 26b, D15) ANY failed run keeps what its reviewer produced: when the run is not usable
     // and its main event stream holds at least one agent message, reasoning text or tool call, the
     // salvage is written even though no turn was killed (codex only; engines keep their own path).
@@ -1631,7 +1645,9 @@ pub(super) fn build_partial_reply(args: PartialReply) {
     let mut killed_at: Vec<String> = Vec::new();
     turns.push(crate::consult::secondary::PartialTurn {
         label: "Turn 1 - the main turn".to_string(),
-        note: if let Some(bs) = budget_stop {
+        note: if let Some(ss) = subagent_stop {
+            format!("stopped at {} s: {ss}", fmt_wall(main_wall))
+        } else if let Some(bs) = budget_stop {
             format!("stopped at {} s: {bs}", fmt_wall(main_wall))
         } else if run_kicked {
             format!(
@@ -1657,7 +1673,12 @@ pub(super) fn build_partial_reply(args: PartialReply) {
         },
         salvage: turn_salvage(&ctx.engine, main_events_text),
     });
-    if budget_stop.is_some() {
+    if subagent_stop.is_some() {
+        killed_at.push(format!(
+            "{} s (a sub-agent was spawned) (the main turn)",
+            fmt_wall(main_wall)
+        ));
+    } else if budget_stop.is_some() {
         killed_at.push(format!(
             "{} s at the quota budget (the main turn)",
             fmt_wall(main_wall)

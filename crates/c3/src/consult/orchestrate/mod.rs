@@ -157,19 +157,33 @@ pub(crate) fn context_window_config(
 
 /// The codex `-c` items of a turn: the operator's (`-CodexConfig` / the roster's `codex_config`)
 /// followed by the context-window items (`$extraConfig` then `$contextConfig`, as the plugin's argv).
-/// (wave 8 = plugin wave 30, T15) Sub-agents off for reviews: every codex turn gets
-/// `-c features.multi_agent=false` unless the user's `-CodexConfig` (or the roster entry's
-/// `codex_config`) names `features.multi_agent` - theirs wins, the key is not refused.
+/// (wave 8 = plugin wave 30, T15; C3 0.2.4) Sub-agents off for reviews: every codex turn gets the
+/// off switches ([`c3_core::quota::SUBAGENT_OFF`] - `features.multi_agent=false` for older CLIs AND
+/// `agents.enabled=false` for codex-cli 0.169.0's multi-agent v2) unless the user's `-CodexConfig`
+/// (or the roster entry's `codex_config`) turns sub-agents ON - then none of the off switches is
+/// passed. A user item that turns them OFF by one key only (`features.multi_agent=false`, which
+/// does nothing on 0.169.0) still gets the switch it did not name: "off" must mean off on every
+/// CLI. A key the user named is never repeated, so the user's own item is the one codex reads.
 pub(crate) fn agent_config_for(engine: EngineKind, extra_config: &[String]) -> Vec<String> {
-    if engine == EngineKind::Codex && c3_core::quota::user_multi_agent(extra_config).is_none() {
-        vec![c3_core::quota::MULTI_AGENT_OFF.to_string()]
-    } else {
-        Vec::new()
+    if engine != EngineKind::Codex || c3_core::quota::user_multi_agent(extra_config) == Some(true) {
+        return Vec::new();
     }
+    c3_core::quota::SUBAGENT_OFF
+        .iter()
+        .filter(|s| {
+            let key = s.split('=').next().unwrap_or("");
+            !extra_config.iter().any(|c| {
+                c.trim()
+                    .strip_prefix(key)
+                    .is_some_and(|rest| rest.trim_start().starts_with('='))
+            })
+        })
+        .map(|s| s.to_string())
+        .collect()
 }
 
-/// (wave 8) The ledger's `subagents_allowed` of a codex run: the user's `features.multi_agent`,
-/// else `false` (the bridge passed `features.multi_agent=false`).
+/// (wave 8; C3 0.2.4) The ledger's `subagents_allowed` of a codex run: the user's effective
+/// `features.multi_agent` / `agents.enabled`, else `false` (the bridge passed the off switches).
 pub(crate) fn subagents_allowed(extra_config: &[String]) -> bool {
     c3_core::quota::user_multi_agent(extra_config).unwrap_or(false)
 }
@@ -3955,6 +3969,15 @@ fn run_primary_turn(
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
                 on_kill,
+                // (R7) stage the operator brief into the HEAD worktree so an uncommitted / modified
+                // brief still reaches the reviewer at the repo-relative path the prompt references.
+                brief: ctx
+                    .brief_path
+                    .clone()
+                    .map(|src| crate::engines::kimi::BriefCopy {
+                        src,
+                        rel: ctx.brief_ref.clone(),
+                    }),
             };
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
             let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
@@ -4008,10 +4031,12 @@ fn run_primary_turn(
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
                 on_kill,
-                // (wave 8 = plugin wave 30, T15) the stall watch also reads the run's rollout
+                // (wave 8 = plugin wave 30, T15) the stall watch also reads the run's rollout;
+                // (C3 0.2.4) the sub-agent guard is on when the bridge turned sub-agents off
                 budget: crate::engines::subprocess::BudgetWatch::of(
                     ctx.budget.percent,
                     &providers::get_codex_home(),
+                    ctx.subagents_allowed == Some(false),
                 ),
             };
             let request = make_live_request(ctx);
@@ -4359,6 +4384,10 @@ fn finish(args: Finish) -> i32 {
     // continuation, the partial is kept; its stop text and the window that stopped it.
     let mut budget_stop_text = String::new();
     let mut budget_window: Option<c3_core::quota::PrimaryWindow> = None;
+    // (C3 0.2.4) the sub-agent guard stopped the turn: the reviewer spawned a sub-agent although
+    // sub-agents are off (the `-c` switch no longer bit); its stop text, kept exactly like a budget
+    // stop, classed `operator` (a tooling failure, not the reviewer's quota or capability).
+    let mut subagent_stop_text = String::new();
     let mut thread_candidate = String::new();
     // The engine adapter's classified failure (correct class/code/message from the turn's
     // evidence); finalized at commit time with retry_after/kind/when and the forced class.
@@ -4514,6 +4543,21 @@ fn finish(args: Finish) -> i32 {
                     );
                     budget_window = Some(window);
                 }
+                c3_core::engine::StopKind::Subagent { signal } => {
+                    // (C3 0.2.4) defence in depth: the reviewer spawned a sub-agent although
+                    // sub-agents are off - stop the turn at once, keep the partial (like the budget
+                    // stop); no continuation. The reason names the codex version and the evidence
+                    // and says the partial is kept; the provider failure is class `operator` below
+                    // (a tooling/operator failure: not the reviewer's quota health, not its
+                    // capability). Applies to the main, continuation and repair turns alike.
+                    subagent_stop_text = format!(
+                        "the reviewer spawned a sub-agent although sub-agents are off ({}; {}); the partial is kept",
+                        ctx.codex_version.trim(),
+                        signal.evidence()
+                    );
+                    bridge_outcome = format!("failed: {subagent_stop_text}");
+                    println!("codex-consult: {subagent_stop_text}");
+                }
             }
             timeout_survivors = survivors;
             // (wave 27c, D16; 28e, E1/E18) a stall or kick kill is a process-tree kill too: told
@@ -4523,6 +4567,8 @@ fn finish(args: Finish) -> i32 {
             let unconfirmed_main = !check.confirmed && timeout_survivors.is_empty();
             let stop_label = if budget_window.is_some() {
                 budget_stop_text.clone()
+            } else if !subagent_stop_text.is_empty() {
+                subagent_stop_text.clone()
             } else {
                 "stopped by the operator (-Kick)".to_string()
             };
@@ -5049,6 +5095,20 @@ fn finish(args: Finish) -> i32 {
             ..Default::default()
         });
     }
+    // (C3 0.2.4) the sub-agent guard stopped the run: no endpoint's fault and no reviewer failing -
+    // a tooling/operator failure (class `operator`, as the kick and the budget stop: excluded from
+    // the machine health file, not counted against the reviewer's quota health or capability). The
+    // hint says the switch may need updating for this codex version.
+    if !subagent_stop_text.is_empty() && provider_failure.is_none() {
+        provider_failure = Some(c3_core::ledger::ProviderFailure {
+            class: "operator".into(),
+            message: subagent_stop_text.clone(),
+            hint: Some(format!(
+                "{subagent_stop_text} - the sub-agent off switch may need updating for this codex version"
+            )),
+            ..Default::default()
+        });
+    }
     // A failed run records a classified provider_failure derived from its evidence
     // (`codex-consult.ps1:4093`), unless a continuation already supplied one. An engine failure
     // keeps the adapter's classified failure (verbatim reason/class from the turn), with the
@@ -5130,6 +5190,7 @@ fn finish(args: Finish) -> i32 {
         bridge_outcome: &bridge_outcome,
         main_thread: &thread,
         budget_stop: budget_window.as_ref().map(|_| budget_stop_text.as_str()),
+        subagent_stop: (!subagent_stop_text.is_empty()).then_some(subagent_stop_text.as_str()),
     });
 
     // Build the finding delta + ids for a structured reply.
@@ -6658,6 +6719,54 @@ mod parent_walk_tests {
             e,
             "thread abc has unknown provenance: it is not in this task's ledger; use -Mode new"
         );
+    }
+
+    /// (C3 0.2.4) The bridge passes BOTH off switches for a codex run with no user opt-in, NONE when
+    /// the user turns sub-agents on, and the switch the user did not name when the user turns them
+    /// off by one key only.
+    #[test]
+    fn agent_config_passes_both_off_switches_unless_opted_in() {
+        use c3_core::engine::EngineKind;
+        assert_eq!(
+            agent_config_for(EngineKind::Codex, &[]),
+            vec![
+                "features.multi_agent=false".to_string(),
+                "agents.enabled=false".to_string()
+            ]
+        );
+        // every other engine gets nothing
+        assert!(agent_config_for(EngineKind::Grok, &[]).is_empty());
+        // the user opting in via either key: the bridge stays out entirely
+        assert!(
+            agent_config_for(EngineKind::Codex, &["features.multi_agent=true".into()]).is_empty()
+        );
+        assert!(agent_config_for(EngineKind::Codex, &["agents.enabled=true".into()]).is_empty());
+        // the user turning them OFF by the legacy key alone (a no-op on codex-cli 0.169.0) still
+        // gets the switch that bites there; the key the user named is not repeated
+        assert_eq!(
+            agent_config_for(EngineKind::Codex, &["features.multi_agent=false".into()]),
+            vec!["agents.enabled=false".to_string()]
+        );
+        assert_eq!(
+            agent_config_for(EngineKind::Codex, &["agents.enabled = false".into()]),
+            vec!["features.multi_agent=false".to_string()]
+        );
+        // both named, effective setting off (agents.enabled governs): nothing to add
+        assert!(agent_config_for(
+            EngineKind::Codex,
+            &[
+                "features.multi_agent=true".into(),
+                "agents.enabled=false".into()
+            ]
+        )
+        .is_empty());
+        // a longer key with the same prefix is not the key
+        assert_eq!(
+            agent_config_for(EngineKind::Codex, &["agents.enabled_roles=1".into()]).len(),
+            2
+        );
+        assert!(!subagents_allowed(&[]));
+        assert!(subagents_allowed(&["agents.enabled=true".into()]));
     }
 
     #[test]

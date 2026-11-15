@@ -477,6 +477,42 @@ fn an_old_low_reading_neither_holds_nor_boosts() {
 }
 
 #[test]
+fn a_merged_old_weekly_window_keeps_its_own_age_not_the_aggregate() {
+    // (R5) A recent primary (5h) observed just now is merged with an OLD weekly (secondary) observed
+    // 6 days ago. The aggregate observed_at is "now" (the newest), but each window must keep ITS OWN
+    // age: the weekly window is NOT fresh, so an idle old weekly reading cannot raise a routing
+    // weight above 1. Before the fix every window inherited the aggregate time and the stale weekly
+    // reading looked fresh and boosted.
+    let _g = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("CODEX_CONSULT_BUDGET_ROUTING");
+    let now = utc("2026-11-15T12:00:00Z");
+    let quota = serde_json::json!({
+        "primary": {"used_percent": 10, "window_minutes": 300, "resets_at": "2026-11-15T16:00:00Z"},
+        "secondary": {"used_percent": 20, "window_minutes": 10080, "resets_at": "2026-11-18T00:00:00Z"},
+        "observed_at": "2026-11-15T12:00:00Z",
+        "primary_observed_at": "2026-11-15T11:59:00Z",
+        "secondary_observed_at": "2026-11-09T12:00:00Z"
+    });
+    let w = windows_from_quota("", &quota, now, "codex-rollout", now);
+    let weekly = w
+        .iter()
+        .find(|x| x.period_secs > 100_000.0)
+        .expect("the weekly window is present");
+    assert!(
+        !weekly.fresh,
+        "the old weekly window is not fresh despite a recent primary"
+    );
+    let (m, _gov) = budget_multiplier(std::slice::from_ref(weekly));
+    assert!(m <= 1.0, "an old weekly reading must never boost (got {m})");
+    // the 5h primary window DID keep its own recent instant and is fresh.
+    let primary = w
+        .iter()
+        .find(|x| x.period_secs < 100_000.0)
+        .expect("the primary window is present");
+    assert!(primary.fresh, "the recent primary window is fresh");
+}
+
+#[test]
 fn a_future_dated_observation_is_ignored() {
     let now = hold_now();
     // Beyond a few minutes of clock skew in the future: not fresh, and not accepted as a reading.

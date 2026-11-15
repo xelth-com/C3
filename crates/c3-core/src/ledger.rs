@@ -394,8 +394,9 @@ pub struct LedgerEntry {
         deserialize_with = "deserialize_present"
     )]
     pub tokens: Option<Option<Value>>,
-    /// (wave 8) `false` when the bridge passed `-c features.multi_agent=false` (the default),
-    /// `true`/`false` as the user's `-CodexConfig` set `features.multi_agent`.
+    /// (wave 8; C3 0.2.4) `false` when the bridge passed the sub-agent off switches (the default:
+    /// `features.multi_agent=false` and `agents.enabled=false`), `true`/`false` as the user's
+    /// `-CodexConfig` set `features.multi_agent` / `agents.enabled`.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

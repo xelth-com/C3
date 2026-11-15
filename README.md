@@ -311,8 +311,14 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   partial is kept` (provider_failure class `operator`, telemetry class `quota`).
 - **Replay guard**: a `--mode fork|resume` whose parent rollout is over `CODEX_CONSULT_FORK_MAX_KB`
   (default 512) is refused before anything starts; from 128 KB on it is warned about.
-- **Sub-agents off**: every codex turn passes `-c features.multi_agent=false` right after `-m`
-  unless `--codex-config` (or the roster's `codex_config`) names `features.multi_agent`.
+- **Sub-agents off**: every codex turn passes `-c features.multi_agent=false` AND
+  `-c agents.enabled=false` right after `-m` (the latter is what disables codex-cli 0.169.0's
+  multi-agent v2, whose tool surface the feature flag alone no longer removes), unless
+  `--codex-config` (or the roster's `codex_config`) turns sub-agents on (`agents.enabled=true`, or
+  `features.multi_agent=true` with `agents.enabled` unnamed); an item that turns them off by one
+  key only still gets the other switch.
+  As defence in depth a guard watches each run's rollout and stops any turn that spawns a sub-agent
+  anyway, keeping the partial and recording the stop as a tooling failure (class `operator`).
 - **Reading discipline**: the purpose paragraphs of acceptance, diff-review, checkpoint and
   core-contract end with the plugin's block (`git diff <range> --stat` first, one path at a time
   with a line cap, the documents first, the verdict even on an incomplete read).

@@ -46,6 +46,9 @@ switch ($role) {
         if ($isForward -and $env:FAKE_GROK_UPDATE_NOOP) { exit 0 }
         if (-not $isForward -and $env:FAKE_GROK_ROLLBACK_NOOP) { exit 0 }
         if ($vf) { Set-Content -LiteralPath $vf -Value $to -NoNewline }
+        # FAKE_GROK_UPDATE_MUTATE_FAIL: a forward update WRITES the new version (mutates the install)
+        # but then exits non-zero, modelling an installer that changed the install yet reported failure.
+        if ($isForward -and $env:FAKE_GROK_UPDATE_MUTATE_FAIL) { exit 1 }
         exit 0
       }
       if ($vf) { Set-Content -LiteralPath $vf -Value ([string]$env:FAKE_GROK_LATEST) -NoNewline }

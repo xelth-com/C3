@@ -49,5 +49,30 @@
   outright that the 2026-11-08 commits were never reviewed by any model (new Q0).
   Branches: all 33 local branches and the two remote ones (`cloud/linux-port`, `claude/sharp-cannon-ocamev`) were
   fully merged into main and are deleted; the leftover agent worktree is removed. Only `main` remains.
+- 2026-11-15 21:09, acceptance pass 1 (brief 08, handoff 09, detach id `0487a32b`, openai :: gpt-6-astra, mode new):
+  FAILED - stopped at 332 s by the quota budget, no answer written. Cause: the reviewer delegated to three
+  sub-agents (`maintain_review`, `budget_protection`, `kimi_roster`) although the bridge passed
+  `-c features.multi_agent=false`; on codex-cli 0.169.0 (updated by hand 2026-11-14) that flag no longer removes
+  the multi-agent v2 tools. A second codex run of another session (xelixir, two sub-agents) ran at the same time.
+  Cost: the 5-hour window 0 -> 93 % (until 02:09), the week 28 % -> 42 %. Not rated (a plan-limit stop).
+  - Recovered from the rollouts (`~/.codex/sessions/2026/11/15/`, the main thread and the two sub-agents that
+    reported; reasoning and inter-agent messages are encrypted there) as R1-R7: R1-R3 `c3 maintain` (the pending
+    record cleared after a failed install or rollback; write errors of the record swallowed; the swap's protection
+    gate read before the smoke), R4 `on_request` + held reserve spent by an exact `--require`, R5 one aggregate
+    `observed_at` for a merged quota reading, R6 a future-dated candidate merged before validation (the open part
+    of F06-4), R7 the kimi / roster questions the third sub-agent never answered. The reviewer's direction was HOLD.
+  - All confirmed and fixed with a named test each (table in `handoffs/10-claude-acceptance-2.md`), except R7b
+    (refuted: a skipped unknown-engine entry keeps its position). R7a was a real defect: kimi reads the brief by
+    reference inside a HEAD worktree, so an uncommitted brief was not there; it is now staged into the worktree.
+    Not adopted: an exit status for an unresolved update (`maintain --run` stays "exit 0 always").
+  - The sub-agent leak: every codex turn now also passes `-c agents.enabled=false` (proven on a GLM model forced
+    to multi-agent v2 through the ZAI codex provider - with the old flag the tools `spawn_agent`, `send_message`,
+    `wait_agent` are offered, with the new one they are gone; five probe turns, the ChatGPT account untouched), and
+    the budget watch stops any turn that spawns a sub-agent anyway (`StopKind::Subagent`, class `operator`, the
+    partial kept). An item that turns sub-agents off by one key only still gets the other switch.
+  - Full run on the merged tree (2026-11-15 23:33): c3-core 286, c3 lib 647 and 81 in the crate's own integration
+    tests, c3-cli 203 in 20 binaries, 0 failed; `cargo fmt --all -- --check` and clippy `-D warnings` clean.
+  - Second pass: brief READY at `handoffs/10-claude-acceptance-2.md` (a delta brief for a NEW thread; the 09
+    thread replays 668 KB per tool call). Not before 02:09 on 2026-11-16 (the 5-hour window).
 - Acceptance authority: these three are stand-ins. Their verdicts are recorded; the tag `v0.2.4`
   waits for the standing partner's acceptance after its window resets (rule of the consult skill).

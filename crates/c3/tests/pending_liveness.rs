@@ -203,6 +203,7 @@ fn the_budget_watch_stops_the_turn_at_the_quota_budget() {
             percent: budget,
             codex_home: home.to_string_lossy().to_string(),
             poll_ms: 200,
+            guard_subagents: false,
         };
         let req = SpawnRequest {
             launcher: launcher.to_str().unwrap(),
@@ -235,5 +236,90 @@ fn the_budget_watch_stops_the_turn_at_the_quota_budget() {
     let r2 = run(96, 3);
     assert_eq!(r2.stop, TurnStop::Timeout, "{r2:?}");
     assert!(r2.budget.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// (C3 0.2.4) The sub-agent guard on the real spawn/kill path: a codex turn with sub-agents OFF
+/// whose rollout grows a `spawn_agent` function call is stopped at once (`TurnStop::Subagent` with
+/// the signal, the partial kept), long before its own 30 s hang and the 20 s timeout. With the guard
+/// off (an opted-in run) the same turn runs to its timeout - a sub-agent is not stopped.
+#[test]
+#[cfg(windows)]
+fn the_subagent_guard_stops_a_turn_that_spawns_a_sub_agent() {
+    use c3::engines::subprocess::{BudgetWatch, TurnStop};
+    let dir = scratch_dir("subproc-subguard");
+    let home = dir.join("codexhome");
+    let now = chrono::Utc::now();
+    let ms = format!("{:012x}", now.timestamp_millis());
+    let thread = format!("{}-{}-7abc-8def-0123456789ab", &ms[0..8], &ms[8..12]);
+    let local = now.with_timezone(&chrono::Local);
+    let day = home
+        .join("sessions")
+        .join(local.format("%Y").to_string())
+        .join(local.format("%m").to_string())
+        .join(local.format("%d").to_string());
+    std::fs::create_dir_all(&day).unwrap();
+    // the run's rollout: a session_meta, then a spawn_agent function call (codex-cli 0.169.0's
+    // multi-agent v2 - it was offered although sub-agents are off, and the reviewer called it)
+    let rollout = day.join(format!(
+        "rollout-{}-{thread}.jsonl",
+        local.format("%Y-%m-%dT%H-%M-%S")
+    ));
+    std::fs::write(
+        &rollout,
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread}\",\"source\":\"exec\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"spawn_agent\",\"namespace\":\"collaboration\",\"arguments\":\"{{}}\"}}}}\n"
+        ),
+    )
+    .unwrap();
+    let launcher = dir.join("thread.cmd");
+    std::fs::write(
+        &launcher,
+        format!("@echo off\r\necho {{\"type\":\"thread.started\",\"thread_id\":\"{thread}\"}}\r\nping 127.0.0.1 -n 30 >nul\r\n"),
+    )
+    .unwrap();
+    let run = |guard: bool, timeout: u64| {
+        let events = dir.join(format!("out-{guard}.jsonl"));
+        let stderr = dir.join(format!("err-{guard}.txt"));
+        let watch = BudgetWatch {
+            percent: 0,
+            codex_home: home.to_string_lossy().to_string(),
+            poll_ms: 200,
+            guard_subagents: guard,
+        };
+        let req = SpawnRequest {
+            launcher: launcher.to_str().unwrap(),
+            argv: &[],
+            cwd: &dir,
+            prompt_delivery: PromptDelivery::Stdin,
+            stdin_text: "",
+            events_path: &events,
+            stderr_path: &stderr,
+            timeout: Duration::from_secs(timeout),
+            stall_sec: 0,
+            kick_path: None,
+            tool_flight: None,
+            on_running: None,
+            on_kill: None,
+            env: None,
+            crt_quote: false,
+            budget: Some(&watch),
+        };
+        run_turn(&req)
+    };
+    let t0 = std::time::Instant::now();
+    let r = run(true, 20);
+    assert!(r.started);
+    assert_eq!(r.stop, TurnStop::Subagent, "{r:?}");
+    assert!(t0.elapsed() < Duration::from_secs(15), "{:?}", t0.elapsed());
+    assert_eq!(
+        r.subagent,
+        Some(c3_core::quota::SubagentSignal::SpawnCall),
+        "the guard names the spawn_agent call"
+    );
+    // the guard off (an opted-in run): the same spawn_agent rollout does NOT stop the turn
+    let r2 = run(false, 3);
+    assert_eq!(r2.stop, TurnStop::Timeout, "{r2:?}");
+    assert!(r2.subagent.is_none());
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -509,6 +509,96 @@ fn a_pending_update_whose_new_binary_fails_its_smoke_is_rolled_back() {
     );
 }
 
+// ------------------------------------------------------------------ (R1) a failed installer keeps the pending record
+
+#[test]
+fn a_failed_installer_that_mutated_keeps_the_pending_record() {
+    // (R1) the installer writes the new binary (mutates the install) but then exits non-zero: the
+    // update is reported failed, yet 1.0.80 is now on disk. The pending record must NOT be cleared -
+    // the next pass needs it to smoke / roll back the half-installed version instead of reading it
+    // as "up to date".
+    let e = setup("mutate-fail");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    env.push(("FAKE_GROK_UPDATE_MUTATE_FAIL", "1"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("update failed"),
+        "the failed installer is reported: {t}"
+    );
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.80",
+        "the installer mutated the install"
+    );
+    assert_ne!(
+        e.pending_json().trim(),
+        "[]",
+        "the pending record survives a failed installer: {}",
+        e.pending_json()
+    );
+    assert!(
+        e.pending_json().contains("grok"),
+        "the grok pending record is retained: {}",
+        e.pending_json()
+    );
+}
+
+#[test]
+fn a_failed_rollback_keeps_the_pending_record() {
+    // (R1) the post-update smoke fails and the rollback is a no-op (does not restore): the engine is
+    // left on the new, unverified 1.0.80. The pending record must survive so the next pass retries
+    // recovery, rather than being cleared while the broken version stands.
+    let e = setup("rb-fail-pending");
+    let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass-then-fail");
+    env.push(("FAKE_GROK_ROLLBACK_NOOP", "1"));
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("rollback failed, still 1.0.80"),
+        "the failed rollback is reported: {t}"
+    );
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.80",
+        "the rollback did not restore"
+    );
+    assert_ne!(
+        e.pending_json().trim(),
+        "[]",
+        "the pending record survives a failed rollback: {}",
+        e.pending_json()
+    );
+}
+
+// ------------------------------------------------------------------ (R2) a pending record that cannot be persisted holds the install
+
+#[test]
+fn a_pending_record_that_cannot_be_persisted_holds_the_install() {
+    // (R2) if the pending journal cannot be written (here pending.json.tmp is pre-created as a
+    // DIRECTORY so the atomic write fails), the write-before-install guarantee is void: the pass must
+    // hold and run no installer (fail closed), not install with no recovery record on disk.
+    let e = setup("pend-unwritable");
+    let maintain_dir = e.home.join("c3").join("maintain");
+    std::fs::create_dir_all(&maintain_dir).unwrap();
+    std::fs::create_dir_all(maintain_dir.join("pending.json.tmp")).unwrap();
+    let env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("could not record the pending update"),
+        "the install is held when the journal cannot be written: {t}"
+    );
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.77",
+        "no installer ran (the old version stands)"
+    );
+}
+
 // ------------------------------------------------------------------ the model step honours --engine
 
 #[test]

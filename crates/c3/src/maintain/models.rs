@@ -225,8 +225,15 @@ pub fn swap_candidates(roster: &Roster, current: &[SourceList]) -> Vec<SwapCandi
 /// file's formatting: copy to `<path>.bak-maintain-<yyyymmdd>`, replace that one `model` value,
 /// re-parse to verify the result still loads, and write it. The backup is left in place; on a
 /// verify failure nothing is written and the backup stands. `today` is `yyyymmdd`.
+///
+/// (R3) `basis` is the roster TEXT as it was read immediately before the candidate's smoke - the
+/// same snapshot the protection / saturation gate judged. The edit is computed from THAT text and
+/// the on-disk file is required to still equal it, so a concurrent edit during the minutes-long
+/// smoke (protecting the entry, or re-pointing its old model to another provider) aborts the swap
+/// instead of being applied over a stale pass-start view.
 pub fn apply_swap(
     roster_path: &str,
+    basis: &str,
     provider: &str,
     old: &str,
     new: &str,
@@ -239,9 +246,14 @@ pub fn apply_swap(
             "the successor id {new:?} is not a valid model id; not seated"
         ));
     }
-    let text = std::fs::read_to_string(roster_path)
+    // Abort if the roster changed since the pre-smoke snapshot the gate judged.
+    let current = std::fs::read_to_string(roster_path)
         .map_err(|e| format!("could not read the roster ({e})"))?;
-    let updated = replace_entry_model(&text, provider, old, new)?;
+    if current != basis {
+        return Err("roster changed during the smoke; the swap was not applied".to_string());
+    }
+    // The edit is computed from the gated snapshot, so it targets exactly that entry.
+    let updated = replace_entry_model(basis, provider, old, new)?;
     // Re-parse to verify the edited roster still loads before writing it.
     let home = std::env::var("USERPROFILE")
         .ok()
@@ -253,7 +265,7 @@ pub fn apply_swap(
             validated.error
         ));
     }
-    commit_swap(roster_path, &text, &updated, today)
+    commit_swap(roster_path, basis, &updated, today)
 }
 
 /// Commit an edited roster: take the once-per-day backup, re-read the file and abort if it changed
@@ -533,6 +545,45 @@ mod tests {
         assert!(err.contains("roster changed during the pass"), "{err}");
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "CHANGED");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn apply_swap_aborts_when_the_roster_changed_since_the_pre_smoke_snapshot() {
+        // (R3) The swap edit is computed from the basis the protection gate judged BEFORE the smoke,
+        // and apply_swap refuses to write when the on-disk roster no longer equals that basis - so a
+        // concurrent edit during the minutes-long smoke (protecting the entry, or re-pointing its old
+        // model to another provider) aborts the swap instead of being applied over a stale view.
+        let dir = std::env::temp_dir().join(format!(
+            "c3-mnt-applyswap-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("roster.json");
+        let path_s = path.to_string_lossy().to_string();
+        let basis = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.7","plan":"supergrok"}]}"#;
+
+        // unchanged on disk since the snapshot -> the swap lands
+        std::fs::write(&path, basis).unwrap();
+        apply_swap(&path_s, basis, "grok", "grok-4.7", "grok-4.8", "20261115").unwrap();
+        assert!(std::fs::read_to_string(&path).unwrap().contains("grok-4.8"));
+
+        // the operator PROTECTS the entry mid-smoke: on disk the roster now differs from the basis
+        // the gate judged, so a swap computed from that stale basis aborts and writes nothing.
+        let protected = r#"{"roster_version":1,"reviewers":[{"provider":"grok","engine":"grok","model":"grok-4.8","plan":"supergrok","ext":{"reserve_percent":15}}]}"#;
+        std::fs::write(&path, protected).unwrap();
+        let err =
+            apply_swap(&path_s, basis, "grok", "grok-4.7", "grok-4.9", "20261116").unwrap_err();
+        assert!(err.contains("roster changed during the smoke"), "{err}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            protected,
+            "the protected roster was left untouched"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

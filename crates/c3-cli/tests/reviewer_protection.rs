@@ -481,6 +481,69 @@ fn a_fork_follow_up_continues_the_previous_reviewer_or_draws_when_held() {
     f.cleanup();
 }
 
+// #1 ordinary, #2 BOTH on-request AND protected (reserve 15) on plan `zaiplan`.
+const ROSTER_ONREQ_PROTECT: &str = r#"{"roster_version":1,"reviewers":[
+    {"provider":"ZAI","model":"glm-5.3"},
+    {"provider":"ZAI","model":"glm-5.3-flash","plan":"zaiplan","ext":{"on_request":true,"reserve_percent":15}}
+]}"#;
+
+#[test]
+fn a_required_on_request_and_held_entry_refuses_without_spend_reserve() {
+    // (R4) an entry that is BOTH on_request and over its protected reserve must not run in a
+    // non-standing panel merely because an exact --require names it: the reserve hold is evaluated
+    // before the on-request gate, so the required entry carries the HARD `reserve` skip and the panel
+    // refuses (exit 5) - unless --spend-reserve. Before the fix on_request hid the reserve hold and
+    // the required-outage check re-admitted the entry, spending the protected reserve.
+    let f = setup("rp-onreq-held", ROSTER_ONREQ_PROTECT);
+    f.budget_set("zaiplan", "97%");
+
+    // (a) --panel --require #2 on a non-standing purpose refuses (exit 5), nothing started.
+    let (code, _out, err) = f.run(&[
+        "consult",
+        "--task",
+        "t",
+        "--panel",
+        "--purpose",
+        "diff-review",
+        "--require",
+        "#2",
+        "--prompt",
+        "x",
+        "--dry-run",
+    ]);
+    assert_eq!(
+        code,
+        Some(5),
+        "required on-request+held entry refuses: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("reserve") || err.contains("--spend-reserve"),
+        "names the reserve hold, not just the on-request gate: {err}"
+    );
+
+    // (b) --spend-reserve seats the required entry (preflight available on the dry run).
+    let (code, out, err) = f.run(&[
+        "consult",
+        "--task",
+        "t",
+        "--panel",
+        "--purpose",
+        "diff-review",
+        "--require",
+        "#2",
+        "--prompt",
+        "x",
+        "--spend-reserve",
+        "--dry-run",
+    ]);
+    assert_eq!(code, Some(0), "spend-reserve seats it: {out}\n{err}");
+    assert!(
+        out.contains("glm-5.3-flash"),
+        "the entry is seated with --spend-reserve: {out}"
+    );
+    f.cleanup();
+}
+
 // #1 ordinary, #2 on-request (seated only when named).
 const ROSTER_ON_REQUEST: &str = r#"{"roster_version":1,"reviewers":[
     {"provider":"ZAI","model":"glm-5.3"},

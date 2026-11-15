@@ -329,6 +329,49 @@ fn a_structured_run_is_usable_with_a_kimi_session_and_no_usage() {
     );
 }
 
+// ------------------------------------------------------------------ (R7) an uncommitted brief reaches kimi in its worktree
+
+#[test]
+fn an_uncommitted_brief_is_readable_by_kimi_in_its_worktree() {
+    // (R7) kimi reviews a throwaway worktree of HEAD; a brief that exists only in the caller's
+    // working tree (uncommitted) must still reach the reviewer. The operator brief named in the
+    // assembled prompt (by a repo-relative path) must resolve from the worktree cwd - the engine
+    // stages it in. Before the fix the uncommitted brief was absent from the HEAD worktree.
+    let e = setup("uncommitted-brief");
+    // an UNCOMMITTED brief inside the repo (never git-added); `.collab/t/handoffs` exists from setup.
+    std::fs::write(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("brief.md"),
+        "# Brief\n\n1. Is app.txt fine?\n",
+    )
+    .unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            ".collab/t/handoffs/brief.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{:?}", turns);
+    assert_eq!(
+        turns[0]["op_brief_exists"], true,
+        "the uncommitted operator brief is readable from the worktree: {:?}",
+        turns[0]
+    );
+}
+
 // ------------------------------------------------------------------ the zero-tool-call guard
 
 #[test]

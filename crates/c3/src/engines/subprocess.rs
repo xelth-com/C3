@@ -86,13 +86,20 @@ pub struct BudgetWatch {
     pub percent: i64,
     pub codex_home: String,
     pub poll_ms: u64,
+    /// (C3 0.2.4) Defence in depth: while a codex turn runs with sub-agents OFF, the same poll that
+    /// reads the rollout for the budget also notices a sub-agent (a `spawn_agent` call in the run's
+    /// rollout, or a child rollout naming this thread as parent) and stops the turn at once
+    /// ([`TurnStop::Subagent`], the partial kept). On for the main AND the secondary turns of a run
+    /// whose sub-agents are off; `percent` 0 then makes it a guard-only watch (no budget stop).
+    pub guard_subagents: bool,
 }
 
 impl BudgetWatch {
-    /// The watch of a run's budget (`None` when it is off): the poll interval from the test hook
-    /// (test mode only) or 15 s.
-    pub fn of(percent: i64, codex_home: &str) -> Option<BudgetWatch> {
-        if percent <= 0 {
+    /// The watch of a run's budget / sub-agent guard (`None` when both are off): the poll interval
+    /// from the test hook (test mode only) or 15 s. `guard_subagents` on with `percent` 0 is a
+    /// guard-only watch, used on the secondary turns.
+    pub fn of(percent: i64, codex_home: &str, guard_subagents: bool) -> Option<BudgetWatch> {
+        if percent <= 0 && !guard_subagents {
             return None;
         }
         let poll_ms = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_BUDGET_POLL_MS")
@@ -103,6 +110,7 @@ impl BudgetWatch {
             percent,
             codex_home: codex_home.to_string(),
             poll_ms,
+            guard_subagents,
         })
     }
 }
@@ -156,6 +164,9 @@ pub enum TurnStop {
     Kick,
     /// (wave 8 = plugin wave 30) The quota budget was reached and the tree was killed.
     Budget,
+    /// (C3 0.2.4) The sub-agent guard fired: the run spawned a sub-agent although sub-agents are
+    /// off, and the tree was killed.
+    Subagent,
 }
 
 /// The result of one subprocess turn.
@@ -195,6 +206,8 @@ pub struct TurnResult {
     pub error: Option<String>,
     /// (wave 8) The window that stopped the turn at its quota budget ([`TurnStop::Budget`]).
     pub budget: Option<c3_core::quota::PrimaryWindow>,
+    /// (C3 0.2.4) The sub-agent the guard saw when it stopped the turn ([`TurnStop::Subagent`]).
+    pub subagent: Option<c3_core::quota::SubagentSignal>,
 }
 
 impl TurnResult {
@@ -215,6 +228,7 @@ impl TurnResult {
             stderr: String::new(),
             error: Some(error),
             budget: None,
+            subagent: None,
         }
     }
 }
@@ -658,6 +672,8 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     // (wave 8 = plugin wave 30) the quota budget watch: the thread (from the stream's head), its
     // rollout, the next poll and the turn's start (an observation older than it never stops it)
     let mut budget_hit: Option<c3_core::quota::PrimaryWindow> = None;
+    // (C3 0.2.4) the sub-agent the guard saw ([`TurnStop::Subagent`]).
+    let mut subagent_hit: Option<c3_core::quota::SubagentSignal> = None;
     let mut budget_thread = String::new();
     let mut budget_rollout: Option<std::path::PathBuf> = None;
     let mut next_budget_ms: u64 = req.budget.map(|b| b.poll_ms).unwrap_or(0);
@@ -719,10 +735,10 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                             break None;
                         }
                     }
-                    // (wave 8 = plugin wave 30, T15) the quota budget.
+                    // (wave 8 = plugin wave 30, T15) the quota budget; (C3 0.2.4) the sub-agent guard.
                     if let Some(b) = req.budget {
                         let el = start.elapsed().as_millis() as u64;
-                        if b.percent > 0 && el >= next_budget_ms {
+                        if (b.percent > 0 || b.guard_subagents) && el >= next_budget_ms {
                             next_budget_ms = el + b.poll_ms;
                             if budget_thread.is_empty() {
                                 budget_thread =
@@ -734,17 +750,33 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                                     &b.codex_home,
                                 );
                             }
-                            if let Some(rp) = &budget_rollout {
-                                let w = c3_core::quota::read_primary_window(Some(rp));
-                                if c3_core::quota::budget_reached(
-                                    &w,
-                                    b.percent,
-                                    turn_start,
-                                    chrono::Utc::now(),
+                            if b.percent > 0 {
+                                if let Some(rp) = &budget_rollout {
+                                    let w = c3_core::quota::read_primary_window(Some(rp));
+                                    if c3_core::quota::budget_reached(
+                                        &w,
+                                        b.percent,
+                                        turn_start,
+                                        chrono::Utc::now(),
+                                    ) {
+                                        budget_hit = Some(w);
+                                        (survivors, kill_check) = kill_now(&mut child);
+                                        stop = TurnStop::Budget;
+                                        break None;
+                                    }
+                                }
+                            }
+                            // (C3 0.2.4) defence in depth: the same poll notices a sub-agent on a run
+                            // whose sub-agents are off, and stops the turn like the budget does.
+                            if b.guard_subagents && !budget_thread.is_empty() {
+                                if let Some(sig) = c3_core::quota::subagent_in_run(
+                                    &budget_thread,
+                                    turn_start.with_timezone(&chrono::Utc),
+                                    &b.codex_home,
                                 ) {
-                                    budget_hit = Some(w);
+                                    subagent_hit = Some(sig);
                                     (survivors, kill_check) = kill_now(&mut child);
-                                    stop = TurnStop::Budget;
+                                    stop = TurnStop::Subagent;
                                     break None;
                                 }
                             }
@@ -814,6 +846,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                         kick_late: false,
                         error: Some(format!("waiting on the child failed: {e}")),
                         budget: None,
+                        subagent: None,
                     };
                 }
             }
@@ -854,6 +887,7 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
         stderr: read_text(req.stderr_path),
         error: None,
         budget: budget_hit,
+        subagent: subagent_hit,
     }
 }
 

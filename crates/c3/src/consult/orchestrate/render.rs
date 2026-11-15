@@ -99,7 +99,7 @@ pub(super) fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
                 if ctx.subagents_allowed == Some(true) {
                     "allowed"
                 } else {
-                    "off (features.multi_agent=false)"
+                    "off (features.multi_agent=false, agents.enabled=false)"
                 },
                 if ctx.budget.percent > 0 {
                     format!("{} % of the 5-hour window", ctx.budget.percent)

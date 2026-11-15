@@ -69,8 +69,22 @@ pub const READING_DISCIPLINE: &str = "Reading discipline: never print whole file
 pub const READING_DISCIPLINE_PURPOSES: [&str; 4] =
     ["checkpoint", "core-contract", "acceptance", "diff-review"];
 
-/// The `-c` item that turns a reviewer's sub-agents off.
+/// The legacy `-c` item that turned a reviewer's sub-agents off (codex-cli up to ~0.168). On
+/// 0.169.0 the live subsystem is multi-agent **v2**, whose tool surface this feature flag no longer
+/// touches: a model's metadata (`multi_agent_version`) outranks `features.multi_agent`, so the
+/// `spawn_agent` tools are offered even with `features.multi_agent=false`. Kept because it is the
+/// switch on older CLIs and is harmless on newer ones. See [`AGENTS_OFF`] and [`SUBAGENT_OFF`].
 pub const MULTI_AGENT_OFF: &str = "features.multi_agent=false";
+/// The `-c` item that turns a reviewer's sub-agents off on codex-cli 0.169.0: it disables the
+/// `agents` subsystem for the thread regardless of the model's `multi_agent_version`, so the
+/// `spawn_agent`/`send_message`/`wait_agent` tools are not offered. Proven live (a GLM reviewer on a
+/// custom provider with a forced-v2 model: the tool surface is present without it and gone with it).
+pub const AGENTS_OFF: &str = "agents.enabled=false";
+/// Every `-c` item the bridge passes to turn a reviewer's sub-agents off, in argv order. Unknown
+/// keys are harmless: codex ignores a `-c` key it does not recognise unless `--strict-config` is
+/// passed (the bridge never passes it), so an older CLI silently drops [`AGENTS_OFF`] and a future
+/// CLI silently drops [`MULTI_AGENT_OFF`].
+pub const SUBAGENT_OFF: [&str; 2] = [MULTI_AGENT_OFF, AGENTS_OFF];
 
 // --------------------------------------------------------------------------- the formats
 
@@ -647,6 +661,89 @@ pub fn subagent_rollouts(parent: &str, since: DateTime<Utc>, codex_home: &str) -
     out
 }
 
+/// (C3) How the sub-agent guard saw a sub-agent on a run whose sub-agents are OFF.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubagentSignal {
+    /// A `spawn_agent` function call in the run's OWN rollout.
+    SpawnCall,
+    /// A child rollout naming the run's thread (recursively) as its parent; the child's thread id.
+    ChildRollout { thread: String },
+}
+
+impl SubagentSignal {
+    /// A short clause naming the evidence, for the failure reason.
+    pub fn evidence(&self) -> String {
+        match self {
+            SubagentSignal::SpawnCall => "a spawn_agent call in its rollout".to_string(),
+            SubagentSignal::ChildRollout { thread } => {
+                format!("a sub-agent rollout (thread {thread})")
+            }
+        }
+    }
+}
+
+/// Whether a rollout holds a `spawn_agent` function call (`type:response_item`,
+/// `payload.type:function_call`, `payload.name:spawn_agent` - codex-cli 0.169.0's multi-agent v2).
+/// A cheap substring pre-check avoids parsing a rollout that cannot contain one.
+fn rollout_has_spawn_agent(path: &Path) -> bool {
+    let text = read_rollout_text(path, 0);
+    if !text.contains("spawn_agent") {
+        return false;
+    }
+    for line in text.lines() {
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        // the function_call object is the line's `payload` (rollout) or the line itself (stream)
+        let obj = v.get("payload").unwrap_or(&v);
+        if obj.get("type").and_then(|t| t.as_str()) == Some("function_call")
+            && obj.get("name").and_then(|n| n.as_str()) == Some("spawn_agent")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// The thread id a rollout's file name ends with (`rollout-<stamp>-<uuid>.jsonl`), else the id its
+/// head's `session_meta` carries; `""` when neither is there.
+fn rollout_thread_of(path: &Path) -> String {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        if let Some(m) = uuid_re().find_iter(name).last() {
+            return m.as_str().to_lowercase();
+        }
+    }
+    let head = read_rollout_head(path);
+    uuid_re()
+        .find(&head)
+        .map(|m| m.as_str().to_lowercase())
+        .unwrap_or_default()
+}
+
+/// (C3) The sub-agent guard: while a codex turn runs with sub-agents OFF, look for a sub-agent of
+/// `thread` - a `spawn_agent` function call in the run's own rollout, or a child rollout naming the
+/// thread (recursively) as parent, written since `since`. `None` when none is seen. A CLI update can
+/// break the `-c` switch again; this reads the same rollout the budget watch already polls.
+pub fn subagent_in_run(
+    thread: &str,
+    since: DateTime<Utc>,
+    codex_home: &str,
+) -> Option<SubagentSignal> {
+    if thread.is_empty() || codex_home.is_empty() {
+        return None;
+    }
+    if let Some(path) = codex_rollout_path(thread, codex_home) {
+        if rollout_has_spawn_agent(&path) {
+            return Some(SubagentSignal::SpawnCall);
+        }
+    }
+    let subs = subagent_rollouts(thread, since, codex_home);
+    subs.first().map(|p| SubagentSignal::ChildRollout {
+        thread: rollout_thread_of(p),
+    })
+}
+
 /// `Select-NewerWindow`: `true` when `b` wins over `a` - the newer one that names a window; at the
 /// same instant the one whose fullest window is fuller (the threads of one account report at the
 /// same moment, and some report a stale share: the highest is the account's).
@@ -1104,6 +1201,43 @@ pub fn account_window_at(codex_home: &str, now: DateTime<Utc>) -> Option<Account
     select_account_window(&observations, now)
 }
 
+/// (R6) The clock skew tolerated before a per-window observation instant counts as future-dated.
+const OBSERVED_FUTURE_SKEW_SECS: i64 = 300;
+
+/// (R6) A copy of `o` with every window whose OWN observation instant is dated in the future (beyond
+/// a few minutes of clock skew) dropped; `None` when nothing valid remains. A future-dated per-window
+/// candidate is rejected BEFORE the merge, so it can neither win on recency against a real reading nor
+/// drag the merged aggregate instant into the future (which would make the whole reading look invalid
+/// and discard a genuine held reading - e.g. a 97% weekly whose reserve hold then vanishes).
+fn without_future_windows(o: &Observation, now: DateTime<Utc>) -> Option<Observation> {
+    let is_future = |t: Option<DateTime<FixedOffset>>| {
+        t.map(|t| (now - t.with_timezone(&Utc)).num_seconds() < -OBSERVED_FUTURE_SKEW_SECS)
+            .unwrap_or(false)
+    };
+    let mut o = o.clone();
+    if is_future(o.window_at(0)) {
+        o.primary = None;
+        o.primary_at = None;
+    }
+    if is_future(o.window_at(1)) {
+        o.secondary = None;
+        o.secondary_at = None;
+    }
+    // The aggregate `at` (display / usability only) is re-derived from the surviving windows; a
+    // window that relied on `at` was dropped above if `at` itself was future, so no future value
+    // can survive here.
+    o.at = [o.primary_at, o.secondary_at]
+        .into_iter()
+        .flatten()
+        .max()
+        .or(o.at);
+    if o.named() {
+        Some(o)
+    } else {
+        None
+    }
+}
+
 /// The newest-observation selection over a set of account observations (the shared body of
 /// [`account_window_at`] and [`account_window_within`]): fold [`merge_observation`] at `now`, then
 /// keep a result only when it names a window with a known instant.
@@ -1114,8 +1248,12 @@ fn select_account_window(
     let mut best: Option<Observation> = None;
     let mut best_path = PathBuf::new();
     for (o, p) in observations {
+        // (R6) drop future-dated per-window candidates before they can win the merge.
+        let Some(o) = without_future_windows(o, now) else {
+            continue;
+        };
         let before = best.clone();
-        best = merge_observation(best, Some(o), now);
+        best = merge_observation(best, Some(&o), now);
         if best != before {
             best_path = p.clone();
         }
@@ -1654,13 +1792,35 @@ pub fn fork_replay_guard(thread: &str, codex_home: &str, max_kb_env: Option<&str
     g
 }
 
-/// Whether the user's `-c` items name `features.multi_agent` (the last one wins): `Some(allowed)`,
-/// else `None` (the bridge then passes [`MULTI_AGENT_OFF`]).
+/// The last `-c` item naming `key` (a dotted config path), as a bool: `Some(true)` for `=true`,
+/// `Some(false)` for anything else, `None` when the key is absent.
+fn last_config_bool(extra_config: &[String], key: &str) -> Option<bool> {
+    let head = regex::Regex::new(&format!(r"^{}\s*=", regex::escape(key))).unwrap();
+    let last = extra_config
+        .iter()
+        .rev()
+        .find(|c| head.is_match(c.trim()))?;
+    Some(
+        regex::Regex::new(r"=\s*true\s*$")
+            .unwrap()
+            .is_match(last.trim()),
+    )
+}
+
+/// Whether the user's `-c` items name a sub-agent switch (`features.multi_agent` or
+/// `agents.enabled`): `Some(allowed)` when they do - the bridge then passes NONE of its own off
+/// switches, the user's own settings stand -, else `None` (the bridge passes [`SUBAGENT_OFF`]).
+/// `allowed` is true when the user's effective setting leaves sub-agents ON: a named `agents.enabled`
+/// wins over a named `features.multi_agent`, since on codex-cli 0.169.0 `agents.enabled` governs.
 pub fn user_multi_agent(extra_config: &[String]) -> Option<bool> {
-    let re = regex::Regex::new(r"^features\.multi_agent\s*=").unwrap();
-    let last = extra_config.iter().rev().find(|c| re.is_match(c.trim()))?;
-    let t = last.trim();
-    Some(regex::Regex::new(r"=\s*true$").unwrap().is_match(t))
+    match (
+        last_config_bool(extra_config, "agents.enabled"),
+        last_config_bool(extra_config, "features.multi_agent"),
+    ) {
+        (Some(agents), _) => Some(agents),
+        (None, Some(multi)) => Some(multi),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -2639,6 +2799,39 @@ mod tests {
         }
     }
 
+    // UNIT (R6): a future-dated per-window candidate is rejected before the account merge, so it
+    // cannot evict a valid held reading nor drag the aggregate instant into the future.
+    #[test]
+    fn a_future_dated_observation_never_evicts_a_valid_account_window() {
+        let now: DateTime<Utc> = "2026-11-15T12:00:00Z".parse().unwrap();
+        let reset = now + Duration::days(3);
+        let today = secs(now - Duration::minutes(30));
+        let tomorrow = secs(now + Duration::days(1));
+        // a real 97% weekly observed 30 min ago, and a future-dated weekly observed TOMORROW (which,
+        // unguarded, wins the merge on recency and poisons the whole reading).
+        let valid = rq(None, Some((97.0, Some(reset))), &iso_s(today));
+        let future = rq(None, Some((10.0, Some(reset))), &iso_s(tomorrow));
+        let obs = vec![
+            (obs_of(&valid, today.fixed_offset()), PathBuf::from("valid")),
+            (
+                obs_of(&future, tomorrow.fixed_offset()),
+                PathBuf::from("future"),
+            ),
+        ];
+        let w = super::select_account_window(&obs, now).expect("a valid window survives");
+        assert_eq!(
+            w.quota["secondary"]["used_percent"].as_f64().unwrap(),
+            97.0,
+            "the surviving weekly reading is the real 97%, not the future 10%: {}",
+            w.quota
+        );
+        assert!(
+            w.observed_at.with_timezone(&Utc) <= now,
+            "the aggregate observed_at is not in the future: {}",
+            w.observed_at
+        );
+    }
+
     // UNIT (F58-1, c): the recorded/live split - the rollout window instants travel into the
     // endpoint selection (A,B recorded + C live, and C recorded + A,B live).
     #[test]
@@ -3315,6 +3508,114 @@ mod tests {
             ]),
             Some(true)
         );
+        // (C3 0.2.4) agents.enabled is also recognised and GOVERNS over features.multi_agent, since
+        // on codex-cli 0.169.0 it is the switch that bites a v2 model.
+        assert_eq!(
+            user_multi_agent(&["agents.enabled=true".into()]),
+            Some(true)
+        );
+        assert_eq!(
+            user_multi_agent(&["agents.enabled = false".into()]),
+            Some(false)
+        );
+        assert_eq!(
+            user_multi_agent(&[
+                "features.multi_agent=false".into(),
+                "agents.enabled=true".into()
+            ]),
+            Some(true),
+            "agents.enabled wins over features.multi_agent"
+        );
+    }
+
+    /// (C3 0.2.4) The off switch set is exactly the two `-c` items, in order.
+    #[test]
+    fn the_subagent_off_switches_are_both_passed() {
+        assert_eq!(
+            SUBAGENT_OFF,
+            ["features.multi_agent=false", "agents.enabled=false"]
+        );
+    }
+
+    /// (C3 0.2.4) The sub-agent guard reads a run's rollout: a `spawn_agent` function call in the
+    /// run's own rollout is a hit; a plain rollout is not.
+    #[test]
+    fn the_subagent_guard_sees_a_spawn_agent_call() {
+        let home = std::env::temp_dir().join(format!(
+            "c3-subguard-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let now = Utc::now();
+        let local = now.with_timezone(&Local);
+        let day = home
+            .join("sessions")
+            .join(local.format("%Y").to_string())
+            .join(local.format("%m").to_string())
+            .join(local.format("%d").to_string());
+        std::fs::create_dir_all(&day).unwrap();
+        let thread = v7(now, 1);
+        let rollout = day.join(format!(
+            "rollout-{}-{thread}.jsonl",
+            local.format("%Y-%m-%dT%H-%M-%S")
+        ));
+        let home_s = home.to_string_lossy().to_string();
+        let since = now - Duration::minutes(1);
+        // a plain rollout: no sub-agent
+        std::fs::write(&rollout, format!("{}\n", meta_line(now, &thread, ""))).unwrap();
+        assert_eq!(subagent_in_run(&thread, since, &home_s), None);
+        // a spawn_agent function call: a hit
+        std::fs::write(
+            &rollout,
+            format!(
+                "{}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"spawn_agent\",\"namespace\":\"collaboration\",\"arguments\":\"{{}}\"}}}}\n",
+                meta_line(now, &thread, "")
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            subagent_in_run(&thread, since, &home_s),
+            Some(SubagentSignal::SpawnCall)
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// (C3 0.2.4) A child rollout naming the run's thread as parent is a hit even without a
+    /// `spawn_agent` call in the parent's own rollout.
+    #[test]
+    fn the_subagent_guard_sees_a_child_rollout() {
+        let home = std::env::temp_dir().join(format!(
+            "c3-subguard-child-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let now = Utc::now();
+        let local = now.with_timezone(&Local);
+        let day = home
+            .join("sessions")
+            .join(local.format("%Y").to_string())
+            .join(local.format("%m").to_string())
+            .join(local.format("%d").to_string());
+        std::fs::create_dir_all(&day).unwrap();
+        let parent = v7(now, 2);
+        let child = v7(now, 3);
+        let stamp = local.format("%Y-%m-%dT%H-%M-%S");
+        std::fs::write(
+            day.join(format!("rollout-{stamp}-{parent}.jsonl")),
+            format!("{}\n", meta_line(now, &parent, "")),
+        )
+        .unwrap();
+        std::fs::write(
+            day.join(format!("rollout-{stamp}-{child}.jsonl")),
+            format!("{}\n", meta_line(now, &child, &parent)),
+        )
+        .unwrap();
+        let home_s = home.to_string_lossy().to_string();
+        assert_eq!(
+            subagent_in_run(&parent, now - Duration::minutes(1), &home_s),
+            Some(SubagentSignal::ChildRollout { thread: child })
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

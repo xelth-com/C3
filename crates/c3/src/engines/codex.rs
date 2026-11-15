@@ -162,12 +162,11 @@ impl CodexEngine {
             }),
             env: None,
             crt_quote: false,
-            // (wave 8) the quota budget watches only the primary (main) turn
-            budget: if is_primary {
-                self.budget.as_ref()
-            } else {
-                None
-            },
+            // (wave 8) the quota budget watches only the primary (main) turn; (C3 0.2.4) the
+            // sub-agent guard watches every turn - the primary engine's watch carries the budget
+            // (percent > 0) and only ever runs the primary turn, the secondary engine's watch is
+            // guard-only (percent 0), so it never does a budget stop on a continuation / repair.
+            budget: self.budget.as_ref(),
         };
         let result = run_turn(&spawn);
 
@@ -237,6 +236,21 @@ impl CodexEngine {
             TurnStop::Kick => {
                 return Ok(AttemptOutcome::Stopped {
                     kind: StopKind::Kick,
+                    partial: salvage_partial(&events_text),
+                    survivors: result.survivors,
+                    kill: result.kill.clone(),
+                    conversation: conversation(false),
+                    wall_seconds: result.wall_seconds,
+                });
+            }
+            TurnStop::Subagent => {
+                return Ok(AttemptOutcome::Stopped {
+                    kind: StopKind::Subagent {
+                        signal: result
+                            .subagent
+                            .clone()
+                            .unwrap_or(c3_core::quota::SubagentSignal::SpawnCall),
+                    },
                     partial: salvage_partial(&events_text),
                     survivors: result.survivors,
                     kill: result.kill.clone(),

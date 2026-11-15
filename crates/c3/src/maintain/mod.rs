@@ -136,27 +136,25 @@ fn read_pending(dir: &Path) -> Vec<PendingUpdate> {
 }
 
 /// Write the pending-update journal atomically (temp + rename), so a crash mid-write never corrupts
-/// it.
-fn write_pending(dir: &Path, list: &[PendingUpdate]) {
-    if std::fs::create_dir_all(dir).is_err() {
-        return;
-    }
-    let Ok(bytes) = serde_json::to_vec(list) else {
-        return;
-    };
+/// it. (R2) Every persistence failure is PROPAGATED - the caller must not run the installer when the
+/// record it relies on for crash recovery was never written to disk.
+fn write_pending(dir: &Path, list: &[PendingUpdate]) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let bytes = serde_json::to_vec(list)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let path = pending_path(dir);
     let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, &bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
-    }
+    std::fs::write(&tmp, &bytes)?;
+    std::fs::rename(&tmp, &path)
 }
 
-/// Record (or replace) the pending update for one engine.
-fn set_pending(dir: &Path, rec: PendingUpdate) {
+/// Record (or replace) the pending update for one engine. (R2) Returns the persistence error so the
+/// caller can fail closed before the install.
+fn set_pending(dir: &Path, rec: PendingUpdate) -> std::io::Result<()> {
     let mut list = read_pending(dir);
     list.retain(|p| p.engine != rec.engine);
     list.push(rec);
-    write_pending(dir, &list);
+    write_pending(dir, &list)
 }
 
 /// Clear the pending update for one engine (a no-op when there is none).
@@ -165,7 +163,9 @@ fn clear_pending(dir: &Path, engine: &str) {
     let before = list.len();
     list.retain(|p| p.engine != engine);
     if list.len() != before {
-        write_pending(dir, &list);
+        // A clear-failure is safe (a stale record is re-smoked and resolved on the next pass), so it
+        // is best-effort - unlike the write-before-install, whose failure must fail the pass closed.
+        let _ = write_pending(dir, &list);
     }
 }
 
@@ -876,8 +876,9 @@ fn maintain_one_engine(
     }
 
     // Record the in-progress update BEFORE the install runs, so a crash before the post-update smoke
-    // finishes is recovered on the next pass instead of being read as "up to date".
-    set_pending(
+    // finishes is recovered on the next pass instead of being read as "up to date". (R2) If the record
+    // cannot be persisted, the recovery guarantee is void: hold and run no installer (fail closed).
+    if let Err(e) = set_pending(
         dir,
         PendingUpdate {
             engine: name.to_string(),
@@ -885,8 +886,12 @@ fn maintain_one_engine(
             target: new_text.clone(),
             when: rfc3339(now),
         },
-    );
-    let outcome = update_and_verify(
+    ) {
+        let msg = format!("held: could not record the pending update ({e})");
+        println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
+        return (format!("{installed_text} -> {new_text} {msg}"), msg);
+    }
+    let (clause, action, resolved) = update_and_verify(
         env,
         name,
         launcher,
@@ -900,12 +905,21 @@ fn maintain_one_engine(
         dir,
         now,
     );
-    clear_pending(dir, name);
-    outcome
+    // (R1) Clear the pending record ONLY when the update is genuinely resolved - the target passed
+    // its smoke, or the previous version is verified restored. A failed installer (which may have
+    // mutated the install), an update that did not take, or a failed rollback KEEPS the record so the
+    // next pass re-probes and recovers instead of calling a half-installed CLI "up to date".
+    if resolved {
+        clear_pending(dir, name);
+    }
+    (clause, action)
 }
 
-/// The update + post-update verify/smoke/rollback, wrapped so the pending-update journal is cleared
-/// on every exit path. `inst` is the parsed previous version; `latest_v` the checked target.
+/// The update + post-update verify/smoke/rollback. `inst` is the parsed previous version; `latest_v`
+/// the checked target. Returns (report clause without the name, state action, RESOLVED) - (R1)
+/// `resolved` is true only when the engine is left in a known-good state (the target smoked clean, or
+/// the previous version is verified restored); every failure path returns false so the caller keeps
+/// the pending-update record for the next pass to recover.
 #[allow(clippy::too_many_arguments)]
 fn update_and_verify(
     env: &dyn Env,
@@ -920,19 +934,21 @@ fn update_and_verify(
     self_exe: &str,
     dir: &Path,
     now: DateTime<Utc>,
-) -> (String, String) {
+) -> (String, String, bool) {
     // 2. update.
     match engine::do_update(env, name, launcher, new_text, dir) {
         Ok(r) if r.ok() => {}
         Ok(r) => {
+            // (R1) The installer exited nonzero but may have mutated the install: keep the pending
+            // record (resolved = false) so the next pass re-probes and smokes/rolls back the result.
             let msg = format!("update failed ({})", r.fail_reason());
             println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
-            return (format!("{installed_text} -> {new_text} {msg}"), msg);
+            return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
         }
         Err(e) => {
             let msg = format!("update failed ({e})");
             println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
-            return (format!("{installed_text} -> {new_text} {msg}"), msg);
+            return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
         }
     }
 
@@ -940,13 +956,14 @@ fn update_and_verify(
     // (a `grok update` that installed something else, or a silent no-op, is a failed update).
     let after = engine::installed_version(env, launcher);
     if !matches!(&after, Some(v) if v >= latest_v) {
+        // (R1) Some other version may now be on disk: keep the pending record for recovery.
         let now_t = after
             .as_ref()
             .map(|v| v.text().to_string())
             .unwrap_or_else(|| "unknown".to_string());
         let msg = format!("update did not take (still {now_t})");
         println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
-        return (format!("{installed_text} -> {new_text} {msg}"), msg);
+        return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
     }
     let after_text = after
         .as_ref()
@@ -964,22 +981,33 @@ fn update_and_verify(
                     .as_ref()
                     .map(|v| v.parts == inst.parts)
                     .unwrap_or(false);
-                let msg = if cmd_ok && restored {
-                    "smoke failed, rolled back".to_string()
+                // (R1) Resolved only when the previous version is verified back; a failed rollback
+                // leaves the broken new version on disk, so keep the pending record.
+                let (msg, resolved) = if cmd_ok && restored {
+                    ("smoke failed, rolled back".to_string(), true)
                 } else {
                     let now_t = back
                         .as_ref()
                         .map(|v| v.text().to_string())
                         .unwrap_or_else(|| "unknown".to_string());
-                    format!("smoke failed, rollback failed, still {now_t}")
+                    (
+                        format!("smoke failed, rollback failed, still {now_t}"),
+                        false,
+                    )
                 };
                 println!("c3 maintain: {name} {installed_text} -> {new_text} {msg} ({why})");
-                return (format!("{installed_text} -> {new_text} {msg}"), msg);
+                return (
+                    format!("{installed_text} -> {new_text} {msg}"),
+                    msg,
+                    resolved,
+                );
             }
         }
+        // (R1) No rollback path: the engine is stuck on a failed new version with no safe target.
+        // Keep the record so the next pass re-smokes it once more before giving up.
         let msg = "smoke failed, no rollback path".to_string();
         println!("c3 maintain: {name} {installed_text} -> {new_text} {msg} ({why})");
-        return (format!("{installed_text} -> {new_text} {msg}"), msg);
+        return (format!("{installed_text} -> {new_text} {msg}"), msg, false);
     }
 
     let msg = "ok".to_string();
@@ -987,6 +1015,7 @@ fn update_and_verify(
     (
         format!("{installed_text} -> {after_text} ok"),
         format!("{installed_text} -> {after_text} ok"),
+        true,
     )
 }
 
@@ -1146,18 +1175,40 @@ fn run_models(
                 continue;
             }
             let now = Utc::now();
+            // (R3) Re-read the roster fresh right before the smoke: the protection / saturation gate
+            // and the swap's comparison basis come from the SAME on-disk snapshot, so a concurrent
+            // edit during (or just before) the minutes-long smoke - protecting the entry, or
+            // re-pointing its old model to another provider - is judged and aborted instead of being
+            // swapped over the stale pass-start roster.
+            let Ok(basis) = std::fs::read_to_string(&roster.path) else {
+                let msg = format!(
+                    "model {} :: {} -> {} not seated (roster unreadable)",
+                    c.provider, c.old, c.new
+                );
+                println!("c3 maintain: {msg}");
+                clauses.push(msg);
+                continue;
+            };
+            let home = std::env::var("USERPROFILE")
+                .ok()
+                .or_else(|| std::env::var("HOME").ok());
+            let fresh = c3_core::roster::validate_roster(&roster.path, &basis, home.as_deref());
             // The candidate's smoke obeys the saturation rule pick_target applies: a swap on a plan
             // whose governing window is at 90 %+ is held, the roster untouched. (0.2.4) a protected
             // or on-request seat is never smoked either - its quota is kept / it runs only when named.
-            let saturated = roster
+            // The entry must still be present with this exact provider + old model (else the roster
+            // changed under us and the swap is abandoned).
+            let entry = fresh
                 .entries
                 .iter()
-                .find(|e| e.position == c.position)
-                .map(|e| {
-                    smoke::seat_saturated(roster, e, now) || e.on_request || e.reserve_percent > 0
-                })
-                .unwrap_or(false);
-            if saturated {
+                .find(|e| e.provider == c.provider && e.model == c.old);
+            let blocked = match entry {
+                None => true,
+                Some(e) => {
+                    smoke::seat_saturated(&fresh, e, now) || e.on_request || e.reserve_percent > 0
+                }
+            };
+            if blocked {
                 let msg = format!(
                     "model {} :: {} -> {} held: no quota for a smoke",
                     c.provider, c.old, c.new
@@ -1173,7 +1224,14 @@ fn run_models(
             match run_one_smoke(env, self_exe, &target, &c.engine, now) {
                 smoke::Smoke::Pass => {
                     let today = now.format("%Y%m%d").to_string();
-                    match models::apply_swap(&roster.path, &c.provider, &c.old, &c.new, &today) {
+                    match models::apply_swap(
+                        &roster.path,
+                        &basis,
+                        &c.provider,
+                        &c.old,
+                        &c.new,
+                        &today,
+                    ) {
                         Ok(()) => {
                             println!(
                                 "c3 maintain: model {} :: {} -> {} (roster)",
@@ -1806,7 +1864,8 @@ mod tests {
                 target: "1.0.80".into(),
                 when: rfc3339(now()),
             },
-        );
+        )
+        .unwrap();
         let got = read_pending(&dir);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].previous, "1.0.77");

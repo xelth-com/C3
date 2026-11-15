@@ -61,6 +61,20 @@ pub struct KimiEngine {
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
     /// Told around every tree kill of a turn (`SpawnRequest::on_kill`).
     pub on_kill: Option<super::subprocess::KillHook>,
+    /// (R7) The operator brief to make readable inside the throwaway worktree, or `None`. kimi reads
+    /// the review in a worktree of HEAD, so a brief that exists only in the caller's working tree
+    /// (uncommitted, or committed-but-locally-modified) is absent there; it is copied in at its
+    /// repo-relative path before the turn so the prompt's reference resolves to the operator's actual
+    /// brief. A secondary (continuation) turn resumes a session that already read it, so it sets `None`.
+    pub brief: Option<BriefCopy>,
+}
+
+/// (R7) A brief to stage into a kimi worktree: its absolute source in the real tree and the
+/// repo-relative path the prompt references (resolved in the worktree cwd).
+#[derive(Clone)]
+pub struct BriefCopy {
+    pub src: PathBuf,
+    pub rel: String,
 }
 
 /// One kimi stream-json line's effect on the tool calls in flight (`Update-ToolFlight`): an
@@ -282,6 +296,25 @@ impl KimiEngine {
                 });
             }
         };
+        // (R7) Stage the operator brief into the worktree so the prompt's repo-relative reference
+        // resolves to the operator's ACTUAL brief (committed or not) rather than whatever HEAD holds
+        // (or nothing). Only a clean in-repo relative path is staged; an absolute / out-of-repo brief
+        // reference already resolves from the worktree against the real tree.
+        if let Some(brief) = &self.brief {
+            let rel = Path::new(&brief.rel);
+            let safe = !brief.rel.is_empty()
+                && rel.is_relative()
+                && !rel
+                    .components()
+                    .any(|c| matches!(c, std::path::Component::ParentDir));
+            if safe {
+                let dest = worktree.path.join(rel);
+                if let Some(parent) = dest.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::copy(&brief.src, &dest);
+            }
+        }
         let isolation = Some(worktree.isolation_line());
         let files = self.files_for(turn.kind);
         let timeout = std::time::Duration::from_secs_f64(turn.request.timeout_sec.max(0.0));

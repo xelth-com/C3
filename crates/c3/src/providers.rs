@@ -839,11 +839,11 @@ impl Ctx {
             // seated automatically (a -Require naming it rejoins via `request`); a held protected
             // entry on a non-standing purpose refuses the run when `--require`d (`reserve` is a hard
             // outage) - unless --spend-reserve.
-            if state == "run" && e.on_request {
-                state = "skipped".into();
-                reason = "on request only".into();
-                skip_kind = "request".into();
-            }
+            // (R4) The reserve hold is judged BEFORE the on-request gate: an entry that is BOTH
+            // on-request and over its protected reserve must carry the HARD `reserve` skip (which the
+            // required-outage check and select_panel_routing refuse), never the soft `request` skip
+            // that an exact `--require` re-admits. Checked first, `reserve` wins; a not-over or
+            // --spend-reserve / standing entry falls through to `request` and may be re-admitted.
             if state == "run"
                 && !spend_reserve
                 && !c3_core::purpose::is_standing(purpose)
@@ -863,6 +863,11 @@ impl Ctx {
                     );
                     skip_kind = "reserve".into();
                 }
+            }
+            if state == "run" && e.on_request {
+                state = "skipped".into();
+                reason = "on request only".into();
+                skip_kind = "request".into();
             }
             if state == "run" && e.panel == "weighty" && !all && !weighty_purpose {
                 state = "skipped".into();
