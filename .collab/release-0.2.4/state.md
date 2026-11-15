@@ -36,5 +36,18 @@
   call the day he complained about it being drained. To run it:
   `c3 consult --task release-0.2.4 --purpose acceptance --mode new --brief .collab/release-0.2.4/handoffs/08-claude-acceptance.md --reply-name acceptance --detach`
   (no `--provider`: acceptance goes to the standing partner). Then `git tag v0.2.4` at the accepted commit.
+- 2026-11-15 evening, on the operator's word ("запускай астру на приемку и пуш все что надо должна остаться одна
+  мейн ветка"): the CI wave before the acceptance. GitHub CI had been red at its Format step since 2026-11-08
+  (run 42525901306), so clippy and both Linux jobs had not run on any commit after 5018ac4. Done: `cargo fmt --all`
+  (24 files), 9 clippy fixes without behaviour change (the roster engine-name regex built once before the loop,
+  `budget/mod.rs`, `cli/{budget,router}.rs`, `engines/{grok,kimi}.rs`, `maintain/version.rs`, two tests), the Linux
+  cfg gates of everything added since 5018ac4 read (no gap found; not compiled locally). Full run on the final tree:
+  c3-core 282, c3 lib 644, c3-cli 196 in 20 binaries, 0 failed; fmt check and clippy `-D warnings` clean.
+  CHANGELOG gained the entries the three 2026-11-08 commits never got (budget-aware panel routing, the native kimi
+  engine, read-insist re-asks, the roster loader skipping an unknown engine); README gained kimi, `c3 maintain` and
+  the `ext.reserve_percent` / `ext.on_request` settings. Brief 08 now names the base as `5018ac4..HEAD` and says
+  outright that the 2026-11-08 commits were never reviewed by any model (new Q0).
+  Branches: all 33 local branches and the two remote ones (`cloud/linux-port`, `claude/sharp-cannon-ocamev`) were
+  fully merged into main and are deleted; the leftover agent worktree is removed. Only `main` remains.
 - Acceptance authority: these three are stand-ins. Their verdicts are recorded; the tag `v0.2.4`
   waits for the standing partner's acceptance after its window resets (rule of the consult skill).

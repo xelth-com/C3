@@ -1,19 +1,27 @@
 # Handoff 08 - Claude: acceptance of 0.2.4
 
-Date: 2026-11-15. Base: tag `v0.2.3` .. commit `d7ce658` (committed) + one uncommitted wave in the
-working tree. `git diff 035d386 d7ce658` is wave 1, `git diff d7ce658` is wave 2 (the working tree).
+Date: 2026-11-15. Base: tag `v0.2.3` .. HEAD of `main` (clean tree). You accepted the tree at
+`5018ac4` (task review-2026-10-30, handoff 12); everything after it is new to you:
+`git diff 5018ac4 HEAD` (53 .rs files, about 10 900 added lines). By commit: `285779b`, `f686a1e`,
+`529e8e3` (2026-11-08), `035d386`, `d7ce658` (wave 1), `97cae9f` (wave 2), then the CI wave (HEAD).
 
 ## Question
 
-Can 0.2.4 be accepted and tagged at the commit that will hold exactly this working tree? Name
-anything that must be fixed first.
+Can 0.2.4 be accepted and tagged at HEAD? Name anything that must be fixed first.
 
 ## Delta since the last review
 
-First review of this task by the standing partner. Stand-in diff-reviews ran on both waves:
+First review of this task by the standing partner. Stand-in diff-reviews ran on waves 1 and 2:
 handoffs 02-04 (GLM-5.3 ACCEPT, Muse Wonder HOLD, Grok HOLD; 30 findings) and 06-07 (Grok HOLD,
 Muse contributor HOLD; 7 findings). All 37 are closed; ids and closing tests below.
 
+- **The 2026-11-08 commits were never reviewed by any model** (only a live kimi smoke, task
+  smoke-kimi): `285779b` budget-aware panel routing (`crates/c3/src/budget/`, `cli/budget.rs`,
+  `cli/router.rs`) and the native kimi engine (`crates/c3/src/engines/kimi.rs`, 920 lines, runs in a
+  throwaway worktree); `f686a1e` the roster loader skips an entry with an unknown engine
+  (`crates/c3-core/src/roster.rs`); `529e8e3` read-insist re-asks and the budget boost guards
+  (`consult/orchestrate/secondary.rs`). `035d386` (grok brief by reference, zero-tool guard on every
+  non-raw purpose) was read only as the base of wave 1. Spend your attention here first.
 - **Wave 1 (`d7ce658`)**: `c3 maintain` (`crates/c3/src/maintain/`) - a weekly detached pass from the
   SessionStart hook that updates the engine CLIs behind a two-turn smoke with rollback and swaps a
   seated model only for a same-major successor that passed the smoke; Grok takes the reply schema
@@ -21,13 +29,20 @@ Muse contributor HOLD; 7 findings). All 37 are closed; ids and closing tests bel
   run that died in a re-ask is recorded under that re-ask (`crates/c3/src/consult/orchestrate/secondary.rs`,
   `crates/c3/src/engines/grok.rs`); live quota windows for z.ai and Muse (`crates/c3/src/budget/mod.rs`);
   the build commit in `c3 --version` (`crates/c3-cli/build.rs`).
-- **Wave 2 (uncommitted)**: reviewer protection. Roster entry `ext.on_request` (never seated
+- **Wave 2 (`97cae9f`)**: reviewer protection. Roster entry `ext.on_request` (never seated
   automatically) and `ext.reserve_percent` (a protected entry is held on non-standing purposes when
   `used% >= min(elapsed% + N, 100 - N)` on a long window; `--spend-reserve` overrides); a bare
   consultation is the standing partner only on acceptance / core-contract, otherwise one routed
   pick; the ChatGPT windows are read from rollouts up to 8 days back and the health record instead
   of being forgotten after two days (`crates/c3/src/providers.rs`, `crates/c3/src/panel/{plan,run}.rs`,
   `crates/c3/src/consult/orchestrate/mod.rs`, `crates/c3-core/src/{roster,purpose,quota}.rs`).
+
+- **CI wave (HEAD)**: no behaviour change. `cargo fmt --all` over 24 files (GitHub CI had been red
+  at its Format step since 2026-11-08, so clippy and the Linux jobs never ran on any commit above);
+  9 clippy fixes (`roster.rs` engine-name regex built once before the loop, `budget/mod.rs`,
+  `cli/{budget,router}.rs`, `engines/{grok,kimi}.rs`, `maintain/version.rs`, two tests); CHANGELOG
+  entries for the 2026-11-08 commits, README sections for kimi, `c3 maintain` and the two `ext`
+  settings.
 
 ## CURRENT invariants claimed
 
@@ -79,8 +94,11 @@ Muse contributor HOLD; 7 findings). All 37 are closed; ids and closing tests bel
 
 ## Evidence
 
-- Full run on this exact tree (2026-11-15): `cargo test -p c3-core` 282 passed, `cargo test -p c3 --lib`
-  644 passed, `cargo test -p c3-cli --no-fail-fast -- --test-threads=1` 196 passed in 20 binaries, 0 failed.
+- Full run on this exact tree (2026-11-15, Windows): `cargo test -p c3-core` 282 passed, `cargo test
+  -p c3 --lib` 644 passed, `cargo test -p c3-cli -- --test-threads=1` 196 passed in 20 binaries,
+  0 failed; `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` clean.
+  The Linux build was checked only by reading the cfg gates; the GitHub CI result for HEAD (ubuntu
+  and windows) is named in the prompt of this consultation.
 - Live on this machine with the d7ce658 build: `c3 maintain --run --dry-run` named the right versions
   of six CLIs and left no state; `c3 maintain --smoke --engine codex --engine kimi` passed; the hook
   with a due pass returned in 2.1 s while the pass ran 20 s and the next hook printed the report once.
@@ -92,6 +110,10 @@ Muse contributor HOLD; 7 findings). All 37 are closed; ids and closing tests bel
 
 ## Questions
 
+- **Q0.** The 2026-11-08 commits: budget weights (`budget/mod.rs`: can a wrong or stale reading
+  starve or flood a seat?), the kimi engine (worktree cleanup, what a failed or partial run leaves,
+  how the reply is told from tool output), the roster loader (can a skipped entry change which
+  entry is first or which one a `--provider` names?).
 - **Q1.** ACCEPT, HOLD or REJECT for 0.2.4 as this tree, and the reason.
 - **Q2.** `c3 maintain`: is there still a path that leaves an engine worse than it found it, or
   edits the roster wrongly?
@@ -102,4 +124,4 @@ Muse contributor HOLD; 7 findings). All 37 are closed; ids and closing tests bel
 - **Q5.** What must be observed in the log on the first real update and the first real hold
   (first-run checklist)?
 
-Answer by number. Cite `path:line` for every finding. Keep it under 900 words.
+Answer by number. Cite `path:line` for every finding. Keep it under 1100 words.

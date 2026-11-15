@@ -78,7 +78,7 @@ fn multiplier_takes_the_most_constraining_window() {
     std::env::remove_var("CODEX_CONSULT_BUDGET_ROUTING");
     let w = vec![
         win("month", 0.1425, 0.4, false), // h ~ 1.43
-        win("5h", 0.9, 0.5, false),        // h = .1 / .5 = .2 -> clamp .25
+        win("5h", 0.9, 0.5, false),       // h = .1 / .5 = .2 -> clamp .25
     ];
     let (m, gov) = budget_multiplier(&w);
     assert_eq!(m, ROUTING_BUDGET_MIN);
@@ -151,7 +151,11 @@ fn zai_parse_yields_only_the_tokens_5h_window() {
     assert_eq!(w[0].source, "zai-quota");
     assert_eq!(w[0].resets_at, resets);
     // period 5h, remain 1h -> elapsed = 1 - 1/5 = 0.8
-    assert!((w[0].elapsed_ratio - 0.8).abs() < 1e-6, "{}", w[0].elapsed_ratio);
+    assert!(
+        (w[0].elapsed_ratio - 0.8).abs() < 1e-6,
+        "{}",
+        w[0].elapsed_ratio
+    );
 }
 
 #[test]
@@ -183,7 +187,11 @@ fn muse_parse_yields_5h_and_weekly() {
     assert_eq!(w[0].used_ratio, 0.0);
     assert_eq!(w[0].source, "muse-usage");
     // period 5h, remain 1h -> elapsed 0.8
-    assert!((w[0].elapsed_ratio - 0.8).abs() < 1e-6, "{}", w[0].elapsed_ratio);
+    assert!(
+        (w[0].elapsed_ratio - 0.8).abs() < 1e-6,
+        "{}",
+        w[0].elapsed_ratio
+    );
     assert_eq!(w[1].name, "week");
     assert!((w[1].used_ratio - 0.08).abs() < 1e-9);
     assert_eq!(w[1].source, "muse-usage");
@@ -212,7 +220,11 @@ fn snapshot_round_trip() {
     assert_eq!(w.source, "snapshot");
     assert!(!w.stale);
     // period 30 days, remain Nov 26 - Nov 9 = 17 days -> elapsed = 1 - 17/30 = 0.433
-    assert!((w.elapsed_ratio - 0.4333).abs() < 0.01, "elapsed = {}", w.elapsed_ratio);
+    assert!(
+        (w.elapsed_ratio - 0.4333).abs() < 0.01,
+        "elapsed = {}",
+        w.elapsed_ratio
+    );
 }
 
 #[test]
@@ -277,8 +289,11 @@ fn a_snapshot_whose_window_already_reset_is_stale() {
         "period_days": 7
     });
     let w = window_from_snapshot("supergrok", &v, now).expect("window");
-    assert!(w.stale, "a rolled-over snapshot must not drive the multiplier");
-    assert_eq!(budget_multiplier(&[w.clone()]).0, 1.0);
+    assert!(
+        w.stale,
+        "a rolled-over snapshot must not drive the multiplier"
+    );
+    assert_eq!(budget_multiplier(std::slice::from_ref(&w)).0, 1.0);
     assert!(providers_quota_cell(&[w], now).contains("window reset since - refresh"));
 }
 
@@ -316,7 +331,9 @@ fn parse_when_accepts_dates_instants_and_minute_precision() {
     );
     // A full RFC 3339 instant (the already-accepted form) still works.
     assert_eq!(
-        parse_when("2026-11-16T15:18:00Z").unwrap().with_timezone(&Utc),
+        parse_when("2026-11-16T15:18:00Z")
+            .unwrap()
+            .with_timezone(&Utc),
         utc("2026-11-16T15:18:00Z")
     );
     // The `--help` example `2026-11-26T00:00Z` (no seconds) is now accepted.
@@ -464,7 +481,10 @@ fn a_future_dated_observation_is_ignored() {
     let now = hold_now();
     // Beyond a few minutes of clock skew in the future: not fresh, and not accepted as a reading.
     assert!(!observed_fresh(now + chrono::Duration::minutes(10), now));
-    assert!(!observed_not_future(now + chrono::Duration::minutes(10), now));
+    assert!(!observed_not_future(
+        now + chrono::Duration::minutes(10),
+        now
+    ));
     // Within skew and within the hour: fresh and accepted.
     assert!(observed_fresh(now - chrono::Duration::minutes(30), now));
     assert!(observed_not_future(now + chrono::Duration::minutes(2), now));
@@ -481,9 +501,18 @@ fn a_two_day_rollout_window_past_its_reset_is_dropped_by_keep_future() {
     let quota = serde_json::json!({
         "primary": {"used_percent": 80, "window_minutes": 10080, "resets_at": "2026-11-14T00:00:00Z"},
     });
-    let w = windows_from_quota("", &quota, now - chrono::Duration::days(1), "codex-rollout", now);
+    let w = windows_from_quota(
+        "",
+        &quota,
+        now - chrono::Duration::days(1),
+        "codex-rollout",
+        now,
+    );
     assert_eq!(w.len(), 1, "the window is parsed");
-    assert!(keep_future(w, now).is_empty(), "but dropped once its reset is in the past");
+    assert!(
+        keep_future(w, now).is_empty(),
+        "but dropped once its reset is in the past"
+    );
 }
 
 #[test]
@@ -509,16 +538,34 @@ fn a_past_reset_live_window_is_dropped() {
     // a snapshot or "no data" applies instead of a pre-reset usage figure driving the multiplier.
     // kimi: 5h reset 2026-11-08T17:16:53Z and month reset 2026-11-26; `now` after both -> no windows.
     let now = utc("2026-11-27T00:00:00Z");
-    assert!(parse_kimi(KIMI_FIXTURE, "kimi", now, now).is_empty(), "kimi past reset");
+    assert!(
+        parse_kimi(KIMI_FIXTURE, "kimi", now, now).is_empty(),
+        "kimi past reset"
+    );
     // zai: TOKENS_LIMIT nextResetTime 1794757032954 ms, now one hour later -> no windows.
     let zai_resets = epoch_ms(1_794_757_032_954).unwrap();
     assert!(
-        parse_zai(ZAI_FIXTURE, "zai", zai_resets + chrono::Duration::hours(1), zai_resets + chrono::Duration::hours(1)).is_empty(),
+        parse_zai(
+            ZAI_FIXTURE,
+            "zai",
+            zai_resets + chrono::Duration::hours(1),
+            zai_resets + chrono::Duration::hours(1)
+        )
+        .is_empty(),
         "zai past reset"
     );
     // muse: 5h resetsAtMs 1794757194000 past, weekly resetsAtMs 1794787200000 still future.
     let muse_5h = epoch_ms(1_794_757_194_000).unwrap();
-    let w = parse_muse(MUSE_FIXTURE, "meta", muse_5h + chrono::Duration::hours(1), muse_5h + chrono::Duration::hours(1));
-    assert_eq!(w.len(), 1, "only the still-open weekly window survives: {w:?}");
+    let w = parse_muse(
+        MUSE_FIXTURE,
+        "meta",
+        muse_5h + chrono::Duration::hours(1),
+        muse_5h + chrono::Duration::hours(1),
+    );
+    assert_eq!(
+        w.len(),
+        1,
+        "only the still-open weekly window survives: {w:?}"
+    );
     assert_eq!(w[0].name, "week");
 }

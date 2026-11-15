@@ -74,14 +74,8 @@ fn run_set(a: BudgetSetArgs) -> i32 {
             return 2;
         }
     };
-    match crate::budget::write_snapshot(
-        &a.plan,
-        &a.window,
-        used,
-        resets,
-        a.period_days,
-        Utc::now(),
-    ) {
+    match crate::budget::write_snapshot(&a.plan, &a.window, used, resets, a.period_days, Utc::now())
+    {
         Ok(path) => {
             println!(
                 "budget: {} {} {}% resets {} -> {}",
@@ -108,8 +102,8 @@ fn run_show() -> i32 {
         return 0;
     }
     println!(
-        "{:<14} {:<8} {:>6} {:>8} {:>12} {}",
-        "plan", "window", "used", "elapsed", "resets", "age"
+        "{:<14} {:<8} {:>6} {:>8} {:>12} age",
+        "plan", "window", "used", "elapsed", "resets"
     );
     for w in snaps {
         let age_days = (now - w.observed_at).num_days().max(0);

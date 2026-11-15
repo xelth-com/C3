@@ -1181,13 +1181,19 @@ fn the_roster_validates_the_claude_keys() {
     // (unknown-engine skip) a syntactically valid but unrecognized engine name no longer refuses
     // the whole roster - the entry is skipped (kept inactive) and `providers` exits 0 with a
     // warning line instead.
-    let gemini_cli_roster =
-        e.roster(r#"{"roster_version":1,"reviewers":[{"provider":"g","engine":"gemini-cli","model":"m"}]}"#);
+    let gemini_cli_roster = e.roster(
+        r#"{"roster_version":1,"reviewers":[{"provider":"g","engine":"gemini-cli","model":"m"}]}"#,
+    );
     let gemini_cli_run = e.c3(
         &["providers"],
         &[("CODEX_CONSULT_ROSTER", &gemini_cli_roster)],
     );
-    assert_eq!(gemini_cli_run.status.code(), Some(0), "{}", text(&gemini_cli_run));
+    assert_eq!(
+        gemini_cli_run.status.code(),
+        Some(0),
+        "{}",
+        text(&gemini_cli_run)
+    );
     assert!(
         text(&gemini_cli_run).contains(
             "warning: entry 1: engine \"gemini-cli\" is unknown to this c3 build - entry skipped (upgrade c3 to use it)"

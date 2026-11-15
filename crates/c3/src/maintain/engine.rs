@@ -138,7 +138,12 @@ fn check_codex(env: &dyn Env, launcher: &str) -> Latest {
         };
     }
     let released = version.as_ref().and_then(|v| {
-        let out = env.run_clean(&npm(), &["view", "@openai/codex", "time", "--json"], &[], None);
+        let out = env.run_clean(
+            &npm(),
+            &["view", "@openai/codex", "time", "--json"],
+            &[],
+            None,
+        );
         if !out.ok() {
             return None;
         }
@@ -201,20 +206,27 @@ pub const KIMI_INSTALL_PS1: &str = "https://code.kimi.ai/kimi-code/install.ps1";
 pub const KIMI_INSTALL_SH: &str = "https://code.kimi.ai/kimi-code/install.sh";
 
 fn check_kimi(env: &dyn Env) -> Latest {
-    match env.http_get(KIMI_LATEST_URL, &[], std::time::Duration::from_secs(5), true) {
+    match env.http_get(
+        KIMI_LATEST_URL,
+        &[],
+        std::time::Duration::from_secs(5),
+        true,
+    ) {
         // The marker answers 200 with the bare version and no text content-type, so the body is
         // read as bytes (via http_get) and trimmed before validating it is a version.
-        Ok((status, body)) if (200..300).contains(&status) => match parse_cli_version(body.trim()) {
-            Some(v) => Latest {
-                version: Some(v),
-                released: None,
-                note: String::new(),
-            },
-            None => Latest {
-                note: "the kimi latest marker was not a version".to_string(),
-                ..Default::default()
-            },
-        },
+        Ok((status, body)) if (200..300).contains(&status) => {
+            match parse_cli_version(body.trim()) {
+                Some(v) => Latest {
+                    version: Some(v),
+                    released: None,
+                    note: String::new(),
+                },
+                None => Latest {
+                    note: "the kimi latest marker was not a version".to_string(),
+                    ..Default::default()
+                },
+            }
+        }
         Ok((status, _)) => Latest {
             note: format!("the kimi latest marker returned {status}"),
             ..Default::default()
@@ -266,7 +278,12 @@ pub fn do_rollback(
             &[],
             None,
         ))),
-        "grok" => Some(Ok(env.run_clean(launcher, &["update", "--version", to], &[], None))),
+        "grok" => Some(Ok(env.run_clean(
+            launcher,
+            &["update", "--version", to],
+            &[],
+            None,
+        ))),
         "kimi" => Some(run_kimi_installer(env, state_dir, Some(to))),
         _ => None,
     }
@@ -303,7 +320,9 @@ fn run_kimi_installer(
     std::fs::write(&script, &bytes)
         .map_err(|e| format!("could not write the kimi installer ({e})"))?;
     let script_s = script.to_string_lossy().to_string();
-    let pin: Vec<(&str, &str)> = version.map(|v| vec![("KIMI_VERSION", v)]).unwrap_or_default();
+    let pin: Vec<(&str, &str)> = version
+        .map(|v| vec![("KIMI_VERSION", v)])
+        .unwrap_or_default();
     let args: Vec<&str> = if cfg!(windows) {
         vec![
             "-NoProfile",
@@ -329,12 +348,32 @@ mod tests {
         ran: std::cell::RefCell<Vec<String>>,
     }
     impl Env for FailingHttpEnv {
-        fn run(&self, program: &str, args: &[&str], _env: &[(&str, &str)], _cwd: Option<&Path>) -> RunResult {
-            self.ran.borrow_mut().push(format!("{program} {}", args.join(" ")));
-            RunResult { code: Some(0), ..Default::default() }
+        fn run(
+            &self,
+            program: &str,
+            args: &[&str],
+            _env: &[(&str, &str)],
+            _cwd: Option<&Path>,
+        ) -> RunResult {
+            self.ran
+                .borrow_mut()
+                .push(format!("{program} {}", args.join(" ")));
+            RunResult {
+                code: Some(0),
+                ..Default::default()
+            }
         }
-        fn http_get(&self, _url: &str, _h: &[(&str, &str)], _t: Duration, _f: bool) -> Result<(u16, String), String> {
-            Err("the response body exceeded the cap (a truncated download is never used)".to_string())
+        fn http_get(
+            &self,
+            _url: &str,
+            _h: &[(&str, &str)],
+            _t: Duration,
+            _f: bool,
+        ) -> Result<(u16, String), String> {
+            Err(
+                "the response body exceeded the cap (a truncated download is never used)"
+                    .to_string(),
+            )
         }
     }
 
@@ -349,13 +388,22 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        let env = FailingHttpEnv { ran: std::cell::RefCell::new(Vec::new()) };
+        let env = FailingHttpEnv {
+            ran: std::cell::RefCell::new(Vec::new()),
+        };
         let r = do_update(&env, "kimi", "kimi", "1.2.3", &dir);
-        assert!(r.is_err(), "a failed/oversized download is an error, not a partial install");
+        assert!(
+            r.is_err(),
+            "a failed/oversized download is an error, not a partial install"
+        );
         // nothing was written to disk and no installer was executed
         assert!(!dir.join("kimi-install.ps1").exists());
         assert!(!dir.join("kimi-install.sh").exists());
-        assert!(env.ran.borrow().is_empty(), "the installer was never run: {:?}", env.ran.borrow());
+        assert!(
+            env.ran.borrow().is_empty(),
+            "the installer was never run: {:?}",
+            env.ran.borrow()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

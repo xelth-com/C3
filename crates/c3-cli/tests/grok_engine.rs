@@ -331,10 +331,7 @@ fn the_billing_guard_strips_the_xai_api_key_from_the_child_unless_opted_in() {
     let e = setup("guard-strip");
     let o = e.consult(
         &["--engine", "grok", "--model", "grok-4.7"],
-        &[
-            ("XAI_API_KEY", "xai-SECRET"),
-            ("FAKE_GROK_TOOL_CALLS", "1"),
-        ],
+        &[("XAI_API_KEY", "xai-SECRET"), ("FAKE_GROK_TOOL_CALLS", "1")],
     );
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     let turns = e.turns();
@@ -422,7 +419,12 @@ fn a_zero_tool_call_reply_fails_the_guard_but_a_compliant_run_is_usable() {
         "a framing run that reads is usable: {}",
         e2.last()
     );
-    assert_eq!(e2.turns().len(), 1, "a single compliant turn: {:?}", e2.turns());
+    assert_eq!(
+        e2.turns().len(),
+        1,
+        "a single compliant turn: {:?}",
+        e2.turns()
+    );
 }
 
 // --------------------------------------------------- the read-insist re-ask (zero tool calls)
@@ -457,7 +459,10 @@ fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
     );
     assert_eq!(last["structured"], true);
     assert_eq!(last["read_insist"]["attempts"], 1, "one re-ask: {last}");
-    assert_eq!(last["read_insist"]["final_tool_calls"], 2, "it read 2 files: {last}");
+    assert_eq!(
+        last["read_insist"]["final_tool_calls"], 2,
+        "it read 2 files: {last}"
+    );
     assert_eq!(
         last["read_insist"]["new_conversation"], true,
         "the grok re-ask ran in a fresh conversation: {last}"
@@ -539,7 +544,9 @@ fn read_insist_fails_after_two_re_asks_when_the_model_keeps_reading_nothing() {
     );
     // all three turns are fresh (no --resume).
     let turns = e.turns();
-    assert!(turns.iter().all(|t| t["resume"].as_str().unwrap_or("").is_empty()));
+    assert!(turns
+        .iter()
+        .all(|t| t["resume"].as_str().unwrap_or("").is_empty()));
     // primary + 2 insist re-asks = 3 turns.
     assert_eq!(turns.len(), 3, "{:?}", turns);
 }
@@ -548,7 +555,7 @@ fn read_insist_fails_after_two_re_asks_when_the_model_keeps_reading_nothing() {
 fn read_insist_disabled_fails_on_the_first_turn() {
     // CODEX_CONSULT_READ_INSIST=0 restores today's behaviour: the guard fails at once, no re-ask.
     let e = setup("insist-off");
-    let o = e.consult(
+    let _o = e.consult(
         &[
             "--engine",
             "grok",
@@ -779,7 +786,11 @@ fn read_insist_death_describes_the_dead_reask_not_the_zero_tool_primary() {
     )
     .unwrap();
     let interim = e.work.join("interim.txt");
-    std::fs::write(&interim, "INTERIM-REVIEW-TEXT the real review got this far before it died").unwrap();
+    std::fs::write(
+        &interim,
+        "INTERIM-REVIEW-TEXT the real review got this far before it died",
+    )
+    .unwrap();
     let o = e.consult(
         &[
             "--engine",
@@ -807,7 +818,10 @@ fn read_insist_death_describes_the_dead_reask_not_the_zero_tool_primary() {
         "the outcome must name the dead re-ask, not the zero-tool primary: {outcome}\n{t}"
     );
     // it carries the grok exit (4d: why it stopped is answerable).
-    assert!(outcome.contains("exit 1"), "the grok exit is in the outcome: {outcome}");
+    assert!(
+        outcome.contains("exit 1"),
+        "the grok exit is in the outcome: {outcome}"
+    );
     // member wall is the total across attempts, never 0.
     assert!(
         last["wall_seconds"].as_f64().unwrap_or(0.0) > 0.0,
@@ -899,7 +913,10 @@ fn a_turn_that_reads_then_answers_nothing_is_not_usable_under_either_transport()
                 .starts_with("usable"),
             "[{transport}] a turn with no post-tool answer is not usable: {last}\n{t}"
         );
-        assert_ne!(last["structured"], true, "[{transport}] not structured: {last}");
+        assert_ne!(
+            last["structured"], true,
+            "[{transport}] not structured: {last}"
+        );
         // the placeholder is never written as the reply.
         let reply_json = std::fs::read_to_string(
             e.repo
@@ -914,7 +931,12 @@ fn a_turn_that_reads_then_answers_nothing_is_not_usable_under_either_transport()
             "[{transport}] the placeholder must not be ingested as the reply: {reply_json}"
         );
         // a non-guard primary failure drives no read-insist re-ask: a single turn.
-        assert_eq!(e.turns().len(), 1, "[{transport}] single turn: {:?}", e.turns());
+        assert_eq!(
+            e.turns().len(),
+            1,
+            "[{transport}] single turn: {:?}",
+            e.turns()
+        );
     }
 }
 
@@ -935,7 +957,11 @@ fn a_dead_reask_with_only_pre_tool_text_clears_the_reply_not_the_placeholder() {
     )
     .unwrap();
     let pretool = e.work.join("pretool.txt");
-    std::fs::write(&pretool, "PRETOOL-NOTE about to read the files now before I answer").unwrap();
+    std::fs::write(
+        &pretool,
+        "PRETOOL-NOTE about to read the files now before I answer",
+    )
+    .unwrap();
     // an EMPTY reply FILE (not an unset env, which the fake would treat as "fall back to the primary
     // reply"): the re-ask emits its pre-tool note, reads 2 files, then NO text after the last one.
     let empty_reply = e.work.join("empty-reply.txt");

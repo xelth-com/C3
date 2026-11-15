@@ -526,6 +526,7 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
     let mut entries: Vec<RosterEntry> = Vec::new();
     if why.is_empty() {
         let reviewers = obj["reviewers"].as_array().unwrap();
+        let engine_name_re = regex::Regex::new(r"^[a-z][a-z0-9-]{0,31}$").unwrap();
         for (idx, item) in reviewers.iter().enumerate() {
             let pos = idx + 1;
             let at = format!("entry {pos}");
@@ -892,18 +893,12 @@ pub fn validate_roster(path: &str, text: &str, home_dir: Option<&str>) -> Roster
             let mut engine_declared = false;
             let mut unknown_engine = false;
             if let Some(ev) = iobj.get("engine") {
-                static ENGINE_NAME_RE: std::sync::OnceLock<regex::Regex> =
-                    std::sync::OnceLock::new();
                 match ev.as_str() {
                     Some(s) if ENGINE_NAMES.contains(&s) => {
                         engine = s.to_string();
                         engine_declared = true;
                     }
-                    Some(s)
-                        if ENGINE_NAME_RE
-                            .get_or_init(|| regex::Regex::new(r"^[a-z][a-z0-9-]{0,31}$").unwrap())
-                            .is_match(s) =>
-                    {
+                    Some(s) if engine_name_re.is_match(s) => {
                         engine = s.to_string();
                         engine_declared = true;
                         unknown_engine = true;
@@ -1777,9 +1772,13 @@ mod tests {
 
     #[test]
     fn a_non_string_engine_still_refuses() {
-        let w = why(r##"{"roster_version":1,"reviewers":[{"provider":"kimi","engine":5,"model":"m"}]}"##);
+        let w = why(
+            r##"{"roster_version":1,"reviewers":[{"provider":"kimi","engine":5,"model":"m"}]}"##,
+        );
         assert!(
-            w.contains("entry 1: engine must be one of: codex, agy, muse, claude, grok, kimi (got 5)"),
+            w.contains(
+                "entry 1: engine must be one of: codex, agy, muse, claude, grok, kimi (got 5)"
+            ),
             "{w}"
         );
     }

@@ -221,10 +221,9 @@ pub fn successor<'a>(seated: &str, candidates: &'a [String]) -> Option<&'a str> 
             && c.suffix == base.suffix
             && c.major == base.major
             && c.minor > base.minor
+            && best.map(|(_, m)| c.minor > m).unwrap_or(true)
         {
-            if best.map(|(_, m)| c.minor > m).unwrap_or(true) {
-                best = Some((cand.as_str(), c.minor));
-            }
+            best = Some((cand.as_str(), c.minor));
         }
     }
     best.map(|(id, _)| id)
@@ -332,7 +331,10 @@ mod tests {
         // the reviewer's case: a dotted date suffix must not be read as the model version
         assert!(is_stamped("model-5.3-2026.11"));
         assert_eq!(parse_model_id("model-5.3-2026.11"), None);
-        assert_eq!(successor("model-5.3-2026.11", &["model-5.3-2026.12".into()]), None);
+        assert_eq!(
+            successor("model-5.3-2026.11", &["model-5.3-2026.12".into()]),
+            None
+        );
         // the version is the FIRST major.minor; a trailing 4+-digit run is a stamp
         assert!(is_stamped("glm-5.3-20261115"));
         assert!(is_stamped("grok-4.7-1017"));
@@ -372,7 +374,7 @@ mod tests {
             "glm-5.3-flash".to_string(),
             "glm-5.4-flash".to_string(),
             "glm-5.6-flash".to_string(),
-            "glm-5.4-pro".to_string(), // different suffix
+            "glm-5.4-pro".to_string(),   // different suffix
             "glm-6.0-flash".to_string(), // major jump: announced, not a successor
             "glm-5.2-flash".to_string(), // lower: not a successor
         ];
@@ -388,7 +390,10 @@ mod tests {
         let cands = vec!["qwen4.0-flash".to_string()];
         assert_eq!(successor("glm-5.3-flash", &cands), None);
         // no dotted version in the seated id → unswappable
-        assert_eq!(successor("claude-sonnet-4-6", &["claude-sonnet-4-7".into()]), None);
+        assert_eq!(
+            successor("claude-sonnet-4-6", &["claude-sonnet-4-7".into()]),
+            None
+        );
     }
 
     #[test]

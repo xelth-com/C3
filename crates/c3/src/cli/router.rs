@@ -208,8 +208,7 @@ fn run_explain(args: ExplainArgs) -> i32 {
     let now = Utc::now();
 
     // (wave 9) budget-aware routing: each plan group's multiplier and governing window.
-    let active: Vec<c3_core::roster::RosterEntry> =
-        roster.active_entries().into_iter().cloned().collect();
+    let active: Vec<c3_core::roster::RosterEntry> = roster.active_entries().cloned().collect();
     let budget_mults = crate::budget::multipliers_for(&active, now, true);
     // the governing-window cell and multiplier per budget key (recomputed once per key)
     let mut budget_cells: std::collections::HashMap<String, (f64, String)> =

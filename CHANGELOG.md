@@ -119,6 +119,37 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   `C3_MAINTAIN=off` or `"maintain": false` in the C3 config stops the hook's passes,
   `C3_MAINTAIN_DAYS`, `C3_MAINTAIN_SKIP`, `C3_MAINTAIN_MODELS=swap|announce|off` and
   `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` tune it.
+- **Budget-aware panel routing (`c3 budget`):** every roster lineage's panel draw weight is now
+  scaled by a plan multiplier - the plan's remaining quota share divided by the remaining share of
+  its period, the most constraining window of the plan governing, clamped to 0.25..2.0 (an idle
+  plan at most doubles a seat, and the boost never lifts a lineage already scored below neutral -
+  a penalty, `mult < 1`, always applies). Multipliers are read live for the `openai` account (codex
+  rollouts), for kimi (`GET api.kimi.ai/coding/v1/usages`, cached 5 minutes) and for z.ai and Muse
+  (see "Live quota" below); every other plan reads the operator's own snapshot from `c3 budget set <plan> --window <w> --used <pct> --resets
+  <iso>` (`c3 budget show` lists them all; a snapshot is `stale` past 7 days or once its own window
+  has reset, whichever comes first). `CODEX_CONSULT_BUDGET_ROUTING=off` pins every multiplier to
+  1.0. `c3 router explain` gains `weight`, `mult` and `budget` columns (the latter naming the
+  governing window), the per-member multiplier is recorded so `c3 router replay` reproduces a seat
+  offline, and `c3 providers` fills the QUOTA column for every plan that has windows, not only the
+  built-in ones.
+- **The native `kimi` engine:** drives Moonshot's Kimi CLI headless (`kimi -p <pointer>
+  --output-format stream-json -m <model>`), resumed with `-S <session id>` read from the CLI's own
+  `session.resume_hint` line; the assembled prompt goes to a temp file and only a short pointer
+  travels on argv (refused past 30000 chars). Model ids are whatever the CLI's own `config.toml`
+  declares (`kimi-code/k3` default, `kimi-code/k3-256k`, `kimi-code/k3.1-pro`,
+  `kimi-code/kimi-for-coding`, ...; `kimi-code/k3.1-pro` confirmed live by the 2026-11-08 smoke in
+  `.collab/smoke-kimi`). The CLI has no read-only flag and can write, so every kimi turn runs with
+  its cwd set to a throwaway detached git worktree of HEAD (removed after the run, recorded on the
+  handoff's `Isolation:` line), with the strict main-tree check as a second guard - any
+  working-tree or `.collab` change there FAILS the run. Roster: `engine: kimi`; replies are
+  `handoffs/<NN>-kimi-<slug>.*`.
+- **Read-insist re-asks a zero-tool review:** a grok or kimi reviewing primary turn that made no
+  tool calls is re-asked up to `CODEX_CONSULT_READ_INSIST` times (default 2; `0` fails at once)
+  before the existing zero-tool-calls `capability` guard fails the run; a re-ask that reads (tool
+  calls > 0) becomes the primary reply - kimi's re-ask resumes the same thread (grok's re-ask is a
+  new conversation, see below). Both engines' review prompts now say outright that a reply with no
+  tool calls is rejected. The handoff header gets a `Read insist: <n> turn(s), tool calls 0 -> <k>`
+  line and the ledger a `read_insist: {attempts, final_tool_calls}` entry.
 - **Live quota for z.ai and Muse:** the budget module reads the z.ai plan's 5-hour token window
   from `GET https://api.z.ai/api/monitor/usage/quota/limit` (the plan key; the monthly tools
   allowance is ignored) and the Muse 5-hour and weekly windows from `muse usage --json` (no model
@@ -171,6 +202,14 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   one insisting line in front instead of resuming the thread that did not read; the recorded
   thread is the accepted turn's, and a run whose every attempt read nothing records none. The
   ledger's `read_insist` gains `new_conversation`. kimi keeps the same-thread re-ask.
+- **The roster loader skips an entry with an unknown engine instead of refusing the whole file:**
+  an entry whose `engine` is a well-formed name this build does not recognize is kept at its
+  roster position, marked `inactive` and `unknown_engine` (so `#n` lookups still line up, but it
+  is never selected, scheduled or probed), and reported once as a roster warning - `entry <n>:
+  engine "<name>" is unknown to this c3 build - entry skipped (upgrade c3 to use it)` - surfaced by
+  `c3 providers`. A malformed engine value (not even a well-formed name) still refuses the file as
+  before. Motivated by a field report: the native kimi entry in a live roster made an
+  older, not-yet-upgraded c3 refuse every consultation on that machine.
 
 ### Fixed
 

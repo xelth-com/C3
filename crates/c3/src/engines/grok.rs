@@ -533,6 +533,7 @@ pub const GROK_TOOL_REQUIRED_PURPOSES: [&str; 4] =
 ///     code), raw or not; or
 ///   * the consultation is NOT `raw` (any other purpose: it cannot have read the brief - a no-read
 ///     grok reply fabricates code and citations).
+///
 /// A `raw` consultation of a non-review purpose is exempt. `None` when the guard does not fire (at
 /// least one tool call, or a raw non-review turn).
 pub fn grok_review_tool_guard(
@@ -930,7 +931,11 @@ mod tests {
             "final_text = {}",
             e.final_text
         );
-        assert!(e.text.contains("HOLD") && e.text.contains("ADVISE"), "{}", e.text);
+        assert!(
+            e.text.contains("HOLD") && e.text.contains("ADVISE"),
+            "{}",
+            e.text
+        );
         let t = grok_turn_outcome(&e, 0, "", "");
         assert!(t.ok, "outcome: {}", t.outcome);
         assert!(
@@ -957,10 +962,19 @@ mod tests {
         );
         let e = read_grok_events(stream, false);
         assert_eq!(e.tool_calls, 1);
-        assert!(e.final_text.trim().is_empty(), "no text after the last tool call");
+        assert!(
+            e.final_text.trim().is_empty(),
+            "no text after the last tool call"
+        );
         let t = grok_turn_outcome(&e, 0, "", "");
-        assert!(!t.ok, "a turn with no answer after its last tool call is not usable");
-        assert!(t.reply.trim().is_empty(), "the placeholder is not the reply");
+        assert!(
+            !t.ok,
+            "a turn with no answer after its last tool call is not usable"
+        );
+        assert!(
+            t.reply.trim().is_empty(),
+            "the placeholder is not the reply"
+        );
         // the placeholder survives only as salvage text on the failed turn.
         assert!(
             t.texts.iter().any(|x| x.contains("HOLD")),
@@ -989,8 +1003,14 @@ mod tests {
         // the four review purposes fire at 0 tools (raw or not) and never at >= 1.
         for p in GROK_TOOL_REQUIRED_PURPOSES {
             assert!(grok_review_tool_guard(false, p, 0).is_some(), "{p}/0 fires");
-            assert!(grok_review_tool_guard(true, p, 0).is_some(), "{p}/0 raw fires");
-            assert!(grok_review_tool_guard(false, p, 1).is_none(), "{p}/1 usable");
+            assert!(
+                grok_review_tool_guard(true, p, 0).is_some(),
+                "{p}/0 raw fires"
+            );
+            assert!(
+                grok_review_tool_guard(false, p, 1).is_none(),
+                "{p}/1 usable"
+            );
         }
         // A non-review purpose fires only when NON-raw, with the brief wording.
         for p in ["framing", "decision", "stuck", "chore", ""] {
@@ -1001,10 +1021,19 @@ mod tests {
             );
             assert_eq!(class, "capability");
             // raw is exempt on a non-review purpose.
-            assert!(grok_review_tool_guard(true, p, 0).is_none(), "raw {p}/0 exempt");
+            assert!(
+                grok_review_tool_guard(true, p, 0).is_none(),
+                "raw {p}/0 exempt"
+            );
             // at least one tool call -> usable.
-            assert!(grok_review_tool_guard(false, p, 1).is_none(), "{p}/1 usable");
-            assert!(grok_review_tool_guard(false, p, 7).is_none(), "{p}/7 usable");
+            assert!(
+                grok_review_tool_guard(false, p, 1).is_none(),
+                "{p}/1 usable"
+            );
+            assert!(
+                grok_review_tool_guard(false, p, 7).is_none(),
+                "{p}/7 usable"
+            );
         }
     }
 
@@ -1042,7 +1071,10 @@ mod tests {
             "\n",
             r#"{"type":"text","data":"the real review"}"#,
         );
-        assert_eq!(grok_salvage(read_then_tail).as_deref(), Some("the real review"));
+        assert_eq!(
+            grok_salvage(read_then_tail).as_deref(),
+            Some("the real review")
+        );
 
         // A placeholder, a tool call, then NOTHING: the tail is empty, so salvage is None (the
         // placeholder is not resurrected as the reply).

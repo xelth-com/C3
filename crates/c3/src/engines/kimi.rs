@@ -104,10 +104,7 @@ pub fn kimi_tool_flight(line: &str) -> ToolFlight {
             }
         }
         "tool" => {
-            let id = v
-                .get("tool_call_id")
-                .and_then(|i| i.as_str())
-                .unwrap_or("");
+            let id = v.get("tool_call_id").and_then(|i| i.as_str()).unwrap_or("");
             ToolFlight::Close {
                 key: if id.is_empty() {
                     String::new()
@@ -417,7 +414,12 @@ pub struct KimiRun {
     pub isolation: Option<String>,
 }
 
-fn to_outcome(t: &KimiTurn, files: &TurnFiles, wall_seconds: f64, exit_code: i32) -> AttemptOutcome {
+fn to_outcome(
+    t: &KimiTurn,
+    files: &TurnFiles,
+    wall_seconds: f64,
+    exit_code: i32,
+) -> AttemptOutcome {
     if t.ok {
         let conversation = if t.thread.is_empty() {
             ConversationTrust::None
@@ -669,7 +671,12 @@ pub fn kimi_turn_outcome(
                 e
             }
         };
-        fail(&mut o, &format!("kimi failed - {msg}"), "", &[msg.clone()]);
+        fail(
+            &mut o,
+            &format!("kimi failed - {msg}"),
+            "",
+            std::slice::from_ref(&msg),
+        );
         if is_session {
             o.thread_candidate = session.clone();
         }
@@ -835,7 +842,11 @@ mod tests {
         assert_eq!(e.tool_calls, 3, "tool calls across all assistant lines");
         // The reply is the FINAL assistant content only (no "I'll grep..." narration).
         assert!(e.text.starts_with("Found it."), "reply: {:?}", e.text);
-        assert!(!e.text.contains("I'll grep"), "narration leaked: {:?}", e.text);
+        assert!(
+            !e.text.contains("I'll grep"),
+            "narration leaked: {:?}",
+            e.text
+        );
         let t = kimi_turn_outcome(&e, 0, "", "");
         assert!(t.ok, "outcome: {}", t.outcome);
         assert_eq!(t.tool_calls, 3);
@@ -851,12 +862,7 @@ mod tests {
         assert!(t.ok, "outcome: {}", t.outcome);
         assert_eq!(t.thread, sid);
         // A resume that lands on a DIFFERENT session fails (lineage/thread mismatch).
-        let miss = kimi_turn_outcome(
-            &e,
-            0,
-            "",
-            "session_00000000-0000-0000-0000-000000000000",
-        );
+        let miss = kimi_turn_outcome(&e, 0, "", "session_00000000-0000-0000-0000-000000000000");
         assert!(!miss.ok);
         assert!(miss.outcome.contains("not found"));
         assert_eq!(miss.thread_candidate, sid);
@@ -869,8 +875,15 @@ mod tests {
         let e = read_kimi_events("", true);
         let t = kimi_turn_outcome(&e, 127, stderr, "");
         assert!(!t.ok);
-        assert!(t.outcome.contains("is not configured"), "outcome: {}", t.outcome);
-        assert!(!t.outcome.contains("Assertion failed"), "libuv noise leaked");
+        assert!(
+            t.outcome.contains("is not configured"),
+            "outcome: {}",
+            t.outcome
+        );
+        assert!(
+            !t.outcome.contains("Assertion failed"),
+            "libuv noise leaked"
+        );
         assert!(t.thread.is_empty());
     }
 
@@ -894,7 +907,10 @@ mod tests {
         assert!(kimi_review_tool_guard("framing", 0).is_none());
         for p in KIMI_TOOL_REQUIRED_PURPOSES {
             assert!(kimi_review_tool_guard(p, 0).is_some(), "{p}/0 must fire");
-            assert!(kimi_review_tool_guard(p, 1).is_none(), "{p}/1 must not fire");
+            assert!(
+                kimi_review_tool_guard(p, 1).is_none(),
+                "{p}/1 must not fire"
+            );
         }
         assert!(kimi_review_tool_guard("", 0).is_none());
     }

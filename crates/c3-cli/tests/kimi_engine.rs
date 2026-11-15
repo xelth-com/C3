@@ -79,7 +79,9 @@ fn setup(tag: &str) -> Env {
     std::fs::create_dir_all(uh.join("AppData").join("Local")).unwrap();
     std::fs::create_dir_all(uh.join(".kimi-code").join("credentials")).unwrap();
     std::fs::write(
-        uh.join(".kimi-code").join("credentials").join("oauth-token"),
+        uh.join(".kimi-code")
+            .join("credentials")
+            .join("oauth-token"),
         "{\"oauth\":\"x\"}\n",
     )
     .unwrap();
@@ -242,10 +244,7 @@ fn a_dry_run_plans_the_kimi_turn_with_the_prompt_in_argv() {
         cmd_line.contains("Your brief is the file"),
         "the argv is a brief pointer: {cmd_line}"
     );
-    assert!(
-        cmd_line.contains("Read it completely first"),
-        "{cmd_line}"
-    );
+    assert!(cmd_line.contains("Read it completely first"), "{cmd_line}");
     // a dry run starts no turn.
     assert!(e.turns().is_empty(), "no turn in a dry run");
 }
@@ -291,7 +290,10 @@ fn a_structured_run_is_usable_with_a_kimi_session_and_no_usage() {
         turns[0]
     );
     assert!(
-        turns[0]["cwd"].as_str().unwrap_or("").contains("c3-kimi-wt"),
+        turns[0]["cwd"]
+            .as_str()
+            .unwrap_or("")
+            .contains("c3-kimi-wt"),
         "the cwd is a throwaway worktree: {:?}",
         turns[0]
     );
@@ -337,7 +339,12 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
     let e = setup("guard-acceptance");
     let o = e.consult(
         &[
-            "--engine", "kimi", "--model", "kimi-code/k3", "--purpose", "acceptance",
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--purpose",
+            "acceptance",
         ],
         &[],
     );
@@ -357,7 +364,12 @@ fn a_reviewing_purpose_with_zero_tool_calls_fails_but_a_framing_one_is_usable() 
     let e2 = setup("guard-framing");
     let o2 = e2.consult(
         &[
-            "--engine", "kimi", "--model", "kimi-code/k3", "--purpose", "framing",
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--purpose",
+            "framing",
         ],
         &[],
     );
@@ -382,7 +394,12 @@ fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
     let e = setup("insist-rescue");
     let o = e.consult(
         &[
-            "--engine", "kimi", "--model", "kimi-code/k3", "--purpose", "acceptance",
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--purpose",
+            "acceptance",
         ],
         &[("FAKE_KIMI_RESUME_TOOLCALL", "2")],
     );
@@ -398,7 +415,10 @@ fn read_insist_rescues_a_zero_tool_call_acceptance_reply() {
     );
     assert_eq!(last["structured"], true);
     assert_eq!(last["read_insist"]["attempts"], 1, "one re-ask: {last}");
-    assert_eq!(last["read_insist"]["final_tool_calls"], 2, "it read 2 files: {last}");
+    assert_eq!(
+        last["read_insist"]["final_tool_calls"], 2,
+        "it read 2 files: {last}"
+    );
     let turns = e.turns();
     assert_eq!(turns.len(), 2, "primary + one re-ask: {:?}", turns);
     assert!(turns[0]["resume"].as_str().unwrap_or("").is_empty());
@@ -428,7 +448,12 @@ fn read_insist_fails_after_two_re_asks_when_the_model_keeps_reading_nothing() {
     let e = setup("insist-stubborn");
     let o = e.consult(
         &[
-            "--engine", "kimi", "--model", "kimi-code/k3", "--purpose", "acceptance",
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--purpose",
+            "acceptance",
         ],
         &[],
     );

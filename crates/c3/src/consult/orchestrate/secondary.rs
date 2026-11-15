@@ -1378,8 +1378,8 @@ pub(super) fn run_read_insist(args: ReadInsist) {
     // (grok) purpose is told to open the brief it cannot have read. A fresh (grok) re-ask instead
     // carries the WHOLE original prompt with one insisting line in front (the short same-thread
     // follow-up only makes sense inside the old thread).
-    let review_purpose = crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES
-        .contains(&ctx.o.purpose.as_str());
+    let review_purpose =
+        crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES.contains(&ctx.o.purpose.as_str());
     // The guard's own failure text; " after N re-asks" is appended if every re-ask also read nothing.
     let guard_outcome = bridge_outcome.clone();
     let timeout = ctx.r.timeout_sec.min(600);

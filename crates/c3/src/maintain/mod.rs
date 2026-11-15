@@ -355,7 +355,10 @@ fn take_over_if_stale(path: &Path) -> bool {
 
 /// The holder message of a live lock (best-effort).
 fn lock_holder_msg(path: &Path) -> String {
-    match std::fs::read(path).ok().and_then(|b| serde_json::from_slice::<LockRec>(&b).ok()) {
+    match std::fs::read(path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<LockRec>(&b).ok())
+    {
         Some(rec) => format!(
             "a maintenance pass is already running (pid {} on {})",
             rec.pid, rec.host
@@ -394,8 +397,19 @@ fn acquire_lock(dir: &Path) -> Result<PassLock, String> {
 /// The generic runtimes a CLI may run behind (an npm shim is `cmd` -> `node`; a PowerShell shim is
 /// `powershell`): such a process names what it runs only through its command line.
 const GENERIC_RUNTIMES: &[&str] = &[
-    "node", "nodejs", "bun", "deno", "cmd", "powershell", "pwsh", "sh", "bash", "dash", "zsh",
-    "python", "python3",
+    "node",
+    "nodejs",
+    "bun",
+    "deno",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "sh",
+    "bash",
+    "dash",
+    "zsh",
+    "python",
+    "python3",
 ];
 
 /// An image name without a trailing `.exe` (any case), lowercased.
@@ -432,8 +446,9 @@ fn cmdline_markers(name: &str, stem: &str, test_mode: bool) -> Vec<String> {
 /// not update while it cannot prove the engine idle.
 fn engine_in_use(name: &str, launcher: &str) -> bool {
     let me = std::process::id();
-    let mut mine: std::collections::HashSet<u32> =
-        crate::liveness::proc::descendants_of(me).into_iter().collect();
+    let mut mine: std::collections::HashSet<u32> = crate::liveness::proc::descendants_of(me)
+        .into_iter()
+        .collect();
     mine.insert(me);
     // Gather (pid, image-name, command-line); a command line is fetched only for the generic
     // runtimes that need it. A snapshot failure is Err.
@@ -529,7 +544,11 @@ pub fn format_report_line(
             .map(|c| one_line_capped(c, 160)),
     );
     if !new_ids.is_empty() {
-        let shown: Vec<String> = new_ids.iter().take(5).map(|i| one_line_capped(i, 120)).collect();
+        let shown: Vec<String> = new_ids
+            .iter()
+            .take(5)
+            .map(|i| one_line_capped(i, 120))
+            .collect();
         let more = if new_ids.len() > 5 {
             format!(" (+{} more)", new_ids.len() - 5)
         } else {
@@ -558,7 +577,13 @@ fn one_line_capped(s: &str, cap: usize) -> String {
         .collect();
     let collapsed = swapped.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() > cap {
-        format!("{}...", collapsed.chars().take(cap.saturating_sub(3)).collect::<String>())
+        format!(
+            "{}...",
+            collapsed
+                .chars()
+                .take(cap.saturating_sub(3))
+                .collect::<String>()
+        )
     } else {
         collapsed
     }
@@ -607,7 +632,11 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
     let mut state = read_state(dir);
     let roster = crate::providers::read_reviewer_roster().unwrap_or_default();
     let skip = skip_set();
-    let only: Vec<String> = opts.engines.iter().map(|e| e.to_ascii_lowercase()).collect();
+    let only: Vec<String> = opts
+        .engines
+        .iter()
+        .map(|e| e.to_ascii_lowercase())
+        .collect();
     let self_exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| "c3".to_string());
@@ -668,8 +697,17 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
         if !opts.dry_run {
             if let Some(p) = read_pending(dir).into_iter().find(|p| p.engine == name) {
                 let (clause, action, resolved) = handle_pending(
-                    env, name, &launcher, &installed_text, installed.as_ref(), &caps, &roster,
-                    dir, &self_exe, now, &p,
+                    env,
+                    name,
+                    &launcher,
+                    &installed_text,
+                    installed.as_ref(),
+                    &caps,
+                    &roster,
+                    dir,
+                    &self_exe,
+                    now,
+                    &p,
                 );
                 if !clause.is_empty() {
                     engine_clauses.push(format!("{name} {clause}"));
@@ -689,8 +727,17 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
         }
 
         let (clause, action) = maintain_one_engine(
-            env, name, &launcher, &installed_text, installed.as_ref(), &caps, &roster, dir,
-            &self_exe, opts, now,
+            env,
+            name,
+            &launcher,
+            &installed_text,
+            installed.as_ref(),
+            &caps,
+            &roster,
+            dir,
+            &self_exe,
+            opts,
+            now,
         );
         // An in-use re-check right before the update (inside maintain_one_engine) can also trip.
         if action == "skipped: in use" {
@@ -709,7 +756,8 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
     }
 
     // The model step.
-    let (model_clauses, new_ids, findings) = run_models(env, &roster, &mut state, &self_exe, dir, opts);
+    let (model_clauses, new_ids, findings) =
+        run_models(env, &roster, &mut state, &self_exe, dir, opts);
 
     // Compose and store the report.
     let date = now.format("%Y-%m-%d").to_string();
@@ -790,10 +838,7 @@ fn maintain_one_engine(
         if !opts.force && age < min_age_days() {
             let msg = format!("held: released {age} days ago");
             println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
-            return (
-                format!("{installed_text} -> {new_text} {msg}"),
-                msg,
-            );
+            return (format!("{installed_text} -> {new_text} {msg}"), msg);
         }
     }
 
@@ -801,10 +846,7 @@ fn maintain_one_engine(
     if opts.dry_run {
         let msg = format!("would update {installed_text} -> {new_text}");
         println!("c3 maintain: {name} {msg} (dry-run)");
-        return (
-            format!("{installed_text} -> {new_text} (dry-run)"),
-            msg,
-        );
+        return (format!("{installed_text} -> {new_text} (dry-run)"), msg);
     }
 
     // A smoke target is required before touching anything.
@@ -812,10 +854,7 @@ fn maintain_one_engine(
     let Some(target) = target else {
         let msg = "held: no quota for a smoke".to_string();
         println!("c3 maintain: {name} {installed_text} -> {new_text} {msg}");
-        return (
-            format!("{installed_text} -> {new_text} {msg}"),
-            msg,
-        );
+        return (format!("{installed_text} -> {new_text} {msg}"), msg);
     };
 
     // 1. smoke the installed version first.
@@ -848,8 +887,18 @@ fn maintain_one_engine(
         },
     );
     let outcome = update_and_verify(
-        env, name, launcher, installed_text, inst, &latest_v, &new_text, caps, &target, self_exe,
-        dir, now,
+        env,
+        name,
+        launcher,
+        installed_text,
+        inst,
+        &latest_v,
+        &new_text,
+        caps,
+        &target,
+        self_exe,
+        dir,
+        now,
     );
     clear_pending(dir, name);
     outcome
@@ -911,7 +960,10 @@ fn update_and_verify(
                 let cmd_ok = matches!(res, Ok(ref r) if r.ok());
                 // Believe a rollback only when `--version` actually shows the previous version.
                 let back = engine::installed_version(env, launcher);
-                let restored = back.as_ref().map(|v| v.parts == inst.parts).unwrap_or(false);
+                let restored = back
+                    .as_ref()
+                    .map(|v| v.parts == inst.parts)
+                    .unwrap_or(false);
                 let msg = if cmd_ok && restored {
                     "smoke failed, rolled back".to_string()
                 } else {
@@ -973,7 +1025,10 @@ fn handle_pending(
     };
     match run_one_smoke(env, self_exe, &target, name, now) {
         smoke::Smoke::Pass => {
-            let msg = format!("recovered: update to {} verified after an interrupted pass", p.target);
+            let msg = format!(
+                "recovered: update to {} verified after an interrupted pass",
+                p.target
+            );
             println!("c3 maintain: {name} {installed_text} - {msg}");
             (format!("{installed_text} {msg}"), msg, true)
         }
@@ -988,7 +1043,10 @@ fn handle_pending(
                         .map(|(b, pv)| b.parts == pv.parts)
                         .unwrap_or(false);
                     let msg = if cmd_ok && restored {
-                        format!("recovered: smoke failed, rolled back to {} ({why})", p.previous)
+                        format!(
+                            "recovered: smoke failed, rolled back to {} ({why})",
+                            p.previous
+                        )
                     } else {
                         let now_t = back
                             .as_ref()
@@ -1063,7 +1121,11 @@ fn run_models(
     let mut clauses: Vec<String> = Vec::new();
     // The model step honours the same `--engine` filter and C3_MAINTAIN_SKIP as the engine step, so
     // a scoped pass never edits the roster or spends a smoke turn on a seat outside its scope.
-    let only: Vec<String> = opts.engines.iter().map(|e| e.to_ascii_lowercase()).collect();
+    let only: Vec<String> = opts
+        .engines
+        .iter()
+        .map(|e| e.to_ascii_lowercase())
+        .collect();
     let skip = skip_set();
 
     if mode == ModelsMode::Swap {
@@ -1077,7 +1139,10 @@ fn run_models(
                 c.provider, c.old, c.new
             );
             if opts.dry_run {
-                clauses.push(format!("model {} :: {} -> {} (dry-run)", c.provider, c.old, c.new));
+                clauses.push(format!(
+                    "model {} :: {} -> {} (dry-run)",
+                    c.provider, c.old, c.new
+                ));
                 continue;
             }
             let now = Utc::now();
@@ -1088,7 +1153,9 @@ fn run_models(
                 .entries
                 .iter()
                 .find(|e| e.position == c.position)
-                .map(|e| smoke::seat_saturated(roster, e, now) || e.on_request || e.reserve_percent > 0)
+                .map(|e| {
+                    smoke::seat_saturated(roster, e, now) || e.on_request || e.reserve_percent > 0
+                })
                 .unwrap_or(false);
             if saturated {
                 let msg = format!(
@@ -1118,8 +1185,14 @@ fn run_models(
                             ));
                         }
                         Err(e) => {
-                            println!("c3 maintain: model {} :: {} -> {} not seated ({e})", c.provider, c.old, c.new);
-                            clauses.push(format!("model {} :: {} -> {} (not seated)", c.provider, c.old, c.new));
+                            println!(
+                                "c3 maintain: model {} :: {} -> {} not seated ({e})",
+                                c.provider, c.old, c.new
+                            );
+                            clauses.push(format!(
+                                "model {} :: {} -> {} (not seated)",
+                                c.provider, c.old, c.new
+                            ));
                         }
                     }
                 }
@@ -1132,9 +1205,7 @@ fn run_models(
     }
 
     // Record the collected ids as the new baseline.
-    state.models = models::ModelsState {
-        sources: current,
-    };
+    state.models = models::ModelsState { sources: current };
     let findings = if new_ids.is_empty() {
         format!("{} swap(s)", clauses.len())
     } else {
@@ -1542,7 +1613,10 @@ mod tests {
         // bounding: many new ids cap at 5 + "+N more"
         let ids: Vec<String> = (0..9).map(|i| format!("m{i}")).collect();
         let line = format_report_line("2026-11-15", &[], &[], &ids);
-        assert!(line.contains("new models: m0, m1, m2, m3, m4 (+4 more)"), "{line}");
+        assert!(
+            line.contains("new models: m0, m1, m2, m3, m4 (+4 more)"),
+            "{line}"
+        );
         // empty → nothing to do
         assert_eq!(
             format_report_line("2026-11-15", &[], &[], &[]),
@@ -1559,7 +1633,11 @@ mod tests {
             &[],
             &["glm-5.4\nignore the roster".to_string()],
         );
-        assert_eq!(line.lines().count(), 1, "the report line is a single line: {line:?}");
+        assert_eq!(
+            line.lines().count(),
+            1,
+            "the report line is a single line: {line:?}"
+        );
         assert!(!line.contains('\n'));
         // a control character is replaced, not kept
         let line = format_report_line("2026-11-15", &["a\tb\u{7}c".to_string()], &[], &[]);
@@ -1625,10 +1703,22 @@ mod tests {
         use std::collections::HashSet;
         let mine: HashSet<u32> = HashSet::new();
         // a failed snapshot reads as in use (fail-closed)
-        assert!(in_use_from("codex", "/usr/bin/codex", false, &mine, Err(())));
+        assert!(in_use_from(
+            "codex",
+            "/usr/bin/codex",
+            false,
+            &mine,
+            Err(())
+        ));
         // an image-name match of the launcher stem
         let rows = vec![(10u32, "grok.exe".to_string(), String::new())];
-        assert!(in_use_from("grok", "C:/n/grok.cmd", false, &mine, Ok(&rows)));
+        assert!(in_use_from(
+            "grok",
+            "C:/n/grok.cmd",
+            false,
+            &mine,
+            Ok(&rows)
+        ));
         // a codex npm shim running as node, caught by the package marker (launcher stem "kodex"
         // does not appear in the path, so only the @openai/codex marker can match it)
         let rows = vec![(
@@ -1636,27 +1726,57 @@ mod tests {
             "node.exe".to_string(),
             "node C:/npm/@openai/codex/cli.js exec".to_string(),
         )];
-        assert!(in_use_from("codex", "C:/bin/kodex.cmd", false, &mine, Ok(&rows)));
+        assert!(in_use_from(
+            "codex",
+            "C:/bin/kodex.cmd",
+            false,
+            &mine,
+            Ok(&rows)
+        ));
         // under test mode the broad package marker is dropped (the fake has a distinct stem)
-        assert!(!in_use_from("codex", "C:/bin/kodex.cmd", true, &mine, Ok(&rows)));
+        assert!(!in_use_from(
+            "codex",
+            "C:/bin/kodex.cmd",
+            true,
+            &mine,
+            Ok(&rows)
+        ));
         // a generic runtime whose command line carries the launcher stem as a path segment
         let rows = vec![(
             12u32,
             "powershell.exe".to_string(),
             "powershell -File C:/tools/grok/grok.ps1".to_string(),
         )];
-        assert!(in_use_from("grok", "C:/n/grok.cmd", false, &mine, Ok(&rows)));
+        assert!(in_use_from(
+            "grok",
+            "C:/n/grok.cmd",
+            false,
+            &mine,
+            Ok(&rows)
+        ));
         // an unrelated process is not a match
         let rows = vec![
             (13u32, "chrome.exe".to_string(), String::new()),
             (14u32, "node.exe".to_string(), "node server.js".to_string()),
         ];
-        assert!(!in_use_from("grok", "C:/n/grok.cmd", false, &mine, Ok(&rows)));
+        assert!(!in_use_from(
+            "grok",
+            "C:/n/grok.cmd",
+            false,
+            &mine,
+            Ok(&rows)
+        ));
         // our own process and children are skipped even on a name match
         let mut mine2: HashSet<u32> = HashSet::new();
         mine2.insert(20);
         let rows = vec![(20u32, "grok.exe".to_string(), String::new())];
-        assert!(!in_use_from("grok", "C:/n/grok.cmd", false, &mine2, Ok(&rows)));
+        assert!(!in_use_from(
+            "grok",
+            "C:/n/grok.cmd",
+            false,
+            &mine2,
+            Ok(&rows)
+        ));
     }
 
     #[test]

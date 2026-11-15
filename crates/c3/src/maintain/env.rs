@@ -52,8 +52,13 @@ impl RunResult {
 pub trait Env {
     /// Run `program` with `args`, extra `env` pairs set on top of the inherited environment, in
     /// `cwd` (or the current directory). Never inherits the coordinator's host markers.
-    fn run(&self, program: &str, args: &[&str], env: &[(&str, &str)], cwd: Option<&Path>)
-        -> RunResult;
+    fn run(
+        &self,
+        program: &str,
+        args: &[&str],
+        env: &[(&str, &str)],
+        cwd: Option<&Path>,
+    ) -> RunResult;
 
     /// Like [`Env::run`], but for a child that must NOT see the operator's provider secrets: the
     /// third-party update/install commands (the downloaded kimi installer, `npm install`, `grok
@@ -297,7 +302,15 @@ mod tests {
         ] {
             assert!(is_secret_env(n), "{n} should be scrubbed");
         }
-        for n in ["PATH", "HOME", "TEMP", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "KIMI_VERSION"] {
+        for n in [
+            "PATH",
+            "HOME",
+            "TEMP",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "KIMI_VERSION",
+        ] {
             assert!(!is_secret_env(n), "{n} should be kept");
         }
     }

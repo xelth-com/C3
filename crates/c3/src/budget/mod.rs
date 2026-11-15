@@ -141,11 +141,11 @@ impl BudgetWindow {
 /// `used% >= min(elapsed% + N, 100 - N)`. In words, the route may not run more than N points ahead
 /// of the calendar, and its last N % is kept back. No long window with data -> not held. Returns the
 /// governing window (the first that holds) so the caller can name the hold; `None` when not held.
-pub fn reserve_hold<'a>(
-    windows: &'a [BudgetWindow],
+pub fn reserve_hold(
+    windows: &[BudgetWindow],
     reserve_percent: i64,
     now: DateTime<Utc>,
-) -> Option<&'a BudgetWindow> {
+) -> Option<&BudgetWindow> {
     if reserve_percent <= 0 {
         return None;
     }
@@ -575,7 +575,14 @@ fn parse_kimi(
     if let Some(w) = kimi_window(plan, &u["limit_5h"], "5h", Some(300), observed_at, now) {
         out.push(w);
     }
-    if let Some(w) = kimi_window(plan, &u["limit_month_total"], "month", None, observed_at, now) {
+    if let Some(w) = kimi_window(
+        plan,
+        &u["limit_month_total"],
+        "month",
+        None,
+        observed_at,
+        now,
+    ) {
         out.push(w);
     }
     out
@@ -797,7 +804,14 @@ fn parse_muse(
         return Vec::new();
     }
     let mut out = Vec::new();
-    if let Some(w) = muse_window(plan, &allowance["window"], "5h", 5.0 * 3600.0, observed_at, now) {
+    if let Some(w) = muse_window(
+        plan,
+        &allowance["window"],
+        "5h",
+        5.0 * 3600.0,
+        observed_at,
+        now,
+    ) {
         out.push(w);
     }
     if let Some(w) = muse_window(
@@ -1048,8 +1062,8 @@ pub fn write_snapshot(
     period_days: Option<i64>,
     now: DateTime<Utc>,
 ) -> Result<PathBuf, String> {
-    let path = snapshot_path(plan)
-        .ok_or_else(|| "no codex home (set CODEX_HOME or HOME)".to_string())?;
+    let path =
+        snapshot_path(plan).ok_or_else(|| "no codex home (set CODEX_HOME or HOME)".to_string())?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -1120,7 +1134,9 @@ pub fn providers_quota_cell(windows: &[BudgetWindow], now: DateTime<Utc>) -> Str
             if w.source == "snapshot" {
                 let days = (now - w.observed_at).num_days().max(0);
                 if w.resets_at <= now {
-                    s.push_str(&format!(" (seen {days}d ago, window reset since - refresh)"));
+                    s.push_str(&format!(
+                        " (seen {days}d ago, window reset since - refresh)"
+                    ));
                 } else if w.stale {
                     s.push_str(&format!(" (seen {days}d ago, stale - refresh)"));
                 } else {

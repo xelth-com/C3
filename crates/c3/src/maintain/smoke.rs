@@ -201,7 +201,9 @@ pub fn run_smoke(
     token: &str,
 ) -> Smoke {
     if c3_core::test_hooks::mode_on() {
-        if let Some(script) = std::env::var("C3_MAINTAIN_TEST_SMOKE").ok().filter(|s| !s.is_empty())
+        if let Some(script) = std::env::var("C3_MAINTAIN_TEST_SMOKE")
+            .ok()
+            .filter(|s| !s.is_empty())
         {
             return scripted(&script, target);
         }
@@ -352,10 +354,7 @@ fn consult_turn(
 
 /// Whether any handoff reply file under the smoke task contains the token.
 fn reply_contains(work: &std::path::Path, token: &str) -> bool {
-    let handoffs = work
-        .join(".collab")
-        .join("maintain-smoke")
-        .join("handoffs");
+    let handoffs = work.join(".collab").join("maintain-smoke").join("handoffs");
     let rd = match std::fs::read_dir(&handoffs) {
         Ok(rd) => rd,
         Err(_) => return false,
@@ -375,7 +374,14 @@ mod tests {
     use super::*;
     use c3_core::roster::RosterEntry;
 
-    fn entry(pos: usize, provider: &str, engine: &str, model: &str, panel: &str, plan: &str) -> RosterEntry {
+    fn entry(
+        pos: usize,
+        provider: &str,
+        engine: &str,
+        model: &str,
+        panel: &str,
+        plan: &str,
+    ) -> RosterEntry {
         RosterEntry {
             position: pos,
             provider: provider.into(),
@@ -437,7 +443,10 @@ mod tests {
             model: "grok-4.7".into(),
         };
         assert_eq!(scripted("grok::grok-4.7=pass", &t), Smoke::Pass);
-        assert!(matches!(scripted("grok::grok-4.7=fail", &t), Smoke::Fail(_)));
+        assert!(matches!(
+            scripted("grok::grok-4.7=fail", &t),
+            Smoke::Fail(_)
+        ));
         assert!(matches!(scripted("other::x=pass", &t), Smoke::Fail(_)));
     }
 }

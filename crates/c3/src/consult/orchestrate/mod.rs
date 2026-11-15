@@ -2495,7 +2495,8 @@ fn build_context(
     let code_review =
         crate::engines::grok::GROK_TOOL_REQUIRED_PURPOSES.contains(&o.purpose.as_str());
     let brief_text = match &brief_path {
-        Some(bp) if spec.inline_brief && r.raw && !code_review => match std::fs::read_to_string(bp) {
+        Some(bp) if spec.inline_brief && r.raw && !code_review => match std::fs::read_to_string(bp)
+        {
             Ok(t) => t,
             Err(e) => return Err((format!("the brief could not be read for inlining: {e}"), 1)),
         },
@@ -6216,7 +6217,10 @@ pub(crate) fn identity_display(id: &ReviewerIdentity) -> String {
     // (<launcher>)`, `<command> CLI not found` without one - (wave 6) agy and muse as claude, not
     // the codex endpoint text - and (wave 29b, E5) a claude endpoint route's base URL and token
     // variable NAME. The http engine (C3's own) names its provider table's endpoint below.
-    if matches!(id.engine.as_str(), "agy" | "muse" | "claude" | "grok" | "kimi") {
+    if matches!(
+        id.engine.as_str(),
+        "agy" | "muse" | "claude" | "grok" | "kimi"
+    ) {
         let launcher = id
             .provider_config
             .get("launcher")

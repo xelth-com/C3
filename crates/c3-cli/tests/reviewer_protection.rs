@@ -240,7 +240,14 @@ fn a_held_protected_entry_is_skipped_refused_and_overridable() {
 
     // (a) a panel on a non-standing purpose does not seat the held entry (skip kind reserve).
     let (code, out, err) = f.run(&[
-        "consult", "--task", "t", "--panel", "--purpose", "diff-review", "--prompt", "x",
+        "consult",
+        "--task",
+        "t",
+        "--panel",
+        "--purpose",
+        "diff-review",
+        "--prompt",
+        "x",
         "--dry-run",
     ]);
     assert_eq!(code, Some(0), "panel dry stdout:\n{out}\nstderr:\n{err}");
@@ -252,12 +259,24 @@ fn a_held_protected_entry_is_skipped_refused_and_overridable() {
     // (b) an explicit --provider/--model naming it, on a non-standing purpose, is refused before
     //     launch (exit 1, nothing started), naming the hold and --spend-reserve.
     let (code, _out, err) = f.run(&[
-        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--purpose",
-        "diff-review", "--prompt", "x",
+        "consult",
+        "--task",
+        "t",
+        "--provider",
+        "ZAI",
+        "--model",
+        "glm-5.3-flash",
+        "--purpose",
+        "diff-review",
+        "--prompt",
+        "x",
     ]);
     assert_eq!(code, Some(1), "held refusal exit 1: {err}");
     assert!(err.contains("is held"), "names the hold: {err}");
-    assert!(err.contains("--spend-reserve"), "offers the override: {err}");
+    assert!(
+        err.contains("--spend-reserve"),
+        "offers the override: {err}"
+    );
     assert!(
         err.contains("acceptance and core-contract"),
         "says what it is kept for: {err}"
@@ -265,24 +284,54 @@ fn a_held_protected_entry_is_skipped_refused_and_overridable() {
 
     // (c) --spend-reserve lets it through (preflight available on the dry run).
     let (code, out, _err) = f.run(&[
-        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--purpose",
-        "diff-review", "--prompt", "x", "--spend-reserve", "--dry-run",
+        "consult",
+        "--task",
+        "t",
+        "--provider",
+        "ZAI",
+        "--model",
+        "glm-5.3-flash",
+        "--purpose",
+        "diff-review",
+        "--prompt",
+        "x",
+        "--spend-reserve",
+        "--dry-run",
     ]);
     assert_eq!(code, Some(0), "spend-reserve dry: {out}");
     assert!(!out.contains("held (protected reserve)"), "{out}");
 
     // (d) a standing purpose (acceptance) is exempt - allowed without the override.
     let (code, out, _err) = f.run(&[
-        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--purpose",
-        "acceptance", "--prompt", "x", "--dry-run",
+        "consult",
+        "--task",
+        "t",
+        "--provider",
+        "ZAI",
+        "--model",
+        "glm-5.3-flash",
+        "--purpose",
+        "acceptance",
+        "--prompt",
+        "x",
+        "--dry-run",
     ]);
     assert_eq!(code, Some(0), "acceptance dry: {out}");
     assert!(!out.contains("held (protected reserve)"), "{out}");
 
     // (e) a panel that --requires the held entry on a non-standing purpose refuses (exit 5).
     let (code, _out, err) = f.run(&[
-        "consult", "--task", "t", "--panel", "--purpose", "diff-review", "--require", "#2",
-        "--prompt", "x", "--dry-run",
+        "consult",
+        "--task",
+        "t",
+        "--panel",
+        "--purpose",
+        "diff-review",
+        "--require",
+        "#2",
+        "--prompt",
+        "x",
+        "--dry-run",
     ]);
     assert_eq!(code, Some(5), "required held entry outage exit 5: {err}");
     assert!(
@@ -299,10 +348,24 @@ fn a_held_entry_is_refused_even_with_skip_preflight() {
     let f = setup("rp-held-skip", ROSTER_PROTECT);
     f.budget_set("zaiplan", "97%");
     let (code, _out, err) = f.run(&[
-        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--purpose",
-        "diff-review", "--prompt", "x", "--skip-preflight",
+        "consult",
+        "--task",
+        "t",
+        "--provider",
+        "ZAI",
+        "--model",
+        "glm-5.3-flash",
+        "--purpose",
+        "diff-review",
+        "--prompt",
+        "x",
+        "--skip-preflight",
     ]);
-    assert_eq!(code, Some(1), "held refusal exit 1 even with --skip-preflight: {err}");
+    assert_eq!(
+        code,
+        Some(1),
+        "held refusal exit 1 even with --skip-preflight: {err}"
+    );
     assert!(err.contains("is held"), "{err}");
     assert!(err.contains("--spend-reserve"), "{err}");
     f.cleanup();
@@ -322,10 +385,23 @@ fn a_required_held_weighty_entry_on_a_light_purpose_refuses() {
     let f = setup("rp-held-weighty", ROSTER_PROTECT_WEIGHTY);
     f.budget_set("zaiplan", "97%");
     let (code, _out, err) = f.run(&[
-        "consult", "--task", "t", "--panel", "--purpose", "diff-review", "--require", "#2",
-        "--prompt", "x", "--dry-run",
+        "consult",
+        "--task",
+        "t",
+        "--panel",
+        "--purpose",
+        "diff-review",
+        "--require",
+        "#2",
+        "--prompt",
+        "x",
+        "--dry-run",
     ]);
-    assert_eq!(code, Some(5), "required held weighty entry refuses (exit 5): {err}");
+    assert_eq!(
+        code,
+        Some(5),
+        "required held weighty entry refuses (exit 5): {err}"
+    );
     assert!(
         err.to_lowercase().contains("reserve") || err.contains("--spend-reserve"),
         "names the hold, not the weighty gate: {err}"
@@ -346,14 +422,31 @@ fn a_fork_follow_up_continues_the_previous_reviewer_or_draws_when_held() {
     let f = setup("rp-fork", ROSTER_FORK);
     // Seed the task with a real consult on glm-5.3 (records its thread + lineage).
     let (code, out, err) = f.run(&[
-        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3", "--purpose",
-        "checkpoint", "--prompt", "x",
+        "consult",
+        "--task",
+        "t",
+        "--provider",
+        "ZAI",
+        "--model",
+        "glm-5.3",
+        "--purpose",
+        "checkpoint",
+        "--prompt",
+        "x",
     ]);
     assert_eq!(code, Some(0), "seed consult:\n{out}\n{err}");
 
     // (a) a bare --mode fork continues glm-5.3 (eligible), not a different reviewer.
     let (code, out, err) = f.run(&[
-        "consult", "--task", "t", "--mode", "fork", "--purpose", "checkpoint", "--prompt", "x",
+        "consult",
+        "--task",
+        "t",
+        "--mode",
+        "fork",
+        "--purpose",
+        "checkpoint",
+        "--prompt",
+        "x",
         "--dry-run",
     ]);
     assert_eq!(code, Some(0), "fork continue:\n{out}\n{err}");
@@ -369,7 +462,15 @@ fn a_fork_follow_up_continues_the_previous_reviewer_or_draws_when_held() {
     // (b) hold glm-5.3's plan: the fork cannot continue it, so it draws glm-5.3-flash afresh.
     f.budget_set("zaiplan", "97%");
     let (code, out, err) = f.run(&[
-        "consult", "--task", "t", "--mode", "fork", "--purpose", "checkpoint", "--prompt", "x",
+        "consult",
+        "--task",
+        "t",
+        "--mode",
+        "fork",
+        "--purpose",
+        "checkpoint",
+        "--prompt",
+        "x",
         "--dry-run",
     ]);
     assert_eq!(code, Some(0), "fork draw:\n{out}\n{err}");
@@ -392,7 +493,13 @@ fn an_on_request_entry_is_named_only_never_drawn() {
 
     // (a) --panel-all never seats the on-request entry (shown "on request only").
     let (code, out, err) = f.run(&[
-        "consult", "--task", "t", "--panel-all", "--prompt", "x", "--dry-run",
+        "consult",
+        "--task",
+        "t",
+        "--panel-all",
+        "--prompt",
+        "x",
+        "--dry-run",
     ]);
     assert_eq!(code, Some(0), "panel-all dry:\n{out}\n{err}");
     assert!(
@@ -402,8 +509,16 @@ fn an_on_request_entry_is_named_only_never_drawn() {
 
     // (b) --provider/--model naming it runs it (preflight available on the dry run).
     let (code, out, err) = f.run(&[
-        "consult", "--task", "t", "--provider", "ZAI", "--model", "glm-5.3-flash", "--prompt",
-        "x", "--dry-run",
+        "consult",
+        "--task",
+        "t",
+        "--provider",
+        "ZAI",
+        "--model",
+        "glm-5.3-flash",
+        "--prompt",
+        "x",
+        "--dry-run",
     ]);
     assert_eq!(code, Some(0), "named dry:\n{out}\n{err}");
     assert!(
@@ -413,7 +528,15 @@ fn an_on_request_entry_is_named_only_never_drawn() {
 
     // (c) a panel that --requires it by position seats it.
     let (code, out, err) = f.run(&[
-        "consult", "--task", "t", "--panel", "--require", "#2", "--prompt", "x", "--dry-run",
+        "consult",
+        "--task",
+        "t",
+        "--panel",
+        "--require",
+        "#2",
+        "--prompt",
+        "x",
+        "--dry-run",
     ]);
     assert_eq!(code, Some(0), "require #2 dry:\n{out}\n{err}");
     assert!(

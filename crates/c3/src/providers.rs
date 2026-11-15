@@ -502,11 +502,15 @@ impl Ctx {
             // purpose, without --spend-reserve, is skipped by the bare default too.
             if !spend_reserve && !c3_core::purpose::is_standing(purpose) && e.reserve_percent > 0 {
                 // (F07-3) same network mode as the draw / display, so the hold cannot disagree.
-                if let Some(note) =
-                    crate::budget::entry_reserve_hold(&self.roster, e, self.utc_now, !self.no_network)
-                {
-                    let reason =
-                        format!("{note}; kept for acceptance and core-contract (use --spend-reserve)");
+                if let Some(note) = crate::budget::entry_reserve_hold(
+                    &self.roster,
+                    e,
+                    self.utc_now,
+                    !self.no_network,
+                ) {
+                    let reason = format!(
+                        "{note}; kept for acceptance and core-contract (use --spend-reserve)"
+                    );
                     skipped.push((
                         e.provider.clone(),
                         id.model.clone(),
@@ -847,9 +851,12 @@ impl Ctx {
             {
                 // (F07-3) read the windows with the same network mode the draw / display use, so the
                 // hold and the draw cannot disagree about a seat.
-                if let Some(note) =
-                    crate::budget::entry_reserve_hold(&self.roster, e, self.utc_now, !self.no_network)
-                {
+                if let Some(note) = crate::budget::entry_reserve_hold(
+                    &self.roster,
+                    e,
+                    self.utc_now,
+                    !self.no_network,
+                ) {
                     state = "skipped".into();
                     reason = format!(
                         "{note}; kept for acceptance and core-contract (use --spend-reserve)"
@@ -3256,7 +3263,9 @@ fn get_kimi_sign_in() -> CredentialResult {
             .map(|mut d| d.next().is_some())
             .unwrap_or(false);
     if signed {
-        CredentialResult::ok(format!("signed in ({SHOWN}) - Kimi Code plan (managed oauth)"))
+        CredentialResult::ok(format!(
+            "signed in ({SHOWN}) - Kimi Code plan (managed oauth)"
+        ))
     } else {
         CredentialResult::missing(format!(
             "not signed in: {SHOWN} is empty or missing (run `kimi login`)"

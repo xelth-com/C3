@@ -4,7 +4,8 @@
 the pinned v0.6.1 harnesses through the shim - see `docs/port/harness-shim.md` and
 `docs/port/rc5-verification-2026-10-09.md` when it exists; the changes in `CHANGELOG.md`).
 The full surface runs. The parity port (milestones 1–6) is in the binary —
-`c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse`, `claude`, `grok` and `http` engines),
+`c3 providers`, `c3 consult` (with the `codex`, `agy`, `muse`, `claude`, `grok`, `kimi` and `http`
+engines),
 `c3 findings` (statuses and ratings), `c3 scoreboard`, `c3 hook`, `c3 telemetry`/`complain`/
 `forget-me`, the reviewer roster and the routed **panel** with detach/status/wait/prune/kick —
 and so are the heavy subsystems after it: **packs and the `http` engine** (milestone 7,
@@ -34,8 +35,10 @@ reconciles them. Reviewers are subscriptions the user already has: the ChatGPT p
 the Codex CLI, z.ai GLM, Xiaomi MiMo or any Responses-API provider through a
 `[model_providers.<name>]` table, Gemini through Google's Antigravity CLI `agy`, Meta Muse
 through the Muse Code CLI, Claude through Claude Code headless (`claude -p`; the subscription,
-an API key, or a coding plan's Anthropic-compatible endpoint), and Grok through the Grok Build
-CLI `grok` (a read-only reviewer on the SuperGrok subscription). The bridge never creates, prints,
+an API key, or a coding plan's Anthropic-compatible endpoint), Grok through the Grok Build
+CLI `grok` (a read-only reviewer on the SuperGrok subscription), and Kimi through the Kimi Code
+CLI `kimi` (its turns run in a throwaway detached git worktree, since the CLI has no read-only
+flag). The bridge never creates, prints,
 stores or commits a key. C3 adds
 one API path for people who will not juggle subscriptions - OpenRouter (or any
 OpenAI-compatible endpoint) through a native `http` engine that reads its key from the
@@ -84,7 +87,8 @@ dontAsk --model <m> [--effort <e>] [--json-schema <the schema TEXT>] [--max-turn
 the repository root, the prompt on stdin. Replies are `handoffs/NN-claudecode-<slug>.*` (the
 prefix `claude` stays the coordinator's default brief prefix: `--brief-prefix <slug>`, else
 `CODEX_CONSULT_BRIEF_PREFIX`, else `claude` - the coordinator's briefs are
-`handoffs/<NN>-<prefix>-<slug>.md`; a reply prefix (`codex`, `agy`, `muse`, `claudecode`, `grok`, `http`)
+`handoffs/<NN>-<prefix>-<slug>.md`; a reply prefix (`codex`, `agy`, `muse`, `claudecode`, `grok`,
+`kimi`, `http`)
 or a value that is not a lowercase slug is refused before anything starts, and the dry run prints
 `brief prefix:`). Launcher: `--engine-exe`,
 `CODEX_CONSULT_CLAUDE_EXE`, `claude.exe` / `claude.cmd` / `claude` on PATH, then
@@ -291,6 +295,16 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   `--require`, a matcher, `--provider`) fails with `reviewer '<x>' is inactive (ext.c3.inactive in
   the roster)`. A `parallel` key that names an inactive plan/label stays valid. The plugin ignores
   `ext`, so the roster still loads there unchanged.
+- **Protected and on-request reviewers (`ext.reserve_percent`, `ext.on_request`)**: two settings
+  under a roster entry's own `ext`. `"reserve_percent": N` (1..50) protects a scarce reviewer: on a
+  long budget window (24 h or more, reset still ahead) the entry is HELD when
+  `used% >= min(elapsed% + N, 100 - N)` - it may not run more than N points ahead of the calendar
+  and its last N % is kept back. A held entry is skipped by the default and by a panel and refused
+  when named; the hold is waived on `acceptance` and `core-contract` and by `--spend-reserve`.
+  `"on_request": true` keeps an entry out of every automatic seat: it runs only when named exactly.
+  A consultation without `--provider` goes to the roster's first available entry only on
+  `acceptance` and `core-contract`; on every other purpose it is one routed pick
+  (`--panel-seed` reproduces it). `c3 providers` and `c3 router explain` show both states.
 - **`--budget <percent>`** (env `CODEX_CONSULT_QUOTA_BUDGET`, default 90, 0 = off): the stall watch
   reads the run's rollout every 15 s and stops the main turn at the budget - the partial kept, no
   continuation, `failed: stopped at the quota budget: 5-hour window 91 % used, resets 18:32; the
@@ -522,6 +536,34 @@ release is the highest `v<major>.<minor>.<patch>` tag, compared with the running
   equals that sha, but there is **no release signature** to verify yet. The trust you are extending
   is to GitHub's transport and to the `xelth-com/C3` repository, exactly as for a manual
   `cargo install --git`. Signed releases are future work.
+
+## Keeping the reviewer CLIs current
+
+Unlike its own release, C3 does update the reviewer CLIs by itself: `c3 maintain`. Once a week the
+SessionStart hook starts a detached pass (the hook never waits for it) and the next session prints
+its one-line report.
+
+- **Per engine.** The installed and the latest version are read; when an update exists, the
+  INSTALLED version is smoke-tested first, then the update is installed pinned to the checked
+  version, `--version` is re-read, the smoke runs again, and a failed smoke rolls the update back.
+  The smoke is two real turns through `c3 consult` in a throwaway repository; the second must
+  return a random token from a file. codex updates through npm, grok through `grok update`, kimi
+  through the vendor installer; agy is report-only; muse and claude update themselves and are only
+  recorded. An engine with a live run or process is skipped and retried the next day.
+- **Models.** New model ids are announced. A seated id is replaced only by a successor with the
+  same prefix and suffix, the same major and a higher minor, after it passed the smoke, and the
+  roster is backed up first (`.bak-maintain-<date>`). A protected or on-request roster entry is
+  never smoked or edited.
+- **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
+  [--force]` runs a pass now; `c3 maintain --smoke [--engine <name>] [--dry-run]` runs only the
+  smoke.
+- **Switches (default ON).** `C3_MAINTAIN=off`, or `"maintain": false` in
+  `<codex home>/c3/config.json`, turns the automatic pass off. `C3_MAINTAIN_DAYS` (7) sets the
+  interval; `C3_MAINTAIN_MIN_AGE_DAYS` (3) holds a version released more recently than that when
+  its date is known; `C3_MAINTAIN_SKIP=kimi,grok` names engines never touched;
+  `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off`;
+  `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` names the smoke reviewer of an engine. State lives
+  in `<codex home>/c3/maintain/`.
 
 ## License
 

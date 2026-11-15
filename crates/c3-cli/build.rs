@@ -29,10 +29,7 @@ fn main() {
         let dirty = git(&["status", "--porcelain", "--untracked-files=no"])
             .map(|s| !s.is_empty())
             .unwrap_or(false);
-        version = format!(
-            "{pkg} ({hash}{})",
-            if dirty { "-dirty" } else { "" }
-        );
+        version = format!("{pkg} ({hash}{})", if dirty { "-dirty" } else { "" });
 
         // Rebuild when HEAD moves, the current ref is updated, or the index changes (a staged or
         // reverted change flips `-dirty`). Resolve the real git dir so this works from a worktree

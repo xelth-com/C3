@@ -1887,7 +1887,10 @@ mod tests {
     #[test]
     fn kimi_pointer_prompt_names_the_file_and_notes_a_resume() {
         let p = kimi_pointer_prompt("C:\\tmp\\brief.txt", false);
-        assert!(p.starts_with("Your brief is the file C:\\tmp\\brief.txt."), "{p}");
+        assert!(
+            p.starts_with("Your brief is the file C:\\tmp\\brief.txt."),
+            "{p}"
+        );
         assert!(p.contains("Read it completely first"), "{p}");
         assert!(!p.contains("continues our existing session"), "{p}");
         let r = kimi_pointer_prompt("C:\\tmp\\brief.txt", true);
@@ -1922,7 +1925,9 @@ mod tests {
         r.engine = EngineKind::Kimi;
         r.model = "kimi-code/k3".into();
         r.prompt_file = None;
-        let err = SubprocessEngine::new(EngineKind::Kimi).plan(&r).unwrap_err();
+        let err = SubprocessEngine::new(EngineKind::Kimi)
+            .plan(&r)
+            .unwrap_err();
         assert_eq!(err, EngineError::MissingField("prompt_file"));
     }
 

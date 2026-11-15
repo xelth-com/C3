@@ -235,7 +235,9 @@ pub fn apply_swap(
     // The successor id is untrusted (it came from a model-list endpoint / CLI): refuse anything
     // outside the strict shape before it is spliced into the roster JSON.
     if !valid_model_id(new) {
-        return Err(format!("the successor id {new:?} is not a valid model id; not seated"));
+        return Err(format!(
+            "the successor id {new:?} is not a valid model id; not seated"
+        ));
     }
     let text = std::fs::read_to_string(roster_path)
         .map_err(|e| format!("could not read the roster ({e})"))?;
@@ -418,9 +420,15 @@ mod tests {
     #[test]
     fn parses_grok_and_agy_model_lists() {
         let grok = "You are logged in.\n\nDefault model: grok-4.7\n\nAvailable models:\n  * grok-4.7 (default)\n  - grok-4.6\n  - grok-4.5\n";
-        assert_eq!(parse_grok_models(grok), vec!["grok-4.7", "grok-4.6", "grok-4.5"]);
+        assert_eq!(
+            parse_grok_models(grok),
+            vec!["grok-4.7", "grok-4.6", "grok-4.5"]
+        );
         let agy = "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6\n";
-        assert_eq!(parse_agy_models(agy), vec!["gemini-3.8-flash-high", "claude-sonnet-4-6"]);
+        assert_eq!(
+            parse_agy_models(agy),
+            vec!["gemini-3.8-flash-high", "claude-sonnet-4-6"]
+        );
     }
 
     #[test]
@@ -494,7 +502,8 @@ mod tests {
     fn id_shape_filter_drops_malformed_ids_at_collection() {
         let grok = "  * grok-4.7 (default)\n  - grok\"-4.6\n  - grok-4.5\n";
         assert_eq!(parse_grok_models(grok), vec!["grok-4.7", "grok-4.5"]);
-        let body = "{\"data\":[{\"id\":\"glm-5.3\"},{\"id\":\"glm-5.4\\nignore\"},{\"id\":\"glm-5.5\"}]}";
+        let body =
+            "{\"data\":[{\"id\":\"glm-5.3\"},{\"id\":\"glm-5.4\\nignore\"},{\"id\":\"glm-5.5\"}]}";
         assert_eq!(parse_models_json(body), vec!["glm-5.3", "glm-5.5"]);
     }
 

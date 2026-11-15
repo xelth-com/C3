@@ -102,7 +102,12 @@ impl Env {
     }
 
     /// The common env to maintain grok through the fake, smoke scripted by `smoke`.
-    fn grok_env<'a>(&'a self, ver: &'a str, latest: &'a str, smoke: &'a str) -> Vec<(&'a str, &'a str)> {
+    fn grok_env<'a>(
+        &'a self,
+        ver: &'a str,
+        latest: &'a str,
+        smoke: &'a str,
+    ) -> Vec<(&'a str, &'a str)> {
         std::fs::write(&self.grok_verfile, ver).unwrap();
         vec![
             ("CODEX_CONSULT_GROK_EXE", self.grok_exe_s()),
@@ -116,13 +121,29 @@ impl Env {
     }
 
     fn grok_exe_s(&self) -> &str {
-        Box::leak(self.grok_exe.to_string_lossy().into_owned().into_boxed_str())
+        Box::leak(
+            self.grok_exe
+                .to_string_lossy()
+                .into_owned()
+                .into_boxed_str(),
+        )
     }
     fn grok_verfile_s(&self) -> &str {
-        Box::leak(self.grok_verfile.to_string_lossy().into_owned().into_boxed_str())
+        Box::leak(
+            self.grok_verfile
+                .to_string_lossy()
+                .into_owned()
+                .into_boxed_str(),
+        )
     }
     fn mnt_log_s(&self) -> &str {
-        Box::leak(self.work.join("fake.log").to_string_lossy().into_owned().into_boxed_str())
+        Box::leak(
+            self.work
+                .join("fake.log")
+                .to_string_lossy()
+                .into_owned()
+                .into_boxed_str(),
+        )
     }
     fn mnt_log(&self) -> String {
         std::fs::read_to_string(self.work.join("fake.log")).unwrap_or_default()
@@ -175,7 +196,10 @@ fn text(o: &Output) -> String {
 }
 
 fn verfile(p: &Path) -> String {
-    std::fs::read_to_string(p).unwrap_or_default().trim().to_string()
+    std::fs::read_to_string(p)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
 }
 
 // ------------------------------------------------------------------ update + smoke ok
@@ -187,8 +211,15 @@ fn an_update_passes_its_smoke_and_is_installed() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("grok 1.0.77 -> 1.0.80 ok"), "the pass reports the update: {t}");
-    assert_eq!(verfile(&e.grok_verfile), "1.0.80", "the new version is installed");
+    assert!(
+        t.contains("grok 1.0.77 -> 1.0.80 ok"),
+        "the pass reports the update: {t}"
+    );
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.80",
+        "the new version is installed"
+    );
 }
 
 // ------------------------------------------------------------------ post-update smoke fails -> rollback
@@ -201,7 +232,10 @@ fn a_post_update_smoke_failure_rolls_back() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("smoke failed, rolled back"), "the run rolled back: {t}");
+    assert!(
+        t.contains("smoke failed, rolled back"),
+        "the run rolled back: {t}"
+    );
     assert_eq!(
         verfile(&e.grok_verfile),
         "1.0.77",
@@ -229,7 +263,10 @@ fn a_too_fresh_version_is_held() {
     let o = e.run(&["maintain", "--run", "--engine", "codex"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("held: released"), "the fresh version is held: {t}");
+    assert!(
+        t.contains("held: released"),
+        "the fresh version is held: {t}"
+    );
     assert!(
         !e.codex_verfile.exists(),
         "nothing was installed (no install call wrote the version file)"
@@ -242,11 +279,21 @@ fn a_too_fresh_version_is_held() {
 fn a_dry_run_changes_nothing() {
     let e = setup("dry");
     let env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
-    let o = e.run(&["maintain", "--run", "--dry-run", "--engine", "grok"], &env);
+    let o = e.run(
+        &["maintain", "--run", "--dry-run", "--engine", "grok"],
+        &env,
+    );
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("would update 1.0.77 -> 1.0.80"), "dry-run says what it would do: {t}");
-    assert_eq!(verfile(&e.grok_verfile), "1.0.77", "the dry run installed nothing");
+    assert!(
+        t.contains("would update 1.0.77 -> 1.0.80"),
+        "dry-run says what it would do: {t}"
+    );
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.77",
+        "the dry run installed nothing"
+    );
     // a dry run leaves the state untouched - no state file for a later hook to mistake for a pass.
     assert!(
         !e.state_path().exists(),
@@ -264,14 +311,20 @@ fn off_silences_the_hook_but_a_manual_run_still_works() {
     e.write_state(r#"{"report":"c3: maintenance 2026-11-15 - grok up to date","reported":false,"next_due":"2099-01-01T00:00:00Z"}"#);
     let o = e.run(&["hook"], &[("C3_MAINTAIN", "off")]);
     let t = text(&o);
-    assert!(!t.contains("c3: maintenance"), "off: the hook prints no maintenance line: {t}");
+    assert!(
+        !t.contains("c3: maintenance"),
+        "off: the hook prints no maintenance line: {t}"
+    );
 
     // a manual --run still works even with the feature off.
     let mut env = e.grok_env("1.0.77", "1.0.80", "grok::grok-4.7=pass");
     env.push(("C3_MAINTAIN", "off"));
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
-    assert!(t.contains("grok 1.0.77 -> 1.0.80 ok"), "manual --run works when off: {t}");
+    assert!(
+        t.contains("grok 1.0.77 -> 1.0.80 ok"),
+        "manual --run works when off: {t}"
+    );
 }
 
 // ------------------------------------------------------------------ the hook reports once
@@ -281,9 +334,15 @@ fn the_hook_prints_the_report_line_exactly_once() {
     let e = setup("hook-once");
     e.write_state(r#"{"report":"c3: maintenance 2026-11-15 - grok up to date","reported":false,"next_due":"2099-01-01T00:00:00Z"}"#);
     let first = text(&e.run(&["hook"], &[]));
-    assert!(first.contains("c3: maintenance 2026-11-15 - grok up to date"), "first hook prints it: {first}");
+    assert!(
+        first.contains("c3: maintenance 2026-11-15 - grok up to date"),
+        "first hook prints it: {first}"
+    );
     let second = text(&e.run(&["hook"], &[]));
-    assert!(!second.contains("c3: maintenance"), "second hook does not repeat it: {second}");
+    assert!(
+        !second.contains("c3: maintenance"),
+        "second hook does not repeat it: {second}"
+    );
 }
 
 // ------------------------------------------------------------------ an unparsable installed version is held
@@ -296,7 +355,10 @@ fn an_unparsable_installed_version_is_held() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("held: installed version unknown"), "unknown version held: {t}");
+    assert!(
+        t.contains("held: installed version unknown"),
+        "unknown version held: {t}"
+    );
     assert_eq!(verfile(&e.grok_verfile), "nightly", "nothing was installed");
 }
 
@@ -310,7 +372,10 @@ fn an_update_that_does_not_take_is_reported_not_smoked() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("update did not take"), "a no-op update is caught: {t}");
+    assert!(
+        t.contains("update did not take"),
+        "a no-op update is caught: {t}"
+    );
     assert_eq!(verfile(&e.grok_verfile), "1.0.77", "still the old version");
 }
 
@@ -325,8 +390,15 @@ fn a_rollback_that_does_not_restore_is_reported_failed() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("rollback failed, still 1.0.80"), "an unverified rollback is caught: {t}");
-    assert_eq!(verfile(&e.grok_verfile), "1.0.80", "the rollback did not restore");
+    assert!(
+        t.contains("rollback failed, still 1.0.80"),
+        "an unverified rollback is caught: {t}"
+    );
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.80",
+        "the rollback did not restore"
+    );
 }
 
 // ------------------------------------------------------------------ an update is pinned to the checked version
@@ -360,9 +432,18 @@ fn update_children_do_not_see_provider_secrets() {
     assert_eq!(o.status.code(), Some(0), "{}", text(&o));
     let dumped = e.dumpenv();
     assert!(!dumped.is_empty(), "the fake recorded its environment");
-    assert!(!dumped.contains("ZAI_API_KEY"), "the API key was scrubbed:\n{dumped}");
-    assert!(!dumped.contains("MY_AUTH_TOKEN"), "the token was scrubbed:\n{dumped}");
-    assert!(dumped.to_uppercase().contains("PATH"), "PATH is kept so the child can still run:\n{dumped}");
+    assert!(
+        !dumped.contains("ZAI_API_KEY"),
+        "the API key was scrubbed:\n{dumped}"
+    );
+    assert!(
+        !dumped.contains("MY_AUTH_TOKEN"),
+        "the token was scrubbed:\n{dumped}"
+    );
+    assert!(
+        dumped.to_uppercase().contains("PATH"),
+        "PATH is kept so the child can still run:\n{dumped}"
+    );
 }
 
 // ------------------------------------------------------------------ pending-update recovery (interrupted pass)
@@ -378,7 +459,10 @@ fn a_pending_update_whose_install_never_took_is_cleared() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("pending update cleared"), "the stale pending record is cleared: {t}");
+    assert!(
+        t.contains("pending update cleared"),
+        "the stale pending record is cleared: {t}"
+    );
     assert_eq!(e.pending_json().trim(), "[]", "the journal is emptied");
     assert_eq!(verfile(&e.grok_verfile), "1.0.77", "nothing re-installed");
 }
@@ -394,7 +478,10 @@ fn a_pending_update_whose_new_binary_smokes_clean_is_recorded_verified() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("verified after an interrupted pass"), "the new binary is verified: {t}");
+    assert!(
+        t.contains("verified after an interrupted pass"),
+        "the new binary is verified: {t}"
+    );
     assert_eq!(e.pending_json().trim(), "[]", "the journal is emptied");
     assert_eq!(verfile(&e.grok_verfile), "1.0.80", "the new version stands");
 }
@@ -410,9 +497,16 @@ fn a_pending_update_whose_new_binary_fails_its_smoke_is_rolled_back() {
     let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
     let t = text(&o);
     assert_eq!(o.status.code(), Some(0), "{t}");
-    assert!(t.contains("rolled back to 1.0.77"), "the interrupted update is rolled back: {t}");
+    assert!(
+        t.contains("rolled back to 1.0.77"),
+        "the interrupted update is rolled back: {t}"
+    );
     assert_eq!(e.pending_json().trim(), "[]", "the journal is emptied");
-    assert_eq!(verfile(&e.grok_verfile), "1.0.77", "rolled back to the previous version");
+    assert_eq!(
+        verfile(&e.grok_verfile),
+        "1.0.77",
+        "rolled back to the previous version"
+    );
 }
 
 // ------------------------------------------------------------------ the model step honours --engine
@@ -449,7 +543,10 @@ fn the_model_step_honours_the_engine_filter() {
     ];
 
     // scoped to codex: the grok seat's candidate must NOT appear
-    let o = e.run(&["maintain", "--run", "--dry-run", "--engine", "codex"], &common);
+    let o = e.run(
+        &["maintain", "--run", "--dry-run", "--engine", "codex"],
+        &common,
+    );
     let t = text(&o);
     assert!(
         !t.contains("grok-4.6 -> grok-4.7"),
@@ -457,7 +554,10 @@ fn the_model_step_honours_the_engine_filter() {
     );
 
     // scoped to grok: the candidate appears
-    let o = e.run(&["maintain", "--run", "--dry-run", "--engine", "grok"], &common);
+    let o = e.run(
+        &["maintain", "--run", "--dry-run", "--engine", "grok"],
+        &common,
+    );
     let t = text(&o);
     assert!(
         t.contains("grok-4.6 -> grok-4.7"),
@@ -517,7 +617,10 @@ fn the_hook_returns_without_waiting_for_the_spawned_pass() {
     let o = e.run(&["hook"], &[]);
     let base = t0.elapsed();
     assert_eq!(o.status.code(), Some(0), "baseline hook: {}", text(&o));
-    assert!(!e.last_run_log().exists(), "the baseline hook did not spawn a pass");
+    assert!(
+        !e.last_run_log().exists(),
+        "the baseline hook did not spawn a pass"
+    );
 
     // Due: no state -> due; the hook is allowed to spawn under test mode; the pass is scoped to grok
     // (every other engine skipped) and the grok version probe sleeps ~6 s, so the pass runs for

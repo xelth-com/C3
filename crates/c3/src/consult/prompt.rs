@@ -238,7 +238,11 @@ pub fn assemble(inp: &PromptInputs) -> String {
         ));
     } else {
         if !inp.purpose.is_empty() {
-            let mut p = format!("Review purpose: {}. {}", inp.purpose, presets::text(inp.purpose));
+            let mut p = format!(
+                "Review purpose: {}. {}",
+                inp.purpose,
+                presets::text(inp.purpose)
+            );
             // (C3) an engine that counts tool calls is told the tool-reading is mandatory.
             if inp.tool_reading_required {
                 p.push(' ');
@@ -486,7 +490,10 @@ mod tests {
         i.reading_duty = true;
         let p = assemble(&i);
         assert!(p.contains(GROK_READING_DUTY), "framing must carry it");
-        assert!(!p.contains("<brief"), "the brief is referenced, not inlined");
+        assert!(
+            !p.contains("<brief"),
+            "the brief is referenced, not inlined"
+        );
         assert!(
             p.contains("Read the brief at `.collab/t/handoffs/01.md`"),
             "the brief is still referenced by path"
