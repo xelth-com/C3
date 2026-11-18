@@ -1021,8 +1021,12 @@ fn update_and_verify(
 
 /// Resolve a pending update left by an interrupted pass. Returns (report clause, state action,
 /// whether the pending record may now be cleared). The installed version still being the previous
-/// one means the update never took (clear); otherwise the installed version is smoked - a pass is
-/// recorded verified, a fail is rolled back to the recorded previous version and re-read.
+/// one means the update never took (clear). Otherwise the installed version is smoked: a pass clears
+/// the record (verified); a fail is rolled back to the recorded previous version and the record is
+/// cleared only when the rollback command succeeds AND the previous version is actually restored. A
+/// failed rollback, a rollback that does not restore the previous version, and the absence of any
+/// rollback path all leave the record in place (resolved = false) so a later due pass smokes it
+/// again - the installed engine still fails its smoke, so the record must not be cleared.
 #[allow(clippy::too_many_arguments)]
 fn handle_pending(
     env: &dyn Env,
@@ -1071,25 +1075,35 @@ fn handle_pending(
                         .zip(prev.as_ref())
                         .map(|(b, pv)| b.parts == pv.parts)
                         .unwrap_or(false);
-                    let msg = if cmd_ok && restored {
-                        format!(
+                    // Rollback succeeded and the previous version is back: the failed update is
+                    // undone, so the pending record may be cleared.
+                    if cmd_ok && restored {
+                        let msg = format!(
                             "recovered: smoke failed, rolled back to {} ({why})",
                             p.previous
-                        )
-                    } else {
-                        let now_t = back
-                            .as_ref()
-                            .map(|v| v.text().to_string())
-                            .unwrap_or_else(|| "unknown".to_string());
-                        format!("recovered: rollback failed, still {now_t} ({why})")
-                    };
+                        );
+                        println!("c3 maintain: {name} {installed_text} - {msg}");
+                        return (format!("{installed_text} {msg}"), msg, true);
+                    }
+                    // Rollback command failed, or it ran but the previous version is not back: the
+                    // installed engine still fails its smoke. Keep the record so a later pass tries
+                    // again; never report this as "recovered".
+                    let now_t = back
+                        .as_ref()
+                        .map(|v| v.text().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let msg = format!(
+                        "pending update unresolved: rollback failed, still {now_t} ({why})"
+                    );
                     println!("c3 maintain: {name} {installed_text} - {msg}");
-                    return (format!("{installed_text} {msg}"), msg, true);
+                    return (format!("{installed_text} {msg}"), msg, false);
                 }
             }
-            let msg = format!("recovered: smoke failed, no rollback path ({why})");
+            // No rollback path (unsupported, or do_rollback returned None): the engine is stuck on a
+            // failing version. Keep the record for another pass; this is not a recovery.
+            let msg = format!("pending update unresolved: smoke failed, no rollback path ({why})");
             println!("c3 maintain: {name} {installed_text} - {msg}");
-            (format!("{installed_text} {msg}"), msg, true)
+            (format!("{installed_text} {msg}"), msg, false)
         }
     }
 }

@@ -56,8 +56,14 @@ fn git(repo: &Path, args: &[&str]) {
 const FAKE_CMD: &str = "@echo off\r\nset \"FAKE_CODEX_ARGS=%*\"\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-codex.ps1\"\r\nexit /b %ERRORLEVEL%\r\n";
 
 /// A fake codex 0.169.0: `--version`, `login status`, and an exec turn that emits `thread.started`,
-/// writes its rollout under `CODEX_HOME/sessions/<y>/<m>/<d>` with a `spawn_agent` function call,
-/// then hangs (the guard stops it; otherwise the run's timeout does).
+/// writes its rollout under `CODEX_HOME/sessions/<y>/<m>/<d>`, then hangs (the guard or the run's
+/// timeout stops it). Every `spawn_agent` line carries an RFC3339 `timestamp` like a real rollout.
+/// Env knobs model a resumed thread (F11-4):
+///   FAKE_CODEX_OLD_SPAWN=1          pre-write a spawn_agent call stamped 30 min ago (prior turn).
+///   FAKE_CODEX_NO_CURRENT_SPAWN=1   do NOT write a current-turn spawn (the current turn is clean).
+///   FAKE_CODEX_NEW_SPAWN_AFTER_MS=n after writing the above and sleeping n ms, append a current-turn
+///                                   spawn (so the guard polls once seeing only history, then fires).
+/// With no knobs it writes one current-turn spawn immediately (the plain guard-stop case).
 const FAKE_PS1: &str = r#"$ErrorActionPreference = 'Stop'
 $raw = [string]$env:FAKE_CODEX_ARGS
 if ($raw -match '--version') { Write-Output 'codex-cli 0.169.0-fake'; exit 0 }
@@ -73,9 +79,21 @@ $day = Join-Path $ch ("sessions/{0:yyyy}/{0:MM}/{0:dd}" -f $now)
 New-Item -ItemType Directory -Force -Path $day | Out-Null
 $stamp = "{0:yyyy-MM-ddTHH-mm-ss}" -f $now
 $roll = Join-Path $day "rollout-$stamp-$tid.jsonl"
+function SpawnLine([datetime]$at) {
+  $z = $at.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
+  return '{"timestamp":"' + $z + '","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","namespace":"collaboration","arguments":"{}"}}'
+}
 $meta = '{"type":"session_meta","payload":{"id":"' + $tid + '","source":"exec"}}'
-$call = '{"type":"response_item","payload":{"type":"function_call","name":"spawn_agent","namespace":"collaboration","arguments":"{}"}}'
-[IO.File]::WriteAllText($roll, $meta + "`n" + $call + "`n")
+$lines = $meta
+if ($env:FAKE_CODEX_OLD_SPAWN) { $lines = $lines + "`n" + (SpawnLine $now.AddMinutes(-30)) }
+if (-not $env:FAKE_CODEX_NO_CURRENT_SPAWN -and -not $env:FAKE_CODEX_NEW_SPAWN_AFTER_MS) {
+  $lines = $lines + "`n" + (SpawnLine $now)
+}
+[IO.File]::WriteAllText($roll, $lines + "`n")
+if ($env:FAKE_CODEX_NEW_SPAWN_AFTER_MS) {
+  Start-Sleep -Milliseconds ([int]$env:FAKE_CODEX_NEW_SPAWN_AFTER_MS)
+  [IO.File]::AppendAllText($roll, (SpawnLine (Get-Date)) + "`n")
+}
 Start-Sleep -Seconds 60
 exit 0
 "#;
@@ -134,7 +152,12 @@ fn c3_cmd(work: &Path, env: &[(&str, &str)]) -> Command {
 
 /// Run one `c3 consult` to completion with `args` (after the task/prompt/reply-name) and its text.
 fn run_consult(work: &Path, args: &[&str]) -> (Option<i32>, String) {
-    let out = c3_cmd(work, &[])
+    run_consult_env(work, args, &[])
+}
+
+/// As [`run_consult`], with extra process env (the fake-codex `FAKE_CODEX_*` knobs).
+fn run_consult_env(work: &Path, args: &[&str], env: &[(&str, &str)]) -> (Option<i32>, String) {
+    let out = c3_cmd(work, env)
         .args([
             "consult",
             "--task",
@@ -233,6 +256,64 @@ fn an_opted_in_run_is_not_stopped_by_the_guard() {
     assert_eq!(
         entry["subagents_allowed"], true,
         "the opted-in run had sub-agents allowed: {entry}"
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+// ------------------------------- (F11-4) a resumed thread's historical spawn does not stop the run
+
+#[test]
+fn a_resumed_thread_with_an_old_spawn_call_is_not_stopped() {
+    // (F11-4) The thread's rollout already holds a spawn_agent call from a PRIOR turn (30 min ago),
+    // but the current turn spawns nothing. The guard polls the rollout at least once; the historical
+    // call (timestamp before the turn launched) must NOT stop the run, which ends on its own timeout.
+    let work = scratch("subguard-resumed-old");
+    prepare(&work);
+    let (code, text) = run_consult_env(
+        &work,
+        &["--timeout-sec", "3", "--continue-sec", "0"],
+        &[
+            ("FAKE_CODEX_OLD_SPAWN", "1"),
+            ("FAKE_CODEX_NO_CURRENT_SPAWN", "1"),
+        ],
+    );
+    assert_eq!(code, Some(1), "the run ends (on timeout): {text}");
+    assert!(
+        !text.contains("spawned a sub-agent"),
+        "a historical spawn call alone must not stop the run: {text}"
+    );
+    assert!(
+        text.contains("timeout"),
+        "the run survived the guard and ended on its own timeout: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&work);
+}
+
+#[test]
+fn a_resumed_thread_that_makes_a_new_spawn_is_stopped() {
+    // (F11-4) The rollout holds an old spawn call AND the current turn makes a NEW one shortly after
+    // launch (after the guard has already polled once seeing only history). The new call stops the
+    // run - operator class, partial kept - proving the scope bounds the scan, it does not disable it.
+    let work = scratch("subguard-resumed-new");
+    prepare(&work);
+    let (code, text) = run_consult_env(
+        &work,
+        &["--timeout-sec", "30", "--continue-sec", "0"],
+        &[
+            ("FAKE_CODEX_OLD_SPAWN", "1"),
+            ("FAKE_CODEX_NEW_SPAWN_AFTER_MS", "800"),
+        ],
+    );
+    assert_eq!(code, Some(1), "a guard-stopped run exits 1: {text}");
+    assert!(
+        text.contains("spawned a sub-agent although sub-agents are off")
+            && text.contains("the partial is kept"),
+        "the new spawn stops the run: {text}"
+    );
+    let entry = last_consult(&work);
+    assert_eq!(
+        entry["provider_failure"]["class"], "operator",
+        "classed operator: {entry}"
     );
     let _ = std::fs::remove_dir_all(&work);
 }

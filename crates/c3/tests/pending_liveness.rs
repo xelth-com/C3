@@ -265,10 +265,15 @@ fn the_subagent_guard_stops_a_turn_that_spawns_a_sub_agent() {
         "rollout-{}-{thread}.jsonl",
         local.format("%Y-%m-%dT%H-%M-%S")
     ));
+    // (F11-4) the guard counts a call only when its rollout line is dated at or after the turn's
+    // launch. This fixture is written BEFORE the turn starts, so the line is dated a minute ahead -
+    // where a real call, written during the turn, lands.
+    let call_at =
+        (now + chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     std::fs::write(
         &rollout,
         format!(
-            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread}\",\"source\":\"exec\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"spawn_agent\",\"namespace\":\"collaboration\",\"arguments\":\"{{}}\"}}}}\n"
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{thread}\",\"source\":\"exec\"}}}}\n{{\"timestamp\":\"{call_at}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"spawn_agent\",\"namespace\":\"collaboration\",\"arguments\":\"{{}}\"}}}}\n"
         ),
     )
     .unwrap();

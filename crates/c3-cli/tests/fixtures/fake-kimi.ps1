@@ -74,9 +74,10 @@ $m = [regex]::Match($prompt, 'Your brief is the file (.+?)\. Read it')
 if ($m.Success) { $brief = $m.Groups[1].Value }
 $briefExists = ($brief -ne '') -and (Test-Path -LiteralPath $brief -PathType Leaf)
 # (R7) the assembled prompt (the pointer target) names the OPERATOR brief by a repo-relative path;
-# resolve it against THIS cwd (the worktree) and record whether it is present there.
+# resolve it against THIS cwd (the worktree) and record whether it is present there, and its contents.
 $opBrief = ''
 $opBriefExists = $false
+$opBriefBody = ''
 if ($briefExists) {
     try {
         $body = [IO.File]::ReadAllText($brief, $u8)
@@ -85,8 +86,19 @@ if ($briefExists) {
             $opBrief = $bm.Groups[1].Value
             $full = if ([IO.Path]::IsPathRooted($opBrief)) { $opBrief } else { Join-Path (Get-Location).Path $opBrief }
             $opBriefExists = Test-Path -LiteralPath $full -PathType Leaf
+            if ($opBriefExists) { $opBriefBody = [IO.File]::ReadAllText($full, $u8) }
         }
     } catch {}
+}
+# (F11-3) When FAKE_KIMI_OP_BRIEF names a repo-relative brief, resolve it against THIS cwd on EVERY
+# turn (primary AND read-insist re-ask) and record its presence + contents. A read-insist re-ask runs
+# in a NEW HEAD worktree, so the operator's brief must have been staged there too.
+if ($env:FAKE_KIMI_OP_BRIEF) {
+    $opBrief = [string]$env:FAKE_KIMI_OP_BRIEF
+    $full = if ([IO.Path]::IsPathRooted($opBrief)) { $opBrief } else { Join-Path (Get-Location).Path $opBrief }
+    $opBriefExists = Test-Path -LiteralPath $full -PathType Leaf
+    $opBriefBody = ''
+    if ($opBriefExists) { try { $opBriefBody = [IO.File]::ReadAllText($full, $u8) } catch {} }
 }
 # (A) a linked git worktree has a `.git` FILE (not a directory) in its root.
 $gitFile = Test-Path -LiteralPath (Join-Path (Get-Location).Path '.git') -PathType Leaf
@@ -95,7 +107,7 @@ if ($env:FAKE_KIMI_ARGV_LOG) {
     $names = @([Environment]::GetEnvironmentVariables().Keys | ForEach-Object { [string]$_ } | Where-Object { $_ -ne 'FAKE_KIMI_ARGS' })
     $names = [string[]]$names
     [Array]::Sort($names, [StringComparer]::OrdinalIgnoreCase)
-    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; brief = $brief; brief_exists = $briefExists; op_brief = $opBrief; op_brief_exists = $opBriefExists; git_file = $gitFile; env = [object[]]$names; pid = $PID }
+    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; brief = $brief; brief_exists = $briefExists; op_brief = $opBrief; op_brief_exists = $opBriefExists; op_brief_body = $opBriefBody; git_file = $gitFile; env = [object[]]$names; pid = $PID }
     $line = (J $rec) + "`n"
     Invoke-FakeWrite { [IO.File]::AppendAllText($env:FAKE_KIMI_ARGV_LOG, $line, $u8) }
 }

@@ -277,8 +277,17 @@ fn run_codex_secondary(
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
-                // (R7) a continuation turn resumes the session that already read the brief.
-                brief: None,
+                // (F11-3) Every kimi turn runs in a fresh HEAD worktree, so a secondary turn
+                // (read-insist / continuation / repair) must stage the operator brief too - an
+                // uncommitted or locally modified brief is otherwise absent/stale exactly when a
+                // zero-tool primary is re-asked to read it. Same source and relative path as primary.
+                brief: ctx
+                    .brief_path
+                    .clone()
+                    .map(|src| crate::engines::kimi::BriefCopy {
+                        src,
+                        rel: ctx.brief_ref.clone(),
+                    }),
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, r.turn.outcome),
@@ -1123,8 +1132,15 @@ fn run_engine_secondary(
                 kick_path: None,
                 on_running: None,
                 on_kill: None,
-                // (R7) a continuation turn resumes the session that already read the brief.
-                brief: None,
+                // (F11-3) Stage the operator brief into this turn's fresh HEAD worktree too, so an
+                // uncommitted / locally modified brief reaches the reviewer at its repo-relative path.
+                brief: ctx
+                    .brief_path
+                    .clone()
+                    .map(|src| crate::engines::kimi::BriefCopy {
+                        src,
+                        rel: ctx.brief_ref.clone(),
+                    }),
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, kimi_detail(&r.turn)),

@@ -318,6 +318,31 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
     working tree is the one the reviewer reads. The other R7 question was refuted: a skipped
     unknown-engine roster entry keeps its position, so `#n`, the first entry and `--provider`
     resolve as the file shows them.
+- **Second acceptance pass of the standing partner (task release-0.2.4, handoff 11, F11-1..F11-4):**
+  - `c3 maintain` no longer clears a pending update whose recovery failed (F11-1): after a failed
+    recovery smoke, only a rollback that both runs AND restores the previous version clears the
+    record. A failed rollback, a rollback that did not restore, or no rollback path now reports
+    `pending update unresolved: ...` (never `recovered`) and keeps the record, so a later due pass
+    smokes the still-broken CLI again instead of reading it as up to date. The recovery smoke stays
+    behind the normal due/forced gate (the SessionStart hook spawns a pass only when one is due), so
+    a retained record never spends a consultation on every session start.
+  - The `kimi` reviewer's reply is only the answer after its last tool call (F11-2): text a kimi
+    turn emits BEFORE a tool call (an early verdict or placeholder) is no longer taken as the usable,
+    verified reply when the turn ran tools but produced no answer after the last one - that turn now
+    fails like a stream that ended without an answer, and salvage keeps only the post-tool tail, as
+    the grok adapter already does. In both adapters that failure is now recorded with its reason as
+    the message: the reviewer's interim text is no longer the failure evidence, so a placeholder that
+    mentions "quota" or "timeout" cannot be classed as a quota or transport failure of the provider.
+  - Every `kimi` turn stages the operator brief into its worktree (F11-3): read-insist, continuation
+    and repair turns create a fresh HEAD worktree too, so an uncommitted or locally modified brief is
+    present at its repo-relative path on the very turn a zero-tool primary is re-asked to read it; a
+    staging failure now refuses the turn before the reviewer launches.
+  - The sub-agent guard no longer kills a compliant resumed run (F11-4): the scan for a `spawn_agent`
+    call in the run's own rollout is scoped to the current turn (a call counts only when its line
+    timestamp is at/after the turn's launch), so a resumed thread whose history holds an old spawn
+    call is not stopped when the current turn spawns nothing; a new spawn still stops it, and the
+    child-rollout detection is unchanged. A forked thread is covered only as long as Codex keeps the
+    original timestamps on the history it copies - not observed on codex-cli 0.169.0.
 
 ## [0.2.3] - 2026-10-22
 

@@ -683,9 +683,20 @@ impl SubagentSignal {
 }
 
 /// Whether a rollout holds a `spawn_agent` function call (`type:response_item`,
-/// `payload.type:function_call`, `payload.name:spawn_agent` - codex-cli 0.169.0's multi-agent v2).
-/// A cheap substring pre-check avoids parsing a rollout that cannot contain one.
-fn rollout_has_spawn_agent(path: &Path) -> bool {
+/// `payload.type:function_call`, `payload.name:spawn_agent` - codex-cli 0.169.0's multi-agent v2)
+/// made IN THE CURRENT TURN, i.e. on a line whose `timestamp` is at/after `since` (the current
+/// turn's launch time). A cheap substring pre-check avoids parsing a rollout that cannot contain one.
+///
+/// (F11-4) A rollout holds the WHOLE thread's history: a resume appends new lines to the same file
+/// (seen on codex-cli 0.169.0: every line carries its own `timestamp`). An OLD `spawn_agent` call
+/// therefore carries its original timestamp from before this turn launched; without the `since`
+/// bound a resumed thread whose history holds a spawn call would be killed as a sub-agent although
+/// the current turn spawned nothing. A FORK was not observed on 0.169.0 (no forked rollout was left
+/// on the machine to read): the bound holds for it only if the copied history keeps its original
+/// timestamps - a fork that re-stamps them would be stopped by an old call again. A `spawn_agent`
+/// line we cannot date is NOT counted - the guard cannot prove it belongs to this turn, a false stop
+/// would kill a valid review, and a child rollout created since `since` is still caught separately.
+fn rollout_spawn_agent_since(path: &Path, since: DateTime<Utc>) -> bool {
     let text = read_rollout_text(path, 0);
     if !text.contains("spawn_agent") {
         return false;
@@ -700,7 +711,12 @@ fn rollout_has_spawn_agent(path: &Path) -> bool {
         if obj.get("type").and_then(|t| t.as_str()) == Some("function_call")
             && obj.get("name").and_then(|n| n.as_str()) == Some("spawn_agent")
         {
-            return true;
+            // Only a call made in the current turn counts; an undatable line is skipped.
+            if let Some(at) = v.get("timestamp").and_then(when_offset) {
+                if at.with_timezone(&Utc) >= since {
+                    return true;
+                }
+            }
         }
     }
     false
@@ -734,7 +750,7 @@ pub fn subagent_in_run(
         return None;
     }
     if let Some(path) = codex_rollout_path(thread, codex_home) {
-        if rollout_has_spawn_agent(&path) {
+        if rollout_spawn_agent_since(&path, since) {
             return Some(SubagentSignal::SpawnCall);
         }
     }
@@ -3564,18 +3580,95 @@ mod tests {
         // a plain rollout: no sub-agent
         std::fs::write(&rollout, format!("{}\n", meta_line(now, &thread, ""))).unwrap();
         assert_eq!(subagent_in_run(&thread, since, &home_s), None);
-        // a spawn_agent function call: a hit
+        // a spawn_agent function call made in the current turn (timestamp >= since): a hit
         std::fs::write(
             &rollout,
-            format!(
-                "{}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"spawn_agent\",\"namespace\":\"collaboration\",\"arguments\":\"{{}}\"}}}}\n",
-                meta_line(now, &thread, "")
-            ),
+            format!("{}\n{}\n", meta_line(now, &thread, ""), spawn_line(now)),
         )
         .unwrap();
         assert_eq!(
             subagent_in_run(&thread, since, &home_s),
             Some(SubagentSignal::SpawnCall)
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A `spawn_agent` function-call line stamped `at` (codex-cli 0.169.0 multi-agent v2 shape).
+    fn spawn_line(at: DateTime<Utc>) -> String {
+        format!(
+            "{{\"timestamp\":\"{}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"spawn_agent\",\"namespace\":\"collaboration\",\"arguments\":\"{{}}\"}}}}",
+            stamp(at)
+        )
+    }
+
+    /// (F11-4) The guard scopes the parent-rollout `spawn_agent` scan to the CURRENT turn: a
+    /// historical call (before `since`) is ignored, a call at/after `since` stops the run, and a
+    /// rollout holding both still stops (the new call counts).
+    #[test]
+    fn the_subagent_guard_ignores_a_historical_spawn_call() {
+        let home = std::env::temp_dir().join(format!(
+            "c3-subguard-hist-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let now = Utc::now();
+        let local = now.with_timezone(&Local);
+        let day = home
+            .join("sessions")
+            .join(local.format("%Y").to_string())
+            .join(local.format("%m").to_string())
+            .join(local.format("%d").to_string());
+        std::fs::create_dir_all(&day).unwrap();
+        let thread = v7(now, 1);
+        let rollout = day.join(format!(
+            "rollout-{}-{thread}.jsonl",
+            local.format("%Y-%m-%dT%H-%M-%S")
+        ));
+        let home_s = home.to_string_lossy().to_string();
+        // the current turn launched one minute ago.
+        let since = now - Duration::minutes(1);
+        let old = now - Duration::minutes(30); // a spawn from a PRIOR turn of this resumed thread
+        let new = now; // a spawn in the current turn
+
+        // history only: an old spawn_agent call before `since` must NOT stop the run.
+        std::fs::write(
+            &rollout,
+            format!("{}\n{}\n", meta_line(old, &thread, ""), spawn_line(old)),
+        )
+        .unwrap();
+        assert_eq!(
+            subagent_in_run(&thread, since, &home_s),
+            None,
+            "a historical spawn call alone must not stop a resumed run"
+        );
+
+        // a call in the current turn: a hit.
+        std::fs::write(
+            &rollout,
+            format!("{}\n{}\n", meta_line(old, &thread, ""), spawn_line(new)),
+        )
+        .unwrap();
+        assert_eq!(
+            subagent_in_run(&thread, since, &home_s),
+            Some(SubagentSignal::SpawnCall),
+            "a spawn call in the current turn stops the run"
+        );
+
+        // both an old and a new call: the new one still stops it.
+        std::fs::write(
+            &rollout,
+            format!(
+                "{}\n{}\n{}\n",
+                meta_line(old, &thread, ""),
+                spawn_line(old),
+                spawn_line(new)
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            subagent_in_run(&thread, since, &home_s),
+            Some(SubagentSignal::SpawnCall),
+            "a new spawn call stops the run even when the history holds an old one"
         );
         let _ = std::fs::remove_dir_all(&home);
     }

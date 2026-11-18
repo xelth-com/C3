@@ -74,5 +74,26 @@
     tests, c3-cli 203 in 20 binaries, 0 failed; `cargo fmt --all -- --check` and clippy `-D warnings` clean.
   - Second pass: brief READY at `handoffs/10-claude-acceptance-2.md` (a delta brief for a NEW thread; the 09
     thread replays 668 KB per tool call). Not before 02:09 on 2026-11-16 (the 5-hour window).
-- Acceptance authority: these three are stand-ins. Their verdicts are recorded; the tag `v0.2.4`
-  waits for the standing partner's acceptance after its window resets (rule of the consult skill).
+- 2026-11-16 02:15, acceptance pass 2 (brief 10, handoff 11, detach id `9a28f0c8`, openai :: gpt-6-astra, mode new,
+  thread `01a1e1ec-c2d2-7de3-9bda-760504cedd03`, `--budget 50`), reviewed 08121e5 with CI run 43770037495 green:
+  usable reply after 783 s, **HOLD** - 1 blocker, 3 major (F11-1..F11-4). `sub-agents 0`: the two switches held on
+  the ChatGPT provider (the first run there since the fix). Cost: the 5-hour window 0 -> 25 % (until 07:16), the
+  week 42 % -> 48 %; 36 calls, 2.18 M input tokens of which 2.05 M cached. Rated useful.
+  - R2-R6 closed by the reviewer; R1 half-closed (F11-1); R7b refuted by the reviewer too; 12 of the 13 prior
+    findings it re-read are `fixed`, F06-4 `still-open` in one part (see below).
+  - F11-1 (blocker): `handle_pending` returns "resolved" after a failed rollback and when there is no rollback
+    path, so the next pass clears the pending record of an engine that still fails its smoke.
+  - F11-2: a kimi turn that speaks, then calls tools, then ends without an answer is published as a usable,
+    verified reply (the pre-tool text is the reply); the salvage keeps that text too.
+  - F11-3: R7a stages the brief only for the primary kimi turn; read-insist / continuation / repair turns get a
+    fresh HEAD worktree without it.
+  - F11-4: the sub-agent guard scans the whole rollout, so a resumed thread whose HISTORY holds a `spawn_agent`
+    call would be stopped although the current turn spawned nothing.
+  - All four read against the code by the coordinator and confirmed; fixes in work (one worker, in place).
+  - F06-4, the open part: `openai_windows` returns the rollout reading before it looks at the recorded one, and
+    the quota scan filters by provider, not by account. Not taken into this wave: the recorded quota is written
+    from the same rollouts (it cannot be newer than them on one Codex home), and the machine has one ChatGPT
+    account; it stays in `.eck/TECH_DEBT.md`.
+  - A third pass needs the operator's word (two passes have cost 20 points of the week).
+- Acceptance authority: the panel members above are stand-ins. Their verdicts are recorded; the tag `v0.2.4`
+  waits for the standing partner's ACCEPT (rule of the consult skill).

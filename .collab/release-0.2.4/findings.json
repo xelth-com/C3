@@ -76,6 +76,14 @@
                                                      "note":  "zai_get builds the agent with redirects(0) and accepts a body only when status \u003c 300 (crates/c3/src/budget/mod.rs:620). A 3xx is no data, so the bearer token is not replayed.",
                                                      "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
                                                      "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "zai_get uses redirects(0) and only consumes responses below 300 at budget/mod.rs:687-698; verified by source inspection, without a live redirect test.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
                                                  }
                                              ]
                      },
@@ -273,6 +281,14 @@
                                                      "note":  "The model-swap smoke now holds the seat when seat_saturated, on_request, or reserve_percent is set before it builds the Target (crates/c3/src/maintain/mod.rs:1091). seat_saturated is the same 90 percent plan_headroom guard as pick_target.",
                                                      "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
                                                      "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The candidate is checked through seat_saturated before its smoke at maintain/mod.rs:1208; smoke.rs:148 delegates to the governing-window headroom calculation. Swap testing remains specific to the candidate.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
                                                  }
                                              ]
                      },
@@ -997,6 +1013,14 @@
                                                      "note":  "A read-insist LaunchFailed is stored as launch_fail and breaks the loop. It is not written into the dead-attempt record, and the comment keeps the guard reply and pointers (crates/c3/src/consult/orchestrate/secondary.rs:1396 and :1453).",
                                                      "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
                                                      "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "secondary.rs:1463 handles LaunchFailed separately; dead attempts replace raw_text even with empty salvage at :1524, and fresh abandoned threads are cleared. No launch-failure fixture was executed.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
                                                  }
                                              ]
                      },
@@ -1190,6 +1214,14 @@
                                                      "note":  "The smoke scratch repo is now under the OS temp dir and removed after the run (crates/c3/src/maintain/mod.rs:1026). redirect_target still treats any host with the same last two labels as the same site (crates/c3/src/maintain/env.rs:259), so a non-allowlisted kimi.ai subdomain is accepted.",
                                                      "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
                                                      "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Smoke scratch repositories use OS temp at maintain/mod.rs:1113; env.rs:253,258 restricts cross-host redirects to the exact code.kimi.ai -\u003e cdn.kimi.ai pair over HTTPS.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
                                                  }
                                              ]
                      },
@@ -1699,6 +1731,14 @@
                                                      "note":  "Same zai_get path as F02-1. redirects(0) plus status \u003c 300 means a 302 body is not cached or parsed as TOKENS_LIMIT (crates/c3/src/budget/mod.rs:620-631).",
                                                      "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
                                                      "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "budget/mod.rs:690 disables redirects and :697 excludes 3xx response bodies from parsing/caching.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
                                                  }
                                              ]
                      },
@@ -1772,6 +1812,14 @@
                                                      "note":  "The Windows hook spawn is CreateProcessW of the c3 exe. The parent opens the log and passes the handle. The command line is only the quoted exe plus maintain --run, not cmd.exe /c (crates/c3/src/maintain/mod.rs:1316-1443). CODEX_HOME is lpCurrentDirectory, so \u0026 and | in it do not start another process.",
                                                      "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
                                                      "tree_sha256":  "f62917127425cf1b4d3a1c14c179e24eefd2eb579b42407f376902332ca76fcf"
+                                                 },
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "maintain/mod.rs:1527-1532 supplies the executable directly, and :1572 calls CreateProcessW with file handles for logging rather than cmd.exe redirection.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
                                                  }
                                              ]
                      },
@@ -2061,7 +2109,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "providers.rs:847-876 applies reserve and on-request gates before panel weight gates; stand_in_light_members at :971 only promotes rows whose skip_kind is light. R4 additionally fixes the combined reserve/on-request ordering.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                                 }
                                              ]
                      },
                      {
@@ -2119,7 +2174,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The reserve check at consult/orchestrate/mod.rs:2086 is outside the skip-preflight credential branch and applies to a selected protected roster entry.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                                 }
                                              ]
                      },
                      {
@@ -2190,7 +2252,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "consult/orchestrate/mod.rs:1548-1588 supplies the previous eligible reviewer position to routing for non-standing resume/fork, and switches to new mode if another reviewer must be drawn.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                                 }
                                              ]
                      },
                      {
@@ -2261,7 +2330,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Age-based boosting, expired-window fallback and future-candidate selection were corrected. However, budget/mod.rs:391 and :404 still return rollout windows before comparing newer health observations at :410, so the supplied old-low-rollout/new-high-health scenario remains. quota.rs:1308-1318 also filters provider rather than account identity.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                                 }
                                              ]
                      },
                      {
@@ -2337,7 +2413,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Under the clarified invariant, old high usage may hold an unexpired window. Cache fetch timestamps are preserved at budget/mod.rs:526,656,769; per-window freshness caps old weights at 1, expired windows are dropped, and hold messages disclose age. Account/source precedence remains tracked separately under F06-4.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                                 }
                                              ]
                      },
                      {
@@ -2404,7 +2487,14 @@
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "The common reserve check at consult/orchestrate/mod.rs:2086-2105 covers explicit selection and thread-pinned selection independently of skip-preflight.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                                 }
                                              ]
                      },
                      {
@@ -2477,6 +2567,293 @@
                                              "evidence":  "",
                                              "base_commit":  "d7ce6581fd1bbee6af3e3589399145493b6adbf0",
                                              "tree_sha256":  "d97dc550f949d87d8860e37f7bfaf4d77f2e5e43dbb675e0f8af70ff00129da9"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  7,
+                                                     "when":  "2026-11-16T02:28:53+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "Walk and panel holds use !ctx.no_network, matching panel multipliers; real single-run refusal and router explain use network=true. Source inspection confirms the original network-mode mismatch is removed; live cache-refresh behavior was not exercised.",
+                                                     "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                                     "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F11-1",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1087
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1092
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  722
+                                           },
+                                           {
+                                               "path":  "crates/c3-cli/tests/maintain.rs",
+                                               "line":  550
+                                           }
+                                       ],
+                         "claim":  "R1 remains incomplete: pending-update recovery reports itself resolved after a failed rollback or when no rollback path exists, so the caller deletes the recovery record while the installed engine still fails its smoke.",
+                         "trigger":  "A retained pending update reaches a subsequent maintenance pass; the installed version differs from the previous version, its smoke fails, and rollback fails or is unavailable.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:1064-1092",
+                                              "observation":  "The failed-smoke branch distinguishes rollback success in its message but unconditionally returns true at line 1087; the no-rollback branch also returns true."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:695-725",
+                                              "observation":  "The caller invokes clear_pending whenever handle_pending returns resolved=true."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-cli/tests/maintain.rs:550-580",
+                                              "observation":  "The new failed-rollback test checks retention immediately after the initial update, without running recovery."
+                                          }
+                                      ],
+                         "verification":  "Run RC1: retain a failed update, force a second pass whose smoke and rollback fail, and assert the engine remains in pending.json.",
+                         "remedy":  "Return resolved=false on unsuccessful recovery, including absent rollback support; clear only after a passing smoke or verified restoration. Add repeated-recovery regression coverage.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  7,
+                                        "reply":  "handoffs/11-codex-acceptance-2.md",
+                                        "thread":  "01a1e1ec-c2d2-7de3-9bda-760504cedd03",
+                                        "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                        "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-16T02:28:53+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                             "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  580
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  776
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  805
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  456
+                                           }
+                                       ],
+                         "claim":  "Kimi can publish a pre-tool placeholder or verdict as a usable, verified reply when the turn performs tools but never produces a post-tool answer; its salvage also retains that pre-tool text.",
+                         "trigger":  "A Kimi stream emits nonempty assistant content without tool_calls, subsequently emits a tool call/result, then ends with a valid session.resume_hint and exit code zero without further assistant content.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:579-585",
+                                              "observation":  "Assistant content is appended to one text buffer; encountering tool calls increments the count without clearing earlier text."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:776-788 and 423-429",
+                                              "observation":  "Nonempty accumulated text becomes usable; the primary review guard only checks that the total tool count is nonzero."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:456-470 and 805-827",
+                                              "observation":  "A usable turn becomes Completed with Verified conversation trust, while salvage concatenates all assistant content lacking tool_calls."
+                                          }
+                                      ],
+                         "verification":  "Run RC2 with a schema-valid pre-tool verdict and no post-tool answer; inspect the outcome, reply and conversation trust.",
+                         "remedy":  "Track assistant answer text after the last actual tool call separately; reject an empty answer tail and use that tail for salvage, as the Grok adapter already does.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  7,
+                                        "reply":  "handoffs/11-codex-acceptance-2.md",
+                                        "thread":  "01a1e1ec-c2d2-7de3-9bda-760504cedd03",
+                                        "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                        "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-16T02:28:53+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                             "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  281
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  1127
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  174
+                                           },
+                                           {
+                                               "path":  "crates/c3-cli/tests/kimi_engine.rs",
+                                               "line":  335
+                                           }
+                                       ],
+                         "claim":  "R7a only stages the operator brief for the primary Kimi turn. Read-insist and other secondary turns create fresh HEAD worktrees without staging it, leaving an uncommitted brief absent or a modified committed brief at its old contents.",
+                         "trigger":  "An acceptance consultation supplies an uncommitted or locally modified relative brief, and the primary makes zero tool calls, causing a read-insist turn that must read that brief.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/secondary.rs:268-283 and 1114-1129",
+                                              "observation":  "Both secondary Kimi constructors explicitly set brief=None, assuming the previous turn already read it."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:168-180 and 278-318",
+                                              "observation":  "Every run creates a new worktree of HEAD; operator brief staging only occurs when brief is Some."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-cli/tests/kimi_engine.rs:335-373 and 434-466",
+                                              "observation":  "The new brief test asserts one framing turn; the separate read-insist test does not supply an uncommitted operator brief."
+                                          }
+                                      ],
+                         "verification":  "Run RC3 and inspect the actual contents read from the original repo-relative brief path during the secondary turn.",
+                         "remedy":  "Stage the same operator brief into every Kimi worktree that can reference it, including read-insist, continuation and repair; propagate staging failures before launching the reviewer.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  7,
+                                        "reply":  "handoffs/11-codex-acceptance-2.md",
+                                        "thread":  "01a1e1ec-c2d2-7de3-9bda-760504cedd03",
+                                        "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                        "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-16T02:28:53+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                             "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  688
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  737
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/subprocess.rs",
+                                               "line":  772
+                                           }
+                                       ],
+                         "claim":  "The new sub-agent guard can kill a compliant resumed turn because it treats a historical spawn_agent call anywhere in the thread\u0027s rollout as a spawn in the current run.",
+                         "trigger":  "Resume a thread that previously spawned an agent, for example during an explicitly opted-in run, with sub-agents disabled now; the resumed process remains running until a guard poll but makes no new spawn call.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:688-710 and 728-744",
+                                              "observation":  "rollout_has_spawn_agent reads the rollout with no timestamp or offset boundary. subagent_in_run does not pass its since argument to that scan; since is used only for child-rollout discovery."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/subprocess.rs:769-780",
+                                              "observation":  "The watch passes the current turn start, but any returned historical SpawnCall triggers process-tree termination and TurnStop::Subagent."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:3563-3578",
+                                              "observation":  "The inspected regression checks a spawn call without testing a call preceding the current turn."
+                                          }
+                                      ],
+                         "verification":  "Run RC4 and confirm that a historical call alone does not produce an operator-class sub-agent stop.",
+                         "remedy":  "Scope parent-rollout detection to the current turn using a launch-time byte offset or validated event timestamps/turn identity; retain detection of newly created child rollouts.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  7,
+                                        "reply":  "handoffs/11-codex-acceptance-2.md",
+                                        "thread":  "01a1e1ec-c2d2-7de3-9bda-760504cedd03",
+                                        "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                        "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-16T02:28:53+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "08121e5773c95e97b4123d0e839b295f2c237fca",
+                                             "tree_sha256":  "4be3336d21a57398e4ef3e8e0135fab528aec6a6420ac86076800d56e98e95ae"
                                          }
                                      ],
                          "reviewer_checks":  [
@@ -2599,6 +2976,29 @@
                                       "source":  "consult_coordinator"
                                   },
                         "telemetry_sent":  1794759566
+                    },
+                    {
+                        "n":  7,
+                        "consult_id":  "4bc54f8a-f363-44e7-bc6e-433eaf3ed56b",
+                        "lineage":  "openai :: gpt-6-astra",
+                        "provider":  "openai",
+                        "model":  "gpt-6-astra",
+                        "engine":  "codex",
+                        "purpose":  "acceptance",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-16T02:15:47+01:00",
+                        "useful":  "yes",
+                        "note":  "Acceptance pass 2 at 08121e5: HOLD with 4 findings (F11-1 blocker, F11-2..4 major), all four confirmed against the code by the coordinator; R2-R6 closed, R1 found half-closed; sub-agents 0, 783 s, week 42 -\u003e 48 %.",
+                        "when":  "2026-11-16T02:32:47+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1794792767
                     }
                 ]
 }

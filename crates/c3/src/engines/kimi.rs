@@ -61,11 +61,13 @@ pub struct KimiEngine {
     pub on_running: Option<std::sync::Arc<dyn Fn(u32, String) + Send + Sync>>,
     /// Told around every tree kill of a turn (`SpawnRequest::on_kill`).
     pub on_kill: Option<super::subprocess::KillHook>,
-    /// (R7) The operator brief to make readable inside the throwaway worktree, or `None`. kimi reads
-    /// the review in a worktree of HEAD, so a brief that exists only in the caller's working tree
-    /// (uncommitted, or committed-but-locally-modified) is absent there; it is copied in at its
+    /// (R7, F11-3) The operator brief to make readable inside the throwaway worktree, or `None`. kimi
+    /// reads the review in a worktree of HEAD, so a brief that exists only in the caller's working
+    /// tree (uncommitted, or committed-but-locally-modified) is absent there; it is copied in at its
     /// repo-relative path before the turn so the prompt's reference resolves to the operator's actual
-    /// brief. A secondary (continuation) turn resumes a session that already read it, so it sets `None`.
+    /// brief. EVERY turn creates a fresh HEAD worktree, so every turn - primary, read-insist,
+    /// continuation and repair - stages it; a read-insist turn in particular re-asks a zero-tool
+    /// primary to read the brief, and that worktree must hold the operator's actual brief.
     pub brief: Option<BriefCopy>,
 }
 
@@ -309,10 +311,32 @@ impl KimiEngine {
                     .any(|c| matches!(c, std::path::Component::ParentDir));
             if safe {
                 let dest = worktree.path.join(rel);
-                if let Some(parent) = dest.parent() {
-                    let _ = std::fs::create_dir_all(parent);
+                let staged = dest
+                    .parent()
+                    .map(std::fs::create_dir_all)
+                    .unwrap_or(Ok(()))
+                    .and_then(|()| std::fs::copy(&brief.src, &dest).map(|_| ()));
+                // (F11-3) The prompt tells the reviewer to read this brief; if it cannot be staged,
+                // the review would read stale or missing content. Refuse before launch rather than
+                // run a reviewer pointed at the wrong brief.
+                if let Err(e) = staged {
+                    return Ok(KimiRun {
+                        outcome: AttemptOutcome::ProviderFailure {
+                            failure: c3_core::ledger::ProviderFailure {
+                                class: "capability".into(),
+                                code: String::new(),
+                                message: format!(
+                                    "kimi could not stage the operator brief `{}` into the isolation worktree: {e}",
+                                    brief.rel
+                                ),
+                                ..Default::default()
+                            },
+                            exit_code: None,
+                        },
+                        turn: KimiTurn::default(),
+                        isolation: None,
+                    });
                 }
-                let _ = std::fs::copy(&brief.src, &dest);
             }
         }
         let isolation = Some(worktree.isolation_line());
@@ -543,6 +567,11 @@ pub struct KimiEvents {
     /// The reply text: the concatenated `content` of `assistant` lines WITHOUT `tool_calls`
     /// (content that accompanies tool calls is narration and is dropped).
     pub text: String,
+    /// (F11-2) The final answer: the `content` of `assistant` lines without `tool_calls` that come
+    /// AFTER the last tool call or tool result. Reset whenever a tool call or a tool result arrives,
+    /// so text emitted BEFORE a tool call (an interim verdict/placeholder) never stands in as the
+    /// reply. With no tool call `final_text == text`.
+    pub final_text: String,
     /// The session id of the `session.resume_hint` meta line (`''` when none).
     pub session: String,
     /// A `session.resume_hint` meta line was seen (the end-of-run marker of a clean turn).
@@ -578,11 +607,18 @@ pub fn read_kimi_events(events_text: &str, allow_partial_last: bool) -> KimiEven
         match role {
             "assistant" => {
                 if let Some(tcs) = obj.get("tool_calls").and_then(|v| v.as_array()) {
-                    // A tool-call line: count the calls; its `content` (if any) is narration.
+                    // A tool-call line: count the calls; its `content` (if any) is narration. A new
+                    // read begins, so any answer text so far was interim, not the final reply.
                     r.tool_calls += tcs.len();
+                    r.final_text.clear();
                 } else if let Some(c) = obj.get("content").and_then(|v| v.as_str()) {
                     r.text.push_str(c);
+                    r.final_text.push_str(c);
                 }
+            }
+            // A tool result closes a call; text after it is a fresh answer tail.
+            "tool" => {
+                r.final_text.clear();
             }
             "meta" => {
                 let ty = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -605,7 +641,7 @@ pub fn read_kimi_events(events_text: &str, allow_partial_last: bool) -> KimiEven
                         .to_string();
                 }
             }
-            // "tool" results and any other role are ignored.
+            // Any other role is ignored.
             _ => {
                 // A defensive catch for a top-level `{"error":"..."}` without a role.
                 if role.is_empty() && r.error.is_empty() {
@@ -774,7 +810,31 @@ pub fn kimi_turn_outcome(
         return o;
     }
     o.thread = session.clone();
-    o.reply = events.text.clone();
+    // (F11-2) A turn that made tool calls but produced NO text after the last one has no final
+    // answer: the pre-tool text was an interim schema-shaped progress note / verdict, never the
+    // reply. Fail it the way a stream that ended without an answer is failed - do not let the
+    // placeholder stand in as the answer. A zero-tool turn keeps `final_text == text` and is owned
+    // by the zero-tool review guard. Mirrors the grok adapter.
+    // The failure's evidence is the reason alone, NOT the reviewer's interim text: `texts` feed the
+    // failure message and its class, and a placeholder that mentions "quota", "timeout" or "auth"
+    // would otherwise be recorded as that provider failure (and mark the provider unavailable). The
+    // interim text stays in the events file.
+    if events.tool_calls > 0 && events.final_text.trim().is_empty() {
+        fail(
+            &mut o,
+            "the kimi turn made tool calls but produced no answer after the last one",
+            "",
+            &[],
+        );
+        return o;
+    }
+    // The reply is the FINAL answer (the text after the last tool call); an interim schema-shaped
+    // progress note written before the reading is dropped. With no tool call `final_text == text`.
+    o.reply = if events.tool_calls > 0 {
+        events.final_text.clone()
+    } else {
+        events.text.clone()
+    };
     if o.reply.trim().is_empty() {
         fail(&mut o, "empty reply", "", &[]);
         return o;
@@ -800,10 +860,16 @@ fn fail(o: &mut KimiTurn, why: &str, class: &str, texts: &[String]) {
 
 // --------------------------------------------------------------------------- salvage
 
-/// Salvage the reply text of a killed turn: the `content` of `assistant` lines without
-/// `tool_calls`, concatenated. `None` when nothing was produced.
+/// Salvage the reply text of a killed turn: the final answer, i.e. the `content` of `assistant`
+/// lines without `tool_calls` that come AFTER the last tool call or tool result (an interim
+/// schema-shaped progress note written before the reading is never salvaged). With no tool call it
+/// is all the text. `None` when that tail is empty - so a turn that read and then died with only
+/// pre-tool text salvages nothing, and its placeholder never becomes the reply. Mirrors
+/// [`crate::engines::grok::grok_salvage`].
 pub fn kimi_salvage(events_text: &str) -> Option<String> {
-    let mut out = String::new();
+    let mut all = String::new();
+    let mut tail = String::new();
+    let mut saw_tool = false;
     for line in events_text.split(['\r', '\n']) {
         let t = line.trim();
         if !t.starts_with('{') {
@@ -813,18 +879,30 @@ pub fn kimi_salvage(events_text: &str) -> Option<String> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if obj.get("role").and_then(|v| v.as_str()) == Some("assistant")
-            && obj.get("tool_calls").is_none()
-        {
-            if let Some(c) = obj.get("content").and_then(|v| v.as_str()) {
-                out.push_str(c);
+        match obj.get("role").and_then(|v| v.as_str()) {
+            Some("assistant") => {
+                if obj.get("tool_calls").is_some() {
+                    // a new read begins: any text so far was an interim note, not the final answer.
+                    saw_tool = true;
+                    tail.clear();
+                } else if let Some(c) = obj.get("content").and_then(|v| v.as_str()) {
+                    all.push_str(c);
+                    tail.push_str(c);
+                }
             }
+            // a tool result closes a call: the next answer text is a fresh tail.
+            Some("tool") => {
+                saw_tool = true;
+                tail.clear();
+            }
+            _ => {}
         }
     }
-    if out.trim().is_empty() {
+    let chosen = if saw_tool { tail } else { all };
+    if chosen.trim().is_empty() {
         None
     } else {
-        Some(out)
+        Some(chosen)
     }
 }
 
@@ -970,5 +1048,93 @@ mod tests {
         );
         assert_eq!(kimi_salvage(s).as_deref(), Some("the answer"));
         assert!(kimi_salvage("").is_none());
+    }
+
+    #[test]
+    fn a_pre_tool_verdict_with_no_post_tool_answer_is_rejected() {
+        // (F11-2) A schema-valid verdict emitted BEFORE the tool call, then a tool call + result,
+        // then a clean resume hint and exit zero with no further assistant content: the turn ran
+        // tools but produced no answer after the last one, so it must be rejected (not usable) and
+        // salvage must be empty - the pre-tool verdict must never stand in as the reply.
+        let stream = concat!(
+            r#"{"role":"assistant","content":"{\"verdict\":\"HOLD\",\"reply_markdown\":\"the quota and rate limit code\"}"}"#,
+            "\n",
+            r#"{"role":"assistant","content":"reading","tool_calls":[{"type":"function","id":"t1","function":{"name":"Read","arguments":"{}"}}]}"#,
+            "\n",
+            r#"{"role":"tool","tool_call_id":"t1","content":"1\thello"}"#,
+            "\n",
+            r#"{"role":"meta","type":"session.resume_hint","session_id":"session_c6f82457-e408-4931-b986-a8e2edd596b1","command":"kimi -r"}"#,
+        );
+        let e = read_kimi_events(stream, false);
+        assert!(e.tool_calls > 0, "a tool call was made");
+        assert!(
+            e.final_text.trim().is_empty(),
+            "no answer after the last tool call: {:?}",
+            e.final_text
+        );
+        let t = kimi_turn_outcome(&e, 0, "", "");
+        assert!(!t.ok, "the turn is rejected: {}", t.outcome);
+        assert!(
+            t.outcome.contains("made tool calls but produced no answer"),
+            "outcome: {}",
+            t.outcome
+        );
+        // The rejected turn maps to a failure, never a Verified conversation.
+        let files = TurnFiles::default();
+        // Its evidence is the reason, never the reviewer's interim text: a pre-tool verdict that
+        // mentions "quota" must not turn this into a quota failure of the provider.
+        assert!(
+            !t.texts.iter().any(|x| x.contains("HOLD")),
+            "the pre-tool text is not failure evidence: {:?}",
+            t.texts
+        );
+        match to_outcome(&t, &files, 1.0, 0) {
+            AttemptOutcome::ProviderFailure { failure, .. } => {
+                assert_eq!(failure.class, "unknown", "message: {}", failure.message);
+                assert!(
+                    failure
+                        .message
+                        .contains("produced no answer after the last one"),
+                    "message: {}",
+                    failure.message
+                );
+            }
+            _ => panic!("a rejected turn is a provider failure, not a verified reply"),
+        }
+        // The pre-tool verdict is not salvaged as the reply.
+        assert!(
+            kimi_salvage(stream).is_none(),
+            "salvage drops the pre-tool verdict: {:?}",
+            kimi_salvage(stream)
+        );
+    }
+
+    #[test]
+    fn a_post_tool_answer_is_the_reply_not_the_pre_tool_text() {
+        // (F11-2) Pre-tool placeholder, a tool call + result, then the real post-tool answer: the
+        // reply (and the salvage) is exactly the post-tool answer.
+        let stream = concat!(
+            r#"{"role":"assistant","content":"pre-tool placeholder"}"#,
+            "\n",
+            r#"{"role":"assistant","content":"reading","tool_calls":[{"type":"function","id":"t1","function":{"name":"Read","arguments":"{}"}}]}"#,
+            "\n",
+            r#"{"role":"tool","tool_call_id":"t1","content":"1\thello"}"#,
+            "\n",
+            r#"{"role":"assistant","content":"the post-tool answer"}"#,
+            "\n",
+            r#"{"role":"meta","type":"session.resume_hint","session_id":"session_c6f82457-e408-4931-b986-a8e2edd596b1","command":"kimi -r"}"#,
+        );
+        let e = read_kimi_events(stream, false);
+        assert_eq!(e.final_text, "the post-tool answer");
+        let t = kimi_turn_outcome(&e, 0, "", "");
+        assert!(t.ok, "outcome: {}", t.outcome);
+        assert_eq!(
+            t.reply, "the post-tool answer",
+            "the reply is only the post-tool answer"
+        );
+        assert_eq!(
+            kimi_salvage(stream).as_deref(),
+            Some("the post-tool answer")
+        );
     }
 }

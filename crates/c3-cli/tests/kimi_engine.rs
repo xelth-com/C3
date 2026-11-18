@@ -513,6 +513,70 @@ fn read_insist_fails_after_two_re_asks_when_the_model_keeps_reading_nothing() {
     assert_eq!(e.turns().len(), 3, "primary + 2 re-asks: {:?}", e.turns());
 }
 
+// ----------------------------- (F11-3) the uncommitted brief reaches the read-insist worktree too
+
+#[test]
+fn the_uncommitted_brief_reaches_the_read_insist_worktree_too() {
+    // (F11-3) An acceptance consultation with an UNCOMMITTED operator brief: the primary makes zero
+    // tool calls (the guard fires -> a read-insist re-ask), and the re-ask runs in a FRESH HEAD
+    // worktree. The operator's uncommitted brief must be staged into BOTH worktrees, so the reviewer
+    // reads the operator's actual (uncommitted) content in both turns. Before the fix the secondary
+    // turn staged nothing, so the brief was absent/stale in the re-ask worktree.
+    let e = setup("insist-brief");
+    let brief_rel = ".collab/t/handoffs/brief.md";
+    let brief_body = "# Brief\n\n1. Is app.txt fine?\nMARKER-UNCOMMITTED-F113\n";
+    // UNCOMMITTED (never git-added); `.collab/t/handoffs` exists from setup.
+    std::fs::write(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("brief.md"),
+        brief_body,
+    )
+    .unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            brief_rel,
+            "--purpose",
+            "acceptance",
+        ],
+        &[
+            // the primary reads nothing (guard fires); the re-ask reads 2 files and rescues the run.
+            ("FAKE_KIMI_RESUME_TOOLCALL", "2"),
+            // the fake resolves this repo-relative brief against its cwd (the worktree) on every turn.
+            ("FAKE_KIMI_OP_BRIEF", brief_rel),
+        ],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(
+        turns.len(),
+        2,
+        "primary + one read-insist re-ask: {:?}",
+        turns
+    );
+    for (i, turn) in turns.iter().enumerate() {
+        assert_eq!(
+            turn["op_brief_exists"], true,
+            "turn {i} worktree holds the operator brief: {:?}",
+            turn
+        );
+        assert_eq!(
+            turn["op_brief_body"].as_str().unwrap_or(""),
+            brief_body,
+            "turn {i} sees the operator's uncommitted brief contents: {:?}",
+            turn
+        );
+    }
+}
+
 // ------------------------------------------------------------------ the resume path
 
 #[test]

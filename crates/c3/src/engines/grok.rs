@@ -705,15 +705,19 @@ pub fn grok_turn_outcome(
     o.thread = session.clone();
     // (F03-1) A turn that made tool calls but produced NO text after the last one has no final
     // answer: the pre-tool text was an interim schema-shaped progress note, never the reply. Fail it
-    // the way a stream that ended without an answer is failed - keep the whole text only as salvage,
-    // do not let the placeholder stand in as the answer. A zero-tool turn keeps `final_text == text`
-    // and is owned by the zero-tool review guard (run_detailed).
+    // the way a stream that ended without an answer is failed - do not let the placeholder stand in
+    // as the answer. A zero-tool turn keeps `final_text == text` and is owned by the zero-tool
+    // review guard (run_detailed).
+    // The failure's evidence is the reason alone, NOT the reviewer's interim text: `texts` feed the
+    // failure message and its class, and a placeholder that mentions "quota", "timeout" or "auth"
+    // would otherwise be recorded as that provider failure (and mark the provider unavailable). The
+    // interim text stays in the events file.
     if events.tool_calls > 0 && events.final_text.trim().is_empty() {
         fail(
             &mut o,
             "the grok turn made tool calls but produced no answer after the last one",
             "",
-            std::slice::from_ref(&events.text),
+            &[],
         );
         return o;
     }
@@ -949,10 +953,10 @@ mod tests {
     fn tool_calls_then_no_post_tool_text_is_not_a_usable_reply() {
         // (F03-1) A turn that wrote a placeholder, made a tool call, then ended with NO text after
         // the last tool call has no final answer. It must FAIL (not take the placeholder as the
-        // answer), and keep the whole text only as salvage. tool_calls > 0 so the zero-tool guard
+        // answer), with the reason as its only evidence. tool_calls > 0 so the zero-tool guard
         // does not own this case - grok_turn_outcome must.
         let stream = concat!(
-            r#"{"type":"text","data":"{\"verdict\":\"HOLD\",\"reply_markdown\":\"reading now\"}"}"#,
+            r#"{"type":"text","data":"{\"verdict\":\"HOLD\",\"reply_markdown\":\"reading the quota and rate limit code now\"}"}"#,
             "\n",
             r#"{"type":"tool_call","toolCallId":"c1","toolName":"read_file","status":"pending"}"#,
             "\n",
@@ -975,12 +979,26 @@ mod tests {
             t.reply.trim().is_empty(),
             "the placeholder is not the reply"
         );
-        // the placeholder survives only as salvage text on the failed turn.
+        // The failure's evidence is the reason, never the reviewer's interim text: a placeholder
+        // that mentions "quota" must not turn this into a quota failure of the provider.
         assert!(
-            t.texts.iter().any(|x| x.contains("HOLD")),
-            "the pre-tool text is kept for salvage: {:?}",
+            !t.texts.iter().any(|x| x.contains("HOLD")),
+            "the pre-tool text is not failure evidence: {:?}",
             t.texts
         );
+        match to_outcome(&t, &e, &TurnFiles::default(), 1.0, 0) {
+            AttemptOutcome::ProviderFailure { failure, .. } => {
+                assert_eq!(failure.class, "unknown", "message: {}", failure.message);
+                assert!(
+                    failure
+                        .message
+                        .contains("produced no answer after the last one"),
+                    "message: {}",
+                    failure.message
+                );
+            }
+            _ => panic!("a rejected turn is a provider failure"),
+        }
         // The thread is still recorded (the stream named a valid session).
         assert_eq!(t.thread, e.session);
     }

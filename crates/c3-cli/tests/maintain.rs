@@ -573,6 +573,89 @@ fn a_failed_rollback_keeps_the_pending_record() {
     );
 }
 
+// --------------------------------------------- (F11-1) pending recovery stays unresolved on failed rollback
+
+#[test]
+fn a_pending_recovery_whose_rollback_keeps_failing_stays_unresolved() {
+    // (F11-1) A retained pending update reaches a later recovery pass: the installed 1.0.80 still
+    // fails its smoke and the rollback is a no-op (does not restore 1.0.77). Recovery must report
+    // "unresolved" (never "recovered") and KEEP the pending record across repeated forced passes, so
+    // the broken version is re-smoked next time instead of being cleared and read as up to date.
+    let e = setup("pend-rb-unresolved");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    // installed is the new 1.0.80 (so the interrupted update "took"); the recovery smoke fails and
+    // the rollback is a no-op, leaving 1.0.80 on disk.
+    let mut env = e.grok_env("1.0.80", "1.0.80", "grok::grok-4.7=fail");
+    env.push(("FAKE_GROK_ROLLBACK_NOOP", "1"));
+
+    // pass 1: unresolved, record retained.
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("unresolved"),
+        "recovery is reported unresolved: {t}"
+    );
+    assert!(
+        !t.contains("recovered"),
+        "a failed rollback is never reported 'recovered': {t}"
+    );
+    assert!(
+        e.pending_json().contains("grok"),
+        "the pending record is retained after pass 1: {}",
+        e.pending_json()
+    );
+
+    // pass 2: still failing, the record must survive again.
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("unresolved") && !t.contains("recovered"),
+        "pass 2 is still unresolved: {t}"
+    );
+    assert!(
+        e.pending_json().contains("grok"),
+        "the pending record is retained after pass 2: {}",
+        e.pending_json()
+    );
+
+    // pass 3: confirm it still stays until a smoke actually passes.
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(
+        e.pending_json().contains("grok"),
+        "the pending record is retained after pass 3: {}",
+        e.pending_json()
+    );
+}
+
+#[test]
+fn a_pending_recovery_whose_smoke_passes_clears_the_record() {
+    // (F11-1) The positive counterpart: once the installed binary smokes clean, the retained pending
+    // record is cleared (reported recovered/verified).
+    let e = setup("pend-recover-ok");
+    e.write_pending(
+        r#"[{"engine":"grok","previous":"1.0.77","target":"1.0.80","when":"2026-11-15T00:00:00Z"}]"#,
+    );
+    // installed is 1.0.80 and now smokes clean.
+    let env = e.grok_env("1.0.80", "1.0.80", "grok::grok-4.7=pass");
+    let o = e.run(&["maintain", "--run", "--engine", "grok"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("verified after an interrupted pass"),
+        "a passing recovery smoke clears the record: {t}"
+    );
+    assert_eq!(
+        e.pending_json().trim(),
+        "[]",
+        "the record is cleared on a passing recovery smoke"
+    );
+}
+
 // ------------------------------------------------------------------ (R2) a pending record that cannot be persisted holds the install
 
 #[test]

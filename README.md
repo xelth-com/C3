@@ -318,7 +318,9 @@ thread's rollout (`<codex home>/sessions/<yyyy>/<mm>/<dd>/rollout-<ts>-<thread>.
   `features.multi_agent=true` with `agents.enabled` unnamed); an item that turns them off by one
   key only still gets the other switch.
   As defence in depth a guard watches each run's rollout and stops any turn that spawns a sub-agent
-  anyway, keeping the partial and recording the stop as a tooling failure (class `operator`).
+  anyway (a `spawn_agent` call made in the current turn, scoped by its launch time so a resumed
+  thread's older history does not false-stop it, or a child rollout of this thread), keeping the
+  partial and recording the stop as a tooling failure (class `operator`).
 - **Reading discipline**: the purpose paragraphs of acceptance, diff-review, checkpoint and
   core-contract end with the plugin's block (`git diff <range> --stat` first, one path at a time
   with a line cap, the documents first, the verdict even on an incomplete read).
