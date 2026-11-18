@@ -7,7 +7,7 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
-## [0.2.4] - 2026-11-15
+## [0.2.4] - 2026-11-18
 
 ### Added
 
@@ -343,6 +343,12 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
     call is not stopped when the current turn spawns nothing; a new spawn still stops it, and the
     child-rollout detection is unchanged. A forked thread is covered only as long as Codex keeps the
     original timestamps on the history it copies - not observed on codex-cli 0.169.0.
+- **Third acceptance pass (handoff 13): ACCEPT at 7c1e91f.** One minor finding is left open, F13-1: the
+  time bound of the sub-agent guard is the start of the budget watch - taken after the reviewer process
+  is launched and set two seconds back - not the launch itself, so a `spawn_agent` call from the last
+  two seconds before a resumed turn would still stop it. F06-4 stays open in one part (the rollout
+  reading is returned before the recorded one; the quota scan is scoped by provider, not by account).
+  No real CLI update, rollback, roster swap or reserve hold has run live yet.
 
 ## [0.2.3] - 2026-10-22
 

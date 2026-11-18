@@ -94,6 +94,32 @@
     the quota scan filters by provider, not by account. Not taken into this wave: the recorded quota is written
     from the same rollouts (it cannot be newer than them on one Codex home), and the machine has one ChatGPT
     account; it stays in `.eck/TECH_DEBT.md`.
-  - A third pass needs the operator's word (two passes have cost 20 points of the week).
-- Acceptance authority: the panel members above are stand-ins. Their verdicts are recorded; the tag `v0.2.4`
-  waits for the standing partner's ACCEPT (rule of the consult skill).
+  - A third pass needs the operator's word (two passes have cost 20 points of the week). Given on 2026-11-16
+    ("да конечно давай если надо", for the pass and for the release build).
+  - Fixes committed as 7c1e91f (2026-11-18; the full run is of 2026-11-16 on that tree: c3-core 287, c3 649 lib +
+    81 integration, c3-cli 208 in 20 binaries, 0 failed; CI run 44247193938 green). F11-1..F11-3 `verified`.
+    The first full run failed in three places: rustfmt of one test; the older guard fixture in
+    `crates/c3/tests/pending_liveness.rs`, which wrote its call line undated (it dates the line now); and one
+    15 s `claude --version` probe of a fake launcher while another session's build loaded the machine (passed
+    on the second run, nothing changed).
+- 2026-11-18 07:07, acceptance pass 3 (brief 12, handoff 13, detach id `833eec75`, openai :: gpt-6-astra, mode new,
+  thread `01a1ed44-2711-70b2-8371-bdb99aa350df`, `--budget 50`), reviewed 7c1e91f: usable reply after 246 s,
+  **ACCEPT** - 0 blocker, 0 major, 1 minor (F13-1). `sub-agents 0`. Cost: the 5-hour window 0 -> 11 %, the week
+  78 % -> 80 % (other sessions had taken it from 48 % to 78 % in two days; the entry was `held (reserve)`, which
+  a standing purpose passes by design - `--spend-reserve` was not used). 10 calls, 458 k input tokens of which
+  394 k cached. Rated useful.
+  - F11-1, F11-2, F11-3 closed by the reviewer. F11-4: the historical-call case is corrected; what is left is
+    F13-1, which supersedes it.
+  - F13-1 (minor, confirmed at `crates/c3/src/engines/subprocess.rs:680`): the guard's time bound is the budget
+    watch's `turn_start` - taken after the spawn, the `on_running` callback and the stdin write, then set two
+    seconds back - not the launch itself. A historical call inside those two seconds would count; a current
+    call made before a slow `on_running` returned would not (the child-rollout check is the backstop, and a
+    codex reviewer cannot act before its prompt arrives on stdin). Not fixed in 0.2.4: a code change after the
+    ACCEPT would need another pass. Recorded in `.eck/TECH_DEBT.md` with the reviewer's RC1 as the test to write.
+  - F06-4 stays open in the same part; the reviewer: neither it nor the uncovered scenarios block the tag.
+  - Not rerun by the reviewer: the test totals, fmt, clippy, CI. Its first-run checklist (seven observable
+    items for the first real update, rollback, kimi run, resumed codex run, roster swap and reserve hold) is at
+    the end of `handoffs/13-codex-acceptance-3.md`; none of those ran live yet.
+- Acceptance authority: the panel members above were stand-ins; the standing partner's ACCEPT is handoff 13.
+  **0.2.4 is accepted.** The tag `v0.2.4` (annotated) sits on the commit that records this acceptance, as
+  `v0.2.3` does; its code is that of the reviewed 7c1e91f. The CHANGELOG date is the day of the tag, 2026-11-18.

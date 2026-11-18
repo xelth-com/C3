@@ -1,0 +1,164 @@
+{
+  "schema_version": "1",
+  "verdict": "ACCEPT",
+  "verdict_reason": "The release-blocking recovery and Kimi defects are corrected; the remaining guard-boundary issue and unchanged quota-source debt are nonblocking limitations.",
+  "reply_markdown": "**Q1. ACCEPT `7c1e91f` with one minor residual finding.** No release blockers remain in the reviewed delta. HEAD matches the requested commit. I reviewed the production and test hunks and relied on your supplied passing Windows tests, formatting, clippy and CI results; I did not rerun them. No delegation or writes occurred.\n\n**Q2.**\n\n- **F11-1: closed.** Failed rollback and unavailable rollback now return unresolved, preserving the record through the caller’s conditional clear (`crates/c3/src/maintain/mod.rs:1099`, `:1106`, `:721`). The regression checks retention across three passes and separately checks successful recovery (`crates/c3-cli/tests/maintain.rs:579`). The no-rollback branch remains inspection-only.\n- **F11-2: closed for the reported stream.** Kimi clears the answer tail on calls/results, rejects tools-without-answer, and salvages only the tail. Tests cover rejection, successful post-tool text and failure classification (`crates/c3/src/engines/kimi.rs:613`, `:822`, `:1054`, `:1113`). These are parser/outcome tests, not process-level coverage.\n- **F11-3: closed.** Both secondary constructors supply the brief, copy errors refuse launch, and the integration fixture checks exact contents in both worktrees (`crates/c3/src/consult/orchestrate/secondary.rs:284`, `:1137`; `crates/c3/src/engines/kimi.rs:323`; `crates/c3-cli/tests/kimi_engine.rs:519`).\n- **F11-4: substantially corrected, not completely closed.** Old-history and new-call regressions cover the ordinary case, but the supplied boundary is not the actual launch timestamp. Finding #1 narrows the remaining issue to that boundary.\n\n**Q3.** Neither F06-4 nor the disclosed uncovered scenarios blocks this tag. F06-4 remains open: rollout windows still return before health comparison, and scanning is provider-scoped (`crates/c3/src/budget/mod.rs:392`, `:405`; `crates/c3-core/src/quota.rs:1324`). The stated single-account deployment limits exposure; it does not establish general account isolation or source ordering.\n\nRetaining unresolved updates and retrying only on due/forced passes is coherent recovery behavior. Missing live installer, rollback, swap and hold evidence remains a first-run verification requirement. Fork timestamp preservation and undated-call handling remain explicit guard limitations, not proven coverage.\n\n**Q4.** Finding #1 is the only additional concrete issue identified: the new timestamp filter inherits an approximate budget-watch boundary. I classify it as minor because it affects launch-boundary cases; ordinary history filtering works, configuration disables sub-agents, and child-rollout detection remains available. The Grok failure-evidence change correctly prevents interim prose from determining the provider failure class.\n\nReading excluded collaboration logs, sessions/state and findings-ledger deltas, earlier release code outside targeted context, and CI logs. Prior closures outside this delta are carried forward from reply 11.\n\n## Requested checks\n\n- **RC1** — Cwd `C:\\Users\\Dmytro\\C3`; workspace-write; budget 20 minutes: extend the subprocess guard fixture with a historical parent call one second before launch, then a current call emitted before an `on_running` callback that delays return by three seconds. Run the targeted regression. Finding #1 is settled when the historical call is ignored and the current call is detected, without relying on a child rollout.",
+  "findings": [
+    {
+      "severity": "minor",
+      "locations": [
+        {
+          "path": "crates/c3-core/src/quota.rs",
+          "line": 716
+        },
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 680
+        },
+        {
+          "path": "crates/c3/src/engines/subprocess.rs",
+          "line": 774
+        },
+        {
+          "path": "crates/c3-cli/tests/subagent_guard.rs",
+          "line": 266
+        }
+      ],
+      "claim": "F11-4's timestamp filter receives an approximate budget-watch boundary rather than the process launch time. That boundary is computed after spawning, the on_running callback and stdin delivery, then backdated by two seconds. It can therefore still classify a sufficiently recent historical spawn as current; if post-spawn setup takes more than two seconds, it can instead exclude an early current-turn parent spawn signal. Separate child-rollout detection may catch the latter.",
+      "trigger": "A resumed rollout contains a historical spawn timestamp inside the two-second lookback, or the child emits a current spawn before a sufficiently slow on_running callback finishes and no matching child rollout is available.",
+      "evidence": [
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-core/src/quota.rs:699-718",
+          "observation": "The new parent-rollout filter counts calls only when their timestamp is greater than or equal to the supplied since value."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3/src/engines/subprocess.rs:626-680,772-775",
+          "observation": "The process is spawned, its running callback executes and stdin is written before turn_start is assigned now minus two seconds; that value is passed to subagent_in_run."
+        },
+        {
+          "kind": "read-code",
+          "reference": "crates/c3-cli/tests/subagent_guard.rs:79-96,266-316",
+          "observation": "The regression models historical calls thirty minutes earlier and a delayed new call, without exercising the launch boundary or a delayed running callback."
+        },
+        {
+          "kind": "inferred",
+          "reference": "Timestamp comparison and caller ordering",
+          "observation": "A historical timestamp within the lookback satisfies the comparison; an early current timestamp preceding a delayed cutoff fails it."
+        }
+      ],
+      "verification": "Run RC1: exercise recent historical and early current parent-rollout calls around subprocess launch, including a delayed on_running callback, and assert only the current call stops the run.",
+      "remedy": "Capture a separate guard launch boundary immediately before spawning, with timestamp precision handled explicitly, instead of reusing the backdated budget boundary; alternatively use a reliable rollout offset or turn identity. Add boundary regressions.",
+      "supersedes": [
+        "F11-4"
+      ]
+    }
+  ],
+  "prior_findings": [
+    {
+      "id": "F02-1",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: authenticated quota GET disables redirects; relevant implementation is unchanged."
+    },
+    {
+      "id": "F02-4",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: swap candidates pass the saturation check; this delta does not alter that path."
+    },
+    {
+      "id": "F03-9",
+      "status": "fixed",
+      "note": "Reply 11's launch-failure and salvage closure stands; secondary changes only supply Kimi briefs."
+    },
+    {
+      "id": "F03-12",
+      "status": "fixed",
+      "note": "Reply 11's temporary scratch-directory and exact redirect-allowlist closure stands; neither path changed."
+    },
+    {
+      "id": "F04-7",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: quota redirects and 3xx bodies are rejected; unchanged."
+    },
+    {
+      "id": "F04-8",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: Windows detached launch uses CreateProcessW and logging handles; unchanged."
+    },
+    {
+      "id": "F06-1",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: reserve/on-request gates precede weight gates; provider and panel routing are unchanged."
+    },
+    {
+      "id": "F06-2",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: the reserve refusal is outside skip-preflight; unchanged."
+    },
+    {
+      "id": "F06-3",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: resume/fork routing preserves the previous eligible reviewer or switches to new mode; unchanged."
+    },
+    {
+      "id": "F06-4",
+      "status": "still-open",
+      "note": "Freshness, expiry and future-observation fixes stand. Targeted inspection confirms rollout windows still return before health comparison at budget/mod.rs:392,405 and quota.rs:1324-1329 filters provider rather than account."
+    },
+    {
+      "id": "F07-1",
+      "status": "fixed",
+      "note": "Reply 11's closure under the clarified stale-window policy stands; cache timestamps and freshness weighting are unchanged."
+    },
+    {
+      "id": "F07-2",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: the common reserve check covers explicit and thread-pinned selection independently of preflight; unchanged."
+    },
+    {
+      "id": "F07-3",
+      "status": "fixed",
+      "note": "Carried forward from reply 11: routing and hold network modes align; unchanged."
+    },
+    {
+      "id": "F11-1",
+      "status": "fixed",
+      "note": "Unsuccessful or unavailable recovery returns unresolved; repeated-retention and successful-recovery regression bodies support closure."
+    },
+    {
+      "id": "F11-2",
+      "status": "fixed",
+      "note": "Answer-tail parsing, rejection, salvage and outcome-classification tests address the reported pre-tool-verdict stream."
+    },
+    {
+      "id": "F11-3",
+      "status": "fixed",
+      "note": "Both secondary constructors stage the brief; staging errors fail before launch, and the read-insist fixture checks exact contents on both attempts."
+    },
+    {
+      "id": "F11-4",
+      "status": "still-open",
+      "note": "Ordinary historical-spawn handling is corrected. Finding #1 supersedes the broad claim with the narrower approximate-launch-boundary issue."
+    }
+  ],
+  "unproven": [
+    "Supplied test totals, formatting/clippy results and CI run 44247193938 were not independently rerun or inspected.",
+    "The guard's launch-boundary cases in finding #1 have not been executed.",
+    "Real forked-rollout timestamp preservation and parent calls without parseable timestamps remain unverified; child detection is a separate backstop.",
+    "The no-rollback recovery branch was inspected but lacks the stated integration coverage.",
+    "No real CLI update, rollback, Kimi installer run, roster swap or account reserve hold was performed.",
+    "Kimi tail rejection is covered by inspected parser/outcome tests rather than a fake-process regression; abrupt worktree cleanup remains unverified.",
+    "Conflicting quota-source precedence and cross-account isolation remain unresolved under F06-4.",
+    "Collaboration logs, sessions/state and findings-ledger deltas, earlier release code outside targeted context, and CI logs were not read."
+  ],
+  "first_run_checklist": [
+    "Observe c3 --version identifying the reviewed build. For an actual update, require an engine-specific old-to-actual-version success report and an independent engine --version matching it.",
+    "Observe a passing explicit smoke: both turns succeed and the second answer contains the exact token read from token.txt.",
+    "Inspect pending.json after recovery. Failed or unavailable rollback must report 'pending update unresolved' and retain the engine across another forced pass; successful verification or verified restoration may clear it.",
+    "For Kimi, observe matching operator-brief contents on every attempt, a final answer after the last tool operation, and removal of the temporary worktree after normal completion. A tools-without-answer stream must produce failure rather than a verified reply.",
+    "For the first resumed Codex run, observe no stop caused solely by historical activity. A controlled new forbidden spawn must produce an operator-class stop, preserved partial output and confirmed process termination.",
+    "For a roster swap, observe the named provider and old/new models, a backup, and a roster diff limited to the intended model; a concurrent edit must abort the swap.",
+    "For a real reserve hold, observe reviewer identity, governing window, used/elapsed percentages, reserve and observation age matching the current account. Explicit held selection must refuse without starting, including skip-preflight and pinned-thread paths; automatic routing must name an eligible replacement."
+  ]
+}
