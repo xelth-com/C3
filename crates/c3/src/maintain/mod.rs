@@ -1249,7 +1249,20 @@ fn run_models(
     let skip = skip_set();
 
     {
-        let candidates = models::swap_candidates(roster, &current);
+        let (candidates, rejected) = models::swap_plan(roster, &current, Utc::now().timestamp());
+        // A public id the version rule alone would take, without the date evidence that it is newer
+        // than the seated model: reported in the notes (never smoked, never in the short line).
+        for r in &rejected {
+            if !engine_in_scope(&r.engine, &only, &skip) {
+                continue;
+            }
+            let msg = format!(
+                "model {} :: {} -> {} not a candidate ({})",
+                r.provider, r.old, r.new, r.why
+            );
+            println!("c3 maintain: {msg}");
+            notes.push(msg);
+        }
         for c in &candidates {
             if !engine_in_scope(&c.engine, &only, &skip) {
                 continue; // a seat of an engine outside this pass's scope is never touched

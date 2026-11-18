@@ -20,9 +20,10 @@ use c3_core::roster::{Roster, RosterEntry};
 pub struct SourceList {
     pub source: String,
     pub ids: Vec<String>,
-    /// The catalog's `created` stamp (unix seconds) per id, when it gives one. Used in the pass only
-    /// (the first-collection "new" rule); not persisted.
-    #[serde(skip)]
+    /// The catalog's `created` stamp (unix seconds) per id, when it gives one: the first-collection
+    /// "new" rule and the date evidence a public candidate needs. Persisted; a state file written
+    /// before it existed loads with no dates.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub created: BTreeMap<String, i64>,
 }
 
@@ -232,33 +233,167 @@ pub fn public_candidates(current: &[SourceList]) -> Vec<String> {
     out
 }
 
+/// A public id that the version rule would take for a successor but that lacks the date evidence a
+/// public candidate needs ([`public_verdict`]); reported in the notes, never smoked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedCandidate {
+    pub provider: String,
+    pub engine: String,
+    pub old: String,
+    pub new: String,
+    pub why: String,
+}
+
+/// A public candidate whose seated id is not in the catalog qualifies only when the catalog created
+/// it within this many days.
+pub const UNANCHORED_MAX_AGE_DAYS: i64 = 180;
+
+/// One occurrence of a (vendor-stripped) id in a public source.
+struct PublicHit<'a> {
+    source: &'a SourceList,
+    vendor: &'a str,
+    created: Option<i64>,
+}
+
+/// Every occurrence of `model` (compared after stripping the vendor part, case-insensitive) in the
+/// public sources of `current`.
+fn public_hits<'a>(current: &'a [SourceList], model: &str) -> Vec<PublicHit<'a>> {
+    let mut out = Vec::new();
+    for s in current.iter().filter(|s| is_public_source(&s.source)) {
+        for id in &s.ids {
+            if strip_vendor(id).eq_ignore_ascii_case(model) {
+                out.push(PublicHit {
+                    source: s,
+                    vendor: id.split_once('/').map(|(v, _)| v).unwrap_or(""),
+                    created: s.created.get(id).copied(),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The catalog date of the seated id within ONE source: its entry under the same vendor slug as the
+/// candidate when it appears under several, else its first entry. `None` when the seated id is not
+/// in that source or carries no date there.
+fn seated_created(source: &SourceList, seated: &str, vendor: &str) -> Option<i64> {
+    let hits: Vec<&String> = source
+        .ids
+        .iter()
+        .filter(|id| strip_vendor(id).eq_ignore_ascii_case(seated))
+        .collect();
+    let pick = hits
+        .iter()
+        .find(|id| id.split_once('/').map(|(v, _)| v).unwrap_or("") == vendor)
+        .or_else(|| hits.first())?;
+    source.created.get(*pick).copied()
+}
+
+/// Whether a public id may be a swap candidate for `seated`: the smoke cannot tell a newer model
+/// from an older one the plan still serves (`grok-4.20` is a 2025 model, older than `grok-4.7`), so
+/// a catalog id needs DATE evidence. Per occurrence: a page id (no dates) or a catalog entry without
+/// `created` never qualifies; when the seated id is in the same catalog with a date, the candidate
+/// must be created strictly later; when it is not, the candidate must be created within
+/// [`UNANCHORED_MAX_AGE_DAYS`]. Any qualifying occurrence qualifies; otherwise the reason.
+fn public_verdict(
+    current: &[SourceList],
+    seated: &str,
+    cand: &str,
+    now_unix: i64,
+) -> Result<(), &'static str> {
+    // reasons ranked: the most informative one found is reported
+    let mut why: (u8, &'static str) = (0, "not in a public source");
+    let mut note = |rank: u8, w: &'static str| {
+        if rank > why.0 {
+            why = (rank, w);
+        }
+    };
+    for h in public_hits(current, cand) {
+        if h.source.source.starts_with("page:") {
+            note(1, "a page carries no dates - announce only");
+            continue;
+        }
+        let Some(c) = h.created else {
+            note(2, "no date in the catalog - announce only");
+            continue;
+        };
+        match seated_created(h.source, seated, h.vendor) {
+            Some(cs) if c > cs => return Ok(()),
+            Some(_) => note(4, "older than the seated model by the catalog's date"),
+            None if c >= now_unix - UNANCHORED_MAX_AGE_DAYS * 86_400 => return Ok(()),
+            None => note(3, "older than 180 days by the catalog's date"),
+        }
+    }
+    Err(why.1)
+}
+
+/// [`swap_plan`]'s candidates only.
+pub fn swap_candidates(
+    roster: &Roster,
+    current: &[SourceList],
+    now_unix: i64,
+) -> Vec<SwapCandidate> {
+    swap_plan(roster, current, now_unix).0
+}
+
 /// The seated ids with an available successor ([`successor`]: same prefix and suffix, a higher
-/// version - a higher major included). The candidates of an entry are the ids of its own source
-/// (if it has one) PLUS the public catalog/page ids with the vendor part stripped. Entries of
-/// inactive plans are never touched (iterated via `active_entries`); protected and on-request
-/// entries ARE returned (flagged) so the pass can announce them, never smoke them.
-pub fn swap_candidates(roster: &Roster, current: &[SourceList]) -> Vec<SwapCandidate> {
+/// version - a higher major included), and the public ids rejected for lack of date evidence. The
+/// candidates of an entry are the ids of its own source (if it has one - what the plan offers, no
+/// dates needed) PLUS the public catalog ids with the vendor part stripped that pass
+/// [`public_verdict`]. When the version rule's pick among ALL ids is a public id that fails the
+/// verdict, it is returned as rejected (with the reason) and the best qualifying id, if any, is the
+/// candidate. Entries of inactive plans are never touched (iterated via `active_entries`);
+/// protected and on-request entries ARE returned (flagged) so the pass can announce them, never
+/// smoke them.
+pub fn swap_plan(
+    roster: &Roster,
+    current: &[SourceList],
+    now_unix: i64,
+) -> (Vec<SwapCandidate>, Vec<RejectedCandidate>) {
     let public = public_candidates(current);
     let mut out = Vec::new();
+    let mut rejected = Vec::new();
     for e in roster.active_entries() {
         if e.model.is_empty() {
             continue;
         }
+        let engine = if e.engine.is_empty() {
+            "codex".to_string()
+        } else {
+            e.engine.clone()
+        };
         let own: &[String] = source_for(e)
             .and_then(|source| current.iter().find(|s| s.source == source))
             .map(|s| s.ids.as_slice())
             .unwrap_or(&[]);
+        let others: Vec<&String> = public.iter().filter(|p| !own.contains(p)).collect();
+        let mut all: Vec<String> = own.to_vec();
+        all.extend(others.iter().map(|p| (*p).clone()));
         let mut cands: Vec<String> = own.to_vec();
-        cands.extend(public.iter().filter(|p| !own.contains(p)).cloned());
+        cands.extend(
+            others
+                .iter()
+                .filter(|p| public_verdict(current, &e.model, p, now_unix).is_ok())
+                .map(|p| (*p).clone()),
+        );
+        if let Some(raw) = successor(&e.model, &all) {
+            if !own.iter().any(|o| o == raw) {
+                if let Err(why) = public_verdict(current, &e.model, raw, now_unix) {
+                    rejected.push(RejectedCandidate {
+                        provider: e.provider.clone(),
+                        engine: engine.clone(),
+                        old: e.model.clone(),
+                        new: raw.to_string(),
+                        why: why.to_string(),
+                    });
+                }
+            }
+        }
         if let Some(succ) = successor(&e.model, &cands) {
             out.push(SwapCandidate {
                 position: e.position,
                 provider: e.provider.clone(),
-                engine: if e.engine.is_empty() {
-                    "codex".to_string()
-                } else {
-                    e.engine.clone()
-                },
+                engine,
                 old: e.model.clone(),
                 new: succ.to_string(),
                 from_public: !own.iter().any(|o| o == succ),
@@ -267,7 +402,7 @@ pub fn swap_candidates(roster: &Roster, current: &[SourceList]) -> Vec<SwapCandi
             });
         }
     }
-    out
+    (out, rejected)
 }
 
 /// A "new in the family" announcement: public ids not seen in the previous pass that share the
@@ -319,8 +454,11 @@ pub fn new_public_ids(
 /// The "new in the family" ids per seated, active entry (protected and on-request entries
 /// included: an announcement spends nothing). An id is new in the family of a seated id when it
 /// is new in this pass ([`new_public_ids`]), has the same prefix, a version not lower and a
-/// different suffix. At most [`FAMILY_NEWS_PER_ENTRY`] per entry, highest version first; an entry
-/// seated twice (same model) is announced once.
+/// different suffix - and is not OLDER than the seated id by the catalog's date when both dates are
+/// known. At most [`FAMILY_NEWS_PER_ENTRY`] per entry, highest version first; an entry seated twice
+/// (same model) is announced once, and an id is announced once per provider: the entries are taken
+/// most specific (longest seated id) first, so `glm-5.3-flashx-legal` goes to `glm-5.3-flash`, not
+/// also to `glm-5.3`.
 pub fn family_news(
     roster: &Roster,
     previous: &ModelsState,
@@ -329,12 +467,24 @@ pub fn family_news(
 ) -> Vec<FamilyNews> {
     let fresh = new_public_ids(previous, current, now_unix);
     let mut out: Vec<FamilyNews> = Vec::new();
-    for e in roster.active_entries() {
+    let mut entries: Vec<&RosterEntry> = roster.active_entries().collect();
+    entries.sort_by_key(|e| std::cmp::Reverse(e.model.len()));
+    for e in entries {
         if e.model.is_empty() || out.iter().any(|n| n.seated == e.model) {
             continue;
         }
         let Some(base) = parse_model_id(&e.model) else {
             continue;
+        };
+        let older_by_date = |id: &str| {
+            public_hits(current, id).iter().any(|h| {
+                matches!((h.created, seated_created(h.source, &e.model, h.vendor)),
+                    (Some(c), Some(cs)) if c < cs)
+            })
+        };
+        let taken = |id: &str| {
+            out.iter()
+                .any(|n| n.provider == e.provider && n.ids.iter().any(|x| x == id))
         };
         let mut hits: Vec<(&String, (u64, u64))> = fresh
             .iter()
@@ -343,6 +493,7 @@ pub fn family_news(
             .filter(|(_, p)| {
                 p.prefix == base.prefix && p.suffix != base.suffix && p.version() >= base.version()
             })
+            .filter(|(id, _)| !older_by_date(id) && !taken(id))
             .map(|(id, p)| (id, p.version()))
             .collect();
         if hits.is_empty() {
@@ -674,11 +825,16 @@ mod tests {
             entries: vec![alibaba_endpoint_entry(), protected],
             ..Default::default()
         };
-        let cur = vec![sl(
+        let now = 1_795_000_000;
+        let cur = vec![dated(
             "web:openrouter.ai",
-            &["qwen/qwen4-max", "qwen/qwen4-plus", "openai/gpt-7-astra"],
+            &[
+                ("qwen/qwen4-max", Some(at(1, now))),
+                ("qwen/qwen4-plus", Some(at(1, now))),
+                ("openai/gpt-7-astra", Some(at(5, now))),
+            ],
         )];
-        let c = swap_candidates(&roster, &cur);
+        let c = swap_candidates(&roster, &cur, now);
         assert_eq!(c.len(), 2, "{c:?}");
         assert_eq!(c[0].old, "qwen3.8-max");
         assert_eq!(c[0].new, "qwen4-max");
@@ -692,12 +848,149 @@ mod tests {
             sl("endpoint:alibaba.example", &["qwen4-max"]),
             sl("web:openrouter.ai", &["qwen/qwen4-max"]),
         ];
-        let c = swap_candidates(&roster, &cur);
+        let c = swap_candidates(&roster, &cur, now);
         assert!(!c[0].from_public);
     }
 
     fn at(days_ago: i64, now: i64) -> i64 {
         now - days_ago * 86_400
+    }
+
+    /// A source with a `created` date per id (`None`: the catalog gives none).
+    fn dated(source: &str, ids: &[(&str, Option<i64>)]) -> SourceList {
+        let mut s = sl(source, &ids.iter().map(|(i, _)| *i).collect::<Vec<_>>());
+        for (id, c) in ids {
+            if let Some(c) = c {
+                s.created.insert(id.to_string(), *c);
+            }
+        }
+        s
+    }
+
+    fn roster_of(entries: Vec<RosterEntry>) -> Roster {
+        Roster {
+            exists: true,
+            entries,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_catalog_id_older_than_the_seated_one_by_date_is_never_a_candidate() {
+        // the live case: the vendor's grok-4.20 (2025) is numerically above grok-4.7 but older
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![entry("grok", "grok", "grok-4.7")]);
+        let cur = vec![dated(
+            "web:openrouter.ai",
+            &[
+                ("x-ai/grok-4.7", Some(at(30, now))),
+                ("x-ai/grok-4.20", Some(at(300, now))),
+                ("x-ai/grok-4.8", Some(at(2, now))),
+            ],
+        )];
+        let (c, rejected) = swap_plan(&roster, &cur, now);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].new, "grok-4.8");
+        assert_eq!(rejected.len(), 1, "{rejected:?}");
+        assert_eq!(rejected[0].new, "grok-4.20");
+        assert_eq!(
+            rejected[0].why,
+            "older than the seated model by the catalog's date"
+        );
+        // without grok-4.8, nothing qualifies and grok-4.20 is still only reported
+        let cur = vec![dated(
+            "web:openrouter.ai",
+            &[
+                ("x-ai/grok-4.7", Some(at(30, now))),
+                ("x-ai/grok-4.20", Some(at(300, now))),
+            ],
+        )];
+        let (c, rejected) = swap_plan(&roster, &cur, now);
+        assert!(c.is_empty());
+        assert_eq!(rejected.len(), 1);
+        // the entry's OWN list keeps today's rule (no dates needed)
+        let cur = vec![
+            sl("grok", &["grok-4.7", "grok-4.20"]),
+            dated("web:openrouter.ai", &[("x-ai/grok-4.7", Some(at(30, now)))]),
+        ];
+        assert_eq!(swap_candidates(&roster, &cur, now)[0].new, "grok-4.20");
+    }
+
+    #[test]
+    fn a_seated_id_absent_from_the_catalog_needs_a_recent_candidate() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![alibaba_endpoint_entry()]);
+        let old = vec![dated(
+            "web:openrouter.ai",
+            &[("qwen/qwen4-max", Some(at(400, now)))],
+        )];
+        let (c, rejected) = swap_plan(&roster, &old, now);
+        assert!(c.is_empty());
+        assert_eq!(rejected[0].why, "older than 180 days by the catalog's date");
+        let recent = vec![dated(
+            "web:openrouter.ai",
+            &[("qwen/qwen4-max", Some(at(20, now)))],
+        )];
+        assert_eq!(swap_candidates(&roster, &recent, now)[0].new, "qwen4-max");
+    }
+
+    #[test]
+    fn undated_and_page_ids_are_never_candidates() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![alibaba_endpoint_entry()]);
+        let undated = vec![dated("web:openrouter.ai", &[("qwen/qwen4-max", None)])];
+        let (c, rejected) = swap_plan(&roster, &undated, now);
+        assert!(c.is_empty());
+        assert_eq!(rejected[0].why, "no date in the catalog - announce only");
+        let page = vec![sl("page:qwen-docs", &["qwen4-max"])];
+        let (c, rejected) = swap_plan(&roster, &page, now);
+        assert!(c.is_empty());
+        assert_eq!(rejected[0].why, "a page carries no dates - announce only");
+    }
+
+    #[test]
+    fn an_old_state_without_dates_loads_and_dates_round_trip() {
+        let old: ModelsState = serde_json::from_str(
+            r#"{"sources":[{"source":"web:openrouter.ai","ids":["qwen/qwen4-max"]}]}"#,
+        )
+        .unwrap();
+        assert!(old.sources[0].created.is_empty());
+        let now = 1_795_000_000;
+        let st = ModelsState {
+            sources: vec![dated("web:openrouter.ai", &[("qwen/qwen4-max", Some(now))])],
+        };
+        let back: ModelsState = serde_json::from_str(&serde_json::to_string(&st).unwrap()).unwrap();
+        assert_eq!(back.sources[0].created.get("qwen/qwen4-max"), Some(&now));
+    }
+
+    #[test]
+    fn family_news_skips_older_by_date_and_dedupes_per_provider() {
+        let now = 1_795_000_000;
+        let roster = roster_of(vec![
+            entry("ZAI", "claude", "glm-5.3"),
+            entry("ZAI", "claude", "glm-5.3-flash"),
+            entry("gemini", "agy", "gemini-3.8-flash-high"),
+        ]);
+        let cur = vec![dated(
+            "web:openrouter.ai",
+            &[
+                ("z-ai/glm-5.3-flashx-legal", Some(at(2, now))),
+                ("google/gemini-3.8-flash-high", Some(at(10, now))),
+                // numerically not lower, but created before the seated id: not announced
+                ("google/gemini-3.80-pro", Some(at(200, now))),
+                ("google/gemini-4-hydrogen", Some(at(3, now))),
+            ],
+        )];
+        let prev = ModelsState {
+            sources: vec![sl("web:openrouter.ai", &[])],
+        };
+        let news = family_news(&roster, &prev, &cur, now);
+        let zai: Vec<&FamilyNews> = news.iter().filter(|n| n.provider == "ZAI").collect();
+        assert_eq!(zai.len(), 1, "{news:?}");
+        assert_eq!(zai[0].seated, "glm-5.3-flash");
+        assert_eq!(zai[0].ids, vec!["glm-5.3-flashx-legal"]);
+        let g = news.iter().find(|n| n.provider == "gemini").unwrap();
+        assert_eq!(g.ids, vec!["gemini-4-hydrogen"]);
     }
 
     #[test]
@@ -917,7 +1210,7 @@ mod tests {
             ..Default::default()
         };
         let cur = vec![sl("endpoint:api.z.ai", &["glm-5.3", "glm-5.4"])];
-        let c = swap_candidates(&roster, &cur);
+        let c = swap_candidates(&roster, &cur, 0);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].old, "glm-5.3");
         assert_eq!(c[0].new, "glm-5.4");

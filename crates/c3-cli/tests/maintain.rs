@@ -797,10 +797,14 @@ impl ModelsCase {
 /// A `--models` case: the roster, the catalog served from a file in place of the network, the fetch
 /// log, a scripted smoke, and the fake grok/codex wired so any engine probe would be recorded.
 fn models_case(e: &Env, roster_json: &str, smoke: &str) -> ModelsCase {
+    models_case_with(e, roster_json, smoke, &catalog_json())
+}
+
+fn models_case_with(e: &Env, roster_json: &str, smoke: &str, catalog_body: &str) -> ModelsCase {
     let roster = e.work.join("roster.json");
     std::fs::write(&roster, roster_json).unwrap();
     let catalog = e.work.join("catalog.json");
-    std::fs::write(&catalog, catalog_json()).unwrap();
+    std::fs::write(&catalog, catalog_body).unwrap();
     let http_log = e.work.join("http.log");
     std::fs::write(&e.grok_verfile, "1.0.77").unwrap();
     let s = |p: &Path| p.to_string_lossy().into_owned();
@@ -918,6 +922,51 @@ fn a_catalog_successor_whose_smoke_fails_is_reported_not_seated() {
         "the roster is untouched"
     );
     assert!(m.backups().is_empty(), "no backup without a swap");
+}
+
+#[test]
+fn a_catalog_id_older_than_the_seated_model_by_date_is_not_smoked_or_seated() {
+    // the live grok-4.20 case: numerically above the seated id, but the catalog dates it before
+    // the seated one - the smoke would pass on a plan that still serves it, so it must never run
+    let e = setup("web-older");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let catalog = format!(
+        r#"{{"data":[{{"id":"qwen/qwen3.8-max","created":{}}},{{"id":"qwen/qwen4-max","created":{}}}]}}"#,
+        now - 10 * 86_400,
+        now - 300 * 86_400
+    );
+    let m = models_case_with(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=pass",
+        &catalog,
+    );
+    let o = e.run(&["maintain", "--models"], &m.env());
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("qwen3.8-max -> qwen4-max not a candidate (older than the seated model by the catalog's date)"),
+        "the older id is reported with the reason: {t}"
+    );
+    assert!(!t.contains("smoke passed"), "no smoke ran: {t}");
+    assert!(!t.contains("would smoke"), "{t}");
+    let summary = t
+        .lines()
+        .find(|l| l.starts_with("c3: maintenance"))
+        .unwrap_or_default();
+    assert!(
+        !summary.contains("qwen4-max"),
+        "the rejected id stays out of the one-line summary: {summary}"
+    );
+    assert_eq!(
+        m.roster_text(),
+        endpoint_roster(false),
+        "the roster is untouched"
+    );
+    assert!(m.backups().is_empty());
 }
 
 #[test]

@@ -102,6 +102,16 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **`c3 maintain` no longer offers an older catalog model as a successor.** The version rule alone
+  took the vendor's 2025 `grok-4.20` for a successor of `grok-4.7` (4.20 > 4.7), and a plan that
+  still serves it would have passed the smoke and been downgraded. A public candidate now needs
+  date evidence: created after the seated id when the catalog lists both, else created within the
+  last 180 days; an undated catalog entry or a page id is announced only, never smoked. The
+  entry's own model list keeps the old rule. The catalog dates are kept in the maintain state (an
+  older state loads without them); a rejected id is named with its reason in the full report only;
+  "new in the family" skips an id older than the seated one by date and names each id once per
+  provider.
+
 - **The `kimi` engine's throwaway worktree removal could follow a link.** The reviewer can run
   commands in that worktree; a junction or symlink it left there (e.g. a `node_modules` junction into
   the main checkout) could be followed by `git worktree remove --force`. Every symlink and junction
