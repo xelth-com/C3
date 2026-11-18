@@ -7,6 +7,48 @@ PowerShell plugin [`claude-codex-consult`](https://github.com/xelth-com/claude-c
 tag `v0.6.1`; the finding ids (Fnn-k, En, Dn) are those of the parity task's reviews and of the
 plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
+## [Unreleased]
+
+### Added
+
+- **`c3 doctor` now flags a pinned agent model.** Each `.claude/agents/*.md` whose frontmatter
+  `model:` names a concrete id (e.g. `claude-opus-4-8`) instead of a floating alias is reported,
+  one line per file, with the alias to write instead (derived from the id's family). The aliases
+  `opus` / `sonnet` / `haiku` / `fable`, `inherit`, and a missing `model:` line are fine. A pin
+  makes the workspace dirty (exit 1); `--json` carries the same data.
+- **C3 now repairs a repository's model settings, not only reports them.** `c3 doctor --fix` and the
+  SessionStart hook (default ON; off with `C3_REPO_MODELS=off` or `"repo_models": false` in the C3
+  config) rewrite a stale `.claude/agents/*.md` Claude pin to its alias, and let the repository-root
+  `AGENTS.md` follow the roster's successor (same family/major, higher minor, keeping the original
+  casing — e.g. `GLM-5.3` -> `GLM-5.4`). Each edit changes one line and is left uncommitted for
+  `c3 finish`; the hook never runs git, writes outside the repository (a linked directory or file is
+  skipped), or fails a session.
+- **Every child C3 starts is marked with `C3_CHILD=1`** (reviewer CLIs, worker CLIs, launcher
+  probes). The hook's repair above does nothing when it sees the mark: a reviewer on the `claude`
+  engine runs the same SessionStart hook in the repository under review and must stay read-only,
+  and a worker's patch must hold only its own change.
+
+### Changed
+
+- **A new Claude model id is accepted without a C3 release.** The closed `CLAUDE_MODELS` table is
+  kept (it documents the known ids and the plugin parity), but a roster / `--model` of a `claude`
+  entry (auth subscription or api-key) and the telemetry class `anthropic` now also accept any id of
+  the published shape `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (case-sensitive, an
+  optional `[1m]`). A private endpoint's model name, which does not match the shape, is still
+  withheld from telemetry.
+
+### Fixed
+
+- **`c3 init` templates pinned old models.** `opus-worker.md` / `sonnet-worker.md` pinned
+  `claude-opus-4-8` / `claude-sonnet-5`; they now write the floating aliases `opus` / `sonnet`
+  (and the worker prose no longer names a model version), so a freshly-initialised worker follows
+  the newest model.
+- **`eck_finish_task` in the worker templates** is now `c3_finish_task` (the tool a C3 workspace
+  actually exposes).
+- **`claude-fable-5-2` (the current Fable) was missing from the closed Claude model table**, so a
+  roster entry naming it was refused. It is added to the table in `c3-core` and the telemetry class
+  list, and to the model lists in `README.md` and the setup-providers skill.
+
 ## [0.2.4] - 2026-11-18
 
 ### Added

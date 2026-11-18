@@ -2,19 +2,36 @@
 //!
 //! It reports: `[STUB` markers left in `.eck/*.md`; whether `c3 mcp` is registered in
 //! `.mcp.json`; eck leftovers (an `eck-core` server in `.mcp.json` / `.codex/config.toml` /
-//! `opencode.json`, and any `.claude/rules/*.md` that still names an `eck_*` tool); and the
-//! size and file count of `.eck/snapshots/`. Exit 0 when there is nothing to fix, 1
-//! otherwise. The snapshot-folder size is diagnostic context only and never forces exit 1.
+//! `opencode.json`, and any `.claude/rules/*.md` that still names an `eck_*` tool); any
+//! `.claude/agents/*.md` whose frontmatter pins a concrete model id instead of a floating
+//! alias; and the size and file count of `.eck/snapshots/`. Exit 0 when there is nothing to
+//! fix, 1 otherwise. The snapshot-folder size is diagnostic context only and never forces
+//! exit 1.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+
+use c3_core::claude::{model_family, CLAUDE_MODEL_ALIASES};
 
 /// The eck MCP tool names whose presence in a rule marks an unported project.
 const ECK_TOOL_NAMES: &[&str] = &["eck_finish_task", "eck_fail_task", "eck_manifest_edit"];
 
 /// The eck MCP server name left in a config.
 const ECK_CORE: &str = "eck-core";
+
+/// A `.claude/agents/*.md` whose frontmatter pins a concrete model id instead of a floating
+/// alias.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedAgent {
+    /// Repo-relative path of the agent file.
+    pub file: String,
+    /// The pinned model id, exactly as the `model:` line spells it.
+    pub model: String,
+    /// The alias to suggest instead (`opus` / `sonnet` / `haiku` / `fable`), or empty when the
+    /// id names no known family.
+    pub alias: String,
+}
 
 /// Everything `c3 doctor` found.
 #[derive(Debug, Clone, Default)]
@@ -27,6 +44,8 @@ pub struct DoctorReport {
     pub eck_core_in: Vec<String>,
     /// `.claude/rules/*.md` files that still name an `eck_*` tool (repo-relative).
     pub eck_rule_files: Vec<String>,
+    /// `.claude/agents/*.md` files whose `model:` pins a concrete id instead of an alias.
+    pub pinned_agents: Vec<PinnedAgent>,
     /// Number of `*.md` files in `.eck/snapshots/`.
     pub snapshot_count: usize,
     /// Total bytes of those snapshot files.
@@ -34,14 +53,51 @@ pub struct DoctorReport {
 }
 
 impl DoctorReport {
-    /// A clean workspace: no stubs left, `c3 mcp` registered, no eck leftovers. The snapshot
-    /// folder size is informational and does not count.
+    /// A clean workspace: no stubs left, `c3 mcp` registered, no eck leftovers, no agent file
+    /// pinning an old model. The snapshot folder size is informational and does not count.
     pub fn is_clean(&self) -> bool {
         self.stub_files.is_empty()
             && self.mcp_registered
             && self.eck_core_in.is_empty()
             && self.eck_rule_files.is_empty()
+            && self.pinned_agents.is_empty()
     }
+}
+
+/// Extract the top-level `model:` value from a `.claude/agents/*.md` YAML frontmatter (the
+/// leading `---`-delimited block). Returns the value (trimmed, unquoted) when a `model:` key
+/// is present, else `None`. Only un-indented keys of the frontmatter are considered, so a
+/// `model:` inside an indented block scalar (e.g. the `description`) is not mistaken for one.
+pub fn agent_model(content: &str) -> Option<String> {
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+    let mut lines = content.lines();
+    if lines.next().map(str::trim) != Some("---") {
+        return None;
+    }
+    for line in lines {
+        if line.trim() == "---" {
+            break;
+        }
+        if let Some(rest) = line.strip_prefix("model:") {
+            let v = rest.trim().trim_matches('"').trim_matches('\'').trim();
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
+/// Classify an agent file's model pin. A missing `model:` line, `inherit`, and the floating
+/// aliases (`opus` / `sonnet` / `haiku` / `fable`) are fine and return `None`. Any other value
+/// is a concrete pin that should be an alias: returns `Some((pinned_id, suggested_alias))`,
+/// where the alias is derived from the id's family (`claude-opus-4-8` -> `opus`) or empty when
+/// the id names no known family.
+pub fn pinned_agent_model(content: &str) -> Option<(String, String)> {
+    let model = agent_model(content)?;
+    let m = model.trim();
+    if m.is_empty() || m == "inherit" || CLAUDE_MODEL_ALIASES.contains(&m) {
+        return None;
+    }
+    Some((model.clone(), model_family(m)))
 }
 
 /// Whether a `.eck/*.md` body still carries a stub marker: a LINE that starts with `[STUB:` (the
@@ -176,6 +232,30 @@ pub fn scan(repo_root: &Path) -> DoctorReport {
         report.eck_rule_files = names;
     }
 
+    // `.claude/agents/*.md` pinning a concrete model id instead of a floating alias.
+    let agents = repo_root.join(".claude").join("agents");
+    if let Ok(rd) = std::fs::read_dir(&agents) {
+        let mut pins: Vec<PinnedAgent> = Vec::new();
+        for e in rd.flatten() {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            if !name.to_lowercase().ends_with(".md") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(e.path()) {
+                if let Some((model, alias)) = pinned_agent_model(&content) {
+                    pins.push(PinnedAgent {
+                        file: format!(".claude/agents/{name}"),
+                        model,
+                        alias,
+                    });
+                }
+            }
+        }
+        pins.sort_by(|a, b| a.file.cmp(&b.file));
+        report.pinned_agents = pins;
+    }
+
     // `.eck/snapshots/` size and count.
     let snaps = eck.join("snapshots");
     if let Ok(rd) = std::fs::read_dir(&snaps) {
@@ -259,5 +339,61 @@ mod tests {
         r.stub_files.clear();
         r.mcp_registered = false;
         assert!(!r.is_clean());
+        r.mcp_registered = true;
+        assert!(r.is_clean());
+        // A pinned agent model makes the workspace dirty.
+        r.pinned_agents.push(PinnedAgent {
+            file: ".claude/agents/opus-worker.md".into(),
+            model: "claude-opus-4-8".into(),
+            alias: "opus".into(),
+        });
+        assert!(!r.is_clean());
+    }
+
+    #[test]
+    fn agent_model_reads_the_frontmatter_value() {
+        assert_eq!(
+            agent_model("---\nname: x\nmodel: opus\n---\nbody\n").as_deref(),
+            Some("opus")
+        );
+        // Quoted value.
+        assert_eq!(
+            agent_model("---\nmodel: \"claude-opus-4-8\"\n---\n").as_deref(),
+            Some("claude-opus-4-8")
+        );
+        // No model line.
+        assert_eq!(agent_model("---\nname: x\n---\nbody\n"), None);
+        // No frontmatter at all.
+        assert_eq!(agent_model("# just prose\nmodel: opus\n"), None);
+        // An indented `model:` inside a block scalar is NOT the frontmatter key.
+        assert_eq!(
+            agent_model("---\ndescription: >\n  model: not this\nname: x\n---\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn pinned_agent_model_accepts_aliases_and_flags_ids() {
+        // Aliases, inherit and a missing line are fine.
+        assert_eq!(pinned_agent_model("---\nmodel: opus\n---\n"), None);
+        assert_eq!(pinned_agent_model("---\nmodel: sonnet\n---\n"), None);
+        assert_eq!(pinned_agent_model("---\nmodel: haiku\n---\n"), None);
+        assert_eq!(pinned_agent_model("---\nmodel: fable\n---\n"), None);
+        assert_eq!(pinned_agent_model("---\nmodel: inherit\n---\n"), None);
+        assert_eq!(pinned_agent_model("---\nname: x\n---\n"), None);
+        // A concrete id is flagged, with the alias derived from the family.
+        assert_eq!(
+            pinned_agent_model("---\nmodel: claude-opus-4-8\n---\n"),
+            Some(("claude-opus-4-8".into(), "opus".into()))
+        );
+        assert_eq!(
+            pinned_agent_model("---\nmodel: claude-sonnet-5\n---\n"),
+            Some(("claude-sonnet-5".into(), "sonnet".into()))
+        );
+        // An id that names no known family -> no alias suggested.
+        assert_eq!(
+            pinned_agent_model("---\nmodel: claude-3-opus-20240229\n---\n"),
+            Some(("claude-3-opus-20240229".into(), String::new()))
+        );
     }
 }

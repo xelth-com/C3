@@ -1,7 +1,7 @@
 ---
 mode: primary
 description: Expert developer - executes and fixes
-model: GLM-4.7
+model: GLM-5.3
 steps: 5
 tools:
   eck-core:eck_finish_task: true

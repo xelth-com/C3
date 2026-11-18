@@ -269,10 +269,10 @@ API itself for this engine. Full contract: the README, "The `claude` engine".
    `endpoint` (a coding plan, step 6). An INHERITED `ANTHROPIC_BASE_URL`, Bedrock, Vertex or
    Foundry setup is out of scope and never reaches the reviewer.
 4. **The model - the USER decides:** required, one of the engine's table: `opus`, `sonnet`,
-   `haiku`, `fable`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
+   `haiku`, `fable`, `claude-fable-5-2`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
    `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5-5`,
    `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5` - each may
-   end with `[1m]`; spelled exactly so (lower case: `OPUS` is refused). An alias floats; c3 pins each thread to the id its first turn resolved.
+   end with `[1m]`; spelled exactly so (lower case: `OPUS` is refused). A new Claude model needs no c3 release: any id of the published shape `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (case-sensitive, optional `[1m]`) is also accepted. An alias floats; c3 pins each thread to the id its first turn resolved.
 5. **Roster entry:** `{ "provider": "anthropic", "engine": "claude", "model": "claude-opus-5-5",
    "auth": "subscription", "panel": "weighty" }` - `codex_config` is refused, `auth` is never
    `none`. The claude members of one panel run one at a time; `"parallel": {"anthropic": 2}`

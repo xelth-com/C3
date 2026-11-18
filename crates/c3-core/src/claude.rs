@@ -20,11 +20,14 @@ pub const CLAUDE_MODEL_ALIASES: &[&str] = &["opus", "sonnet", "haiku", "fable"];
 /// The closed model table (`$script:ClaudeModels`, 0.6.0 with `claude-haiku-5-5` of 2026-10-07): a
 /// roster entry or `-Model` of auth subscription / api-key names one of them, optionally ending
 /// with the 1M-context suffix `[1m]`. The telemetry class `anthropic`'s closed list IS this table.
+/// C3 adds `claude-fable-5-2` (the current Fable), so this table carries one id more than the
+/// frozen plugin's `$script:ClaudeModels` (0.6.1).
 pub const CLAUDE_MODELS: &[&str] = &[
     "opus",
     "sonnet",
     "haiku",
     "fable",
+    "claude-fable-5-2",
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-5-5",
@@ -158,13 +161,24 @@ pub fn model_problem(model: &str, auth: &str) -> String {
         return String::new();
     }
     let b = strip_1m(model);
-    if !CLAUDE_MODELS.contains(&b.as_str()) {
+    if !CLAUDE_MODELS.contains(&b.as_str()) && !is_published_claude_shape(&b) {
         return format!(
-            "is not in the claude engine's model table ({}; each may end with [1m])",
+            "is not in the claude engine's model table, nor of the published Claude shape claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>] ({}; each may end with [1m])",
             CLAUDE_MODELS.join(", ")
         );
     }
     String::new()
+}
+
+/// Whether `id` matches the published shape of a Claude model id -
+/// `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]`, case-sensitive like the table lookup (a
+/// trailing `[1m]` is stripped before the test). This is the open door that lets a NEW Claude model
+/// of a known family be named in a roster / `-Model` without a C3 release, while the closed
+/// [`CLAUDE_MODELS`] table still documents the known ids and keeps plugin parity. `CLAUDE-OPUS-5-5`
+/// (upper case), `opus-5-5` (no `claude-` prefix), `claude-opus` (no version) and
+/// `claude-nonexistent-9` (unknown family) do not match.
+pub fn is_published_claude_shape(id: &str) -> bool {
+    re(r"^claude-(fable|opus|sonnet|haiku)-[0-9]+(-[0-9]+)?$").is_match(id)
 }
 
 /// (wave 29b, E1) The endpoint of a roster entry with auth `endpoint` (`ConvertFrom-ClaudeEndpointValue`).
@@ -828,11 +842,26 @@ mod tests {
         assert!(model_problem("claude-opus-5-5[1m]", "subscription").is_empty());
         assert!(model_problem("claude-haiku-5-5", "api-key").is_empty());
         assert!(model_problem("sonnet", "").is_empty());
+        // The current Fable is in the table.
+        assert!(model_problem("claude-fable-5-2", "subscription").is_empty());
+        assert!(model_problem("claude-fable-5-2[1m]", "api-key").is_empty());
+        assert_eq!(model_family("claude-fable-5-2"), "fable");
         assert_eq!(
             model_problem("gpt-5.1", "subscription"),
-            "is not in the claude engine's model table (opus, sonnet, haiku, fable, claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-5-5, claude-sonnet-5, claude-sonnet-4-6, claude-haiku-5-5, claude-haiku-4-5; each may end with [1m])"
+            "is not in the claude engine's model table, nor of the published Claude shape claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>] (opus, sonnet, haiku, fable, claude-fable-5-2, claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-5-5, claude-sonnet-5, claude-sonnet-4-6, claude-haiku-5-5, claude-haiku-4-5; each may end with [1m])"
         );
-        assert!(!model_problem("claude-opus-9", "subscription").is_empty());
+        // An id of an unknown family is still refused.
+        assert!(!model_problem("claude-nonexistent-9", "subscription").is_empty());
+        // (Part B) a NEW id of a known family is accepted by the published shape without a release.
+        assert!(model_problem("claude-opus-6-1", "subscription").is_empty());
+        assert!(model_problem("claude-sonnet-7", "api-key").is_empty());
+        assert!(model_problem("claude-opus-6-1[1m]", "subscription").is_empty());
+        assert!(is_published_claude_shape("claude-opus-6-1"));
+        assert!(is_published_claude_shape("claude-sonnet-7"));
+        assert!(!is_published_claude_shape("claude-nonexistent-9"));
+        assert!(!is_published_claude_shape("claude-opus"));
+        assert!(!is_published_claude_shape("CLAUDE-OPUS-5-5"));
+        assert!(!is_published_claude_shape("opus-5-5"));
         assert_eq!(model_family("claude-opus-5-5[1m]"), "opus");
         assert_eq!(model_family("Sonnet"), "sonnet");
         assert_eq!(model_family("glm-5.3"), "");
@@ -849,7 +878,7 @@ mod tests {
     /// (`-cnotcontains`), the `[1m]` strip is not; the endpoint's E11 refusal lower-cases.
     #[test]
     fn the_model_table_is_case_sensitive_as_the_plugins() {
-        let refused = "is not in the claude engine's model table (";
+        let refused = "is not in the claude engine's model table";
         for m in [
             "OPUS",
             "Opus",

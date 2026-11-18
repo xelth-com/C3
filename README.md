@@ -97,10 +97,13 @@ or a value that is not a lowercase slug is refused before anything starts, and t
 - **Roster entry:** `{"provider": "anthropic", "engine": "claude", "model": "claude-opus-5-5",
   "auth": "subscription"}` (or `--engine claude --model sonnet`; the label defaults to
   `anthropic`). `model` is REQUIRED and one of the closed table: `opus`, `sonnet`, `haiku`,
-  `fable`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
+  `fable`, `claude-fable-5-2`, `claude-fable-5-1`, `claude-fable-5`, `claude-opus-5-5`, `claude-opus-5`,
   `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5-5`, `claude-sonnet-5`,
   `claude-sonnet-4-6`, `claude-haiku-5-5`, `claude-haiku-4-5`, each optionally ending in `[1m]`
   - spelled exactly so (the lookup is case-sensitive, as the plugin's: `OPUS` is refused).
+  The table documents the known ids, but a new Claude model needs no C3 release: any id of the
+  published shape `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (case-sensitive, an
+  optional `[1m]`) is also accepted.
   An alias floats: every thread is pinned to the id its first init event resolved
   (`engine_run.model_resolved`), and every later turn of it sends that id.
 - **Three auth modes.** `subscription` (the default): the claude.ai login, checked by
@@ -572,6 +575,30 @@ its one-line report.
   `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off`;
   `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` names the smoke reviewer of an engine. State lives
   in `<codex home>/c3/maintain/`.
+
+## Keeping a repository's model settings current
+
+A project's own agent files can pin an old model and so quietly run a worker on a stale one. C3
+both reports this (`c3 doctor`) and repairs it in place.
+
+- **What is refreshed.** A `.claude/agents/*.md` whose frontmatter `model:` pins a concrete Claude
+  id (`claude-opus-4-8`) is rewritten to the floating alias (`opus`) so the worker follows the
+  newest model; a pin that names no known family is reported but left for a human. The
+  repository-root `AGENTS.md` (the OpenCode agent file eckSnapshot writes) follows the roster: when
+  one of the active roster entries is the successor of its `model:` (same family, same major, a
+  higher minor), its line is rewritten to that id (keeping the original casing, `GLM-5.3` ->
+  `GLM-5.4`) — and because `c3 maintain` only seats a successor after its smoke passed, `AGENTS.md`
+  never runs ahead of a tested id. Each edit changes one line and nothing else, and is **left
+  uncommitted** for `c3 finish`.
+- **When.** `c3 doctor --fix` applies the repairs and then reports what is left; the SessionStart
+  hook applies them automatically and prints one line only when it changed something. No git
+  command is run and nothing is written outside the repository (an agents directory or a file that
+  is a link is skipped). The hook does not do this inside a session C3 itself started: every
+  reviewer, worker and launcher probe gets `C3_CHILD=1`, so a read-only reviewer on the `claude`
+  engine cannot change the tree it reviews and a worker's patch holds only its own change.
+- **Switch (default ON).** `C3_REPO_MODELS=off`, or `"repo_models": false` in
+  `<codex home>/c3/config.json`, turns the automatic hook refresh off (`c3 doctor --fix` is always
+  explicit).
 
 ## License
 

@@ -57,6 +57,13 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     if let Some(l) = crate::maintain::hook_line(chrono::Utc::now()) {
         println!("{l}");
     }
+    // (repo model settings) C3 repairs this repository's stale agent model pins in place and lets
+    // AGENTS.md follow the roster's successor, printing one line only when it changed something.
+    // Default ON (`C3_REPO_MODELS=off` / `"repo_models": false`). Silent and harmless otherwise:
+    // every error is swallowed, nothing is written outside the repo root, no git command is run.
+    if let Some(l) = crate::setup::repo_models::hook_line() {
+        println!("{l}");
+    }
     0
 }
 

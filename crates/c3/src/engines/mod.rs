@@ -39,6 +39,10 @@ pub use muse::MuseEngine;
 /// are the BRIDGE's switches - an engine child (codex/agy/muse) and a launcher probe (`--version`,
 /// `login status`, `models`) never inherit them. They are not listed in `child_env_scrubbed`. The
 /// bridge's own processes (a panel member re-exec, the detached background) keep them.
+///
+/// The child is also MARKED: [`C3_CHILD_ENV`] is set to `1`, so a `c3` command that runs inside the
+/// child - the SessionStart hook of a reviewer or worker on the `claude` engine - can tell it was
+/// started by C3 and keep its hands off the repository (see `setup::repo_models::hook_line`).
 pub fn scrub_host_markers(cmd: &mut std::process::Command) {
     for (k, _) in std::env::vars_os() {
         if let Some(name) = k.to_str() {
@@ -47,6 +51,18 @@ pub fn scrub_host_markers(cmd: &mut std::process::Command) {
             }
         }
     }
+    cmd.env(C3_CHILD_ENV, "1");
+}
+
+/// The variable C3 sets (to `1`) in the environment of every reviewer CLI, worker CLI and launcher
+/// probe it starts. A `c3` process that sees it is running INSIDE such a child: a reviewer is
+/// read-only and a worker's change is measured against its scope, so nothing there may edit the
+/// repository on C3's own initiative.
+pub const C3_CHILD_ENV: &str = "C3_CHILD";
+
+/// Whether this process runs inside a child that C3 started ([`C3_CHILD_ENV`] set and not empty).
+pub fn in_c3_child() -> bool {
+    std::env::var_os(C3_CHILD_ENV).is_some_and(|v| !v.is_empty())
 }
 
 /// (wave 27c, D3) The transactional host-marker hide is fail-closed: a removal that cannot happen

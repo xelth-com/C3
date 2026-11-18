@@ -30,11 +30,13 @@ pub(crate) struct Vendor {
 }
 
 /// The `claude` engine's model table (`$script:ClaudeModels`) - the `anthropic` class's list.
-pub(crate) const CLAUDE_MODELS: [&str; 16] = [
+/// C3 adds `claude-fable-5-2`, so this list has one id more than the frozen plugin's (0.6.1).
+pub(crate) const CLAUDE_MODELS: [&str; 17] = [
     "opus",
     "sonnet",
     "haiku",
     "fable",
+    "claude-fable-5-2",
     "claude-fable-5-1",
     "claude-fable-5",
     "claude-opus-5-5",
@@ -302,11 +304,18 @@ pub(crate) fn model_token(vendor: Option<&Vendor>, model: &str) -> String {
         return openrouter_model_token(&m);
     }
     let m = m.strip_suffix("[1m]").unwrap_or(&m);
-    v.models
-        .iter()
-        .find(|known| known.to_lowercase() == m)
-        .map(|k| k.to_string())
-        .unwrap_or_else(|| "other".to_string())
+    if let Some(known) = v.models.iter().find(|known| known.to_lowercase() == m) {
+        return known.to_string();
+    }
+    // (Part B) the `anthropic` class additionally sends an id of the published Claude shape
+    // (`claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]`): the closed list exists so a PRIVATE
+    // endpoint's model name is never sent, and a published Claude id is safe to send - so a new
+    // Claude model of a known family needs no C3 release here either. A private id (e.g. `glm-5.3`
+    // on a claude endpoint) does not match the shape and is still withheld as `other`.
+    if v.class == "anthropic" && c3_core::claude::is_published_claude_shape(m) {
+        return m.to_string();
+    }
+    "other".to_string()
 }
 
 /// `Get-TelemetryVendor` on a reviewer-shaped record: the class of `provider_config.base_url`'s
@@ -1105,6 +1114,18 @@ mod tests {
             model_token(vendor_of_class("minimax"), "MiniMax-M3"),
             "minimax-m3"
         );
+        // (Part B) the anthropic class sends a published-shape Claude id even when the closed list
+        // does not list it, but still withholds a private endpoint's model name as `other`.
+        let anthropic = vendor_of_class("anthropic");
+        assert_eq!(model_token(anthropic, "claude-opus-5-5"), "claude-opus-5-5");
+        assert_eq!(model_token(anthropic, "claude-opus-6-1"), "claude-opus-6-1");
+        assert_eq!(model_token(anthropic, "Claude-Sonnet-7"), "claude-sonnet-7");
+        assert_eq!(
+            model_token(anthropic, "claude-opus-6-1[1m]"),
+            "claude-opus-6-1"
+        );
+        assert_eq!(model_token(anthropic, "glm-5.3"), "other");
+        assert_eq!(model_token(anthropic, "claude-nonexistent-9"), "other");
     }
 
     #[test]

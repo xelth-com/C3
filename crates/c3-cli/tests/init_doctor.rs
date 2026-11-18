@@ -51,11 +51,16 @@ fn scratch_repo(name: &str) -> PathBuf {
 }
 
 fn run_c3(repo: &Path, args: &[&str]) -> (i32, String, String) {
-    let out = Command::new(c3_bin())
-        .current_dir(repo)
-        .args(args)
-        .output()
-        .expect("spawn c3");
+    run_c3_env(repo, args, &[])
+}
+
+fn run_c3_env(repo: &Path, args: &[&str], envs: &[(&str, &str)]) -> (i32, String, String) {
+    let mut cmd = Command::new(c3_bin());
+    cmd.current_dir(repo).args(args);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn c3");
     (
         out.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -112,6 +117,222 @@ fn init_creates_everything_then_a_second_init_skips_everything() {
     assert!(
         out.contains("Created nothing"),
         "second init should create nothing: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn init_writes_agent_files_with_floating_aliases() {
+    let repo = scratch_repo("agent-aliases");
+    let (code, out, err) = run_c3(&repo, &["init"]);
+    assert_eq!(code, 0, "init failed: {out}\n{err}");
+
+    for (file, alias) in [
+        ("opus-worker.md", "opus"),
+        ("sonnet-worker.md", "sonnet"),
+        ("haiku-worker.md", "haiku"),
+    ] {
+        let body = std::fs::read_to_string(repo.join(format!(".claude/agents/{file}"))).unwrap();
+        assert!(
+            body.contains(&format!("model: {alias}")),
+            "{file} should pin the alias {alias}: {body}"
+        );
+        // No frontmatter model line names a concrete claude-* id.
+        assert!(
+            !body
+                .lines()
+                .any(|l| l.starts_with("model:") && l.contains("claude-")),
+            "{file} still pins a concrete model id: {body}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn doctor_flags_a_pinned_agent_model_only() {
+    let repo = scratch_repo("doctor-pin");
+    // Otherwise-clean workspace (resolved manifest, c3 mcp, c3 rule, no eck-core).
+    std::fs::create_dir_all(repo.join(".eck")).unwrap();
+    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::write(
+        repo.join(".mcp.json"),
+        "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",
+    )
+    .unwrap();
+    std::fs::create_dir_all(repo.join(".claude/rules")).unwrap();
+    std::fs::write(
+        repo.join(".claude/rules/01-c3-protocol.md"),
+        "Call `c3_finish_task` when done.\n",
+    )
+    .unwrap();
+    // Agent files: one pinned to an old id, plus an alias / inherit / missing-line one.
+    std::fs::create_dir_all(repo.join(".claude/agents")).unwrap();
+    std::fs::write(
+        repo.join(".claude/agents/opus-worker.md"),
+        "---\nname: opus-worker\nmodel: claude-opus-4-8\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join(".claude/agents/sonnet-worker.md"),
+        "---\nname: sonnet-worker\nmodel: sonnet\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join(".claude/agents/inherit-worker.md"),
+        "---\nname: inherit-worker\nmodel: inherit\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join(".claude/agents/nomodel-worker.md"),
+        "---\nname: nomodel-worker\n---\nbody\n",
+    )
+    .unwrap();
+
+    let (code, out, err) = run_c3(&repo, &["doctor"]);
+    assert_eq!(
+        code, 1,
+        "a pinned agent must make doctor dirty: {out}\n{err}"
+    );
+    assert!(
+        out.contains("opus-worker.md") && out.contains("claude-opus-4-8"),
+        "pinned file not reported: {out}"
+    );
+    assert!(out.contains("(opus)"), "suggested alias missing: {out}");
+    // The alias / inherit / missing-line files are not warned about.
+    assert!(
+        !out.contains("sonnet-worker.md"),
+        "alias file wrongly reported: {out}"
+    );
+    assert!(
+        !out.contains("inherit-worker.md"),
+        "inherit file wrongly reported: {out}"
+    );
+    assert!(
+        !out.contains("nomodel-worker.md"),
+        "missing-model file wrongly reported: {out}"
+    );
+    // --json carries the pinned agent and the dirty verdict.
+    let (jcode, jout, _e) = run_c3(&repo, &["doctor", "--json"]);
+    assert_eq!(jcode, 1);
+    assert!(jout.contains("claude-opus-4-8"), "json: {jout}");
+    assert!(
+        jout.contains("\"clean\":false") || jout.contains("\"clean\": false"),
+        "json verdict: {jout}"
+    );
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn doctor_fix_rewrites_a_pin_then_exits_clean() {
+    let repo = scratch_repo("doctor-fix");
+    // Otherwise-clean workspace.
+    std::fs::create_dir_all(repo.join(".eck")).unwrap();
+    std::fs::write(repo.join(".eck/ROADMAP.md"), "# ROADMAP\n\nAll done.\n").unwrap();
+    std::fs::write(
+        repo.join(".mcp.json"),
+        "{\"mcpServers\":{\"c3\":{\"command\":\"/abs/c3\",\"args\":[\"mcp\"]}}}",
+    )
+    .unwrap();
+    std::fs::create_dir_all(repo.join(".claude/rules")).unwrap();
+    std::fs::write(
+        repo.join(".claude/rules/01-c3-protocol.md"),
+        "Call `c3_finish_task` when done.\n",
+    )
+    .unwrap();
+    // A pinned agent (Claude family) plus one of an unknown family (left reported, not fixed).
+    std::fs::create_dir_all(repo.join(".claude/agents")).unwrap();
+    std::fs::write(
+        repo.join(".claude/agents/opus-worker.md"),
+        "---\nname: opus-worker\nmodel: claude-opus-4-8\n---\nbody\n",
+    )
+    .unwrap();
+
+    let (code, out, err) = run_c3_env(&repo, &["doctor", "--fix"], &[("C3_CONFIG", "none")]);
+    assert_eq!(code, 0, "doctor --fix should end clean: {out}\n{err}");
+    assert!(
+        out.contains("[fixed] .claude/agents/opus-worker.md: model claude-opus-4-8 -> opus"),
+        "fix line missing: {out}"
+    );
+    assert!(out.contains("clean"), "verdict: {out}");
+    let body = std::fs::read_to_string(repo.join(".claude/agents/opus-worker.md")).unwrap();
+    assert!(body.contains("model: opus"), "not rewritten: {body}");
+    assert!(!body.contains("claude-opus-4-8"), "old id left: {body}");
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+#[test]
+fn hook_refreshes_repo_models_once_and_honours_the_off_switch() {
+    let repo = scratch_repo("hook-models");
+    std::fs::create_dir_all(repo.join(".claude/agents")).unwrap();
+    let agent = repo.join(".claude/agents/opus-worker.md");
+    let pinned = "---\nname: opus-worker\nmodel: claude-opus-4-8\n---\nbody\n";
+    std::fs::write(&agent, pinned).unwrap();
+
+    // Quiet the other hook actions so the run is deterministic and fast.
+    let envs = &[
+        ("C3_CONFIG", "none"),
+        ("C3_MAINTAIN", "off"),
+        ("C3_UPDATE_CHECK", "off"),
+    ];
+
+    let (code, out, err) = run_c3_env(&repo, &["hook"], envs);
+    assert_eq!(code, 0, "hook must exit 0: {out}\n{err}");
+    assert!(
+        out.contains("c3: model settings refreshed in this repository"),
+        "refresh line missing: {out}"
+    );
+    assert!(
+        out.contains(".claude/agents/opus-worker.md claude-opus-4-8 -> opus"),
+        "refresh detail missing: {out}"
+    );
+    assert!(out.contains("(left uncommitted)"), "suffix missing: {out}");
+    let body = std::fs::read_to_string(&agent).unwrap();
+    assert!(body.contains("model: opus"), "not rewritten: {body}");
+
+    // A second run has nothing to change, so the line is not printed again.
+    let (_c, out2, _e) = run_c3_env(&repo, &["hook"], envs);
+    assert!(
+        !out2.contains("model settings refreshed"),
+        "refresh line printed with nothing to do: {out2}"
+    );
+
+    // Re-pin, then with the off switch nothing is written and nothing is printed.
+    std::fs::write(&agent, pinned).unwrap();
+    let off = &[
+        ("C3_CONFIG", "none"),
+        ("C3_MAINTAIN", "off"),
+        ("C3_UPDATE_CHECK", "off"),
+        ("C3_REPO_MODELS", "off"),
+    ];
+    let (_c, out3, _e) = run_c3_env(&repo, &["hook"], off);
+    assert!(
+        !out3.contains("model settings refreshed"),
+        "off switch ignored: {out3}"
+    );
+    let body = std::fs::read_to_string(&agent).unwrap();
+    assert!(
+        body.contains("claude-opus-4-8"),
+        "off switch still rewrote the file: {body}"
+    );
+
+    // Inside a child that C3 itself started (a reviewer or a worker on the claude engine runs this
+    // same hook in the repository) the feature is ON but must not touch the tree.
+    let child = &[
+        ("C3_CONFIG", "none"),
+        ("C3_MAINTAIN", "off"),
+        ("C3_UPDATE_CHECK", "off"),
+        ("C3_CHILD", "1"),
+    ];
+    let (code4, out4, _e) = run_c3_env(&repo, &["hook"], child);
+    assert_eq!(code4, 0, "hook must exit 0 in a child: {out4}");
+    assert!(
+        !out4.contains("model settings refreshed"),
+        "the hook edited the repository inside a C3 child: {out4}"
+    );
+    let body = std::fs::read_to_string(&agent).unwrap();
+    assert!(
+        body.contains("claude-opus-4-8"),
+        "a C3 child's hook rewrote the file: {body}"
     );
     let _ = std::fs::remove_dir_all(&repo);
 }

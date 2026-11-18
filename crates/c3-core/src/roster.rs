@@ -1730,9 +1730,16 @@ mod tests {
         assert_eq!(ep.timeout_ms, 3_000_000);
         assert_eq!(ep.plan, "zai");
         assert!(r.entries[2].endpoint.is_none());
+        // (Part B) a NEW Claude id of a known family loads without a release (published shape).
+        let r2 = ok(
+            r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-opus-6-1","auth":"subscription"},{"provider":"anthropic","engine":"claude","model":"claude-sonnet-7","auth":"api-key"}]}"##,
+        );
+        assert!(r2.error.is_empty(), "{}", r2.error);
+        assert_eq!(r2.entries[0].model, "claude-opus-6-1");
+        assert_eq!(r2.entries[1].model, "claude-sonnet-7");
         let cases = [
             (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"opus","auth":"key"}]}"##, "entry 1: auth of engine claude must be \"subscription\" (the claude.ai login, the default) or \"api-key\" (ANTHROPIC_API_KEY) or \"endpoint\" (a third-party Anthropic-compatible endpoint named by the entry's \"endpoint\") (got \"key\")"),
-            (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-opus-9"}]}"##, "entry 1: the claude model 'claude-opus-9' is not in the claude engine's model table (opus, sonnet, haiku, fable, claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-5-5, claude-sonnet-5, claude-sonnet-4-6, claude-haiku-5-5, claude-haiku-4-5; each may end with [1m])"),
+            (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"claude-nonexistent-9"}]}"##, "entry 1: the claude model 'claude-nonexistent-9' is not in the claude engine's model table, nor of the published Claude shape claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>] (opus, sonnet, haiku, fable, claude-fable-5-2, claude-fable-5-1, claude-fable-5, claude-opus-5-5, claude-opus-5, claude-opus-4-8, claude-opus-4-7, claude-opus-4-6, claude-sonnet-5-5, claude-sonnet-5, claude-sonnet-4-6, claude-haiku-5-5, claude-haiku-4-5; each may end with [1m])"),
             (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude"}]}"##, "entry 1: engine claude needs a model (the full model id, e.g. claude-sonnet-5-5)"),
             (r##"{"roster_version":1,"reviewers":[{"provider":"anthropic","engine":"claude","model":"opus","codex_config":["a=b"]}]}"##, "entry 1: codex_config does not apply to engine claude (it configures codex exec)"),
             (r##"{"roster_version":1,"reviewers":[{"provider":"g","engine":"agy","model":"gemini-3.8-flash-high","auth":"api-key"}]}"##, "entry 1: auth may only be \"none\" (an endpoint that needs no credential; omit it otherwise)"),

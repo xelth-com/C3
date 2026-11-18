@@ -40,6 +40,9 @@ pub struct C3Config {
     pub source_checkout: Option<String>,
     /// Automatic engine/model maintenance (`c3 maintain`); default ON, `"maintain": false` off.
     pub maintain: bool,
+    /// Automatic in-place repair of a repository's agent model settings (the `c3 hook` action);
+    /// default ON, `"repo_models": false` off.
+    pub repo_models: bool,
 }
 
 impl Default for C3Config {
@@ -50,6 +53,7 @@ impl Default for C3Config {
             update_check: true,
             source_checkout: None,
             maintain: true,
+            repo_models: true,
         }
     }
 }
@@ -206,6 +210,7 @@ fn validate(root: &Value) -> Result<C3Config, String> {
             "update_check",
             "source_checkout",
             "maintain",
+            "repo_models",
         ],
         "config",
     )?;
@@ -235,11 +240,17 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("c3 config: maintain must be true or false".to_string()),
     };
+    let repo_models = match obj.get("repo_models") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("c3 config: repo_models must be true or false".to_string()),
+    };
 
     let mut cfg = C3Config {
         update_check,
         source_checkout,
         maintain,
+        repo_models,
         ..Default::default()
     };
     let Some(index) = obj.get("index") else {

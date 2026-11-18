@@ -1,8 +1,8 @@
 ---
 name: haiku-worker
 description: >
-  Haiku execution worker — the cheapest tier, READ-ONLY work only. Note: Haiku 4.5 is
-  a generation older than the 5-family workers — use it opportunistically for cheap
+  Haiku execution worker — the cheapest tier, READ-ONLY work only. Note: Haiku is
+  a generation older than the other workers — use it opportunistically for cheap
   reads, don't force work onto it; when in doubt, prefer sonnet-worker. Good for:
   read-only code reconnaissance and multi-file tracing (find where X lives, map a
   config surface, list endpoints), log and command-output analysis, running
