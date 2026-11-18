@@ -20,6 +20,7 @@ pub mod env;
 pub mod models;
 pub mod smoke;
 pub mod version;
+pub mod web;
 
 use std::path::{Path, PathBuf};
 
@@ -60,6 +61,10 @@ pub struct State {
     /// A short summary of the last model findings (swaps / new ids).
     #[serde(default)]
     pub model_findings: String,
+    /// The full model report of the last model step (successors seated or not and why, "new in the
+    /// family" ids per seated entry, new list ids) - printed by `c3 maintain`; the hook line is short.
+    #[serde(default)]
+    pub model_notes: Vec<String>,
 }
 
 /// The maintenance state of one engine.
@@ -598,6 +603,9 @@ pub struct PassOpts {
     pub engines: Vec<String>,
     pub dry_run: bool,
     pub force: bool,
+    /// `--models`: run ONLY the model step (no CLI is checked or updated) and leave the schedule
+    /// (`next_due`, `last_pass`) and the engine records as they are.
+    pub models_only: bool,
 }
 
 /// `c3 maintain --run`: run one pass in the foreground. Exit 0 always (a pass never fails the
@@ -629,6 +637,9 @@ pub fn run_pass(opts: PassOpts) -> i32 {
 
 /// The body of a pass, over an injected [`Env`]. Separated so unit tests drive it with a fake.
 fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) -> i32 {
+    if opts.models_only {
+        return models_pass(env, dir, opts, now);
+    }
     let mut state = read_state(dir);
     let roster = crate::providers::read_reviewer_roster().unwrap_or_default();
     let skip = skip_set();
@@ -756,23 +767,47 @@ fn pass_inner(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) ->
     }
 
     // The model step.
-    let (model_clauses, new_ids, findings) =
-        run_models(env, &roster, &mut state, &self_exe, dir, opts);
+    let outcome = run_models(env, &roster, &mut state, &self_exe, dir, opts);
 
     // Compose and store the report.
     let date = now.format("%Y-%m-%d").to_string();
-    let report = format_report_line(&date, &engine_clauses, &model_clauses, &new_ids);
+    let report = format_report_line(&date, &engine_clauses, &outcome.clauses, &outcome.new_ids);
     println!("{report}");
 
     // A dry run leaves the state untouched (no file to mislead a later hook); a real pass records
     // the engines, the report and the schedule.
     if !opts.dry_run {
         state.engines = new_engines;
-        state.model_findings = findings;
+        state.model_findings = outcome.findings;
+        state.model_notes = outcome.notes;
         state.report = report;
         state.reported = false;
         state.last_pass = rfc3339(now);
         state.next_due = rfc3339(next_due(now, interval_days(), in_use_seen));
+        write_state(dir, &state);
+    }
+    0
+}
+
+/// `c3 maintain --models`: the model step alone, on request. No CLI is checked or updated; the
+/// schedule (`next_due`, `last_pass`) and the engine records stay as they are. A real run stores the
+/// collected ids, the report (printed once by the next SessionStart hook) and the notes; a dry run
+/// stores nothing.
+fn models_pass(env: &dyn Env, dir: &Path, opts: &PassOpts, now: DateTime<Utc>) -> i32 {
+    let mut state = read_state(dir);
+    let roster = crate::providers::read_reviewer_roster().unwrap_or_default();
+    let self_exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "c3".to_string());
+    let outcome = run_models(env, &roster, &mut state, &self_exe, dir, opts);
+    let date = now.format("%Y-%m-%d").to_string();
+    let report = format_report_line(&date, &[], &outcome.clauses, &outcome.new_ids);
+    println!("{report}");
+    if !opts.dry_run {
+        state.model_findings = outcome.findings;
+        state.model_notes = outcome.notes;
+        state.report = report;
+        state.reported = false;
         write_state(dir, &state);
     }
     0
@@ -1145,8 +1180,22 @@ fn engine_in_scope(engine: &str, only: &[String], skip: &[String]) -> bool {
     !skip.contains(&eng)
 }
 
-/// The model step: collect ids, record them, and in `swap` mode seat successors after a smoke.
-/// Returns (report clauses, new ids, a findings summary for the state).
+/// What the model step found: the short report clauses (the hook line), the new ids of the engine
+/// and endpoint lists, the findings summary, and the full notes `c3 maintain` prints.
+struct ModelOutcome {
+    clauses: Vec<String>,
+    new_ids: Vec<String>,
+    findings: String,
+    notes: Vec<String>,
+}
+
+/// The most "new in the family" ids the short report line names (the rest: `+N more`; the full
+/// list is in the stored notes).
+const FAMILY_IDS_IN_LINE: usize = 3;
+
+/// The model step: collect ids (the engines' lists, the endpoints' lists and - unless switched off -
+/// the public catalogs and pages), record them, announce what is new for the roster, and in `swap`
+/// mode seat successors after a smoke on the entry's own plan.
 fn run_models(
     env: &dyn Env,
     roster: &c3_core::roster::Roster,
@@ -1154,14 +1203,42 @@ fn run_models(
     self_exe: &str,
     _dir: &Path,
     opts: &PassOpts,
-) -> (Vec<String>, Vec<String>, String) {
-    let mode = models_mode();
-    if mode == ModelsMode::Off {
-        return (Vec::new(), Vec::new(), "models: off".to_string());
+) -> ModelOutcome {
+    let mut mode = models_mode();
+    if opts.models_only && mode == ModelsMode::Off {
+        // an explicit `--models` is the operator's request: it collects and announces even when the
+        // periodic model step is off, but never edits the roster then
+        println!("c3 maintain: C3_MAINTAIN_MODELS=off - --models announces only");
+        mode = ModelsMode::Announce;
     }
-    let current = models::collect(env, roster);
+    if mode == ModelsMode::Off {
+        return ModelOutcome {
+            clauses: Vec::new(),
+            new_ids: Vec::new(),
+            findings: "models: off".to_string(),
+            notes: Vec::new(),
+        };
+    }
+    let mut current = models::collect(env, roster);
+    if web::enabled() {
+        let (catalogs, pages) = web::configured_sources();
+        let public = web::collect(env, &catalogs, &pages);
+        for s in &public {
+            println!(
+                "c3 maintain: {} - {} model id(s) collected",
+                s.source,
+                s.ids.len()
+            );
+        }
+        current.extend(public);
+    } else {
+        println!("c3 maintain: public model sources off (C3_MODEL_WEB / model_web)");
+    }
     let new_ids = models::new_ids(&state.models, &current);
+    let news = models::family_news(roster, &state.models, &current, Utc::now().timestamp());
     let mut clauses: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    let mut seated = 0usize;
     // The model step honours the same `--engine` filter and C3_MAINTAIN_SKIP as the engine step, so
     // a scoped pass never edits the roster or spends a smoke turn on a seat outside its scope.
     let only: Vec<String> = opts
@@ -1171,21 +1248,40 @@ fn run_models(
         .collect();
     let skip = skip_set();
 
-    if mode == ModelsMode::Swap {
+    {
         let candidates = models::swap_candidates(roster, &current);
         for c in &candidates {
             if !engine_in_scope(&c.engine, &only, &skip) {
                 continue; // a seat of an engine outside this pass's scope is never touched
             }
+            let label = format!("model {} :: {} -> {}", c.provider, c.old, c.new);
             println!(
-                "c3 maintain: model {} :: {} -> {} (candidate)",
-                c.provider, c.old, c.new
+                "c3 maintain: {label} (candidate{})",
+                if c.from_public {
+                    ", from a public catalog"
+                } else {
+                    ""
+                }
             );
+            // Announced only: a protected or on-request entry is never smoked or edited, and mode
+            // `announce` edits nothing.
+            let hold = if c.protected {
+                Some("protected entry")
+            } else if c.on_request {
+                Some("on-request entry")
+            } else if mode == ModelsMode::Announce {
+                Some("mode announce")
+            } else {
+                None
+            };
+            if let Some(why) = hold {
+                let msg = format!("{label} not seated ({why})");
+                println!("c3 maintain: {msg}");
+                clauses.push(msg);
+                continue;
+            }
             if opts.dry_run {
-                clauses.push(format!(
-                    "model {} :: {} -> {} (dry-run)",
-                    c.provider, c.old, c.new
-                ));
+                clauses.push(format!("{label} (dry-run: would smoke and seat)"));
                 continue;
             }
             let now = Utc::now();
@@ -1195,10 +1291,7 @@ fn run_models(
             // re-pointing its old model to another provider - is judged and aborted instead of being
             // swapped over the stale pass-start roster.
             let Ok(basis) = std::fs::read_to_string(&roster.path) else {
-                let msg = format!(
-                    "model {} :: {} -> {} not seated (roster unreadable)",
-                    c.provider, c.old, c.new
-                );
+                let msg = format!("{label} not seated (roster unreadable)");
                 println!("c3 maintain: {msg}");
                 clauses.push(msg);
                 continue;
@@ -1217,16 +1310,16 @@ fn run_models(
                 .iter()
                 .find(|e| e.provider == c.provider && e.model == c.old);
             let blocked = match entry {
-                None => true,
-                Some(e) => {
-                    smoke::seat_saturated(&fresh, e, now) || e.on_request || e.reserve_percent > 0
+                None => Some("roster changed"),
+                Some(e) if e.reserve_percent > 0 => Some("protected entry"),
+                Some(e) if e.on_request => Some("on-request entry"),
+                Some(e) if smoke::seat_saturated(&fresh, e, now) => {
+                    Some("held: no quota for a smoke")
                 }
+                Some(_) => None,
             };
-            if blocked {
-                let msg = format!(
-                    "model {} :: {} -> {} held: no quota for a smoke",
-                    c.provider, c.old, c.new
-                );
+            if let Some(why) = blocked {
+                let msg = format!("{label} not seated ({why})");
                 println!("c3 maintain: {msg}");
                 clauses.push(msg);
                 continue;
@@ -1235,6 +1328,8 @@ fn run_models(
                 provider: c.provider.clone(),
                 model: c.new.clone(),
             };
+            // One smoke per entry and pass: the highest successor only. A failed candidate is tried
+            // again on a later pass.
             match run_one_smoke(env, self_exe, &target, &c.engine, now) {
                 smoke::Smoke::Pass => {
                     let today = now.format("%Y%m%d").to_string();
@@ -1247,43 +1342,96 @@ fn run_models(
                         &today,
                     ) {
                         Ok(()) => {
-                            println!(
-                                "c3 maintain: model {} :: {} -> {} (roster)",
-                                c.provider, c.old, c.new
-                            );
-                            clauses.push(format!(
-                                "model {} :: {} -> {} (roster)",
-                                c.provider, c.old, c.new
-                            ));
+                            seated += 1;
+                            let msg = format!("{label}, smoke passed");
+                            println!("c3 maintain: {msg} (roster edited, backup taken)");
+                            clauses.push(msg);
                         }
                         Err(e) => {
-                            println!(
-                                "c3 maintain: model {} :: {} -> {} not seated ({e})",
-                                c.provider, c.old, c.new
-                            );
-                            clauses.push(format!(
-                                "model {} :: {} -> {} (not seated)",
-                                c.provider, c.old, c.new
-                            ));
+                            println!("c3 maintain: {label} smoke passed, not seated ({e})");
+                            clauses.push(format!("{label} smoke passed, not seated"));
+                            notes.push(format!("{label}: smoke passed, not seated ({e})"));
                         }
                     }
                 }
-                smoke::Smoke::Fail(_) => {
-                    println!("c3 maintain: new model {} (smoke failed)", c.new);
-                    clauses.push(format!("new: {} (smoke failed)", c.new));
+                smoke::Smoke::Fail(why) => {
+                    let msg = if c.from_public {
+                        format!(
+                            "{label} not seated (smoke failed: seen in the catalog, not served by this plan)"
+                        )
+                    } else {
+                        format!("{label} not seated (smoke failed)")
+                    };
+                    println!("c3 maintain: {msg} ({why})");
+                    clauses.push(msg);
                 }
             }
         }
     }
 
-    // Record the collected ids as the new baseline.
-    state.models = models::ModelsState { sources: current };
-    let findings = if new_ids.is_empty() {
-        format!("{} swap(s)", clauses.len())
-    } else {
-        format!("{} swap(s), {} new id(s)", clauses.len(), new_ids.len())
-    };
-    (clauses, new_ids, findings)
+    // "New in the family": the full list goes into the notes, the line names a few.
+    let mut family_ids: Vec<String> = Vec::new();
+    for n in &news {
+        let note = format!(
+            "new in the family of {} ({}): {}",
+            n.seated,
+            n.provider,
+            n.ids.join(", ")
+        );
+        println!("c3 maintain: {note}");
+        notes.push(note);
+        for id in &n.ids {
+            if !family_ids.contains(id) {
+                family_ids.push(id.clone());
+            }
+        }
+    }
+    if !family_ids.is_empty() {
+        let more = family_ids.len().saturating_sub(FAMILY_IDS_IN_LINE);
+        let shown = family_ids
+            .iter()
+            .take(FAMILY_IDS_IN_LINE)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        clauses.push(if more > 0 {
+            format!("new in the family: {shown} (+{more} more)")
+        } else {
+            format!("new in the family: {shown}")
+        });
+    }
+    // Every model clause is a note too (the stored full report).
+    let mut all_notes: Vec<String> = clauses
+        .iter()
+        .filter(|c| !c.starts_with("new in the family: "))
+        .cloned()
+        .collect();
+    all_notes.extend(notes);
+    if !new_ids.is_empty() {
+        all_notes.push(format!("new model ids: {}", new_ids.join(", ")));
+    }
+
+    // Record the collected ids as the new baseline. A public source that was not collected this
+    // time (switched off, or the fetch failed) keeps its previous record, so a later pass does not
+    // take it for a first collection and its names stay published.
+    let mut sources = current;
+    for prev in &state.models.sources {
+        if web::is_public_source(&prev.source) && !sources.iter().any(|s| s.source == prev.source) {
+            sources.push(prev.clone());
+        }
+    }
+    state.models = models::ModelsState { sources };
+    let findings = format!(
+        "{seated} swap(s), {} new id(s), {} new in the family",
+        new_ids.len(),
+        family_ids.len()
+    );
+    ModelOutcome {
+        clauses,
+        new_ids,
+        findings,
+        notes: all_notes,
+    }
 }
 
 // --------------------------------------------------------------------------- the smoke subcommand
@@ -1378,6 +1526,9 @@ pub fn run_report() -> i32 {
     }
     if !s.model_findings.is_empty() {
         println!("  models:    {}", s.model_findings);
+    }
+    for n in &s.model_notes {
+        println!("    - {}", one_line_capped(n, 400));
     }
     if !s.report.is_empty() {
         println!("  report:    {}", s.report);

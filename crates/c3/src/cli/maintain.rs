@@ -24,6 +24,12 @@ pub struct MaintainArgs {
     /// Ignore the interval and the cool-down.
     #[arg(long)]
     pub force: bool,
+    /// Run ONLY the model step now (engine and endpoint lists, the public catalogs and pages):
+    /// announce, and swap per `C3_MAINTAIN_MODELS`. No CLI is checked or updated and the schedule
+    /// does not move. With `--dry-run`: collect and say what would be announced and swapped, with
+    /// no smoke and no roster edit.
+    #[arg(long, conflicts_with = "smoke")]
+    pub models: bool,
 }
 
 /// Run `c3 maintain`. `--run` runs a pass; otherwise it reports the stored state. Exit 0, except 1
@@ -31,11 +37,12 @@ pub struct MaintainArgs {
 pub fn run(args: MaintainArgs) -> i32 {
     if args.smoke {
         maintain::run_smoke_only(args.engines, args.dry_run)
-    } else if args.run {
+    } else if args.run || args.models {
         maintain::run_pass(PassOpts {
             engines: args.engines,
             dry_run: args.dry_run,
             force: args.force,
+            models_only: args.models,
         })
     } else {
         maintain::run_report()

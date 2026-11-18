@@ -3,19 +3,27 @@
 //! seated id's successor after it passes the same smoke, editing exactly that roster entry's `model`
 //! and nothing else.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use super::env::Env;
-use super::version::{successor, valid_model_id};
+use super::version::{parse_model_id, successor, valid_model_id};
+use super::web::{is_public_source, strip_vendor};
 use c3_core::roster::{Roster, RosterEntry};
 
-/// The model ids collected from one source in a pass.
+/// The model ids collected from one source in a pass. Sources: `grok` / `agy` (the engines' own
+/// lists), `endpoint:<host>` (an endpoint's `/v1/models`, which may be PRIVATE), `web:<host>` (a
+/// public catalog, ids kept as `<vendor>/<model>`) and `page:<name>` (a configured public page).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceList {
     pub source: String,
     pub ids: Vec<String>,
+    /// The catalog's `created` stamp (unix seconds) per id, when it gives one. Used in the pass only
+    /// (the first-collection "new" rule); not persisted.
+    #[serde(skip)]
+    pub created: BTreeMap<String, i64>,
 }
 
 /// The persisted model state: the last-seen id list per source.
@@ -32,6 +40,10 @@ impl ModelsState {
             .find(|s| s.source == source)
             .map(|s| s.ids.as_slice())
             .unwrap_or(&[])
+    }
+
+    fn has_source(&self, source: &str) -> bool {
+        self.sources.iter().any(|s| s.source == source)
     }
 }
 
@@ -80,7 +92,11 @@ pub fn collect(env: &dyn Env, roster: &Roster) -> Vec<SourceList> {
                 .unwrap_or_default(),
         };
         if !ids.is_empty() {
-            out.push(SourceList { source, ids });
+            out.push(SourceList {
+                source,
+                ids,
+                ..Default::default()
+            });
         }
     }
     out
@@ -160,14 +176,19 @@ pub fn parse_models_json(body: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The ids present in `current` but absent from `previous` (across all sources), sorted and
-/// de-duplicated. Empty when `previous` has never recorded a source (the first pass is a baseline).
+/// The ids present in `current` but absent from `previous` (across the engine and endpoint sources),
+/// sorted and de-duplicated. Empty when `previous` has never recorded a source (the first pass is a
+/// baseline). The public sources (a catalog of hundreds of ids) are left out here: what they bring
+/// is announced only as a successor or as "new in the family" of a seated id ([`family_news`]).
 pub fn new_ids(previous: &ModelsState, current: &[SourceList]) -> Vec<String> {
     if previous.sources.is_empty() {
         return Vec::new();
     }
     let mut out: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for s in current {
+        if is_public_source(&s.source) {
+            continue;
+        }
         let prev = previous.ids_of(&s.source);
         for id in &s.ids {
             if !prev.contains(id) {
@@ -178,7 +199,7 @@ pub fn new_ids(previous: &ModelsState, current: &[SourceList]) -> Vec<String> {
     out.into_iter().collect()
 }
 
-/// A seated id with a successor available in its own source.
+/// A seated id with a successor available in its own source or in a public source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwapCandidate {
     pub position: usize,
@@ -186,25 +207,50 @@ pub struct SwapCandidate {
     pub engine: String,
     pub old: String,
     pub new: String,
+    /// The successor came only from a public catalog/page, not from the entry's own source: the plan
+    /// may not serve it (the smoke decides).
+    pub from_public: bool,
+    /// The entry is protected (`reserve_percent`) - announced only, never smoked or edited.
+    pub protected: bool,
+    /// The entry runs only on request - announced only, never smoked or edited.
+    pub on_request: bool,
 }
 
-/// The seated ids with an available successor (same prefix/suffix, same major, higher minor) in
-/// their own source. Entries of inactive plans are never touched (iterated via `active_entries`).
+/// The ids of every public source in `current` with the vendor part stripped (`qwen/qwen4-max` ->
+/// `qwen4-max`), de-duplicated.
+pub fn public_candidates(current: &[SourceList]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for s in current.iter().filter(|s| is_public_source(&s.source)) {
+        for id in &s.ids {
+            let m = strip_vendor(id);
+            if seen.insert(m.to_string()) {
+                out.push(m.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The seated ids with an available successor ([`successor`]: same prefix and suffix, a higher
+/// version - a higher major included). The candidates of an entry are the ids of its own source
+/// (if it has one) PLUS the public catalog/page ids with the vendor part stripped. Entries of
+/// inactive plans are never touched (iterated via `active_entries`); protected and on-request
+/// entries ARE returned (flagged) so the pass can announce them, never smoke them.
 pub fn swap_candidates(roster: &Roster, current: &[SourceList]) -> Vec<SwapCandidate> {
+    let public = public_candidates(current);
     let mut out = Vec::new();
     for e in roster.active_entries() {
         if e.model.is_empty() {
             continue;
         }
-        let Some(source) = source_for(e) else {
-            continue;
-        };
-        let ids = current
-            .iter()
-            .find(|s| s.source == source)
+        let own: &[String] = source_for(e)
+            .and_then(|source| current.iter().find(|s| s.source == source))
             .map(|s| s.ids.as_slice())
             .unwrap_or(&[]);
-        if let Some(succ) = successor(&e.model, ids) {
+        let mut cands: Vec<String> = own.to_vec();
+        cands.extend(public.iter().filter(|p| !own.contains(p)).cloned());
+        if let Some(succ) = successor(&e.model, &cands) {
             out.push(SwapCandidate {
                 position: e.position,
                 provider: e.provider.clone(),
@@ -215,10 +261,133 @@ pub fn swap_candidates(roster: &Roster, current: &[SourceList]) -> Vec<SwapCandi
                 },
                 old: e.model.clone(),
                 new: succ.to_string(),
+                from_public: !own.iter().any(|o| o == succ),
+                protected: e.reserve_percent > 0,
+                on_request: e.on_request,
             });
         }
     }
     out
+}
+
+/// A "new in the family" announcement: public ids not seen in the previous pass that share the
+/// seated id's prefix, carry a version not lower than it and a DIFFERENT suffix (seated
+/// `gemini-3.8-flash-high`, catalog `gemini-4-hydrogen`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FamilyNews {
+    pub provider: String,
+    pub seated: String,
+    pub ids: Vec<String>,
+}
+
+/// The most "new in the family" ids announced per seated entry.
+pub const FAMILY_NEWS_PER_ENTRY: usize = 5;
+/// On the very first collection of a public source, only ids whose catalog `created` lies within
+/// this many days count as new (so the first run does not announce the whole catalog).
+pub const FIRST_COLLECTION_DAYS: i64 = 30;
+
+/// The public ids that are new in this pass: per public source, the ids absent from the previous
+/// record of that source; on the source's FIRST collection, only those whose `created` stamp is
+/// within [`FIRST_COLLECTION_DAYS`] of `now_unix` (an id without a stamp - a page - is not new then).
+/// Returned with the vendor part stripped, de-duplicated.
+pub fn new_public_ids(
+    previous: &ModelsState,
+    current: &[SourceList],
+    now_unix: i64,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let floor = now_unix - FIRST_COLLECTION_DAYS * 86_400;
+    for s in current.iter().filter(|s| is_public_source(&s.source)) {
+        let first = !previous.has_source(&s.source);
+        let prev = previous.ids_of(&s.source);
+        for id in &s.ids {
+            let is_new = if first {
+                s.created.get(id).is_some_and(|c| *c >= floor)
+            } else {
+                !prev.contains(id)
+            };
+            let m = strip_vendor(id);
+            if is_new && seen.insert(m.to_string()) {
+                out.push(m.to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The "new in the family" ids per seated, active entry (protected and on-request entries
+/// included: an announcement spends nothing). An id is new in the family of a seated id when it
+/// is new in this pass ([`new_public_ids`]), has the same prefix, a version not lower and a
+/// different suffix. At most [`FAMILY_NEWS_PER_ENTRY`] per entry, highest version first; an entry
+/// seated twice (same model) is announced once.
+pub fn family_news(
+    roster: &Roster,
+    previous: &ModelsState,
+    current: &[SourceList],
+    now_unix: i64,
+) -> Vec<FamilyNews> {
+    let fresh = new_public_ids(previous, current, now_unix);
+    let mut out: Vec<FamilyNews> = Vec::new();
+    for e in roster.active_entries() {
+        if e.model.is_empty() || out.iter().any(|n| n.seated == e.model) {
+            continue;
+        }
+        let Some(base) = parse_model_id(&e.model) else {
+            continue;
+        };
+        let mut hits: Vec<(&String, (u64, u64))> = fresh
+            .iter()
+            .filter(|id| **id != e.model)
+            .filter_map(|id| parse_model_id(id).map(|p| (id, p)))
+            .filter(|(_, p)| {
+                p.prefix == base.prefix && p.suffix != base.suffix && p.version() >= base.version()
+            })
+            .map(|(id, p)| (id, p.version()))
+            .collect();
+        if hits.is_empty() {
+            continue;
+        }
+        hits.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+        out.push(FamilyNews {
+            provider: e.provider.clone(),
+            seated: e.model.clone(),
+            ids: hits
+                .into_iter()
+                .take(FAMILY_NEWS_PER_ENTRY)
+                .map(|(id, _)| id.clone())
+                .collect(),
+        });
+    }
+    out
+}
+
+/// The published model names the maintain state holds: every id of a PUBLIC source (a catalog or a
+/// page - never an endpoint's own list, which may be private), lower-cased, both as recorded
+/// (`qwen/qwen4-max`) and with the vendor part stripped (`qwen4-max`). Empty when there is no state.
+pub fn published_from(state: &ModelsState) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for s in state.sources.iter().filter(|s| is_public_source(&s.source)) {
+        for id in &s.ids {
+            out.insert(id.to_ascii_lowercase());
+            out.insert(strip_vendor(id).to_ascii_lowercase());
+        }
+    }
+    out
+}
+
+/// [`published_from`] of the maintain state on disk, read once per process (telemetry asks per
+/// event). Always empty in this crate's unit tests, so they never depend on the machine's state.
+pub fn published_ids() -> &'static std::collections::HashSet<String> {
+    static P: std::sync::OnceLock<std::collections::HashSet<String>> = std::sync::OnceLock::new();
+    P.get_or_init(|| {
+        if cfg!(test) {
+            return Default::default();
+        }
+        super::state_dir()
+            .map(|d| published_from(&super::read_state(&d).models))
+            .unwrap_or_default()
+    })
 }
 
 /// Seat a successor by editing exactly the target entry's `model` in the roster file, keeping the
@@ -450,25 +619,166 @@ mod tests {
         assert!(parse_models_json("not json").is_empty());
     }
 
+    fn sl(source: &str, ids: &[&str]) -> SourceList {
+        SourceList {
+            source: source.into(),
+            ids: ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn new_ids_are_baseline_then_diff() {
         let prev = ModelsState::default();
-        let cur = vec![SourceList {
-            source: "grok".into(),
-            ids: vec!["grok-4.7".into()],
-        }];
+        let cur = vec![sl("grok", &["grok-4.7"])];
         assert!(new_ids(&prev, &cur).is_empty(), "first pass is a baseline");
         let prev = ModelsState {
-            sources: vec![SourceList {
-                source: "grok".into(),
-                ids: vec!["grok-4.7".into()],
-            }],
+            sources: vec![sl("grok", &["grok-4.7"])],
         };
-        let cur = vec![SourceList {
-            source: "grok".into(),
-            ids: vec!["grok-4.7".into(), "grok-5.0".into()],
-        }];
+        let cur = vec![
+            sl("grok", &["grok-4.7", "grok-5.0"]),
+            // a public catalog's new ids are not listed here (only as successor / family news)
+            sl("web:openrouter.ai", &["x-ai/grok-9"]),
+        ];
         assert_eq!(new_ids(&prev, &cur), vec!["grok-5.0"]);
+    }
+
+    fn entry(provider: &str, engine: &str, model: &str) -> RosterEntry {
+        RosterEntry {
+            provider: provider.into(),
+            engine: engine.into(),
+            model: model.into(),
+            ..Default::default()
+        }
+    }
+
+    fn alibaba_endpoint_entry() -> RosterEntry {
+        RosterEntry {
+            position: 1,
+            endpoint: Some(c3_core::claude::ClaudeEndpoint {
+                base_url: "https://alibaba.example/apps/anthropic".into(),
+                host_name: "alibaba.example".into(),
+                env_key: "NO_KEY".into(),
+                ..Default::default()
+            }),
+            ..entry("alibaba-claude", "claude", "qwen3.8-max")
+        }
+    }
+
+    #[test]
+    fn a_catalog_offers_a_successor_to_an_entry_without_its_own_list() {
+        let mut protected = entry("astra", "codex", "gpt-6-astra");
+        protected.reserve_percent = 15;
+        let roster = Roster {
+            exists: true,
+            entries: vec![alibaba_endpoint_entry(), protected],
+            ..Default::default()
+        };
+        let cur = vec![sl(
+            "web:openrouter.ai",
+            &["qwen/qwen4-max", "qwen/qwen4-plus", "openai/gpt-7-astra"],
+        )];
+        let c = swap_candidates(&roster, &cur);
+        assert_eq!(c.len(), 2, "{c:?}");
+        assert_eq!(c[0].old, "qwen3.8-max");
+        assert_eq!(c[0].new, "qwen4-max");
+        assert!(c[0].from_public);
+        assert!(!c[0].protected);
+        // the protected entry is returned flagged (announced, never smoked)
+        assert_eq!(c[1].new, "gpt-7-astra");
+        assert!(c[1].protected);
+        // the entry's own list wins the origin when it lists the successor too
+        let cur = vec![
+            sl("endpoint:alibaba.example", &["qwen4-max"]),
+            sl("web:openrouter.ai", &["qwen/qwen4-max"]),
+        ];
+        let c = swap_candidates(&roster, &cur);
+        assert!(!c[0].from_public);
+    }
+
+    fn at(days_ago: i64, now: i64) -> i64 {
+        now - days_ago * 86_400
+    }
+
+    #[test]
+    fn family_news_first_collection_and_later_diff() {
+        let now = 1_795_000_000;
+        let roster = Roster {
+            exists: true,
+            entries: vec![entry("gemini", "agy", "gemini-3.8-flash-high")],
+            ..Default::default()
+        };
+        let mut cur = sl(
+            "web:openrouter.ai",
+            &[
+                "google/gemini-4-hydrogen",
+                "google/gemini-3.9-pro",
+                "google/gemini-3.5-ultra",
+                "google/gemini-4.1-flash-high",
+                "google/gemma-5",
+            ],
+        );
+        cur.created
+            .insert("google/gemini-4-hydrogen".into(), at(3, now));
+        cur.created
+            .insert("google/gemini-3.9-pro".into(), at(90, now));
+        cur.created
+            .insert("google/gemini-3.5-ultra".into(), at(1, now));
+        cur.created
+            .insert("google/gemini-4.1-flash-high".into(), at(2, now));
+        let cur = vec![cur];
+        // first collection: only the ids created within 30 days count; a lower version
+        // (gemini-3.5-ultra) and the same suffix (a successor, not family news) are excluded
+        let news = family_news(&roster, &ModelsState::default(), &cur, now);
+        assert_eq!(news.len(), 1);
+        assert_eq!(news[0].seated, "gemini-3.8-flash-high");
+        assert_eq!(news[0].ids, vec!["gemini-4-hydrogen"]);
+        // a later pass: an id absent from the previous record is new whatever its stamp
+        let prev = ModelsState {
+            sources: vec![sl("web:openrouter.ai", &["google/gemini-4-hydrogen"])],
+        };
+        let news = family_news(&roster, &prev, &cur, now);
+        assert_eq!(news[0].ids, vec!["gemini-3.9-pro"]);
+        // nothing new -> nothing announced
+        let prev = ModelsState {
+            sources: cur.clone(),
+        };
+        assert!(family_news(&roster, &prev, &cur, now).is_empty());
+    }
+
+    #[test]
+    fn family_news_is_capped_per_entry() {
+        let roster = Roster {
+            exists: true,
+            entries: vec![entry("g", "agy", "gemini-3.8-flash-high")],
+            ..Default::default()
+        };
+        let ids: Vec<String> = (0..9).map(|i| format!("google/gemini-4-v{i}")).collect();
+        let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let cur = vec![sl("web:openrouter.ai", &refs)];
+        let prev = ModelsState {
+            sources: vec![sl("web:openrouter.ai", &[])],
+        };
+        let news = family_news(&roster, &prev, &cur, 0);
+        assert_eq!(news[0].ids.len(), FAMILY_NEWS_PER_ENTRY);
+    }
+
+    #[test]
+    fn published_names_come_from_public_sources_only() {
+        let st = ModelsState {
+            sources: vec![
+                sl("web:openrouter.ai", &["qwen/Qwen4-Max"]),
+                sl("page:zai-docs", &["glm-6"]),
+                sl("endpoint:api.z.ai", &["glm-9-secret"]),
+                sl("grok", &["grok-4.7"]),
+            ],
+        };
+        let p = published_from(&st);
+        assert!(p.contains("qwen/qwen4-max"));
+        assert!(p.contains("qwen4-max"));
+        assert!(p.contains("glm-6"));
+        assert!(!p.contains("glm-9-secret"));
+        assert!(!p.contains("grok-4.7"));
     }
 
     #[test]
@@ -606,10 +916,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let cur = vec![SourceList {
-            source: "endpoint:api.z.ai".into(),
-            ids: vec!["glm-5.3".into(), "glm-5.4".into()],
-        }];
+        let cur = vec![sl("endpoint:api.z.ai", &["glm-5.3", "glm-5.4"])];
         let c = swap_candidates(&roster, &cur);
         assert_eq!(c.len(), 1);
         assert_eq!(c[0].old, "glm-5.3");

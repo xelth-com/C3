@@ -96,11 +96,11 @@ pub fn rewrite_agent_model(content: &str) -> Option<(String, String, String)> {
 }
 
 /// The rewrite for the repository-root `AGENTS.md`: its frontmatter `model:` follows the roster.
-/// The value is lower-cased and the successor rule ([`successor`]: same prefix and suffix, same
-/// major, higher minor) is asked whether one of `roster_models` is its successor; if so the value
-/// is rewritten to that id, keeping the casing of the original prefix/suffix (`GLM-5.3` ->
-/// `GLM-5.4`). No roster, no successor, a higher major only, a different family, or no frontmatter
-/// model line: `None`. Returns `(new_content, old, new)`.
+/// The value is lower-cased and the successor rule ([`successor`]: same prefix and suffix, a higher
+/// version - a higher major included) is asked whether one of `roster_models` is its successor; if
+/// so the value is rewritten to that id, keeping the casing of the original prefix/suffix
+/// (`GLM-5.3` -> `GLM-5.4`, `Qwen3.8-Max` -> `Qwen4-Max`). No roster, no successor, a different
+/// suffix or family, or no frontmatter model line: `None`. Returns `(new_content, old, new)`.
 pub fn rewrite_agents_md_model(
     content: &str,
     roster_models: &[String],
@@ -114,13 +114,20 @@ pub fn rewrite_agents_md_model(
     let lowered = value.to_lowercase();
     let cands: Vec<String> = roster_models.iter().map(|m| m.to_lowercase()).collect();
     let succ = successor(&lowered, &cands)?;
-    // Reconstruct with the ORIGINAL casing: same prefix/suffix and major, the successor's minor.
+    // Reconstruct with the ORIGINAL casing: the original prefix/suffix around the successor's
+    // version as the successor spells it (`GLM-5.3` + `glm-6` -> `GLM-6`, + `glm-5.4` -> `GLM-5.4`).
     let orig = parse_model_id(&value)?;
     let succ_parsed = parse_model_id(succ)?;
-    let new_value = format!(
-        "{}{}.{}{}",
-        orig.prefix, orig.major, succ_parsed.minor, orig.suffix
-    );
+    let succ_chars: Vec<char> = succ.chars().collect();
+    let vstart = succ_parsed.prefix.chars().count();
+    let vend = succ_chars
+        .len()
+        .checked_sub(succ_parsed.suffix.chars().count())?;
+    if vend <= vstart {
+        return None;
+    }
+    let version: String = succ_chars[vstart..vend].iter().collect();
+    let new_value = format!("{}{}{}", orig.prefix, version, orig.suffix);
     if new_value == value {
         return None;
     }
@@ -311,15 +318,25 @@ mod tests {
         // Lowercase prefix stays lowercase.
         let (_, _, new) = rewrite_agents_md_model("---\nmodel: glm-5.3\n---\n", &roster).unwrap();
         assert_eq!(new, "glm-5.4");
+        // The roster moved across a major: AGENTS.md follows it, the successor's spelling
+        // of the version, the original casing around it.
+        let (_, _, new) =
+            rewrite_agents_md_model("---\nmodel: GLM-5.3\n---\n", &["glm-6.0".to_string()])
+                .unwrap();
+        assert_eq!(new, "GLM-6.0");
+        let (_, _, new) =
+            rewrite_agents_md_model("---\nmodel: Qwen3.8-Max\n---\n", &["qwen4-max".to_string()])
+                .unwrap();
+        assert_eq!(new, "Qwen4-Max");
     }
 
     #[test]
     fn agents_md_no_edit_without_a_successor() {
         // Empty roster -> nothing.
         assert!(rewrite_agents_md_model("---\nmodel: GLM-5.3\n---\n", &[]).is_none());
-        // A higher MAJOR is announced, never swapped.
+        // A different suffix is another family member, never followed.
         assert!(
-            rewrite_agents_md_model("---\nmodel: GLM-5.3\n---\n", &["glm-6.0".to_string()])
+            rewrite_agents_md_model("---\nmodel: GLM-5.3\n---\n", &["glm-6-air".to_string()])
                 .is_none()
         );
         // A different family.

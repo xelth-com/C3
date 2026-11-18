@@ -738,6 +738,262 @@ fn the_model_step_honours_the_engine_filter() {
     );
 }
 
+// ------------------------------------------------------------------ the public catalog source (--models)
+
+const CATALOG_URL: &str = "https://openrouter.ai/api/v1/models";
+
+/// An Anthropic-compatible endpoint entry whose endpoint gives no `/v1/models` list (its key
+/// variable is unset, so the list is never even requested) - the Alibaba case of 2026-11-18.
+fn endpoint_roster(protected: bool) -> String {
+    let ext = if protected {
+        r#","ext":{"reserve_percent":15}"#
+    } else {
+        ""
+    };
+    format!(
+        r#"{{"roster_version":1,"reviewers":[{{"provider":"alibaba-claude","engine":"claude","model":"qwen3.8-max","auth":"endpoint","endpoint":{{"base_url":"https://alibaba.example/apps/anthropic","env_key":"C3_TEST_NO_SUCH_KEY"}}{ext}}}]}}"#
+    )
+}
+
+/// A catalog offering the successor `qwen4-max` (plus a `:free` variant, which is skipped) and a new
+/// family member `qwen4-coder`, both created a day ago.
+fn catalog_json() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let c = now - 86_400;
+    format!(
+        r#"{{"data":[{{"id":"qwen/qwen4-max","created":{c}}},{{"id":"qwen/qwen4-max:free","created":{c}}},{{"id":"qwen/qwen4-coder","created":{c}}},{{"id":"openai/gpt-oss-9","created":{c}}}]}}"#
+    )
+}
+
+struct ModelsCase {
+    roster: PathBuf,
+    http_log: PathBuf,
+    owned: Vec<(String, String)>,
+}
+
+impl ModelsCase {
+    fn env(&self) -> Vec<(&str, &str)> {
+        self.owned
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect()
+    }
+    fn roster_text(&self) -> String {
+        std::fs::read_to_string(&self.roster).unwrap()
+    }
+    fn backups(&self) -> Vec<String> {
+        std::fs::read_dir(self.roster.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("roster.json.bak-maintain-"))
+            .collect()
+    }
+}
+
+/// A `--models` case: the roster, the catalog served from a file in place of the network, the fetch
+/// log, a scripted smoke, and the fake grok/codex wired so any engine probe would be recorded.
+fn models_case(e: &Env, roster_json: &str, smoke: &str) -> ModelsCase {
+    let roster = e.work.join("roster.json");
+    std::fs::write(&roster, roster_json).unwrap();
+    let catalog = e.work.join("catalog.json");
+    std::fs::write(&catalog, catalog_json()).unwrap();
+    let http_log = e.work.join("http.log");
+    std::fs::write(&e.grok_verfile, "1.0.77").unwrap();
+    let s = |p: &Path| p.to_string_lossy().into_owned();
+    let owned: Vec<(String, String)> = vec![
+        ("CODEX_CONSULT_ROSTER".into(), s(&roster)),
+        ("C3_MAINTAIN_MODELS".into(), "swap".into()),
+        (
+            "C3_MAINTAIN_TEST_HTTP".into(),
+            format!("{CATALOG_URL}|{}", s(&catalog)),
+        ),
+        ("C3_MAINTAIN_TEST_HTTP_LOG".into(), s(&http_log)),
+        ("C3_MAINTAIN_TEST_SMOKE".into(), smoke.into()),
+        ("CODEX_CONSULT_GROK_EXE".into(), s(&e.grok_exe)),
+        ("CODEX_CONSULT_EXE".into(), s(&e.codex_exe)),
+        ("FAKE_GROK_VERFILE".into(), s(&e.grok_verfile)),
+        ("FAKE_GROK_VER".into(), "1.0.77".into()),
+        ("FAKE_GROK_LATEST".into(), "1.0.80".into()),
+        ("FAKE_MNT_LOG".into(), s(&e.work.join("fake.log"))),
+    ];
+    ModelsCase {
+        roster,
+        http_log,
+        owned,
+    }
+}
+
+const SCHEDULED: &str = r#"{"last_pass":"2026-11-10T00:00:00Z","next_due":"2026-11-17T00:00:00Z","reported":true,"engines":[{"name":"grok","installed":"1.0.77","action":"up to date","when":"2026-11-10T00:00:00Z"}]}"#;
+
+#[test]
+fn a_catalog_successor_that_passes_its_smoke_is_seated_without_moving_the_schedule() {
+    let e = setup("web-seat");
+    e.write_state(SCHEDULED);
+    let m = models_case(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=pass",
+    );
+    let o = e.run(&["maintain", "--models"], &m.env());
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("model alibaba-claude :: qwen3.8-max -> qwen4-max, smoke passed"),
+        "the successor from the catalog is seated: {t}"
+    );
+    assert!(
+        t.contains("new in the family: qwen4-coder"),
+        "a new family member is announced: {t}"
+    );
+    assert!(!t.contains("qwen4-max:free"), "a :variant is skipped: {t}");
+    // the TEST roster: only that entry's model edited, a backup taken first
+    let roster = m.roster_text();
+    assert!(roster.contains("\"model\":\"qwen4-max\""), "{roster}");
+    assert_eq!(
+        roster,
+        endpoint_roster(false).replace("qwen3.8-max", "qwen4-max")
+    );
+    let backups = m.backups();
+    assert_eq!(backups.len(), 1, "{backups:?}");
+    let backup = std::fs::read_to_string(e.work.join(&backups[0])).unwrap();
+    assert_eq!(
+        backup,
+        endpoint_roster(false),
+        "the backup holds the old roster"
+    );
+    // --models touched no CLI and did not move the schedule or the engine records
+    assert!(
+        e.mnt_log().is_empty(),
+        "no engine CLI was run: {}",
+        e.mnt_log()
+    );
+    let state = std::fs::read_to_string(e.state_path()).unwrap();
+    assert!(
+        state.contains("\"next_due\": \"2026-11-17T00:00:00Z\""),
+        "{state}"
+    );
+    assert!(
+        state.contains("\"last_pass\": \"2026-11-10T00:00:00Z\""),
+        "{state}"
+    );
+    assert!(state.contains("\"action\": \"up to date\""), "{state}");
+    assert!(
+        state.contains("web:openrouter.ai"),
+        "the catalog is recorded: {state}"
+    );
+    // the stored report names it, and the full notes are printed by `c3 maintain`
+    let r = text(&e.run(&["maintain"], &m.env()));
+    assert!(r.contains("qwen3.8-max -> qwen4-max, smoke passed"), "{r}");
+    assert!(
+        r.contains("new in the family of qwen3.8-max (alibaba-claude): qwen4-coder"),
+        "{r}"
+    );
+    // the next SessionStart hook prints the line once
+    let h = text(&e.run(&["hook"], &m.env()));
+    assert!(h.contains("qwen3.8-max -> qwen4-max, smoke passed"), "{h}");
+}
+
+#[test]
+fn a_catalog_successor_whose_smoke_fails_is_reported_not_seated() {
+    let e = setup("web-fail");
+    let m = models_case(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=fail",
+    );
+    let o = e.run(&["maintain", "--models"], &m.env());
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("qwen3.8-max -> qwen4-max not seated (smoke failed: seen in the catalog, not served by this plan)"),
+        "the failed candidate is reported: {t}"
+    );
+    assert_eq!(
+        m.roster_text(),
+        endpoint_roster(false),
+        "the roster is untouched"
+    );
+    assert!(m.backups().is_empty(), "no backup without a swap");
+}
+
+#[test]
+fn a_protected_entry_is_announced_only() {
+    let e = setup("web-protected");
+    // the smoke would pass - but a protected entry is never smoked or edited
+    let m = models_case(&e, &endpoint_roster(true), "alibaba-claude::qwen4-max=pass");
+    let o = e.run(&["maintain", "--models"], &m.env());
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("qwen3.8-max -> qwen4-max not seated (protected entry)"),
+        "the protected entry's successor is announced: {t}"
+    );
+    assert!(!t.contains("smoke passed"), "{t}");
+    assert_eq!(
+        m.roster_text(),
+        endpoint_roster(true),
+        "the roster is untouched"
+    );
+    assert!(m.backups().is_empty());
+}
+
+#[test]
+fn model_web_off_fetches_nothing() {
+    let e = setup("web-off");
+    let m = models_case(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=pass",
+    );
+    let mut env = m.env();
+    env.push(("C3_MODEL_WEB", "off"));
+    let o = e.run(&["maintain", "--models"], &env);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(!m.http_log.exists(), "no public source was requested");
+    assert!(!t.contains("qwen4-max"), "no catalog candidate: {t}");
+    assert_eq!(m.roster_text(), endpoint_roster(false));
+    // and C3_MAINTAIN_MODELS=off on a full pass fetches nothing either
+    let mut env = m.env();
+    env.retain(|(k, _)| *k != "C3_MAINTAIN_MODELS");
+    env.push(("C3_MAINTAIN_MODELS", "off"));
+    env.push(("C3_MAINTAIN_SKIP", "codex,grok,kimi,agy,muse,claude"));
+    let o = e.run(&["maintain", "--run", "--dry-run"], &env);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(!m.http_log.exists(), "the model step off: no fetch");
+}
+
+#[test]
+fn models_dry_run_edits_nothing() {
+    let e = setup("web-dry");
+    let m = models_case(
+        &e,
+        &endpoint_roster(false),
+        "alibaba-claude::qwen4-max=pass",
+    );
+    let o = e.run(&["maintain", "--models", "--dry-run"], &m.env());
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("qwen3.8-max -> qwen4-max (dry-run: would smoke and seat)"),
+        "the dry run says what it would do: {t}"
+    );
+    assert!(t.contains("new in the family: qwen4-coder"), "{t}");
+    assert!(m.http_log.exists(), "the dry run still collects");
+    assert_eq!(
+        m.roster_text(),
+        endpoint_roster(false),
+        "the roster is untouched"
+    );
+    assert!(m.backups().is_empty());
+    assert!(!e.state_path().exists(), "a dry run writes no state");
+    assert!(e.mnt_log().is_empty(), "no engine CLI was run");
+}
+
 // ------------------------------------------------------------------ no spawn under test mode
 
 #[test]

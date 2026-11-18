@@ -88,6 +88,12 @@ pub trait Env {
         timeout: Duration,
         follow_redirects: bool,
     ) -> Result<(u16, String), String>;
+
+    /// Whether this is the production [`SystemEnv`] (the test-mode routing of the public model
+    /// sources applies to it only; the unit-test fakes answer for themselves).
+    fn is_system(&self) -> bool {
+        false
+    }
 }
 
 /// The production environment: a real `std::process::Command` (host markers scrubbed from the
@@ -96,6 +102,10 @@ pub trait Env {
 pub struct SystemEnv;
 
 impl Env for SystemEnv {
+    fn is_system(&self) -> bool {
+        true
+    }
+
     fn run(
         &self,
         program: &str,

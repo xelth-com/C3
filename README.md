@@ -561,18 +561,41 @@ its one-line report.
   return a random token from a file. codex updates through npm, grok through `grok update`, kimi
   through the vendor installer; agy is report-only; muse and claude update themselves and are only
   recorded. An engine with a live run or process is skipped and retried the next day.
-- **Models.** New model ids are announced. A seated id is replaced only by a successor with the
-  same prefix and suffix, the same major and a higher minor, after it passed the smoke, and the
-  roster is backed up first (`.bak-maintain-<date>`). A protected or on-request roster entry is
-  never smoked or edited.
+- **Models.** The ids come from the engines' own lists (`grok models`, `agy models`), from each
+  Anthropic-compatible endpoint's `/v1/models` (sent with that endpoint's key), and from public
+  catalogs. A seated id is replaced only by a successor with the same prefix and suffix and a higher
+  version — a higher major included (`qwen3.8-max` -> `qwen4-max`, `glm-5.3` -> `glm-6`; an id
+  without a minor counts as `.0`) — and only after the smoke passed on that entry's own plan; the
+  roster is backed up first (`.bak-maintain-<date>`) and only that entry's `model` is edited. A
+  protected or on-request roster entry is never smoked or edited: its successor is only announced.
+- **Public catalogs.** Once a week (inside the pass) or on request (`--models`), C3 reads
+  `https://openrouter.ai/api/v1/models` with a plain GET that carries **no key** (https only,
+  redirects only within the same host, a 15 s timeout, at most 4 MB and 5000 ids). Ids are
+  `<vendor>/<model>`; a `:variant` (`:free`, `:batch`) is skipped and every id must have the strict
+  model-id shape. A catalog id is only a candidate: for any active, unprotected entry — also one
+  whose endpoint gives no list, like Alibaba, Xiaomi MiMo or BytePlus — the model part
+  (`qwen4-max`) is smoked on the entry's own plan; a failing one is reported ("seen in the catalog,
+  not served by this plan") and tried again on a later pass, one smoke per entry and pass. The pass
+  also announces "new in the family": a catalog id not seen before with the prefix of a seated id,
+  a version not lower and another suffix (seated `gemini-3.8-flash-high`, catalog
+  `gemini-4-hydrogen`) — at most 5 per entry, and on a catalog's first collection only ids created
+  within the last 30 days. The SessionStart line stays short; `c3 maintain` prints the full list.
+  `"model_catalogs": ["<https url>", ...]` in the C3 config replaces the default catalog list;
+  `"model_pages": [{"name": "<label>", "url": "<https url>", "pattern": "<regex with one capture
+  group>"}]` adds vendor pages whose every capture is a candidate id. The ids of these public
+  sources are published names, so telemetry sends such a model as itself instead of `other` (an
+  endpoint's own list is never treated so).
 - **By hand.** `c3 maintain` prints the report; `c3 maintain --run [--engine <name>] [--dry-run]
-  [--force]` runs a pass now; `c3 maintain --smoke [--engine <name>] [--dry-run]` runs only the
-  smoke.
+  [--force]` runs a pass now; `c3 maintain --models [--dry-run]` runs only the model step (no CLI is
+  checked or updated, the weekly schedule does not move; with `--dry-run` nothing is smoked or
+  edited); `c3 maintain --smoke [--engine <name>] [--dry-run]` runs only the smoke.
 - **Switches (default ON).** `C3_MAINTAIN=off`, or `"maintain": false` in
   `<codex home>/c3/config.json`, turns the automatic pass off. `C3_MAINTAIN_DAYS` (7) sets the
   interval; `C3_MAINTAIN_MIN_AGE_DAYS` (3) holds a version released more recently than that when
   its date is known; `C3_MAINTAIN_SKIP=kimi,grok` names engines never touched;
-  `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off`;
+  `C3_MAINTAIN_MODELS` is `swap` (default), `announce` or `off` (`off` fetches nothing; an
+  explicit `--models` then only announces); `C3_MODEL_WEB=off`, or `"model_web": false`, turns
+  the public catalogs and pages off;
   `C3_MAINTAIN_SMOKE_<ENGINE>=provider::model` names the smoke reviewer of an engine. State lives
   in `<codex home>/c3/maintain/`.
 
@@ -585,9 +608,9 @@ both reports this (`c3 doctor`) and repairs it in place.
   id (`claude-opus-4-8`) is rewritten to the floating alias (`opus`) so the worker follows the
   newest model; a pin that names no known family is reported but left for a human. The
   repository-root `AGENTS.md` (the OpenCode agent file eckSnapshot writes) follows the roster: when
-  one of the active roster entries is the successor of its `model:` (same family, same major, a
-  higher minor), its line is rewritten to that id (keeping the original casing, `GLM-5.3` ->
-  `GLM-5.4`) — and because `c3 maintain` only seats a successor after its smoke passed, `AGENTS.md`
+  one of the active roster entries is the successor of its `model:` (same family and suffix, a
+  higher version), its line is rewritten to that id (keeping the original casing, `GLM-5.3` ->
+  `GLM-5.4`, `Qwen3.8-Max` -> `Qwen4-Max`) — and because `c3 maintain` only seats a successor after its smoke passed, `AGENTS.md`
   never runs ahead of a tested id. Each edit changes one line and nothing else, and is **left
   uncommitted** for `c3 finish`.
 - **When.** `c3 doctor --fix` applies the repairs and then reports what is left; the SessionStart

@@ -293,6 +293,33 @@ pub(crate) fn vendor_by_host(base_url: &str) -> Option<&'static Vendor> {
 /// lower-casing both (and stripping a trailing `[1m]`), as the TABLE spells it; `other` for a
 /// model outside the list or without a vendor; `unknown` for no model at all.
 pub(crate) fn model_token(vendor: Option<&Vendor>, model: &str) -> String {
+    model_token_with(vendor, model, crate::maintain::models::published_ids())
+}
+
+/// [`model_token`] over an explicit set of PUBLISHED names (the ids `c3 maintain` collected from a
+/// public catalog or page - [`crate::maintain::models::published_from`]): a model outside the
+/// vendor's closed list that is such a published name is sent as itself, since a name a public
+/// catalog lists is no private endpoint's secret. An endpoint's own list is never in the set (it
+/// may be private), and with no maintain state the set is empty - the closed lists alone, as before.
+pub(crate) fn model_token_with(
+    vendor: Option<&Vendor>,
+    model: &str,
+    published: &std::collections::HashSet<String>,
+) -> String {
+    let closed = model_token_closed(vendor, model);
+    if closed != "other" {
+        return closed;
+    }
+    let m = model.trim().to_lowercase();
+    let m = m.strip_suffix("[1m]").unwrap_or(&m);
+    if !m.is_empty() && crate::maintain::version::valid_model_id(m) && published.contains(m) {
+        return m.to_string();
+    }
+    closed
+}
+
+/// The closed-list part of [`model_token`].
+fn model_token_closed(vendor: Option<&Vendor>, model: &str) -> String {
     let m = model.trim().to_lowercase();
     if m.is_empty() {
         return "unknown".to_string();
@@ -1126,6 +1153,45 @@ mod tests {
         );
         assert_eq!(model_token(anthropic, "glm-5.3"), "other");
         assert_eq!(model_token(anthropic, "claude-nonexistent-9"), "other");
+    }
+
+    #[test]
+    fn a_published_id_of_the_maintain_state_is_sent_as_itself() {
+        use crate::maintain::models::{published_from, ModelsState};
+        // the maintain state: a public catalog lists qwen4-max; an endpoint's OWN list (possibly
+        // private) holds glm-9-secret; a page lists glm-6
+        let state: ModelsState = serde_json::from_str(
+            r#"{"sources":[
+                {"source":"web:openrouter.ai","ids":["qwen/qwen4-max","google/gemini-4-hydrogen"]},
+                {"source":"endpoint:api.z.ai","ids":["glm-9-secret"]},
+                {"source":"page:zai-docs","ids":["glm-6"]}
+            ]}"#,
+        )
+        .unwrap();
+        let published = published_from(&state);
+        let alibaba = vendor_of_class("alibaba");
+        let zai = vendor_of_class("zai");
+        // in a public source -> sent as itself (stripped of the vendor, or as the catalog spells it)
+        assert_eq!(
+            model_token_with(alibaba, "qwen4-max", &published),
+            "qwen4-max"
+        );
+        assert_eq!(
+            model_token_with(alibaba, "QWEN4-MAX[1m]", &published),
+            "qwen4-max"
+        );
+        assert_eq!(model_token_with(zai, "glm-6", &published), "glm-6");
+        assert_eq!(
+            model_token_with(vendor_of_class("google"), "gemini-4-hydrogen", &published),
+            "gemini-4-hydrogen"
+        );
+        // only in an endpoint's own list -> still withheld
+        assert_eq!(model_token_with(zai, "glm-9-secret", &published), "other");
+        // the closed lists still answer first, and no state means today's behaviour
+        assert_eq!(model_token_with(zai, "glm-5.3", &published), "glm-5.3");
+        let empty = published_from(&ModelsState::default());
+        assert_eq!(model_token_with(alibaba, "qwen4-max", &empty), "other");
+        assert_eq!(model_token_with(zai, "  ", &published), "unknown");
     }
 
     #[test]

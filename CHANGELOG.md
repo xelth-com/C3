@@ -51,6 +51,28 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   branch, no turn ends with an unrecorded branch or worktree, the opener closes, the start folder
   stays on the default branch and clean, guests leave no uncommitted edits, worktree removal never
   `--force`s over a link, a parked privacy/security WIP is listed in the tech-debt file.
+- **`c3 maintain` reads public model catalogs.** Inside the weekly pass (or on request) the model
+  step also fetches `https://openrouter.ai/api/v1/models` with a plain keyless GET (https,
+  same-host redirects only, 15 s, 4 MB / 5000 ids at most; `:variant` ids skipped, every id through
+  the strict model-id shape) and records it as `web:<host>`. A catalog id is a successor CANDIDATE
+  for every active, unprotected entry - also an endpoint entry whose endpoint gives no
+  `/v1/models` (Alibaba, Xiaomi MiMo, BytePlus) - and is seated only after the smoke passed on that
+  entry's own plan; a failing one is reported "seen in the catalog, not served by this plan" and
+  tried again on a later pass. Switches: `C3_MODEL_WEB=off` or `"model_web": false` (default ON;
+  `C3_MAINTAIN_MODELS=off` fetches nothing either); `"model_catalogs"` replaces the default list;
+  `"model_pages": [{"name","url","pattern"}]` adds vendor pages read with a one-group regex
+  (`page:<name>`).
+- **`c3 maintain` announces what is new for the roster.** The pass report names a seated successor
+  (`model alibaba-claude :: qwen3.8-max -> qwen4-max, smoke passed`), a successor not seated and
+  why (protected / on-request entry, smoke failed, mode `announce`), and "new in the family": a
+  catalog id not seen before with a seated id's prefix, a version not lower and another suffix
+  (seated `gemini-3.8-flash-high`, catalog `gemini-4-hydrogen`) - at most 5 per entry, and on a
+  catalog's first collection only ids created in the last 30 days. The hook line stays short; the
+  full list is stored and printed by `c3 maintain`.
+- **`c3 maintain --models [--dry-run]`** runs only the model step now: the engine, endpoint and
+  public lists, the announcements and the swaps per mode - no CLI checked or updated, `next_due`
+  and the engine records untouched. `--dry-run` collects and says what it would announce and swap,
+  with no smoke, no roster edit and no state written.
 
 ### Changed
 
@@ -60,6 +82,23 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   the published shape `claude-(fable|opus|sonnet|haiku)-<digits>[-<digits>]` (case-sensitive, an
   optional `[1m]`). A private endpoint's model name, which does not match the shape, is still
   withheld from telemetry.
+- **`c3 maintain`: a successor may cross a major version.** `version::successor` keeps the same
+  prefix and suffix but now accepts a higher major too and picks the highest version above the
+  seated one; an id without a minor counts as `.0` (`qwen4-max` is 4.0, `gpt-6-astra` 6.0,
+  `glm-6` 6.0), so `qwen3.8-max -> qwen4-max` and `glm-5.3 -> glm-6` are swaps. Everything else of
+  the swap is unchanged (smoke on the entry's own plan first, roster backup, only that `model`
+  edited, protected / on-request entries never smoked or edited). The repository `AGENTS.md`
+  follows the roster across a major the same way (`Qwen3.8-Max` -> `Qwen4-Max`).
+- **Telemetry: a published model id is sent as itself.** A model outside its vendor's closed list
+  that the maintain state holds for a PUBLIC source (a catalog or a page - never an endpoint's own
+  list, which may be private) is sent by name instead of `other`. Without a maintain state the
+  closed lists alone decide, as before.
+- **A newer member of a declared model family passes the effort check.** A codex custom provider
+  or the muse engine refused any id outside the host's caps-v1 list before launch ("no effort
+  vocabulary declared for model ..."). An id with the same prefix and suffix as a listed one and a
+  version not lower (`qwen4-max` beside `qwen3.8-max`, `glm-6` beside `glm-5.3`,
+  `muse-spark-2.0` beside `muse-spark-1.3`) is now accepted with the host's vocabulary, so a
+  successor `c3 maintain` found can be smoked; any other unlisted id is still refused.
 
 ### Fixed
 

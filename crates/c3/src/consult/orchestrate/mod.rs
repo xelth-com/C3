@@ -484,6 +484,31 @@ fn vocabulary_map(vocab: &str, requested: &str) -> Option<(&'static str, &'stati
     Some((label, sent))
 }
 
+/// Whether a model is covered by a host's declared model list: listed, or a NEWER member of a
+/// listed family - the same prefix and suffix as a listed id ([`crate::maintain::version`]'s split:
+/// `qwen3.8-max` -> `qwen` / `-max`) and a version not lower than it (`qwen4-max` on the alibaba
+/// host, `glm-6` on z.ai, `glm-5.4-flash` beside `glm-5.3-flash`). The effort vocabulary is the
+/// host's, not the model's, so a vendor's next release of a listed family maps the same way; an
+/// id of another shape is still refused.
+fn model_declared(list: &[&str], model: &str) -> bool {
+    use crate::maintain::version::{parse_model_id, valid_model_id};
+    if list.contains(&model) {
+        return true;
+    }
+    if !valid_model_id(model) {
+        return false;
+    }
+    let Some(m) = parse_model_id(model) else {
+        return false;
+    };
+    !m.prefix.is_empty()
+        && list.iter().any(|l| {
+            parse_model_id(l).is_some_and(|p| {
+                p.prefix == m.prefix && p.suffix == m.suffix && m.version() >= p.version()
+            })
+        })
+}
+
 fn effort_plan(id: &ReviewerIdentity, requested: &str, native: &str) -> EffortPlan {
     let caps_v = c3_core::effort::CAPS_VERSION.to_string();
     if !native.is_empty() {
@@ -536,7 +561,7 @@ fn effort_plan(id: &ReviewerIdentity, requested: &str, native: &str) -> EffortPl
     }
     // Model-list check.
     if let Models::List(list) = cap.models {
-        if id.model_source == "unknown" || !list.contains(&id.model.as_str()) {
+        if id.model_source == "unknown" || !model_declared(list, &id.model) {
             return EffortPlan {
                 requested: requested.to_string(),
                 sent: None,
@@ -6609,6 +6634,36 @@ mod engine_tests {
         assert_eq!(engine_kind_of("agy"), EngineKind::Agy);
         assert_eq!(engine_kind_of("muse"), EngineKind::Muse);
         assert_eq!(engine_kind_of("codex"), EngineKind::Codex);
+    }
+}
+
+#[cfg(test)]
+mod model_declared_tests {
+    use super::model_declared;
+
+    #[test]
+    fn a_newer_member_of_a_listed_family_is_declared() {
+        let zai = ["glm-5.3", "glm-5.3-flash", "glm-5-turbo", "glm-4.5-air"];
+        assert!(model_declared(&zai, "glm-5.3"));
+        assert!(model_declared(&zai, "glm-6"));
+        assert!(model_declared(&zai, "glm-5.4-flash"));
+        assert!(model_declared(&zai, "glm-6-turbo"));
+        // another suffix, an older version, another family, a hostile shape: still refused
+        assert!(!model_declared(&zai, "glm-9-secret"));
+        assert!(!model_declared(&zai, "glm-4.4-air"));
+        assert!(!model_declared(&zai, "qwen4-max"));
+        assert!(!model_declared(&zai, "glm-6\"x"));
+        let alibaba = ["qwen3.8-max", "qwen3.8-flash"];
+        assert!(model_declared(&alibaba, "qwen4-max"));
+        assert!(!model_declared(&alibaba, "qwen4-max-2026"));
+        let muse = [
+            "muse-spark-1.3",
+            "muse-spark-1.3-contributor",
+            "muse-wonder-1.0",
+        ];
+        assert!(model_declared(&muse, "muse-spark-2.0"));
+        assert!(model_declared(&muse, "muse-wonder-1.1"));
+        assert!(!model_declared(&muse, "muse-other-9"));
     }
 }
 

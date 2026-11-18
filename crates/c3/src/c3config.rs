@@ -46,7 +46,28 @@ pub struct C3Config {
     /// The SessionStart branch/worktree check (`c3 branches`); default ON, `"branch_check": false`
     /// off.
     pub branch_check: bool,
+    /// The public model sources of `c3 maintain`'s model step (catalogs and pages, a keyless GET);
+    /// default ON, `"model_web": false` off.
+    pub model_web: bool,
+    /// `"model_catalogs"`: the catalog URLs (https) that replace the default list; `None` = default.
+    pub model_catalogs: Option<Vec<String>>,
+    /// `"model_pages"`: extra public pages, each read with a one-group regex.
+    pub model_pages: Vec<ModelPageConfig>,
 }
+
+/// One validated `"model_pages"` entry: a slug label, an https URL and a regex with exactly one
+/// capture group (compiled at validation time).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelPageConfig {
+    pub name: String,
+    pub url: String,
+    pub pattern: String,
+}
+
+/// The most catalogs / pages a configuration may declare, and the longest page pattern.
+const MAX_MODEL_CATALOGS: usize = 8;
+const MAX_MODEL_PAGES: usize = 16;
+const MAX_PAGE_PATTERN: usize = 500;
 
 impl Default for C3Config {
     fn default() -> Self {
@@ -58,6 +79,9 @@ impl Default for C3Config {
             maintain: true,
             repo_models: true,
             branch_check: true,
+            model_web: true,
+            model_catalogs: None,
+            model_pages: Vec::new(),
         }
     }
 }
@@ -216,6 +240,9 @@ fn validate(root: &Value) -> Result<C3Config, String> {
             "maintain",
             "repo_models",
             "branch_check",
+            "model_web",
+            "model_catalogs",
+            "model_pages",
         ],
         "config",
     )?;
@@ -255,6 +282,19 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("c3 config: branch_check must be true or false".to_string()),
     };
+    let model_web = match obj.get("model_web") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("c3 config: model_web must be true or false".to_string()),
+    };
+    let model_catalogs = match obj.get("model_catalogs") {
+        None => None,
+        Some(v) => Some(validate_model_catalogs(v)?),
+    };
+    let model_pages = match obj.get("model_pages") {
+        None => Vec::new(),
+        Some(v) => validate_model_pages(v)?,
+    };
 
     let mut cfg = C3Config {
         update_check,
@@ -262,6 +302,9 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         maintain,
         repo_models,
         branch_check,
+        model_web,
+        model_catalogs,
+        model_pages,
         ..Default::default()
     };
     let Some(index) = obj.get("index") else {
@@ -279,6 +322,108 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         cfg.embedder = Some(validate_embedder(embedder)?);
     }
     Ok(cfg)
+}
+
+/// An https URL with a host and no userinfo (a public source is fetched keyless; a URL carrying a
+/// username or password is refused). The value is never echoed.
+fn is_public_https_url(s: &str) -> bool {
+    match url::Url::parse(s) {
+        Ok(u) => {
+            u.scheme() == "https"
+                && u.host_str().is_some_and(|h| !h.is_empty())
+                && u.username().is_empty()
+                && u.password().is_none()
+        }
+        Err(_) => false,
+    }
+}
+
+/// `"model_catalogs"`: a non-empty array of at most [`MAX_MODEL_CATALOGS`] https URLs.
+fn validate_model_catalogs(v: &Value) -> Result<Vec<String>, String> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| "c3 config: model_catalogs must be an array of https URLs".to_string())?;
+    if arr.is_empty() || arr.len() > MAX_MODEL_CATALOGS {
+        return Err(format!(
+            "c3 config: model_catalogs must list 1 to {MAX_MODEL_CATALOGS} https URLs"
+        ));
+    }
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr {
+        match item.as_str() {
+            Some(s) if is_public_https_url(s) => out.push(s.to_string()),
+            _ => {
+                return Err(
+                    "c3 config: each model_catalogs entry must be an https URL without credentials"
+                        .to_string(),
+                )
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// `"model_pages"`: an array of at most [`MAX_MODEL_PAGES`] `{name, url, pattern}` objects - a
+/// unique slug name, an https URL, a regex with exactly ONE capture group.
+fn validate_model_pages(v: &Value) -> Result<Vec<ModelPageConfig>, String> {
+    let arr = v
+        .as_array()
+        .ok_or_else(|| "c3 config: model_pages must be an array".to_string())?;
+    if arr.len() > MAX_MODEL_PAGES {
+        return Err(format!(
+            "c3 config: at most {MAX_MODEL_PAGES} model_pages are allowed"
+        ));
+    }
+    let mut out: Vec<ModelPageConfig> = Vec::new();
+    for item in arr {
+        let o = item
+            .as_object()
+            .ok_or_else(|| "c3 config: each model_pages entry must be an object".to_string())?;
+        check_keys(o.keys(), &["name", "url", "pattern"], "a model page")?;
+        let name = match o.get("name").and_then(|v| v.as_str()) {
+            Some(s) if is_slug(s) => s.to_string(),
+            _ => {
+                return Err(
+                    "c3 config: each model page needs a name that is a slug ([a-z0-9] and '-')"
+                        .to_string(),
+                )
+            }
+        };
+        if out.iter().any(|p| p.name == name) {
+            return Err(format!("c3 config: two model pages share the name {name}"));
+        }
+        let url = match o.get("url").and_then(|v| v.as_str()) {
+            Some(s) if is_public_https_url(s) => s.to_string(),
+            _ => {
+                return Err(format!(
+                    "c3 config: model page {name} needs an https url without credentials"
+                ))
+            }
+        };
+        let pattern = match o.get("pattern").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() && s.len() <= MAX_PAGE_PATTERN => s.to_string(),
+            _ => {
+                return Err(format!(
+                    "c3 config: model page {name} needs a pattern of 1 to {MAX_PAGE_PATTERN} characters"
+                ))
+            }
+        };
+        match regex::Regex::new(&pattern) {
+            Ok(re) if re.captures_len() == 2 => {}
+            Ok(_) => {
+                return Err(format!(
+                    "c3 config: model page {name} pattern must have exactly one capture group"
+                ))
+            }
+            Err(_) => {
+                return Err(format!(
+                    "c3 config: model page {name} pattern is not a valid regex"
+                ))
+            }
+        }
+        out.push(ModelPageConfig { name, url, pattern });
+    }
+    Ok(out)
 }
 
 fn validate_peers(peers: &Value) -> Result<Vec<PeerConfig>, String> {
@@ -609,6 +754,76 @@ mod tests {
         let e = load_from(&p).unwrap_err();
         assert!(e.contains("cloud embedder is not supported"), "{e}");
         assert!(!e.contains("sk-leak"), "the url leaked: {e}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_model_web_keys() {
+        let d = scratch("modelweb");
+        // defaults: on, the default catalogs, no pages
+        let p = write(&d, r#"{"config_version":1}"#);
+        let cfg = load_from(&p).unwrap().unwrap();
+        assert!(cfg.model_web);
+        assert!(cfg.model_catalogs.is_none());
+        assert!(cfg.model_pages.is_empty());
+        // all three set
+        let p = write(
+            &d,
+            r#"{"config_version":1,"model_web":false,
+                "model_catalogs":["https://example.com/api/v1/models"],
+                "model_pages":[{"name":"zai-docs","url":"https://docs.z.ai/models","pattern":"<code>(glm-[^<]+)</code>"}]}"#,
+        );
+        let cfg = load_from(&p).unwrap().unwrap();
+        assert!(!cfg.model_web);
+        assert_eq!(
+            cfg.model_catalogs.as_deref(),
+            Some(&["https://example.com/api/v1/models".to_string()][..])
+        );
+        assert_eq!(cfg.model_pages.len(), 1);
+        assert_eq!(cfg.model_pages[0].name, "zai-docs");
+        // refusals: a non-bool switch, an http catalog, a catalog with credentials (not echoed),
+        // an empty list, a page with two groups / zero groups / a bad regex / an http url / an
+        // unknown key
+        for (body, want) in [
+            (
+                r#"{"config_version":1,"model_web":"no"}"#,
+                "model_web must be true or false",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":["http://example.com/m"]}"#,
+                "https URL",
+            ),
+            (
+                r#"{"config_version":1,"model_catalogs":["https://u:sk-secret@example.com/m"]}"#,
+                "https URL",
+            ),
+            (r#"{"config_version":1,"model_catalogs":[]}"#, "1 to 8"),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://x.io/","pattern":"(a)(b)"}]}"#,
+                "exactly one capture group",
+            ),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://x.io/","pattern":"ab"}]}"#,
+                "exactly one capture group",
+            ),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://x.io/","pattern":"(a"}]}"#,
+                "not a valid regex",
+            ),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"http://x.io/","pattern":"(a)"}]}"#,
+                "https url",
+            ),
+            (
+                r#"{"config_version":1,"model_pages":[{"name":"a","url":"https://x.io/","pattern":"(a)","key":"k"}]}"#,
+                "unknown key 'key'",
+            ),
+        ] {
+            let p = write(&d, body);
+            let e = load_from(&p).unwrap_err();
+            assert!(e.contains(want), "{body}: {e}");
+            assert!(!e.contains("sk-secret"), "a credential leaked: {e}");
+        }
         let _ = std::fs::remove_dir_all(&d);
     }
 

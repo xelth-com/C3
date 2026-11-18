@@ -102,9 +102,11 @@ pub fn valid_model_id(id: &str) -> bool {
 
 // --------------------------------------------------------------------------- the model successor rule
 
-/// A model id split into a prefix, a dotted `major.minor` version and a suffix, for the successor
-/// rule. `glm-5.3-flash` → (`glm-`, 5, 3, `-flash`); `kimi-code/k3.1-pro` → (`kimi-code/k`, 3, 1,
-/// `-pro`); `qwen3.8-max` → (`qwen`, 3, 8, `-max`); `grok-4.7` → (`grok-`, 4, 7, ``).
+/// A model id split into a prefix, a `major[.minor]` version and a suffix, for the successor rule.
+/// `glm-5.3-flash` → (`glm-`, 5, 3, `-flash`); `kimi-code/k3.1-pro` → (`kimi-code/k`, 3, 1,
+/// `-pro`); `qwen3.8-max` → (`qwen`, 3, 8, `-max`); `grok-4.7` → (`grok-`, 4, 7, ``). An id with no
+/// dotted version takes its FIRST digit run as the major and 0 as the minor: `qwen4-max` → (`qwen`,
+/// 4, 0, `-max`); `gpt-6-astra` → (`gpt-`, 6, 0, `-astra`); `glm-6` → (`glm-`, 6, 0, ``).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelId {
     pub prefix: String,
@@ -113,23 +115,46 @@ pub struct ModelId {
     pub suffix: String,
 }
 
+impl ModelId {
+    /// The version as an ordered pair (`qwen4-max` is `(4, 0)`, so `4 > 3.8`).
+    pub fn version(&self) -> (u64, u64) {
+        (self.major, self.minor)
+    }
+}
+
 /// Parse a model id for the successor rule. The version is the FIRST `<digits>.<digits>` run in the
-/// id (a single `major.minor`). `None` when the id carries no such dotted version (a family with no
-/// dotted version is only ever announced, never swapped) or when the id carries a date/build stamp
-/// ([`is_stamped`]), which is never swapped — so a candidate carrying such a stamp is never a
-/// successor either.
+/// id (a single `major.minor`); an id with no dotted version takes its FIRST digit run as the major
+/// (minor 0). `None` when the id carries no digit at all (a family with no version is only ever
+/// announced, never swapped) or when the id carries a date/build stamp ([`is_stamped`]), which is
+/// never swapped — so a candidate carrying such a stamp is never a successor either.
 pub fn parse_model_id(id: &str) -> Option<ModelId> {
     if is_stamped(id) {
         return None;
     }
     let chars: Vec<char> = id.chars().collect();
-    let (start, end, major, minor) = first_dotted_version(&chars)?;
+    let (start, end, major, minor) =
+        first_dotted_version(&chars).or_else(|| first_bare_version(&chars))?;
     Some(ModelId {
         prefix: chars[..start].iter().collect(),
         major,
         minor,
         suffix: chars[end..].iter().collect(),
     })
+}
+
+/// The FIRST digit run of `chars` as `(start, end, major, 0)`, for an id with no dotted version. A
+/// run of four or more digits is a year/build number, not a model version (`None`).
+fn first_bare_version(chars: &[char]) -> Option<(usize, usize, u64, u64)> {
+    let start = chars.iter().position(|c| c.is_ascii_digit())?;
+    let mut end = start;
+    while end < chars.len() && chars[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end - start >= 4 {
+        return None;
+    }
+    let major: u64 = chars[start..end].iter().collect::<String>().parse().ok()?;
+    Some((start, end, major, 0))
 }
 
 /// The FIRST `<digits>.<digits>` run in `chars` as `(start, end, major, minor)` (byte-index-free:
@@ -171,10 +196,25 @@ pub fn is_stamped(id: &str) -> bool {
     let chars: Vec<char> = id.chars().collect();
     match first_dotted_version(&chars) {
         Some((_, end, _, _)) => remainder_is_stampish(&chars[end..]),
-        None => match id.rsplit(['-', '/']).next() {
-            Some(seg) => seg.len() >= 3 && seg.bytes().all(|b| b.is_ascii_digit()),
-            None => false,
-        },
+        None => {
+            let last_seg_stamp = match id.rsplit(['-', '/']).next() {
+                Some(seg) => seg.len() >= 3 && seg.bytes().all(|b| b.is_ascii_digit()),
+                None => false,
+            };
+            // with no dotted version the version is the first digit run: a 4+-digit run after it
+            // (`gpt-6-2026-preview`) is a stamp too
+            let later_stamp = match chars.iter().position(|c| c.is_ascii_digit()) {
+                Some(start) => {
+                    let mut end = start;
+                    while end < chars.len() && chars[end].is_ascii_digit() {
+                        end += 1;
+                    }
+                    remainder_is_stampish(&chars[end..])
+                }
+                None => false,
+            };
+            last_seg_stamp || later_stamp
+        }
     }
 }
 
@@ -202,14 +242,15 @@ fn remainder_is_stampish(rest: &[char]) -> bool {
     false
 }
 
-/// The successor of `seated` among `candidates` from the SAME source under mode `swap`: the
-/// candidate with the identical prefix and suffix, the SAME major and a strictly higher minor; the
-/// highest minor wins. `None` when the seated id cannot be split ([`parse_model_id`]) or no
-/// candidate qualifies (a new major or a new family is only announced, never returned here). A
-/// candidate that is itself stamped or unparsable is skipped.
+/// The successor of `seated` among `candidates` under mode `swap`: the candidate with the identical
+/// prefix and suffix and a strictly higher version - a higher major included (`qwen3.8-max` ->
+/// `qwen4-max`, `glm-5.3` -> `glm-6`); the highest version wins (on a tie the first listed). `None`
+/// when the seated id cannot be split ([`parse_model_id`]) or no candidate qualifies (a different
+/// suffix or prefix is a new family member, only announced, never returned here). A candidate that
+/// is itself stamped or unparsable is skipped.
 pub fn successor<'a>(seated: &str, candidates: &'a [String]) -> Option<&'a str> {
     let base = parse_model_id(seated)?;
-    let mut best: Option<(&'a str, u64)> = None;
+    let mut best: Option<(&'a str, (u64, u64))> = None;
     for cand in candidates {
         if cand == seated {
             continue;
@@ -219,11 +260,10 @@ pub fn successor<'a>(seated: &str, candidates: &'a [String]) -> Option<&'a str> 
         };
         if c.prefix == base.prefix
             && c.suffix == base.suffix
-            && c.major == base.major
-            && c.minor > base.minor
-            && best.map(|(_, m)| c.minor > m).unwrap_or(true)
+            && c.version() > base.version()
+            && best.map(|(_, v)| c.version() > v).unwrap_or(true)
         {
-            best = Some((cand.as_str(), c.minor));
+            best = Some((cand.as_str(), c.version()));
         }
     }
     best.map(|(id, _)| id)
@@ -369,27 +409,69 @@ mod tests {
     }
 
     #[test]
-    fn successor_same_major_higher_minor_wins() {
+    fn successor_highest_version_wins_across_majors() {
         let cands = vec![
             "glm-5.3-flash".to_string(),
             "glm-5.4-flash".to_string(),
             "glm-5.6-flash".to_string(),
             "glm-5.4-pro".to_string(),   // different suffix
-            "glm-6.0-flash".to_string(), // major jump: announced, not a successor
             "glm-5.2-flash".to_string(), // lower: not a successor
         ];
         assert_eq!(successor("glm-5.3-flash", &cands), Some("glm-5.6-flash"));
+        // a higher major is a successor too, and the highest version wins
+        let mut cands = cands;
+        cands.push("glm-6.0-flash".to_string());
+        cands.push("glm-6-flash".to_string()); // the same version spelled without a minor: a tie
+        assert_eq!(successor("glm-5.3-flash", &cands), Some("glm-6.0-flash"));
     }
 
     #[test]
-    fn successor_rejects_major_jump_and_new_family() {
-        // only a major jump available → no successor
-        let cands = vec!["glm-6.0-flash".to_string()];
-        assert_eq!(successor("glm-5.3-flash", &cands), None);
+    fn ids_without_a_minor_parse_as_major_dot_zero() {
+        let v = |id: &str| parse_model_id(id).map(|m| (m.prefix, m.major, m.minor, m.suffix));
+        assert_eq!(v("qwen4-max"), Some(("qwen".into(), 4, 0, "-max".into())));
+        assert_eq!(
+            v("gpt-6-astra"),
+            Some(("gpt-".into(), 6, 0, "-astra".into()))
+        );
+        assert_eq!(v("glm-6"), Some(("glm-".into(), 6, 0, "".into())));
+        assert_eq!(v("no-digits-here"), None);
+        // a year-like first number or a later stamp is no version
+        assert_eq!(v("model-2026"), None);
+        assert!(is_stamped("gpt-6-2026-preview"));
+        assert!(!is_stamped("qwen4-max"));
+    }
+
+    #[test]
+    fn successor_across_a_major_version() {
+        // today's case: qwen3.8-max -> qwen4-max (a major without a minor)
+        assert_eq!(
+            successor("qwen3.8-max", &["qwen4-max".into(), "qwen4-plus".into()]),
+            Some("qwen4-max")
+        );
+        assert_eq!(successor("glm-5.3", &["glm-6".into()]), Some("glm-6"));
+        assert_eq!(
+            successor(
+                "gpt-6-astra",
+                &["gpt-6.1-astra".into(), "gpt-7-astra".into()]
+            ),
+            Some("gpt-7-astra")
+        );
+        // the same version is not higher
+        assert_eq!(successor("glm-6", &["glm-6.0".into()]), None);
+    }
+
+    #[test]
+    fn successor_rejects_a_different_suffix_or_family() {
+        // a different suffix (a new family member) is never a successor
+        assert_eq!(
+            successor("gemini-3.8-flash-high", &["gemini-4-hydrogen".into()]),
+            None
+        );
         // a different family (different prefix) → no successor
         let cands = vec!["qwen4.0-flash".to_string()];
         assert_eq!(successor("glm-5.3-flash", &cands), None);
-        // no dotted version in the seated id → unswappable
+        // claude-sonnet-4-6 splits as (claude-sonnet-, 4, -6): another trailing number is another
+        // suffix, never a successor
         assert_eq!(
             successor("claude-sonnet-4-6", &["claude-sonnet-4-7".into()]),
             None
