@@ -78,6 +78,8 @@ enum Commands {
     Init(c3::cli::init::InitArgs),
     /// Report stubs, c3 mcp registration, eck leftovers and the snapshot folder size.
     Doctor(c3::cli::doctor::DoctorArgs),
+    /// List branches and worktrees with their recorded state; `--set` / `--clear` a state.
+    Branches(c3::cli::branches::BranchesArgs),
     /// Snapshot an EXTERNAL directory into `.eck/scouts/` for context.
     Scout(c3::cli::scout::ScoutArgs),
     /// Write the full contents of matching files of THIS repo into `.eck/scouts/`.
@@ -155,6 +157,7 @@ fn main() {
         Some(Commands::Manifest(a)) => c3::cli::manifest::run(a),
         Some(Commands::Init(a)) => c3::cli::init::run(a),
         Some(Commands::Doctor(a)) => c3::cli::doctor::run(a),
+        Some(Commands::Branches(a)) => c3::cli::branches::run(a),
         Some(Commands::Scout(a)) => c3::cli::scout::run(a),
         Some(Commands::Fetch(a)) => c3::cli::fetch::run(a),
         Some(Commands::Update(a)) => c3::cli::update::run(a),

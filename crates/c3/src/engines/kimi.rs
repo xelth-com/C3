@@ -166,12 +166,16 @@ struct KimiWorktree {
     removed: bool,
 }
 
+/// The directory-name prefix of the throwaway worktree a kimi review runs in (under the system
+/// temp directory). `setup::branches` leaves such a worktree out of its "nobody owns this" count.
+pub const THROWAWAY_WORKTREE_PREFIX: &str = "c3-kimi-wt-";
+
 impl KimiWorktree {
     fn create(repo: &Path) -> Result<KimiWorktree, String> {
         let head = git_capture(repo, &["rev-parse", "HEAD"])?;
         let main_dirty = !git_capture(repo, &["status", "--porcelain"])?.is_empty();
         let run_id = uuid::Uuid::new_v4().simple().to_string();
-        let path = std::env::temp_dir().join(format!("c3-kimi-wt-{run_id}"));
+        let path = std::env::temp_dir().join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}"));
         let path_s = path.to_string_lossy().to_string();
         git_capture(repo, &["worktree", "add", "--detach", &path_s, "HEAD"])?;
         Ok(KimiWorktree {
@@ -205,10 +209,61 @@ impl KimiWorktree {
         }
         self.removed = true;
         let path_s = self.path.to_string_lossy().to_string();
+        // The reviewer can run commands in this worktree: a symlink or junction it left there
+        // (say a `node_modules` junction into the main checkout) must never be followed by the
+        // forced removal below. Unlink every link first, without descending into it.
+        unlink_links_inside(&self.path);
         let _ = git_capture(&self.repo, &["worktree", "remove", "--force", &path_s]);
         let _ = git_capture(&self.repo, &["worktree", "prune"]);
         // A belt-and-suspenders directory removal in case `worktree remove` left anything.
         let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+/// Remove every symlink and Windows junction INSIDE `root` without following it: the walk uses
+/// `symlink_metadata` (which reports a junction as a link too), removes a link itself
+/// (`remove_dir` for a directory link or junction, `remove_file` otherwise) and never descends into
+/// one. `root` itself is not touched. Errors are swallowed. Returns how many links were removed.
+pub(crate) fn unlink_links_inside(root: &Path) -> usize {
+    let mut removed = 0usize;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            let ft = meta.file_type();
+            if ft.is_symlink() {
+                if remove_link(&path, &ft).is_ok() {
+                    removed += 1;
+                }
+            } else if ft.is_dir() {
+                stack.push(path);
+            }
+        }
+    }
+    removed
+}
+
+/// Remove one link (never its target).
+fn remove_link(path: &Path, ft: &std::fs::FileType) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        // A junction carries the directory attribute and is reported as a directory symlink.
+        if ft.is_symlink_dir() {
+            return std::fs::remove_dir(path);
+        }
+        std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ft;
+        std::fs::remove_file(path)
     }
 }
 
@@ -1136,5 +1191,78 @@ mod tests {
             kimi_salvage(stream).as_deref(),
             Some("the post-tool answer")
         );
+    }
+
+    /// A scratch layout: `<base>/wt/sub/` (the worktree) and `<base>/outside/sentinel.txt`.
+    fn link_scratch(name: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let base = std::env::temp_dir().join(format!(
+            "c3-kimi-links-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let wt = base.join("wt");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(wt.join("sub")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("sentinel.txt"), "keep me\n").unwrap();
+        std::fs::write(wt.join("sub").join("own.txt"), "worktree file\n").unwrap();
+        (base, wt, outside)
+    }
+
+    fn assert_link_gone_and_sentinel_kept(base: &Path, wt: &Path, outside: &Path, link: &Path) {
+        assert!(
+            std::fs::symlink_metadata(link).is_err(),
+            "the link inside the worktree is still there"
+        );
+        assert!(
+            outside.join("sentinel.txt").exists(),
+            "the link's target was emptied"
+        );
+        // The worktree's own content is untouched by the unlink pass; the removal after it is safe.
+        assert!(wt.join("sub").join("own.txt").exists());
+        std::fs::remove_dir_all(wt).unwrap();
+        assert!(outside.join("sentinel.txt").exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    // Windows only: a junction is made with `mklink /J`, which exists only on Windows (and needs no
+    // privilege, unlike a symlink there). The symlink variant below covers the other platforms.
+    #[cfg(windows)]
+    #[test]
+    fn unlink_removes_a_junction_without_following_it() {
+        let (base, wt, outside) = link_scratch("junction");
+        let link = wt.join("sub").join("node_modules");
+        let ok = std::process::Command::new("cmd")
+            .args(["/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(ok, "mklink /J failed");
+        assert!(
+            link.join("sentinel.txt").exists(),
+            "the junction does not resolve"
+        );
+        assert_eq!(unlink_links_inside(&wt), 1);
+        assert_link_gone_and_sentinel_kept(&base, &wt, &outside, &link);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unlink_removes_a_symlink_without_following_it() {
+        let (base, wt, outside) = link_scratch("symlink");
+        let link = wt.join("sub").join("node_modules");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert!(
+            link.join("sentinel.txt").exists(),
+            "the symlink does not resolve"
+        );
+        assert_eq!(unlink_links_inside(&wt), 1);
+        assert_link_gone_and_sentinel_kept(&base, &wt, &outside, &link);
     }
 }

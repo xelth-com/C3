@@ -4,15 +4,18 @@
 //! `.mcp.json`; eck leftovers (an `eck-core` server in `.mcp.json` / `.codex/config.toml` /
 //! `opencode.json`, and any `.claude/rules/*.md` that still names an `eck_*` tool); any
 //! `.claude/agents/*.md` whose frontmatter pins a concrete model id instead of a floating
-//! alias; and the size and file count of `.eck/snapshots/`. Exit 0 when there is nothing to
-//! fix, 1 otherwise. The snapshot-folder size is diagnostic context only and never forces
-//! exit 1.
+//! alias; branches not merged and without a recorded state, and worktrees without one
+//! ([`crate::setup::branches`]); and the size and file count of `.eck/snapshots/`. Exit 0 when
+//! there is nothing to fix, 1 otherwise. The snapshot-folder size and the start folder's branch /
+//! uncommitted changes are diagnostic context only and never force exit 1.
 
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
 use c3_core::claude::{model_family, CLAUDE_MODEL_ALIASES};
+
+use crate::setup::branches::{self, BranchReport};
 
 /// The eck MCP tool names whose presence in a rule marks an unported project.
 const ECK_TOOL_NAMES: &[&str] = &["eck_finish_task", "eck_fail_task", "eck_manifest_edit"];
@@ -50,17 +53,22 @@ pub struct DoctorReport {
     pub snapshot_count: usize,
     /// Total bytes of those snapshot files.
     pub snapshot_bytes: u64,
+    /// Branches and worktrees (`c3 branches`, cheap scan); `None` outside a git repository.
+    pub branches: Option<BranchReport>,
 }
 
 impl DoctorReport {
     /// A clean workspace: no stubs left, `c3 mcp` registered, no eck leftovers, no agent file
-    /// pinning an old model. The snapshot folder size is informational and does not count.
+    /// pinning an old model, no unknown branch and no worktree without a recorded state. The
+    /// snapshot folder size and the start folder's branch / uncommitted changes are informational
+    /// and do not count.
     pub fn is_clean(&self) -> bool {
         self.stub_files.is_empty()
             && self.mcp_registered
             && self.eck_core_in.is_empty()
             && self.eck_rule_files.is_empty()
             && self.pinned_agents.is_empty()
+            && self.branches.as_ref().is_none_or(BranchReport::is_clean)
     }
 }
 
@@ -266,6 +274,9 @@ pub fn scan(repo_root: &Path) -> DoctorReport {
             }
         }
     }
+
+    // Branches and worktrees without a recorded state; the start folder (read-only, no cherry).
+    report.branches = branches::quick_scan(repo_root, true);
 
     report
 }

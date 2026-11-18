@@ -64,6 +64,13 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     if let Some(l) = crate::setup::repo_models::hook_line() {
         println!("{l}");
     }
+    // (branches) one line when a branch or worktree has no recorded state, or the start folder is
+    // not on the default branch. Default ON (`C3_BRANCH_CHECK=off` / `"branch_check": false`).
+    // Read-only and cheap (ancestry only, no `git cherry`), every error swallowed, nothing inside
+    // a C3 child or outside a git repository.
+    if let Some(l) = crate::setup::branches::hook_line() {
+        println!("{l}");
+    }
     0
 }
 

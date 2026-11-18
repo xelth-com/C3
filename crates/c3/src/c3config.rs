@@ -43,6 +43,9 @@ pub struct C3Config {
     /// Automatic in-place repair of a repository's agent model settings (the `c3 hook` action);
     /// default ON, `"repo_models": false` off.
     pub repo_models: bool,
+    /// The SessionStart branch/worktree check (`c3 branches`); default ON, `"branch_check": false`
+    /// off.
+    pub branch_check: bool,
 }
 
 impl Default for C3Config {
@@ -54,6 +57,7 @@ impl Default for C3Config {
             source_checkout: None,
             maintain: true,
             repo_models: true,
+            branch_check: true,
         }
     }
 }
@@ -211,6 +215,7 @@ fn validate(root: &Value) -> Result<C3Config, String> {
             "source_checkout",
             "maintain",
             "repo_models",
+            "branch_check",
         ],
         "config",
     )?;
@@ -245,12 +250,18 @@ fn validate(root: &Value) -> Result<C3Config, String> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("c3 config: repo_models must be true or false".to_string()),
     };
+    let branch_check = match obj.get("branch_check") {
+        None => true,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err("c3 config: branch_check must be true or false".to_string()),
+    };
 
     let mut cfg = C3Config {
         update_check,
         source_checkout,
         maintain,
         repo_models,
+        branch_check,
         ..Default::default()
     };
     let Some(index) = obj.get("index") else {

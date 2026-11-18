@@ -159,6 +159,30 @@ partial kept, and turns the reviewer's sub-agents off.
   default, carries outcome classes only — never task names, prompts, briefs, paths or keys — and
   `CODEX_CONSULT_TELEMETRY=off` switches it off.
 
+## Branches and worktrees
+
+Run `c3 branches` at the start and before finishing: it lists every branch and worktree with its
+recorded state, says when an unmerged branch's content is already on the default branch (the
+cherry-pick case), and shows the start folder. An **unknown** branch (not merged, no recorded
+state) is a finding to report, not background. `c3 doctor` counts unknown branches and worktrees
+as leftovers, the SessionStart line names them, and `c3 finish` notes them after its commit.
+
+- Integrate a worker's branch by merge (or rebase + fast-forward), not by cherry-pick; where a
+  cherry-pick cannot be avoided, the same step deletes the branch or records it as integrated
+  (`git merge -s ours <branch>`).
+- Every unmerged branch has a recorded state:
+  `c3 branches --set <branch> --state work|waits|parked --note "..."` (`waits`: the question that
+  was asked; `parked`: the condition for merging). It is stored as the branch description, shared
+  by every worktree, gone with `git branch -d`.
+- A turn does not end while a branch or worktree it created is neither integrated-and-removed nor
+  recorded. The session that opened a branch closes it; a hand-over names the branch, its state and
+  what is left.
+- The start folder stays on the default branch and clean; a session that finds it otherwise says
+  so first. A guest session never leaves an uncommitted edit in another project's folder.
+- Before removing a worktree, look for junctions/symlinks that point outside it; never `--force`
+  over a link.
+- A parked WIP that touches privacy or security is also listed in the tech-debt file.
+
 ## Worker-tier contract
 
 Pick the tier by what the task needs; the names stay, the models behind them change.

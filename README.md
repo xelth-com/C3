@@ -600,6 +600,37 @@ both reports this (`c3 doctor`) and repairs it in place.
   `<codex home>/c3/config.json`, turns the automatic hook refresh off (`c3 doctor --fix` is always
   explicit).
 
+## Branches and worktrees
+
+Branches integrated by cherry-pick look unmerged forever, and a branch's state usually lives only in
+one session's memory. C3 keeps the state in the repository and checks it.
+
+- **The record.** One line stored as the branch description (`git config branch.<name>.description`),
+  shared by every worktree and gone with `git branch -d`:
+  `c3: <state> | <owner> | <YYYY-MM-DD> | <text>`. Three states: `work` (in work; the owner names the
+  session or person), `waits` (finished, waits for the operator; the text is the question put to
+  him), `parked` (a WIP put aside; the text is the condition for merging it). A description that does
+  not start with `c3: ` is somebody's own note: it is kept, and the branch counts as unrecorded.
+- **`c3 branches`** lists every local branch but the default one, and every worktree other than the
+  default branch's: the recorded state, `merged` by ancestry or — when not — whether its content is
+  already on the default branch (`git cherry`; the cherry-pick case), commits ahead, the last commit
+  date and the worktree path. A branch is **unknown** when it is neither merged nor recorded. It also
+  shows the start folder (the primary worktree): its branch, how far it is behind the default
+  branch's upstream as the local refs know it (no fetch) and its uncommitted-change count. `--json`
+  gives the same data. `c3 branches --set <branch> --state work|waits|parked --note "<text>"
+  [--owner <name>]` records a state (the owner defaults to `CODEX_CONSULT_COORDINATOR`; `waits` and
+  `parked` need a note); `c3 branches --clear <branch>` removes it. Nothing is ever deleted or merged.
+- **The checks.** `c3 doctor` reports unknown branches and unrecorded worktrees as leftovers (exit 1)
+  and warns, without changing the exit code, when the start folder is off the default branch or
+  dirty. The SessionStart hook prints one line only when there is something to say (cheap: ancestry
+  only, no `git cherry`; read-only; silent inside a C3 child and outside a git repository).
+  `c3 finish` names unknown branches and worktrees after its commit and never refuses because of them.
+- **Switch (default ON).** `C3_BRANCH_CHECK=off`, or `"branch_check": false` in
+  `<codex home>/c3/config.json`, turns the hook line off (`c3 branches` and `c3 doctor` are explicit).
+- **C3's own throwaway worktree.** Before the `kimi` engine removes the worktree its reviewer ran in,
+  every symlink and junction inside it is unlinked without being followed, so a forced removal can
+  never empty a checkout a link points into.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

@@ -47,3 +47,27 @@ choices you'd want to review → opus-worker. If the choices ARE the task → yo
 ## AFTER WORKERS RETURN
 Review their reports, integrate, and decide next steps yourself. `c3_finish_task`
 stays a **supervisor-only** action — workers never call it.
+
+## BRANCHES AND WORKTREES
+1. Integrate a worker's branch by merge (or rebase + fast-forward), not by cherry-pick.
+   Where a cherry-pick cannot be avoided, the same step deletes the branch or records it
+   as integrated (`git merge -s ours <branch>`).
+2. Every branch that is not merged has a recorded state:
+   `c3 branches --set <branch> --state work|waits|parked --note "..."`. `waits` records
+   the question that was actually asked; `parked` records the condition for merging.
+3. A turn does not end while a branch or worktree created in it is neither
+   integrated-and-removed nor recorded. Run `c3 branches` at the start and before
+   finishing; an unknown branch is a finding to report, not background.
+4. The session that opened a branch closes it. A hand-over names the branch, its state
+   and what is left.
+5. The folder sessions start in stays on the default branch and clean; a session that
+   finds it otherwise says so first.
+6. A guest session never leaves an uncommitted edit in another project's folder: it
+   hands the text to the owning session.
+7. Removing a worktree: look for junctions/symlinks that point outside it first, remove
+   without `--force` when possible, never `--force` over a link.
+8. A parked WIP that touches privacy or security is also listed where such findings are
+   triaged (the tech-debt file), so a new report is matched against it.
+
+Tech-debt notes are written by the owning repository's own session into its own file
+(in a C3-managed repository `.eck/` is ignored, so there is no commit).

@@ -2,6 +2,7 @@
 //! C3 workflow and `c3 doctor` reports what still needs doing. The scout/fetch
 //! context-gathering commands live under [`crate::pack::scout`].
 
+pub mod branches;
 pub mod doctor;
 pub mod init;
 pub mod repo_models;

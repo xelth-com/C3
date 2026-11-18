@@ -70,7 +70,7 @@ pub fn run(args: FinishArgs) -> i32 {
     let collab_root = providers::resolve_collab_root(&repo_root, &args.collab_dir);
 
     let opts = FinishOpts {
-        repo_root,
+        repo_root: repo_root.clone(),
         collab_root,
         message: args.message,
         status,
@@ -82,7 +82,23 @@ pub fn run(args: FinishArgs) -> i32 {
 
     match finish::run_finish(&opts) {
         Ok(r) => {
+            // After the commit: name the branches and worktrees that have no recorded state (a
+            // note, never a refusal; read-only, no `git cherry`).
+            let branch_report = crate::setup::branches::quick_scan(&repo_root, false);
+            let branch_note = branch_report
+                .as_ref()
+                .and_then(crate::setup::branches::finish_note_for);
             if args.json {
+                let branches_json = branch_report
+                    .as_ref()
+                    .filter(|b| !b.is_clean())
+                    .map(|b| {
+                        serde_json::json!({
+                            "note": branch_note,
+                            "unknown_branches": b.unknown_branches().iter().map(|x| x.name.clone()).collect::<Vec<_>>(),
+                            "unrecorded_worktrees": b.unrecorded_worktrees().iter().map(|w| crate::cli::branches::worktree_json(w)).collect::<Vec<_>>(),
+                        })
+                    });
                 let obj = serde_json::json!({
                     "commit": r.commit,
                     "staged": r.staged.len(),
@@ -91,6 +107,7 @@ pub fn run(args: FinishArgs) -> i32 {
                     "snapshot": r.snapshot_path.as_ref().map(|p| p.display().to_string()),
                     "snapshot_note": r.snapshot_note,
                     "pruned": r.pruned,
+                    "branches": branches_json,
                 });
                 println!("{obj}");
             } else {
@@ -114,6 +131,9 @@ pub fn run(args: FinishArgs) -> i32 {
                     }
                     (None, Some(note)) => println!("{note}"),
                     (None, None) => {}
+                }
+                if let Some(note) = &branch_note {
+                    println!("{note}");
                 }
             }
             0

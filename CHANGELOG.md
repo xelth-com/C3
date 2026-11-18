@@ -27,6 +27,30 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   probes). The hook's repair above does nothing when it sees the mark: a reviewer on the `claude`
   engine runs the same SessionStart hook in the repository under review and must stay read-only,
   and a worker's patch must hold only its own change.
+- **`c3 branches`: every branch's state is visible and recorded in the repository.** It lists every
+  local branch but the default one and every worktree other than the default branch's, with the
+  recorded state, `merged` by ancestry or — when not — whether the content is already on the default
+  branch (`git cherry`: the cherry-pick case), commits ahead, last commit date and worktree path, plus
+  the start folder (branch, commits behind the default branch's upstream as the local refs know it,
+  the number of uncommitted changes to tracked files - untracked files are not counted, a C3-managed
+  repository always has some); `--json` gives the same data. The throwaway worktree of a running
+  `kimi` review is C3's own and is left out. `--set <branch> --state
+  work|waits|parked --note "<text>" [--owner <name>]` stores one line `c3: <state> | <owner> | <date>
+  | <text>` as the branch description (shared by all worktrees, gone with `git branch -d`; a foreign
+  description is kept below it); `--clear` removes only C3's line. A branch neither merged nor
+  recorded is **unknown**.
+- **Branch checks in `c3 doctor`, the SessionStart hook and `c3 finish`.** Doctor reports unknown
+  branches and worktrees without a recorded state as leftovers (exit 1) and warns, without changing
+  the exit code, when the start folder is off the default branch or dirty; `--json` carries the same.
+  The hook prints one line only when something is unknown or the start folder is off the default
+  branch (ancestry only, no `git cherry`; read-only; nothing inside a C3 child or outside a git
+  repository; default ON, off with `C3_BRANCH_CHECK=off` or `"branch_check": false`). `c3 finish`
+  names them after its commit (also in `--json`) and never refuses because of them.
+- **Branch and worktree rules** in the `02-delegation.md` template, this repository's own rule file
+  and the `coordinate` skill: merge instead of cherry-pick, a recorded state for every unmerged
+  branch, no turn ends with an unrecorded branch or worktree, the opener closes, the start folder
+  stays on the default branch and clean, guests leave no uncommitted edits, worktree removal never
+  `--force`s over a link, a parked privacy/security WIP is listed in the tech-debt file.
 
 ### Changed
 
@@ -39,6 +63,11 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **The `kimi` engine's throwaway worktree removal could follow a link.** The reviewer can run
+  commands in that worktree; a junction or symlink it left there (e.g. a `node_modules` junction into
+  the main checkout) could be followed by `git worktree remove --force`. Every symlink and junction
+  inside the worktree is now unlinked first, without descending into it, and only then is the
+  worktree removed.
 - **`c3 init` templates pinned old models.** `opus-worker.md` / `sonnet-worker.md` pinned
   `claude-opus-4-8` / `claude-sonnet-5`; they now write the floating aliases `opus` / `sonnet`
   (and the worker prose no longer names a model version), so a freshly-initialised worker follows

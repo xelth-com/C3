@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use clap::Args;
 
 use crate::providers;
+use crate::setup::branches::{self, BranchReport, SET_HINT};
 use crate::setup::doctor;
 
 /// Arguments of `c3 doctor`.
@@ -27,6 +28,53 @@ fn human_bytes(n: u64) -> String {
         format!("{:.1} KB", n as f64 / 1024.0)
     } else {
         format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// The branch/worktree lines: unknown branches and unrecorded worktrees are findings (`[!]`); the
+/// start folder off the default branch or dirty is a `[warn]` that does not change the exit code.
+fn print_branch_findings(b: &BranchReport) {
+    let unknown = b.unknown_branches();
+    if unknown.is_empty() {
+        println!(
+            "[ok] every branch is merged into {} or has a recorded state",
+            b.default_branch
+        );
+    } else {
+        let names: Vec<&str> = unknown.iter().map(|x| x.name.as_str()).collect();
+        println!(
+            "[!] {} branch(es) not merged into {} and without a recorded state: {} - see c3 branches; record one with {SET_HINT}",
+            unknown.len(),
+            b.default_branch,
+            branches::name_list(&names, 8)
+        );
+    }
+    for w in b.unrecorded_worktrees() {
+        println!(
+            "[!] worktree {}: no recorded state - see c3 branches",
+            branches::worktree_label(w)
+        );
+    }
+    if let Some(s) = &b.start {
+        if !s.on_default {
+            let behind = s
+                .behind
+                .filter(|n| *n > 0)
+                .map(|n| format!(", {n} behind {}", s.behind_of))
+                .unwrap_or_default();
+            println!(
+                "[warn] the start folder {} is on {}, not {}{behind} - see c3 branches",
+                s.path,
+                s.branch.as_deref().unwrap_or("a detached HEAD"),
+                b.default_branch
+            );
+        }
+        if let Some(n) = s.dirty.filter(|n| *n > 0) {
+            println!(
+                "[warn] the start folder {} has {n} uncommitted change(s)",
+                s.path
+            );
+        }
     }
 }
 
@@ -68,6 +116,12 @@ pub fn run(args: DoctorArgs) -> i32 {
             })).collect::<Vec<_>>(),
             "snapshot_count": report.snapshot_count,
             "snapshot_bytes": report.snapshot_bytes,
+            "branches": report.branches.as_ref().map(|b| serde_json::json!({
+                "default_branch": b.default_branch,
+                "unknown_branches": b.unknown_branches().iter().map(|x| x.name.clone()).collect::<Vec<_>>(),
+                "unrecorded_worktrees": b.unrecorded_worktrees().iter().map(|w| crate::cli::branches::worktree_json(w)).collect::<Vec<_>>(),
+                "start_folder": b.start.as_ref().map(crate::cli::branches::start_json),
+            })),
         });
         println!("{obj}");
     } else {
@@ -119,6 +173,10 @@ pub fn run(args: DoctorArgs) -> i32 {
                     );
                 }
             }
+        }
+
+        if let Some(b) = &report.branches {
+            print_branch_findings(b);
         }
 
         println!(
