@@ -66,6 +66,17 @@ pub struct ConsultArgs {
     /// base..head or base...head (diff-review / acceptance only).
     #[arg(long, default_value = "")]
     pub range: String,
+    /// Review this revision: every reviewer that runs in a local working directory runs in a
+    /// throwaway detached worktree of it (the brief and the task's handoffs copied in), removed
+    /// after the run; a panel gives every member its own worktree of the same commit.
+    #[arg(long, default_value = "")]
+    pub rev: String,
+    /// Hand the reviewer the change as a patch: `git diff <range>` (base..head, base...head, or one
+    /// revision against the working tree with new files) is written into the task's handoffs
+    /// (.collab/ and .eck/ left out) and named in the prompt; the ledger records the range and the
+    /// patch's sha256.
+    #[arg(long, default_value = "")]
+    pub diff: String,
     /// The handoff base name (a slug); default `reply`.
     #[arg(long, default_value = "")]
     pub reply_name: String,
@@ -265,6 +276,8 @@ pub fn run(args: ConsultArgs) -> i32 {
         budget: args.budget,
         budget_source: String::new(),
         range: args.range,
+        rev: args.rev,
+        diff: args.diff,
         reply_name: args.reply_name,
         artifacts: args.artifact,
         raw: args.raw,

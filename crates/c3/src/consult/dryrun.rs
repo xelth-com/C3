@@ -188,6 +188,29 @@ pub(crate) fn console_lines(ctx: &Context) -> Vec<String> {
             rr.spec, ctx.range_text, rr.insertions, rr.deletions
         ));
     }
+    // (B1) the throwaway worktree the reviewer would read, and the `--diff` patch.
+    if let Some(iso) = &ctx.isolation {
+        let what = match iso.reason {
+            super::reviewed::Reason::Rev => format!("revision {} (--rev {})", iso.sha, iso.rev),
+            super::reviewed::Reason::Engine => format!(
+                "HEAD {} (the {} engine never runs in the live checkout)",
+                iso.sha, ctx.engine
+            ),
+            super::reviewed::Reason::FrozenHead => format!(
+                "HEAD {} (a frozen tree for the claude engine's {})",
+                iso.sha, ctx.o.purpose
+            ),
+        };
+        out.push(format!(
+            "worktree    : a throwaway git worktree of {what}; the brief and the task's handoffs copied in, removed after the run"
+        ));
+    }
+    if let Some(d) = &ctx.diff {
+        out.push(format!(
+            "diff        : git diff {} -> {} (named in the prompt; .collab/ and .eck/ left out)",
+            d.range, d.rel
+        ));
+    }
     out.push(format!("peak        : {}", ctx.peak_label));
     if !ctx.peak_warning.is_empty() {
         out.push(format!("WARNING: {}", ctx.peak_warning));

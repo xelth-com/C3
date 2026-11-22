@@ -11,6 +11,32 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Added
 
+- **`c3 consult --rev <rev>`: every reviewer reads the revision under review.** The bridge resolves
+  `<rev>` to its full sha (a revision git does not know is refused before anything starts), makes a
+  throwaway detached worktree of it under the temp directory, stages the brief and the task's
+  `handoffs/` (event streams left out) and `state.md` into it at their repo-relative paths, and runs
+  every turn of the reviewer there - for every engine that runs in a local working directory
+  (codex, agy, muse, claude, grok, kimi; the http engine sends a pack of the live tree and is told
+  so in a warning). The prompt says which revision the working directory holds, the handoff's
+  `Isolation:` line and the ledger's new `worktree {reason, rev, sha}` record name the full sha, a
+  panel resolves `<rev>` once and gives every member its own worktree of that same commit, and a
+  `--mode resume|fork` of a thread recorded on another revision is warned about before the run. The
+  worktree is the kimi engine's `KimiWorktree`, generalised (`engines::worktree`): same
+  `c3-kimi-wt-<32 hex>` name that `c3 branches` recognises, same owner record, same link-safe
+  removal (every link inside unlinked first, never `--force` over a link); staging never writes
+  through a link the checked-out revision carries. A claude-engine reviewer reviewing a branch
+  checked out in a sibling worktree answered HOLD from documents alone (xelixir acceptance panel
+  741be853): `--restricted` kept it out of that worktree.
+- **`c3 consult --diff <range>` hands the reviewer the change as a patch.** `git diff <range>`
+  (`base..head`, `base...head`, or one revision diffed against the working tree with new files
+  included - marked intent-to-add in a temporary copy of the index, the real one untouched; `.collab/`
+  and `.eck/` left out) is written into the task's handoffs as `<NN>-<prefix>-<slug>.patch` next to a
+  conventionally named brief (else `<nn>-<prefix>-diff.patch`), the prompt says "The change under
+  review is the patch at <path>", and the ledger's new `diff {range, patch, sha256, files, bytes}`
+  record binds the review to it. A brief (or ask) that names a git range, given to an engine without
+  a shell (every engine but codex) and without `--diff`, now draws a printed warning: a grok
+  diff-review spent ~15 tool calls on `.git` archaeology following `git diff main...branch`.
+
 - **A red CI run is named, not left for someone to notice.** `c3 finish`, after its commit, and the
   SessionStart hook ask the GitHub CLI for the latest completed run of the default branch (`gh run
   list --branch <default> --limit 5 --json ...`) and print one line when it failed: `CI: the latest
@@ -107,6 +133,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **A claude-engine reviewer on a diff-review or acceptance reads a frozen tree of HEAD.** Without
+  `--rev`, the claude engine's stand-ins (GLM, Kimi, Qwen, DeepSeek through Anthropic-compatible
+  endpoints) now run in a throwaway worktree of HEAD on those two purposes, like the kimi engine,
+  with the brief and the task's handoffs staged in - so a parallel session editing the tree can no
+  longer change what the reviewer reads mid-review. The prompt names the paths that were
+  uncommitted at launch (and so are not visible there), as wave A1 does for kimi; pass `--diff HEAD`
+  to hand such a reviewer the uncommitted change as a patch. Every turn of a run (primary,
+  read-insist, continuation, repair) now shares the run's one worktree, kimi's included (it used to
+  make a fresh one per turn). Other purposes keep reading the live tree.
 - **The hook's waiting rule says why and says it applies to every session.** The old one-liner
   ("c3: coordinator rules - the c3:coordinate skill; ... schedule a wakeup ... about 20 min") read
   as a pointer to a skill and as a rule about c3 work, and a coordinator waiting on ordinary
@@ -216,6 +251,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Fixed
 
+- **A reviewer in a throwaway worktree is no longer failed by a change of the live tree.** The kimi
+  engine ran in its own worktree, yet the read-only check compared the MAIN tree and failed the run on
+  any change there - a parallel session's edit, not the reviewer's (the false negative the agy fix
+  removed). For every reviewer in a throwaway worktree (kimi, `--rev`, a claude diff-review /
+  acceptance) the check now watches that worktree - its tracked and untracked files and the staged
+  collab copy - for the reviewer's own writes and decides on those (kimi still fails a run that
+  writes there; it never saw such a write before), while a change of the live tree, its collab
+  directory, the brief or an artifact is a warning only; a live-tree change no longer skips the
+  timeout continuation either.
 - **Every model family of the roster resolves to its lab.** The vendor prefix table missed `grok`
   (now xai) and the OpenAI `o<digit>` ids (`o3`, `o4-mini`: openai), so a Grok entry drew the "no lab
   known" warning and counted as a lab of its own; an OpenRouter-style `vendor/model` id that does not

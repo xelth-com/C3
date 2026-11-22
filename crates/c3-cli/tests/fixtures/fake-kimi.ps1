@@ -21,6 +21,12 @@
 #   FAKE_KIMI_STDERR=<text>     written to stderr
 #   FAKE_KIMI_JUNCTION=<dir>    leave a `node_modules` junction to <dir> in the cwd (the throwaway
 #                               worktree), as a reviewer's install command could (F02-21)
+#   FAKE_KIMI_WRITE=<rel>       write that file (relative to the cwd, the throwaway worktree): the
+#                               reviewer's own write (B1)
+#   FAKE_KIMI_TOUCH=<abs path>  write that file (an absolute path - the live checkout): a parallel
+#                               session changing the main tree during the run (B1)
+#   (B1) the log line also carries `head`: the commit the cwd checks out (read from its `.git` file
+#   / directory, no git needed), and `ls`: the cwd's top-level names.
 $ErrorActionPreference = 'Stop'
 $u8 = New-Object System.Text.UTF8Encoding($false)
 $raw = [string]$env:FAKE_KIMI_ARGS
@@ -107,12 +113,28 @@ if ($env:FAKE_KIMI_OP_BRIEF) {
 }
 # (A) a linked git worktree has a `.git` FILE (not a directory) in its root.
 $gitFile = Test-Path -LiteralPath (Join-Path (Get-Location).Path '.git') -PathType Leaf
+# (B1) the commit the cwd checks out: a detached worktree's HEAD file holds the sha itself.
+function Get-CwdHead {
+    try {
+        $gf = Join-Path (Get-Location).Path '.git'
+        $gd = $gf
+        if (Test-Path -LiteralPath $gf -PathType Leaf) {
+            $line = ([IO.File]::ReadAllText($gf)).Trim()
+            if ($line -notmatch '^gitdir:\s*(.+)$') { return '' }
+            $gd = $Matches[1].Trim()
+            if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path (Get-Location).Path $gd }
+        } elseif (-not (Test-Path -LiteralPath $gf -PathType Container)) { return '' }
+        return ([IO.File]::ReadAllText((Join-Path $gd 'HEAD'))).Trim()
+    } catch { return '' }
+}
+$cwdHead = Get-CwdHead
+$cwdLs = @(Get-ChildItem -LiteralPath (Get-Location).Path -Force -Name | ForEach-Object { [string]$_ } | Sort-Object)
 
 if ($env:FAKE_KIMI_ARGV_LOG) {
     $names = @([Environment]::GetEnvironmentVariables().Keys | ForEach-Object { [string]$_ } | Where-Object { $_ -ne 'FAKE_KIMI_ARGS' })
     $names = [string[]]$names
     [Array]::Sort($names, [StringComparer]::OrdinalIgnoreCase)
-    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; brief = $brief; brief_exists = $briefExists; op_brief = $opBrief; op_brief_exists = $opBriefExists; op_brief_body = $opBriefBody; prompt_body = $promptBody; git_file = $gitFile; env = [object[]]$names; pid = $PID }
+    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; brief = $brief; brief_exists = $briefExists; op_brief = $opBrief; op_brief_exists = $opBriefExists; op_brief_body = $opBriefBody; prompt_body = $promptBody; git_file = $gitFile; head = $cwdHead; ls = [object[]]$cwdLs; env = [object[]]$names; pid = $PID }
     $line = (J $rec) + "`n"
     Invoke-FakeWrite { [IO.File]::AppendAllText($env:FAKE_KIMI_ARGV_LOG, $line, $u8) }
 }
@@ -122,6 +144,8 @@ if ($kind -ne 'turn') { Err-Bytes "fake kimi: unknown invocation: $raw"; exit 2 
 
 if ($env:FAKE_KIMI_STDERR) { Err-Bytes $env:FAKE_KIMI_STDERR }
 if ($env:FAKE_KIMI_JUNCTION) { $null = New-Item -ItemType Junction -Path (Join-Path (Get-Location).Path 'node_modules') -Target ([string]$env:FAKE_KIMI_JUNCTION) }
+if ($env:FAKE_KIMI_WRITE) { [IO.File]::WriteAllText((Join-Path (Get-Location).Path ([string]$env:FAKE_KIMI_WRITE)), "written by the reviewer`n", $u8) }
+if ($env:FAKE_KIMI_TOUCH) { [IO.File]::WriteAllText([string]$env:FAKE_KIMI_TOUCH, "a parallel session's edit`n", $u8) }
 
 # a start failure: kimi prints the reason on stderr and exits non-zero, with NO resume hint.
 if ($env:FAKE_KIMI_ERROR) {

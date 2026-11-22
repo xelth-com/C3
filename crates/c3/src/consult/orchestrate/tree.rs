@@ -2,7 +2,9 @@
 //! the working tree changed and, if so, whether the change can be the reviewer's (write-disabled
 //! engines WARN, agy FAILS). Driven by [`super::finish`] via [`engine_tree_check`]; the outcome is
 //! computed by [`engine_tree_outcome`]. Pure decision logic over two collab snapshots and a
-//! [`super::Drift`], so it is unit-testable without a process.
+//! [`super::Drift`], so it is unit-testable without a process. (B1) A reviewer that ran in a
+//! throwaway worktree is judged on that worktree's own changes; the live tree only warns
+//! ([`with_live_tree_warnings`]).
 
 use super::*;
 
@@ -120,6 +122,33 @@ pub(super) struct TreeChanges {
     pub(super) files: Vec<String>,
 }
 
+/// (B1) The suffix of a live-tree change warning when the reviewer ran in a throwaway worktree.
+pub(super) const NOT_THE_WORKTREE: &str =
+    "the reviewer ran in a throwaway worktree, the change is not the reviewer's";
+
+/// (B1) The check of a reviewer that ran in a throwaway worktree, from the outcome over the
+/// worktree's own changes ([`engine_tree_outcome`]) and the live tree's changes during the run
+/// (`main_warn`, already worded as warnings): those never fail the run - a clean worktree with a
+/// changed live tree is `warned`, and the live-tree warnings are added to any outcome.
+pub(super) fn with_live_tree_warnings(
+    mut check: EngineTreeCheck,
+    main_warn: Vec<String>,
+) -> EngineTreeCheck {
+    if main_warn.is_empty() {
+        return check;
+    }
+    if check.outcome == "clean" {
+        check.outcome = "warned".into();
+    }
+    check.warnings.extend(main_warn);
+    check
+}
+
+/// The tree check over the turns of the run. (B1) `worktree_changes` is `Some` when the reviewer
+/// ran in a throwaway worktree: its own changes there are what the outcome is decided on, and every
+/// change of the live tree, its collab directory, the brief or an artifact is only a warning (a
+/// parallel session editing the checkout is not the reviewer).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn engine_tree_check(
     ctx: &Context,
     drift: &Drift,
@@ -128,10 +157,14 @@ pub(super) fn engine_tree_check(
     agy: &AgyToolLog,
     claude_init: &ClaudeInit,
     reply_complete: bool,
+    worktree_changes: Option<&[String]>,
 ) -> EngineTreeCheck {
     let mut why: Vec<String> = Vec::new();
     let mut warn: Vec<String> = Vec::new();
     let mut files: Vec<String> = Vec::new();
+    // (B1) the live tree's changes of a reviewer in a throwaway worktree: warnings only.
+    let isolated = worktree_changes.is_some();
+    let mut main_warn: Vec<String> = Vec::new();
     // The per-engine suffix on each warning line (the change is not the reviewer's).
     let not_mine = if ctx.engine == "agy" {
         let names = distinct(&agy.names);
@@ -156,14 +189,20 @@ pub(super) fn engine_tree_check(
         )
     };
     if drift.tree_changed {
-        files.extend(drift.tree_changed_paths.iter().cloned());
         let cut = cut_files(&drift.tree_changed_paths);
-        why.push(format!(
-            "the working tree changed during the run (by the reviewer or anyone else): {cut}"
-        ));
-        warn.push(format!(
-            "the working tree changed during the run ({cut}) - {not_mine}"
-        ));
+        if isolated {
+            main_warn.push(format!(
+                "the main working tree changed during the run ({cut}) - {NOT_THE_WORKTREE}"
+            ));
+        } else {
+            files.extend(drift.tree_changed_paths.iter().cloned());
+            why.push(format!(
+                "the working tree changed during the run (by the reviewer or anyone else): {cut}"
+            ));
+            warn.push(format!(
+                "the working tree changed during the run ({cut}) - {not_mine}"
+            ));
+        }
     }
     let own = format!(
         "{}/handoffs/{:02}-{}-{}.",
@@ -191,28 +230,60 @@ pub(super) fn engine_tree_check(
             .iter()
             .map(|n| format!("{shown}{n}"))
             .collect();
-        files.extend(names.iter().cloned());
         let cut = cut_files(&names);
-        why.push(format!(
-            "the collab directory changed during the run (by the reviewer or anyone else): {cut}"
-        ));
-        warn.push(format!(
-            "the collab directory changed during the run ({cut}) - {not_mine}"
-        ));
+        if isolated {
+            main_warn.push(format!(
+                "the live collab directory changed during the run ({cut}) - {NOT_THE_WORKTREE}"
+            ));
+        } else {
+            files.extend(names.iter().cloned());
+            why.push(format!(
+                "the collab directory changed during the run (by the reviewer or anyone else): {cut}"
+            ));
+            warn.push(format!(
+                "the collab directory changed during the run ({cut}) - {not_mine}"
+            ));
+        }
     }
     if drift.brief_changed {
-        files.push("brief".to_string());
-        why.push("the brief changed during the run (by the reviewer or anyone else)".to_string());
-        warn.push(format!("the brief changed during the run - {not_mine}"));
+        if isolated {
+            main_warn.push(format!(
+                "the brief changed during the run (the reviewer read the copy staged at launch) - {NOT_THE_WORKTREE}"
+            ));
+        } else {
+            files.push("brief".to_string());
+            why.push(
+                "the brief changed during the run (by the reviewer or anyone else)".to_string(),
+            );
+            warn.push(format!("the brief changed during the run - {not_mine}"));
+        }
     }
     if !drift.artifacts_changed_paths.is_empty() {
-        files.extend(drift.artifacts_changed_paths.iter().cloned());
         let list = drift.artifacts_changed_paths.join(", ");
+        if isolated {
+            main_warn.push(format!(
+                "artifact(s) changed during the run ({list}) - {NOT_THE_WORKTREE}"
+            ));
+        } else {
+            files.extend(drift.artifacts_changed_paths.iter().cloned());
+            why.push(format!(
+                "artifact(s) changed during the run (by the reviewer or anyone else): {list}"
+            ));
+            warn.push(format!(
+                "artifact(s) changed during the run ({list}) - {not_mine}"
+            ));
+        }
+    }
+    // (B1) the reviewer's own writes in its throwaway worktree: only its process tree runs there,
+    // so this - not the live tree - is what the outcome turns on.
+    if let Some(wt) = worktree_changes.filter(|w| !w.is_empty()) {
+        files.extend(wt.iter().cloned());
+        let cut = cut_files(wt);
         why.push(format!(
-            "artifact(s) changed during the run (by the reviewer or anyone else): {list}"
+            "the reviewer's throwaway worktree changed during the run: {cut}"
         ));
         warn.push(format!(
-            "artifact(s) changed during the run ({list}) - {not_mine}"
+            "the reviewer's throwaway worktree changed during the run ({cut}) - {not_mine}"
         ));
     }
     // (Muse, review-2026-10-30) The claude tree decision turns on its init proof, not on the engine
@@ -236,14 +307,15 @@ pub(super) fn engine_tree_check(
             claude_init.extra_tools.join(", ")
         )
     });
-    engine_tree_outcome(
+    let check = engine_tree_outcome(
         &ctx.engine,
         agy,
         write_disabled,
         reply_complete,
         claude_note.as_deref(),
         TreeChanges { why, warn, files },
-    )
+    );
+    with_live_tree_warnings(check, main_warn)
 }
 
 /// Decide the tree-check outcome from the collected change reasons (`why`), their warning form

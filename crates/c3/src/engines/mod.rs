@@ -17,6 +17,7 @@ pub mod kimi;
 pub mod muse;
 pub mod subprocess;
 pub mod tree_check;
+pub mod worktree;
 
 pub use agy::AgyEngine;
 pub use claude::ClaudeEngine;

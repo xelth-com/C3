@@ -25,6 +25,7 @@ pub mod kick;
 pub mod orchestrate;
 pub mod prompt;
 pub mod recovery;
+pub mod reviewed;
 pub mod revision;
 pub mod secondary;
 pub mod section;

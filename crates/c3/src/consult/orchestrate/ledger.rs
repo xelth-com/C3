@@ -312,6 +312,26 @@ pub(super) fn build_entry(args: BuildEntry) -> LedgerEntry {
             ..Default::default()
         }))
     };
+    // (B1) the revision a reviewer in a throwaway worktree read (`{reason, rev, sha}`: `--rev`, the
+    // kimi engine, a claude diff-review / acceptance) and the `--diff` patch it was handed
+    // (`{range, patch, sha256, files, bytes}`); both absent for a run that had neither.
+    if let Some(plan) = &ctx.isolation {
+        let sha = ctx
+            .review_tree
+            .as_ref()
+            .map(|t| t.sha().to_string())
+            .unwrap_or_default();
+        e.extra.insert(
+            "worktree".into(),
+            crate::consult::reviewed::ledger_worktree_value(plan, &sha),
+        );
+    }
+    if let Some(d) = ctx.diff.as_ref().filter(|d| !d.sha256.is_empty()) {
+        e.extra.insert(
+            "diff".into(),
+            crate::consult::reviewed::ledger_diff_value(d),
+        );
+    }
     e
 }
 

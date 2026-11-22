@@ -736,14 +736,14 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// C3's throwaway worktrees (the kimi engine)
+// C3's throwaway worktrees (a reviewer's frozen tree: the kimi engine, --rev, claude reviews)
 // ---------------------------------------------------------------------------------------------
 
-/// Whether a directory name is exactly the one the kimi engine gives its throwaway worktree:
-/// [`crate::engines::kimi::THROWAWAY_WORKTREE_PREFIX`] followed by the run's uuid (32 lower-case hex
+/// Whether a directory name is exactly the one C3 gives a reviewer's throwaway worktree:
+/// [`crate::engines::worktree::THROWAWAY_WORKTREE_PREFIX`] followed by the run's uuid (32 lower-case hex
 /// digits).
 pub fn is_throwaway_name(name: &str) -> bool {
-    name.strip_prefix(crate::engines::kimi::THROWAWAY_WORKTREE_PREFIX)
+    name.strip_prefix(crate::engines::worktree::THROWAWAY_WORKTREE_PREFIX)
         .is_some_and(|id| {
             id.len() == 32
                 && id
@@ -752,7 +752,7 @@ pub fn is_throwaway_name(name: &str) -> bool {
         })
 }
 
-/// Whether a worktree path is one C3 itself made for a kimi review: directly under the system temp
+/// Whether a worktree path is one C3 itself made for a review: directly under the system temp
 /// directory AND named exactly as [`is_throwaway_name`] says. A user's worktree that merely starts
 /// with the prefix, or lives elsewhere, is an ordinary worktree.
 fn is_c3_throwaway_worktree(path: &str) -> bool {
@@ -845,7 +845,7 @@ pub struct StaleRemoval {
     pub removed: bool,
 }
 
-/// `c3 doctor --fix`: remove every stale throwaway worktree of a kimi review with the kimi engine's
+/// `c3 doctor --fix`: remove every stale throwaway worktree of a review with the reviewer's
 /// own link-safe removal (links inside are unlinked first, never followed).
 pub fn remove_stale_worktrees(repo_root: &Path) -> Vec<StaleRemoval> {
     let Some(report) = quick_scan(repo_root, false) else {
@@ -858,7 +858,7 @@ pub fn remove_stale_worktrees(repo_root: &Path) -> Vec<StaleRemoval> {
             let p = Path::new(&s.path);
             // a refused removal (a link inside that could not be detached, a root that is a link)
             // leaves the directory and reports it as not removed, whatever `exists` would say
-            let ok = crate::engines::kimi::remove_throwaway_worktree(repo_root, p);
+            let ok = crate::engines::worktree::remove_throwaway_worktree(repo_root, p);
             StaleRemoval {
                 path: s.path.clone(),
                 removed: ok && std::fs::symlink_metadata(p).is_err(),

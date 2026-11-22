@@ -13,7 +13,8 @@
 #                                 other), argv (the parsed arguments), stdin (the prompt), stdin_len,
 #                                 cwd, env (the variable NAMES, sorted), autoupdater (the value of
 #                                 DISABLE_AUTOUPDATER), c3_child (the value of C3_CHILD - C3 only),
-#                                 schema_ok (the --json-schema text parses)} -
+#                                 schema_ok (the --json-schema text parses), git_file (the cwd is
+#                                 a linked worktree) and head (the commit it checks out) - C3} -
 #                                 the harness's GUARD counts them (a child without a line fails)
 #   `auth status`                 FAKE_CLAUDE_AUTH_STATUS=ok (default: loggedIn, claude.ai,
 #                                 firstParty) | out (loggedIn false, exit 1) | apikey (authMethod
@@ -148,7 +149,21 @@ if ($env:FAKE_CLAUDE_ARGV_LOG) {
     [Array]::Sort($names, [StringComparer]::OrdinalIgnoreCase)
     $tokenMatch = $null
     if ($env:FAKE_CLAUDE_TOKEN_EXPECT) { $tokenMatch = [bool]([string]$env:ANTHROPIC_AUTH_TOKEN -ceq [string]$env:FAKE_CLAUDE_TOKEN_EXPECT) }
-    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; stdin = $stdinText; stdin_len = $stdinText.Length; cwd = (Get-Location).Path; env = [object[]]$names; autoupdater = [string]$env:DISABLE_AUTOUPDATER; c3_child = [string]$env:C3_CHILD; schema_ok = $schemaOk; pid = $PID; base_url = [string]$env:ANTHROPIC_BASE_URL; api_timeout_ms = [string]$env:API_TIMEOUT_MS; has_token = [bool]([string]$env:ANTHROPIC_AUTH_TOKEN); token_match = $tokenMatch }
+    # (C3 B1) git_file: the cwd is a linked worktree (a `.git` FILE); head: the commit it checks out
+    # (a detached worktree's HEAD file holds the sha) - read without git.
+    $gitFile = Test-Path -LiteralPath (Join-Path (Get-Location).Path '.git') -PathType Leaf
+    $cwdHead = ''
+    try {
+        if ($gitFile) {
+            $gl = ([IO.File]::ReadAllText((Join-Path (Get-Location).Path '.git'))).Trim()
+            if ($gl -match '^gitdir:\s*(.+)$') {
+                $gd = $Matches[1].Trim()
+                if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path (Get-Location).Path $gd }
+                $cwdHead = ([IO.File]::ReadAllText((Join-Path $gd 'HEAD'))).Trim()
+            }
+        }
+    } catch {}
+    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; stdin = $stdinText; stdin_len = $stdinText.Length; cwd = (Get-Location).Path; git_file = $gitFile; head = $cwdHead; env = [object[]]$names; autoupdater = [string]$env:DISABLE_AUTOUPDATER; c3_child = [string]$env:C3_CHILD; schema_ok = $schemaOk; pid = $PID; base_url = [string]$env:ANTHROPIC_BASE_URL; api_timeout_ms = [string]$env:API_TIMEOUT_MS; has_token = [bool]([string]$env:ANTHROPIC_AUTH_TOKEN); token_match = $tokenMatch }
     $line = (J $rec) + "`n"
     Invoke-FakeWrite { [IO.File]::AppendAllText($env:FAKE_CLAUDE_ARGV_LOG, $line, $u8) }
 }

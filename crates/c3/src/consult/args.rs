@@ -45,6 +45,13 @@ pub struct Options {
     /// (wave 8) A panel member's budget source (the panel run's resolved one); `""` otherwise.
     pub budget_source: String,
     pub range: String,
+    /// (B1) `--rev <rev>`: the reviewer runs in a throwaway detached worktree of that revision (the
+    /// brief and the task's handoffs staged into it); empty = the live tree as today (the kimi
+    /// engine and a claude diff-review / acceptance still get a frozen worktree of HEAD).
+    pub rev: String,
+    /// (B1) `--diff <range>`: `git diff <range>` (a single revision: against the working tree,
+    /// new files included) is written into the task's handoffs as a patch the prompt names.
+    pub diff: String,
     pub reply_name: String,
     pub artifacts: Vec<String>,
     pub raw: bool,
@@ -261,6 +268,17 @@ pub fn validate(o: &Options, home_dir: Option<&str>) -> Result<Resolved, String>
             "-Range '{}' must be a two-point range (base..head or base...head); a single revision would measure the working tree.",
             o.range
         ));
+    }
+    // (B1) -Rev / -Diff: the syntax here (one token, never read as an option); whether git knows
+    // the revision is checked in `orchestrate::build_context`, before anything starts.
+    if !o.rev.is_empty() && !super::reviewed::rev_token_ok(&o.rev) {
+        return Err(format!(
+            "-Rev '{}' must be one revision (a commit, a branch or a tag; no spaces, not starting with '-').",
+            o.rev
+        ));
+    }
+    if !o.diff.is_empty() {
+        super::reviewed::parse_diff_spec(&o.diff)?;
     }
     if o.sandbox == "danger-full-access" {
         return Err("-Sandbox danger-full-access is refused: consultations run without write access to your machine.".into());

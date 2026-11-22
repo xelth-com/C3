@@ -148,9 +148,6 @@ pub(super) struct EngineDetail {
     pub(super) http_secondary: Option<crate::consult::http::HttpSecondary>,
     /// (0.6.0, wave 29) a claude turn's events and outcome (its proof, its resolved model).
     pub(super) claude: Option<ClaudeRunDetail>,
-    /// (C3) the kimi engine's `Isolation:` handoff line (the throwaway worktree the turn ran in);
-    /// `None` for every other engine.
-    pub(super) isolation: Option<String>,
     /// (A1, grok/kimi) the primary turn's own wall time in seconds. A guard failure comes back as a
     /// `ProviderFailure` outcome, which carries no wall; `finish` folds this into the run's wall so
     /// a guard-failure run reports the zero-tool primary's seconds too. `0.0` elsewhere.
@@ -282,7 +279,6 @@ pub(super) fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         http_provider_config: None,
         http_secondary: None,
         claude: None,
-        isolation: None,
         primary_wall: 0.0,
     }
 }
@@ -314,7 +310,6 @@ pub(super) fn claude_detail(r: &crate::engines::claude::ClaudeRun) -> EngineDeta
             turn: r.turn.clone(),
             killed: r.killed,
         }),
-        isolation: None,
         primary_wall: 0.0,
     }
 }
@@ -332,7 +327,7 @@ pub(super) fn claude_engine(
 ) -> crate::engines::claude::ClaudeEngine {
     crate::engines::claude::ClaudeEngine {
         launcher: ctx.engine_launcher.clone(),
-        cwd: ctx.repo_root.clone(),
+        cwd: ctx.engine_cwd(),
         primary,
         secondary,
         stall_sec,
@@ -365,7 +360,6 @@ pub(super) fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         http_provider_config: None,
         http_secondary: None,
         claude: None,
-        isolation: None,
         primary_wall: 0.0,
     }
 }
@@ -391,7 +385,6 @@ pub(super) fn grok_detail(t: &crate::engines::grok::GrokTurn) -> EngineDetail {
         http_provider_config: None,
         http_secondary: None,
         claude: None,
-        isolation: None,
         primary_wall: t.wall_seconds,
     }
 }
@@ -417,7 +410,6 @@ pub(super) fn kimi_detail(t: &crate::engines::kimi::KimiTurn) -> EngineDetail {
         http_provider_config: None,
         http_secondary: None,
         claude: None,
-        isolation: None,
         primary_wall: t.wall_seconds,
     }
 }

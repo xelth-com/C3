@@ -205,6 +205,8 @@ struct Built {
     /// (wave 26b, D11) per-member timeout exceptions for the `Timeout:` header, e.g.
     /// `#2 ZAI :: glm-5.3 120 s (roster)`; empty when every member takes the shared default.
     timeout_exceptions: Vec<String>,
+    /// (B1) `--rev` resolved to the full sha every member reviews (`""` without `--rev`).
+    rev_sha: String,
 }
 
 /// Resolve the whole plan (`Select-PanelMembers`, required reviewers, `Select-PanelRouting`, the
@@ -808,6 +810,18 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
     // The range dry-run line (a diff-review/acceptance panel).
     let (range_line, range_warning) = range_lines(o, r, &repo_root);
 
+    // (B1) `--rev` is resolved ONCE, to the full sha every member's own worktree checks out (a
+    // branch that moves while the panel runs does not split the panel); `--diff` is checked once.
+    // Either refusal comes before any member is planned or started.
+    let rev_sha = if o.rev.is_empty() {
+        String::new()
+    } else {
+        crate::consult::reviewed::resolve_rev(&repo_root, &o.rev).map_err(|m| (m, 1))?
+    };
+    if !o.diff.is_empty() {
+        crate::consult::reviewed::check_diff_spec(&repo_root, &o.diff).map_err(|m| (m, 1))?;
+    }
+
     Ok(Built {
         panel_id,
         roster_path: roster.path.clone(),
@@ -836,6 +850,7 @@ fn build(o: &Options, r: &Resolved) -> Result<Built, (String, i32)> {
         parent_start,
         verb: if o.dry_run { "would run" } else { "run" },
         timeout_exceptions,
+        rev_sha,
     })
 }
 
@@ -2092,7 +2107,7 @@ fn lost_before_start(s: &Slot) -> bool {
 /// mark (`provider X does not offer the model ...`), an unresolved identity
 /// (`availability could not be established`), or (A1) a worktree-isolated seat whose brief cannot
 /// reach its worktree (`the kimi seat is not usable: the brief ...`,
-/// `engines::kimi::isolated_brief_refusal`).
+/// `engines::worktree::isolated_brief_refusal`).
 pub(crate) fn is_preflight_refusal(refusal: &str) -> bool {
     refusal.contains(" is not usable:")
         || refusal.contains(" does not offer the model ")
@@ -2229,6 +2244,9 @@ fn build_spec(
         "budget": r.budget.percent,
         "budget_source": r.budget.source,
         "range": o.range,
+        // (B1) every member gets its own throwaway worktree of the SAME commit
+        "rev": b.rev_sha,
+        "diff": o.diff,
         "reply_name": s.reply_name,
         "artifact": o.artifacts,
         // (M11) `--peer`/`--peers` reach a reviewer only through a pack, which only the http engine

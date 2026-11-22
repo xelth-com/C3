@@ -211,6 +211,12 @@ struct DetachArgs {
     continue_sec: i64,
     #[serde(default)]
     range: String,
+    /// (B1) the run's `--rev` (empty: the live tree).
+    #[serde(default)]
+    rev: String,
+    /// (B1) the run's `--diff` (empty: no patch).
+    #[serde(default)]
+    diff: String,
     #[serde(default)]
     reply_name: String,
     #[serde(default)]
@@ -331,6 +337,8 @@ impl DetachArgs {
             timeout_sec: o.timeout_sec,
             continue_sec: o.continue_sec,
             range: o.range.clone(),
+            rev: o.rev.clone(),
+            diff: o.diff.clone(),
             reply_name: o.reply_name.clone(),
             artifacts: artifacts_abs,
             raw: o.raw,
@@ -396,6 +404,8 @@ impl DetachArgs {
             budget: self.budget,
             budget_source: String::new(),
             range: self.range,
+            rev: self.rev,
+            diff: self.diff,
             reply_name: self.reply_name,
             artifacts: self.artifacts,
             raw: self.raw,

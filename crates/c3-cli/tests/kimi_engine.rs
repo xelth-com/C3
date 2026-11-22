@@ -32,6 +32,18 @@ fn git(repo: &Path, args: &[&str]) {
     assert!(st.status.success(), "git {args:?}");
 }
 
+/// git's trimmed stdout in `repo`.
+fn git_out(repo: &Path, args: &[&str]) -> String {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("git on PATH");
+    assert!(o.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
 /// A PATH without any directory that holds a kimi launcher (GUARD).
 fn safe_path() -> String {
     let path = std::env::var("PATH").unwrap_or_default();
@@ -347,7 +359,6 @@ fn a_junction_the_reviewer_left_is_unlinked_and_its_outside_target_survives() {
         ],
     );
     let t = text(&o);
-    assert_eq!(o.status.code(), Some(0), "{t}");
     let turns = e.turns();
     assert_eq!(turns.len(), 1, "{turns:?}");
     let wt = turns[0]["cwd"].as_str().unwrap_or("");
@@ -362,6 +373,198 @@ fn a_junction_the_reviewer_left_is_unlinked_and_its_outside_target_survives() {
         "the junction's outside target survived"
     );
     assert!(!t.contains("was left in place"), "{t}");
+    // (B1, item 4) the junction IS a write of the reviewer in its own worktree: the check that now
+    // watches that worktree fails the kimi run for it (it never saw such a write before).
+    let last = e.last();
+    let outcome = last["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.starts_with("failed: the reviewer's throwaway worktree changed during the run")
+            && outcome.contains("node_modules"),
+        "{outcome}\n{t}"
+    );
+    assert_eq!(last["provider_failure"]["class"], "permission", "{last}");
+}
+
+// ------------------------------------------------------- (B1) --rev, the worktree drift check
+
+#[test]
+fn rev_runs_kimi_in_a_worktree_of_that_revision_with_the_untracked_brief() {
+    // (B1, item 1) `--rev <older commit>`: the reviewer's cwd checks out exactly that sha, the
+    // untracked brief is staged there, the prompt, the handoff header and the ledger name the full
+    // sha, and the worktree is gone after the run.
+    let e = setup("rev");
+    let first = git_out(&e.repo, &["rev-parse", "HEAD"]);
+    std::fs::write(e.repo.join("app.txt"), "two\n").unwrap();
+    git(&e.repo, &["commit", "-q", "-am", "second"]);
+    let head = git_out(&e.repo, &["rev-parse", "HEAD"]);
+    assert_ne!(first, head);
+    let brief_rel = ".collab/t/handoffs/01-claude-framing.md";
+    std::fs::write(e.repo.join(brief_rel), "# Brief\n\n1. Is app.txt fine?\n").unwrap();
+    let short = &first[..10];
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            brief_rel,
+            "--purpose",
+            "framing",
+            "--rev",
+            short,
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    assert_eq!(
+        turns[0]["head"],
+        first.as_str(),
+        "the cwd checks out --rev: {:?}",
+        turns[0]
+    );
+    assert_eq!(turns[0]["git_file"], true);
+    assert_eq!(turns[0]["op_brief_exists"], true, "{:?}", turns[0]);
+    let ls: Vec<&str> = turns[0]["ls"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    assert!(ls.contains(&"app.txt") && ls.contains(&".collab"), "{ls:?}");
+    let body = turns[0]["prompt_body"].as_str().unwrap_or("");
+    assert!(
+        body.contains(&format!(
+            "Isolation: your working directory is a throwaway git worktree of revision {first} (`--rev {short}`)"
+        )),
+        "{body}"
+    );
+    let wt = turns[0]["cwd"].as_str().unwrap_or("");
+    assert!(wt.contains("c3-kimi-wt"), "{wt}");
+    assert!(std::fs::symlink_metadata(wt).is_err(), "removed: {wt}");
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "{last}"
+    );
+    assert_eq!(last["worktree"]["reason"], "rev", "{last}");
+    assert_eq!(last["worktree"]["rev"], short);
+    assert_eq!(last["worktree"]["sha"], first.as_str());
+    let handoff = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("02-kimi-reply.md"),
+    )
+    .unwrap_or_default();
+    assert!(
+        handoff.contains(&format!("of revision {first} (--rev {short};")),
+        "the handoff header names the reviewed sha: {handoff}"
+    );
+
+    // a resume under --rev of the thread recorded on HEAD (another revision): warned before the run
+    let o2 = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--purpose",
+            "framing",
+            "--mode",
+            "resume",
+            "--rev",
+            &head,
+        ],
+        &[],
+    );
+    let t2 = text(&o2);
+    assert!(
+        t2.contains(&format!(
+            "WARNING: -Rev {head}: the resume thread {}",
+            last["thread"].as_str().unwrap_or("?")
+        )) && t2.contains(&format!("was recorded on revision {}", &first[..12])),
+        "{t2}"
+    );
+
+    // a revision git does not know is refused before anything starts
+    let o3 = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--rev",
+            "no-such-rev",
+        ],
+        &[],
+    );
+    let t3 = text(&o3);
+    assert_eq!(o3.status.code(), Some(1), "{t3}");
+    assert!(
+        t3.contains("-Rev 'no-such-rev' is not a commit git knows"),
+        "{t3}"
+    );
+    assert!(t3.contains("nothing was started"), "{t3}");
+}
+
+#[test]
+fn a_live_tree_change_during_a_kimi_run_is_a_warning_and_its_own_write_a_failure() {
+    // (B1, item 4) a parallel session edits the LIVE checkout while kimi runs in its worktree: the
+    // run stays usable and says so; kimi's own write in its worktree still fails the run.
+    let e = setup("live-touch");
+    let o = e.consult(
+        &["--engine", "kimi", "--model", "kimi-code/k3"],
+        &[
+            ("FAKE_KIMI_TOOLCALL", "1"),
+            ("FAKE_KIMI_TOUCH", &e.repo.join("app.txt").to_string_lossy()),
+        ],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "a live-tree change no longer fails a worktree reviewer: {last}"
+    );
+    assert_eq!(last["tree_check"]["outcome"], "warned", "{last}");
+    let warnings = last["warnings"].to_string();
+    assert!(
+        warnings.contains("the main working tree changed during the run")
+            && warnings.contains("the reviewer ran in a throwaway worktree"),
+        "{warnings}"
+    );
+
+    let e2 = setup("own-write");
+    let o2 = e2.consult(
+        &["--engine", "kimi", "--model", "kimi-code/k3"],
+        &[
+            ("FAKE_KIMI_TOOLCALL", "1"),
+            ("FAKE_KIMI_WRITE", "scratch.txt"),
+        ],
+    );
+    let t2 = text(&o2);
+    let last2 = e2.last();
+    let outcome = last2["bridge_outcome"].as_str().unwrap_or("");
+    assert!(
+        outcome.starts_with(
+            "failed: the reviewer's throwaway worktree changed during the run: 1 file: scratch.txt"
+        ),
+        "{outcome}\n{t2}"
+    );
+    assert_eq!(last2["provider_failure"]["class"], "permission", "{last2}");
+    assert!(
+        !e2.repo.join("scratch.txt").exists(),
+        "the write never reached the live checkout"
+    );
 }
 
 // ------------------------------------------------------------------ (R7) an uncommitted brief reaches kimi in its worktree

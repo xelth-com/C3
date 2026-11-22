@@ -376,8 +376,8 @@ struct Secondary {
     /// The engine turn warnings (denial notices, engine stderr warnings) — the ledger `warnings`
     /// of an engine run and the `warning    : ...` summary lines.
     engine_warnings: Vec<String>,
-    /// (C3) the kimi engine's `Isolation:` handoff line (the throwaway worktree the reviewer ran
-    /// in); `None` for every other engine.
+    /// (C3, B1) the `Isolation:` handoff line (the throwaway worktree the reviewer ran in and the
+    /// revision it checks out); `None` for a run in the live tree.
     isolation: Option<String>,
     /// The repair turn's kept event-stream (engine repair keeps a real file, unlike codex).
     repair_events_rel: Option<String>,
@@ -1013,6 +1013,14 @@ pub(crate) struct Context {
     pub(crate) subagents_allowed: Option<bool>,
     /// (wave 8) The replay guard of a codex fork / resume (`None` otherwise).
     pub(crate) fork_guard: Option<c3_core::quota::ForkGuard>,
+    /// (B1) The throwaway worktree this run's reviewer reads (`--rev`, the kimi engine, a claude
+    /// diff-review / acceptance), decided before anything starts; `None` = the live tree.
+    pub(crate) isolation: Option<super::reviewed::IsolationPlan>,
+    /// (B1) That worktree, once `run_live` made and staged it: every turn of the run runs there; it
+    /// is removed when the context drops (after the last turn and the commit).
+    pub(crate) review_tree: Option<super::reviewed::ReviewTree>,
+    /// (B1) The `--diff` patch: planned here, written (and its sha256 taken) by `run_live`.
+    pub(crate) diff: Option<super::reviewed::DiffPlan>,
     // paths
     pub(crate) handoffs_dir: PathBuf,
     pub(crate) reply_path: PathBuf,
@@ -1041,6 +1049,15 @@ impl Context {
 
     fn is_codex(&self) -> bool {
         self.engine == "codex"
+    }
+
+    /// (B1) The working directory of every engine turn: the run's throwaway worktree when it has
+    /// one, else the repository root.
+    pub(crate) fn engine_cwd(&self) -> PathBuf {
+        self.review_tree
+            .as_ref()
+            .map(|t| t.path().to_path_buf())
+            .unwrap_or_else(|| self.repo_root.clone())
     }
 }
 
@@ -2361,20 +2378,48 @@ fn build_context(
         .map(|b| c3_core::sha256_hex(&b))
         .unwrap_or_default();
 
-    // (A1) a reviewer in a throwaway worktree of HEAD (kimi) reads the brief at its repo-relative
-    // path IN that worktree: when the brief is neither committed at HEAD nor stageable into the
-    // worktree, the seat is refused before anything starts - a preflight-class refusal, so a panel
-    // re-seats it - instead of a paid seat answering "the brief is missing". Applies with
-    // -SkipPreflight too: this is not an availability guess, the reviewer cannot read its brief.
-    if spec.worktree_isolated && preflight_refusal.is_none() {
-        if let Some(msg) = crate::engines::kimi::isolated_brief_refusal(
-            &repo_root,
-            &engine_name,
-            &brief_ref,
-            brief_path.as_deref(),
-        ) {
-            preflight_label = format!("a real run is refused - {msg}");
-            preflight_refusal = Some((msg, 1));
+    // (B1) The throwaway worktree this run's reviewer reads: `--rev` (a revision git does not know
+    // refuses here, nothing started), the engine's own isolation (kimi), or a claude diff-review /
+    // acceptance (a frozen worktree of HEAD). The http engine sends a pack of the live tree, so
+    // `--rev` does not reach it: said, not refused (a panel seats it beside the others).
+    let isolation = super::reviewed::plan_isolation(
+        &repo_root,
+        &engine_name,
+        &o.purpose,
+        &o.rev,
+        spec.worktree_isolated,
+    )
+    .map_err(|m| (m, 1))?;
+    if !o.rev.is_empty() && isolation.is_none() {
+        let w = format!(
+            "-Rev {}: the {engine_name} engine sends a pack of the live working tree, so this reviewer does not read that revision",
+            o.rev
+        );
+        if !o.dry_run {
+            println!("WARNING: {w}");
+        }
+        run_warnings.push(w);
+    }
+
+    // (A1) a reviewer in a throwaway worktree (of HEAD, or of `--rev`) reads the brief at its
+    // repo-relative path IN that worktree: when the brief is neither committed at that revision nor
+    // stageable into the worktree, the seat is refused before anything starts - a preflight-class
+    // refusal, so a panel re-seats it - instead of a paid seat answering "the brief is missing".
+    // Applies with -SkipPreflight too: this is not an availability guess, the reviewer cannot read
+    // its brief.
+    if let Some(iso) = &isolation {
+        if preflight_refusal.is_none() {
+            if let Some(msg) = crate::engines::worktree::isolated_brief_refusal(
+                &repo_root,
+                &engine_name,
+                &brief_ref,
+                brief_path.as_deref(),
+                iso.checkout(),
+                &iso.label(),
+            ) {
+                preflight_label = format!("a real run is refused - {msg}");
+                preflight_refusal = Some((msg, 1));
+            }
         }
     }
 
@@ -2446,6 +2491,61 @@ fn build_context(
     } else {
         String::new()
     };
+    // (B1) `--rev` continuing a thread recorded on another revision: said before the run (the
+    // reviewer's earlier context describes other code).
+    if let Some(iso) = isolation.as_ref().filter(|i| i.is_rev()) {
+        let parent_entry = ledger_entries.iter().rfind(|e| e.thread == parent_thread);
+        if let Some(w) = super::reviewed::resume_revision_warning(
+            &effective_mode,
+            &parent_thread,
+            parent_entry,
+            &iso.sha,
+            &iso.rev,
+        ) {
+            if !o.dry_run {
+                println!("WARNING: {w}");
+            }
+            run_warnings.push(w);
+        }
+    }
+    // (B1) `--diff <range>`: every revision it names must be a commit git knows (refused here,
+    // nothing started); the patch is planned next to the brief and named in the prompt, and written
+    // by `run_live` before the first turn.
+    let diff_plan = if o.diff.is_empty() {
+        None
+    } else {
+        super::reviewed::check_diff_spec(&repo_root, &o.diff).map_err(|m| (m, 1))?;
+        Some(super::reviewed::plan_diff(
+            &repo_root,
+            &handoffs_dir,
+            brief_path.as_deref(),
+            nn,
+            &r.brief_prefix,
+            &o.diff,
+        ))
+    };
+    let diff_line = diff_plan
+        .as_ref()
+        .map(super::reviewed::diff_prompt_line)
+        .unwrap_or_default();
+    // (B1) a brief (or ask) that names a git range, given to an engine without a shell and without
+    // `--diff`: the reviewer cannot run `git diff` - a warning before the run.
+    {
+        let brief_scan = brief_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok())
+            .unwrap_or_default();
+        if let Some(w) = super::reviewed::range_without_shell_warning(
+            &engine_name,
+            &o.diff,
+            &[&brief_scan, &o.prompt],
+        ) {
+            if !o.dry_run {
+                println!("WARNING: {w}");
+            }
+            run_warnings.push(w);
+        }
+    }
 
     // -Artifact: resolve each path (absolute, or relative to the cwd / repo root), refuse a
     // missing one (`Resolve-ArtifactPaths`; a review cannot be bound to a file that is not
@@ -2587,12 +2687,24 @@ fn build_context(
         },
         _ => String::new(),
     };
-    // (A1) a reviewer in a throwaway worktree of HEAD (kimi) is told which paths of the live tree
-    // were uncommitted at launch and so are not (or not as they are) in its worktree.
-    let isolation_line = if spec.worktree_isolated {
-        crate::engines::kimi::isolation_prompt(&repo_root, &brief_ref)
-    } else {
-        String::new()
+    // (A1) a reviewer in a throwaway worktree of HEAD (kimi, a claude diff-review / acceptance) is
+    // told which paths of the live tree were uncommitted at launch and so are not (or not as they
+    // are) in its worktree; (B1) a reviewer under `--rev` is told which revision it reads and what
+    // was copied in.
+    let isolation_line = match &isolation {
+        Some(iso) if iso.is_rev() => {
+            let task_rel =
+                c3_core::paths::repo_relative(&repo_root, &collab_root.join(task.as_str()))
+                    .filter(|t| crate::engines::worktree::stageable_rel(t));
+            crate::engines::worktree::rev_prompt_line(
+                &iso.sha,
+                &iso.rev,
+                &brief_ref,
+                task_rel.as_deref(),
+            )
+        }
+        Some(_) => crate::engines::worktree::isolation_prompt(&repo_root, &brief_ref),
+        None => String::new(),
     };
     let prompt_text = prompt::assemble(&PromptInputs {
         raw: r.raw,
@@ -2601,6 +2713,7 @@ fn build_context(
         brief_ref: &brief_ref,
         brief_text: &brief_text,
         range: prompt_range.as_ref(),
+        diff_line: &diff_line,
         open_findings: &open_findings,
         schema_transport: &transport.transport,
         schema_text: &schema_text,
@@ -2973,6 +3086,9 @@ fn build_context(
         budget: run_budget,
         subagents_allowed,
         fork_guard,
+        isolation,
+        review_tree: None,
+        diff: diff_plan,
         handoffs_dir,
         reply_path,
         reply_json_path,
@@ -3865,6 +3981,12 @@ fn run_live(mut ctx: Context) -> i32 {
         })
     };
 
+    // (B1) The `--diff` patch and the run's throwaway worktree (the brief and the task's handoffs
+    // staged into it), made ONCE before the first turn: every turn of the run - primary, read-insist,
+    // continuation, repair - runs in that worktree, which is removed when the context drops after
+    // the commit. A failure is the run's capability failure: no reviewer is started.
+    let setup_failure = prepare_review_inputs(&mut ctx);
+
     // The consultation's start time (`$startedAt`, `codex-consult.ps1:3992`), captured just before
     // the turn launches — the ledger's `when`. A panel member captures its OWN start here, so
     // concurrent members share a close `when` while the slower one commits (`finished_at`) later.
@@ -3918,7 +4040,11 @@ fn run_live(mut ctx: Context) -> i32 {
         &ctx.identity.model,
     );
     let main_kill_hook = kill_site.hook("main turn");
-    let (outcome, detail) = match run_primary_turn(&ctx, Some(on_running), Some(main_kill_hook)) {
+    let primary = match &setup_failure {
+        Some(msg) => Ok(setup_failure_outcome(msg)),
+        None => run_primary_turn(&ctx, Some(on_running), Some(main_kill_hook)),
+    };
+    let (outcome, detail) = match primary {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_file(store_pending_path(&store, &pending));
@@ -3953,6 +4079,51 @@ fn run_live(mut ctx: Context) -> i32 {
     code
 }
 
+/// (B1) Write the `--diff` patch (its sha256 then known) and make + stage the run's throwaway
+/// worktree. `Some(why)` when either fails: the run records it as a capability failure and starts
+/// no reviewer.
+fn prepare_review_inputs(ctx: &mut Context) -> Option<String> {
+    if let Some(d) = ctx.diff.as_mut() {
+        if let Err(e) = super::reviewed::write_patch(d, &ctx.repo_root, &ctx.collab_root) {
+            return Some(e);
+        }
+    }
+    if let Some(plan) = &ctx.isolation {
+        let inputs = super::reviewed::StageInputs {
+            repo_root: &ctx.repo_root,
+            collab_root: &ctx.collab_root,
+            task: ctx.task.as_str(),
+            brief_ref: &ctx.brief_ref,
+            brief_path: ctx.brief_path.as_deref(),
+        };
+        match super::reviewed::setup_review_tree(plan, &inputs) {
+            Ok(t) => ctx.review_tree = Some(t),
+            Err(e) => return Some(e),
+        }
+    }
+    None
+}
+
+/// (B1) The primary "turn" of a run whose patch or worktree could not be made: a capability
+/// failure with no child (nothing was started).
+fn setup_failure_outcome(msg: &str) -> (AttemptOutcome, EngineDetail) {
+    (
+        AttemptOutcome::ProviderFailure {
+            failure: c3_core::ledger::ProviderFailure {
+                class: "capability".into(),
+                message: msg.to_string(),
+                ..Default::default()
+            },
+            exit_code: None,
+        },
+        EngineDetail {
+            turn_outcome: format!("failed: {msg}"),
+            forced_class: "capability".into(),
+            ..EngineDetail::default()
+        },
+    )
+}
+
 /// Run the primary turn through the selected engine (codex/agy/muse) and normalize the outcome
 /// plus the engine detail.
 fn run_primary_turn(
@@ -3969,7 +4140,7 @@ fn run_primary_turn(
         "agy" => {
             let eng = crate::engines::agy::AgyEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary,
                 secondary: TurnFiles::default(),
                 no_network: false,
@@ -3999,7 +4170,7 @@ fn run_primary_turn(
         "muse" => {
             let eng = crate::engines::muse::MuseEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary,
                 secondary: TurnFiles::default(),
                 stall_sec: ctx.stall_sec,
@@ -4020,7 +4191,7 @@ fn run_primary_turn(
         "grok" => {
             let eng = crate::engines::grok::GrokEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary,
                 secondary: TurnFiles::default(),
                 stall_sec: ctx.stall_sec,
@@ -4041,7 +4212,7 @@ fn run_primary_turn(
         "kimi" => {
             let eng = crate::engines::kimi::KimiEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary,
                 secondary: TurnFiles::default(),
                 stall_sec: ctx.stall_sec,
@@ -4049,24 +4220,13 @@ fn run_primary_turn(
                 kick_path: Some(ctx.kick_path.clone()),
                 on_running,
                 on_kill,
-                // (R7) stage the operator brief into the HEAD worktree so an uncommitted / modified
-                // brief still reaches the reviewer at the repo-relative path the prompt references.
-                brief: ctx
-                    .brief_path
-                    .clone()
-                    .map(|src| crate::engines::kimi::BriefCopy {
-                        src,
-                        rel: ctx.brief_ref.clone(),
-                    }),
             };
             let mode = resolved_mode(&ctx.effective_mode, &ctx.parent_thread, &ctx.identity);
             let turn = engine_turn(ctx, make_live_request_engine(ctx, mode), TurnKind::Primary);
             let run = eng
                 .run_detailed(&turn)
                 .map_err(|e| format!("the kimi run could not be planned: {e:?}"))?;
-            let mut d = kimi_detail(&run.turn);
-            d.isolation = run.isolation;
-            Ok((run.outcome, d))
+            Ok((run.outcome, kimi_detail(&run.turn)))
         }
         "claude" => {
             let eng = claude_engine(
@@ -4104,7 +4264,7 @@ fn run_primary_turn(
         _ => {
             let eng = CodexEngine {
                 launcher: ctx.launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary,
                 secondary: TurnFiles::default(),
                 stall_sec: ctx.stall_sec,
@@ -4855,6 +5015,12 @@ fn finish(args: Finish) -> i32 {
         main_kept: main_kept.clone(),
         ..Secondary::default()
     };
+    // (C3, B1) the `Isolation:` line of the throwaway worktree the reviewer ran in (any engine:
+    // kimi, `--rev`, a claude diff-review / acceptance) - recorded whatever the outcome, so a
+    // failed/timed-out run still shows where it ran and which revision it read.
+    if let (Some(plan), Some(t)) = (&ctx.isolation, &ctx.review_tree) {
+        sec.isolation = Some(t.isolation_line(plan));
+    }
     // (0.6.0, wave 29) the claude main turn: its resolved model is what every later turn sends
     // (D4); a KILLED turn is judged by its init and model like any turn (E12) - a proof problem is
     // the outcome's reason (the stop said after it) and no continuation resumes the session; a
@@ -4936,11 +5102,6 @@ fn finish(args: Finish) -> i32 {
             sec.original_prose = hs.original_prose.clone();
             sec.drift_notes = hs.drift_notes.clone();
             sec.format_retry = hs.format_retry.clone();
-        }
-        // (C3) the kimi isolation line (the throwaway worktree the reviewer ran in) - recorded
-        // whatever the outcome, so a failed/timed-out run still shows where it ran.
-        if detail.isolation.is_some() {
-            sec.isolation = detail.isolation.clone();
         }
         // The engine warnings of a usable primary turn (denial notices, engine stderr warnings).
         if usable {
@@ -5118,6 +5279,9 @@ fn finish(args: Finish) -> i32 {
         // (A1) the reply is complete and schema-valid: a tree/collab change the reviewer's own
         // tool log does not explain is only a warning - the reply is kept.
         let reply_complete = usable && structured.is_some();
+        // (B1) a reviewer that ran in a throwaway worktree: the check watches THAT worktree for the
+        // reviewer's own writes; a change of the live tree during the run is only a warning.
+        let worktree_changes = ctx.review_tree.as_ref().map(|t| t.changes());
         let check = engine_tree_check(
             &ctx,
             &drift,
@@ -5126,6 +5290,7 @@ fn finish(args: Finish) -> i32 {
             &agy_all,
             &claude_init,
             reply_complete,
+            worktree_changes.as_deref(),
         );
         sec.tree_check_outcome = check.outcome.clone();
         sec.tree_check_files = check.files.clone();
@@ -6724,6 +6889,62 @@ mod engine_tests {
         // claude with a read-only init (write_disabled) still WARNS on a change.
         let cw = engine_tree_outcome("claude", &log(&[], &[]), true, false, None, changes());
         assert_eq!(cw.outcome, "warned");
+    }
+
+    // (B1, item 4) a reviewer in a throwaway worktree: a live-tree change alone is only a warning
+    // (kimi included - it used to fail on any main-tree change); the reviewer's own write in the
+    // worktree still fails a kimi run, and the live-tree warning rides along.
+    #[test]
+    fn a_live_tree_change_never_fails_a_reviewer_in_a_throwaway_worktree() {
+        let main_warn = || {
+            vec![format!(
+                "the main working tree changed during the run (1 file: a.rs) - {}",
+                tree::NOT_THE_WORKTREE
+            )]
+        };
+        let none = || TreeChanges {
+            why: Vec::new(),
+            warn: Vec::new(),
+            files: Vec::new(),
+        };
+        let empty = AgyToolLog::default();
+        // the worktree is clean, the live tree changed: warned, not failed (kimi is not
+        // write-disabled, so the same change in the live tree used to FAIL it)
+        let clean = engine_tree_outcome("kimi", &empty, false, true, None, none());
+        let k = tree::with_live_tree_warnings(clean, main_warn());
+        assert_eq!(k.outcome, "warned");
+        assert!(k.problem.is_empty());
+        assert!(
+            k.warnings[0].contains("the reviewer ran in a throwaway worktree"),
+            "{:?}",
+            k.warnings
+        );
+        // the reviewer wrote in its worktree: kimi FAILS, the live-tree warning is kept beside it
+        let wrote = TreeChanges {
+            why: vec!["the reviewer's throwaway worktree changed during the run: 1 file: x".into()],
+            warn: vec![
+                "the reviewer's throwaway worktree changed during the run (1 file: x) - y".into(),
+            ],
+            files: vec!["x".into()],
+        };
+        let f = tree::with_live_tree_warnings(
+            engine_tree_outcome("kimi", &empty, false, true, None, wrote),
+            main_warn(),
+        );
+        assert_eq!(f.outcome, "failed");
+        assert!(
+            f.problem
+                .contains("the reviewer's throwaway worktree changed"),
+            "{}",
+            f.problem
+        );
+        assert_eq!(f.warnings.len(), 1);
+        // nothing changed anywhere: still clean
+        let c = tree::with_live_tree_warnings(
+            engine_tree_outcome("kimi", &empty, false, true, None, none()),
+            Vec::new(),
+        );
+        assert_eq!(c.outcome, "clean");
     }
 
     // (A1) a panel member's priors are the pre-panel snapshot it was shown: a sibling's blocker

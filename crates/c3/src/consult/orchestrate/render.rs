@@ -113,7 +113,7 @@ pub(super) fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
             .iter()
             .map(|l| format!("Recovery record: {l}"))
             .collect(),
-        // (C3) the kimi isolation line (the throwaway worktree the reviewer ran in).
+        // (C3, B1) the isolation line (the throwaway worktree the reviewer ran in, its revision).
         isolation: sec.isolation.clone(),
         ..Default::default()
     };
@@ -128,10 +128,15 @@ pub(super) fn render_handoff(args: RenderHandoff) -> (String, Option<String>) {
     }
     // Drift lines (`$driftLines`): tree, HEAD move, brief, artifacts — in that order.
     if drift.tree_changed {
-        records.drift_lines.push(
+        records.drift_lines.push(if ctx.review_tree.is_some() {
+            // (B1) the reviewer read its throwaway worktree, so the live tree's change did not
+            // reach it.
+            "WARNING: the main working tree changed during the review (fingerprint before/after differ); the reviewer read its throwaway worktree, not the live tree."
+                .to_string()
+        } else {
             "WARNING: working tree changed during the review (fingerprint before/after differ)."
-                .to_string(),
-        );
+                .to_string()
+        });
     }
     if !drift.revision_moved.is_empty() {
         records.drift_lines.push(revision::revision_moved_note(

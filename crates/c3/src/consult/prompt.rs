@@ -127,6 +127,9 @@ pub struct PromptInputs<'a> {
     /// spec says `inline_brief` (grok); empty otherwise.
     pub brief_text: &'a str,
     pub range: Option<&'a Range>,
+    /// (B1) The `--diff` line ("The change under review is the patch at <path> ..."), after the
+    /// brief and the range; empty without `--diff`.
+    pub diff_line: &'a str,
     pub open_findings: &'a [OpenFinding],
     /// `output-schema` | `native` | `prompt-only`.
     pub schema_transport: &'a str,
@@ -139,7 +142,7 @@ pub struct PromptInputs<'a> {
     pub tools_line: &'a str,
     /// (A1) A worktree-isolated reviewer's (kimi) `Isolation:` paragraph - the live tree's
     /// uncommitted paths at launch, which its throwaway worktree of HEAD does not hold
-    /// ([`crate::engines::kimi::isolation_prompt_line`]); added after the tools line. Empty for
+    /// ([`crate::engines::worktree::isolation_prompt_line`]); added after the tools line. Empty for
     /// every other engine and for a clean tree.
     pub isolation_line: &'a str,
     /// A panel member's role paragraph (`role_prompt_line`), added after the ask and before the
@@ -236,6 +239,10 @@ pub fn assemble(inp: &PromptInputs) -> String {
             "Review range: `{}` - {} ({} insertions, {} deletions; git diff --shortstat). Plan your reading for its size.",
             r.spec, r.text, r.insertions, r.deletions
         ));
+    }
+    // (B1) the `--diff` patch the change under review travels in.
+    if !inp.diff_line.is_empty() {
+        parts.push(inp.diff_line.to_string());
     }
     // The engine's own tools line (D11), after the ask/brief/range; empty for codex.
     if !inp.tools_line.is_empty() {
@@ -386,6 +393,7 @@ pub(crate) fn schema_lines(purpose: &str, has_open: bool, prompt_only: bool) -> 
         brief_ref: "",
         brief_text: "",
         range: None,
+        diff_line: "",
         open_findings: if has_open { &one } else { &[] },
         schema_transport: if prompt_only {
             "prompt-only"
@@ -456,6 +464,7 @@ mod tests {
             brief_ref: ".collab/t/handoffs/01.md",
             brief_text: "",
             range: None,
+            diff_line: "",
             open_findings: &[],
             schema_transport: "output-schema",
             schema_text: "",
@@ -487,6 +496,20 @@ mod tests {
         let iso = with.find("Isolation: your working directory").unwrap();
         let purpose = with.find("Review purpose: framing.").unwrap();
         assert!(t < iso && iso < purpose, "{with}");
+    }
+
+    // (B1) the `--diff` line follows the brief line and precedes the tools line; empty adds nothing.
+    #[test]
+    fn diff_line_follows_the_brief_and_precedes_the_tools_line() {
+        let mut i = base();
+        i.tools_line = "Tools: read files.";
+        assert!(!assemble(&i).contains("The change under review"));
+        i.diff_line = "The change under review is the patch at `.collab/t/handoffs/01.patch`.";
+        let p = assemble(&i);
+        let brief = p.find("Read the brief at").unwrap();
+        let diff = p.find("The change under review is the patch at").unwrap();
+        let tools = p.find("Tools: read files.").unwrap();
+        assert!(brief < diff && diff < tools, "{p}");
     }
 
     #[test]

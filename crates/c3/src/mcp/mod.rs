@@ -314,6 +314,8 @@ fn build_argv(name: &str, args: &Value) -> Result<(Vec<String>, Duration), Strin
                 ("model", "--model"),
                 ("effort", "--effort"),
                 ("range", "--range"),
+                ("rev", "--rev"),
+                ("diff", "--diff"),
                 ("schema_transport", "--schema-transport"),
                 ("telemetry", "--telemetry"),
             ] {
@@ -932,6 +934,8 @@ fn tool_defs() -> Value {
                     "timeout_sec": { "type": "integer", "description": "Run timeout in seconds (0 = the purpose default)." },
                     "continue_sec": { "type": "integer", "description": "Timeout-continuation budget (-1 = min(timeout,900); 0 = none)." },
                     "range": { "type": "string", "description": "base..head or base...head (diff-review / acceptance only)." },
+                    "rev": { "type": "string", "description": "Review this revision: the reviewer runs in a throwaway worktree of it (brief and task handoffs copied in)." },
+                    "diff": { "type": "string", "description": "base..head, base...head or one revision (against the working tree): `git diff` written as a patch into the task's handoffs and named in the prompt." },
                     "artifact": { "type": "array", "items": { "type": "string" }, "description": "File(s) bound to the review (repo-relative)." },
                     "raw": { "type": "boolean", "description": "A plain-text consultation: no schema, no findings bookkeeping." },
                     "dry_run": { "type": "boolean", "description": "Print the plan and exit; writes nothing." },

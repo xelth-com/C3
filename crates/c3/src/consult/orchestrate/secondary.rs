@@ -213,7 +213,7 @@ fn run_codex_secondary(
         "agy" => {
             let eng = crate::engines::agy::AgyEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 no_network: false,
@@ -231,7 +231,7 @@ fn run_codex_secondary(
         "muse" => {
             let eng = crate::engines::muse::MuseEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
@@ -247,7 +247,7 @@ fn run_codex_secondary(
         "grok" => {
             let eng = crate::engines::grok::GrokEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
@@ -267,7 +267,7 @@ fn run_codex_secondary(
         "kimi" => {
             let eng = crate::engines::kimi::KimiEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
@@ -277,17 +277,6 @@ fn run_codex_secondary(
                 kick_path: secondary_kick.clone(),
                 on_running,
                 on_kill,
-                // (F11-3) Every kimi turn runs in a fresh HEAD worktree, so a secondary turn
-                // (read-insist / continuation / repair) must stage the operator brief too - an
-                // uncommitted or locally modified brief is otherwise absent/stale exactly when a
-                // zero-tool primary is re-asked to read it. Same source and relative path as primary.
-                brief: ctx
-                    .brief_path
-                    .clone()
-                    .map(|src| crate::engines::kimi::BriefCopy {
-                        src,
-                        rel: ctx.brief_ref.clone(),
-                    }),
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, r.turn.outcome),
@@ -298,7 +287,7 @@ fn run_codex_secondary(
             use c3_core::engine::Engine;
             let eng = CodexEngine {
                 launcher: ctx.launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
@@ -407,7 +396,9 @@ pub(super) fn run_timeout_continuation(args: TimeoutContinuation) {
         skip = format!("{} process(es) survived the kill", survivors.len());
     } else {
         let mut moved: Vec<&str> = Vec::new();
-        if drift.tree_changed {
+        // (B1) a reviewer in a throwaway worktree reads a frozen tree: a live-tree change during
+        // the run does not change what the continuation would read.
+        if drift.tree_changed && ctx.review_tree.is_none() {
             moved.push("the working tree");
         }
         if drift.brief_changed {
@@ -1072,7 +1063,7 @@ fn run_engine_secondary(
         "agy" => {
             let eng = crate::engines::agy::AgyEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 no_network: false,
@@ -1096,7 +1087,7 @@ fn run_engine_secondary(
         "grok" => {
             let eng = crate::engines::grok::GrokEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
@@ -1122,7 +1113,7 @@ fn run_engine_secondary(
         "kimi" => {
             let eng = crate::engines::kimi::KimiEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,
@@ -1132,15 +1123,6 @@ fn run_engine_secondary(
                 kick_path: None,
                 on_running: None,
                 on_kill: None,
-                // (F11-3) Stage the operator brief into this turn's fresh HEAD worktree too, so an
-                // uncommitted / locally modified brief reaches the reviewer at its repo-relative path.
-                brief: ctx
-                    .brief_path
-                    .clone()
-                    .map(|src| crate::engines::kimi::BriefCopy {
-                        src,
-                        rel: ctx.brief_ref.clone(),
-                    }),
             };
             match eng.run_detailed(&turn) {
                 Ok(r) => (r.outcome, kimi_detail(&r.turn)),
@@ -1156,7 +1138,7 @@ fn run_engine_secondary(
         _ => {
             let eng = crate::engines::muse::MuseEngine {
                 launcher: ctx.engine_launcher.clone(),
-                cwd: ctx.repo_root.clone(),
+                cwd: ctx.engine_cwd(),
                 primary: TurnFiles::default(),
                 secondary: files,
                 stall_sec: 0,

@@ -244,6 +244,9 @@ fn member_options(task: &str, spec: &crate::panel::member::MemberSpec) -> Option
         budget: a.get("budget").and_then(|v| v.as_i64()).filter(|b| *b >= 0),
         budget_source: s("budget_source"),
         range: s("range"),
+        // (B1) the panel run resolved `--rev` to one full sha for every member
+        rev: s("rev"),
+        diff: s("diff"),
         reply_name: s("reply_name"),
         artifacts: list("artifact"),
         raw: b("raw"),

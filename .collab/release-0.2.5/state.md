@@ -188,3 +188,46 @@ swap -> xelth.com/C3 page after the tag.
   update 12, wave6_live_diffs 5, wave9_consilium 4, work 29 - all ok. fmt and clippy clean. Committed
   as one commit (C1 + C2 + P4). Next: B1 alone, then TECH_DEBT, the version bump, a cheap diff-review
   panel, Astra's acceptance.
+- 2026-11-22 ~22:05: C1 + C2 + P4 committed as 08ae5d5 (secret gate: `panel/plan.rs` allowed after
+  review - the test fixture line that assigns the auth kind `endpoint`, a false positive) and pushed; CI run 45069617073
+  watched. Worktrees of C1 and P4 removed (no links, content equal to the saved patches), branches
+  deleted; C2's and P2's worktrees are locked by this session's agent harness (pid 2440) - both
+  recorded `parked`, remove once unlocked, no force. Wave B1 launched (opus-worker, own worktree,
+  base 08ae5d5). Held until B1 is applied: TECH_DEBT.md edits (the worker reads it by line numbers),
+  the version bump and the CHANGELOG heading.
+- 2026-11-22 22:36: CI for 08ae5d5 GREEN on all three jobs (run 45069617073, attempt 2). Attempt 1:
+  the Windows job was cancelled at 16 min 16 s inside `work` (test
+  `a_delayed_status_recovery_cannot_overwrite_a_live_resume_claim`), no failed test before it, no
+  timeout in `ci.yml`, nothing in the code cancels a run; the rerun of that job passed in 15 min.
+  Cause not found - if it repeats at the same test, look at the test, not at the runner.
+- 2026-11-22 ~23:05, wave B1 reported and APPLIED (worktree `agent-a25720cc1ff94d197`, 25 files, clean
+  apply; main's tree equals the worker's, file by file). `c3 consult --rev <rev>`: every local-cwd
+  engine runs in a throwaway worktree of the resolved sha with the brief, `handoffs/` and `state.md`
+  staged in; prompt, handoff `Isolation:` line and ledger `worktree {reason, rev, sha}` name it. A
+  claude-engine diff-review / acceptance without `--rev` reads a worktree of HEAD. `--diff <range>`
+  writes the patch into `handoffs/`, names it in the prompt, ledger `diff {range, patch, sha256, files,
+  bytes}`; a named range without `--diff` on an engine without a shell warns. A reviewer in a
+  throwaway worktree is checked against that worktree; a live-tree change only warns. `KimiWorktree`
+  -> `engines/worktree.rs` (name, owner record, link-safe removal unchanged); new
+  `consult/reviewed.rs`. Accepted: one worktree per run; `*.events.jsonl` not staged; http + `--rev`
+  warns; a worktree / patch that cannot be made = capability failure; claude, grok, muse only warn on
+  a write in their worktree; a relative brief outside the repository refused for a claude
+  diff-review / acceptance; findings stay bound to the live HEAD. Worker's open question on resume
+  across directories: checked live, Claude Code 2.1.330 resumes a session by id from a second and a
+  third directory with the first one deleted - no regression. Not verified for the kimi CLI.
+- 2026-11-22 ~23:40, verification of B1 on main: fmt clean; clippy clean in the worker's identical
+  tree; c3-core and c3 all green; c3-cli unit tests and 10 of 24 integration binaries green (branches,
+  ci_check, claude_engine 18, compat_wave2b, compat_wave5, delegation_rule, finish, grok_engine,
+  hook_scripts, init_doctor). The background run was then stopped by the memory-pressure reaper
+  inside kill_record_durable (another session's `link.exe` for movfast held 6.8 GB, 0.4 GB free).
+  NOT run locally with B1: kill_record_durable, kimi_engine (14 green in the worker's run), maintain,
+  mcp_integration, notspooled_parity, panel_light_required, reviewer_protection, snapshot_partb,
+  subagent_guard, telemetry_parity, update, wave6_live_diffs, wave9_consilium, work. Not restarted
+  locally (the harness rule after a reap); B1 committed and the rest left to CI (Linux + Windows).
+- 2026-11-22 ~23:30: `.eck/TECH_DEBT.md` brought up to date by a worker (12 items closed, 4 partly,
+  F06-4 moved to decided boundaries, 14 minor debts added; backup in the scratchpad `TECH_DEBT.bak`).
+  Five review briefs written: `handoffs/05..09-claude-diff-review-*.md`, one per commit range
+  (ba43ff6..a115422, ..23b1455, ..8e6fd3e, ..08ae5d5, ..B1). Seats: 1 Sol + Muse contributor;
+  2 Grok + GLM-5.3; 3 kimi-claude k3.1-pro + Muse contributor; 4 Grok + DeepSeek; 5 Grok + Muse
+  contributor + GLM-5.3. Scratch rosters in the scratchpad `rosters/roster-p1..p5.json`. To launch
+  with the new binary: `--rev <head of the range> --diff <range> --panel --panel-all`.

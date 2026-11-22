@@ -39,6 +39,18 @@ fn git(repo: &Path, args: &[&str]) {
     assert!(st.status.success(), "git {args:?}");
 }
 
+/// git's trimmed stdout in `repo`.
+fn git_out(repo: &Path, args: &[&str]) -> String {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("git on PATH");
+    assert!(o.status.success(), "git {args:?}");
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
 /// A PATH without any directory that holds a claude launcher (GUARD).
 fn safe_path() -> String {
     let path = std::env::var("PATH").unwrap_or_default();
@@ -1301,4 +1313,174 @@ fn an_event_refused_by_a_living_forget_is_said_dropped() {
     assert!(!out.contains("- counted (c3 telemetry --status)"), "{out}");
     assert_eq!(e.ledger().len(), 1, "the entry is committed");
     assert!(marker.exists(), "the living owner's marker stays");
+}
+
+// ------------------------------------------------------------------ (B1) the reviewed revision
+
+const ACCEPT: &str = r#"{"schema_version":"1","verdict":"ACCEPT","verdict_reason":"r","reply_markdown":"m","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#;
+
+/// (B1, item 2) a claude-engine acceptance review reads a frozen throwaway worktree of HEAD: its
+/// cwd is a linked worktree of the HEAD commit, the untracked brief is staged there (the fake reads
+/// its reply FROM that file in its cwd - a structured reply proves the brief was visible), the
+/// prompt names the paths uncommitted at launch, and the worktree is gone after the run. A framing
+/// run still reads the live tree.
+#[test]
+fn an_acceptance_review_reads_a_frozen_worktree_of_head_with_the_staged_brief() {
+    let e = setup("frozen");
+    let head = git_out(&e.repo, &["rev-parse", "HEAD"]);
+    let brief_rel = ".collab/t/handoffs/01-claude-acceptance.md";
+    // the brief's text is the reply the fake returns when it can read the file in its cwd
+    std::fs::write(e.repo.join(brief_rel), ACCEPT).unwrap();
+    std::fs::write(e.repo.join("app.txt"), "uncommitted edit\n").unwrap();
+    let x = e.consult(
+        &[
+            "--engine",
+            "claude",
+            "--model",
+            "sonnet",
+            "--purpose",
+            "acceptance",
+            "--brief",
+            brief_rel,
+        ],
+        &[
+            ("FAKE_CLAUDE_REPLY_FROM_CWD", brief_rel),
+            ("FAKE_CLAUDE_REPLY", ""),
+        ],
+    );
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{turns:?}");
+    let cwd = turns[0]["cwd"].as_str().unwrap_or("");
+    assert!(cwd.contains("c3-kimi-wt"), "a throwaway worktree: {cwd}");
+    assert_eq!(turns[0]["git_file"], true, "{:?}", turns[0]);
+    assert_eq!(turns[0]["head"], head.as_str(), "of HEAD: {:?}", turns[0]);
+    let stdin = turns[0]["stdin"].as_str().unwrap_or("");
+    assert!(
+        stdin.contains(
+            "Isolation: your working directory is a throwaway git worktree of the committed HEAD"
+        ) && stdin.contains("`app.txt`"),
+        "the prompt names what is not visible: {stdin}"
+    );
+    let l = e.last();
+    assert_eq!(l["bridge_outcome"], "usable reply", "{l}");
+    assert_eq!(
+        l["structured"], true,
+        "the staged brief was read in the worktree: {l}"
+    );
+    assert_eq!(l["verdict"], "ACCEPT");
+    assert_eq!(l["worktree"]["reason"], "frozen-head", "{l}");
+    assert_eq!(l["worktree"]["sha"], head.as_str());
+    assert!(std::fs::symlink_metadata(cwd).is_err(), "removed: {cwd}");
+    let handoff = std::fs::read_to_string(
+        e.repo
+            .join(".collab")
+            .join("t")
+            .join("handoffs")
+            .join("02-claudecode-reply.md"),
+    )
+    .unwrap_or_default();
+    assert!(
+        handoff.contains(&format!("of HEAD {head} (removed after the run)."))
+            && handoff.contains("the reviewer saw the committed HEAD only"),
+        "{handoff}"
+    );
+
+    // a framing run is not frozen: it reads the live checkout
+    let y = e.consult(
+        &[
+            "--engine",
+            "claude",
+            "--model",
+            "sonnet",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let ty = text(&y);
+    assert_eq!(y.status.code(), Some(0), "{ty}");
+    let fr = e.turns();
+    assert_eq!(
+        Path::new(fr[0]["cwd"].as_str().unwrap_or("")),
+        e.repo.as_path(),
+        "{:?}",
+        fr[0]
+    );
+    assert!(e.last().get("worktree").is_none(), "{}", e.last());
+}
+
+/// (B1, item 3) `--diff <range>` writes the patch next to the brief, names it in the prompt and
+/// binds the ledger entry to its sha256; without `--diff`, a brief that names a git range given to
+/// the claude engine (no shell) draws a printed warning.
+#[test]
+fn diff_hands_the_reviewer_a_patch_and_a_named_range_without_it_is_warned() {
+    let e = setup("diff");
+    std::fs::write(e.repo.join("app.txt"), "two\n").unwrap();
+    std::fs::write(e.repo.join("new.txt"), "brand new\n").unwrap();
+    git(&e.repo, &["add", "-A"]);
+    git(&e.repo, &["commit", "-q", "-m", "second"]);
+    let brief_rel = ".collab/t/handoffs/01-claude-review.md";
+    std::fs::write(
+        e.repo.join(brief_rel),
+        "# Review\n\n1. Review `git diff HEAD~1..HEAD` - is the change right?\n",
+    )
+    .unwrap();
+    let base = [
+        "--engine",
+        "claude",
+        "--model",
+        "sonnet",
+        "--purpose",
+        "framing",
+        "--brief",
+        brief_rel,
+    ];
+
+    let x = e.consult(&base, &[]);
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    assert!(
+        t.contains("WARNING: the brief names the git range `HEAD~1..HEAD`, but the claude reviewer has no shell to run git: pass -Diff HEAD~1..HEAD"),
+        "{t}"
+    );
+
+    let mut with_diff = base.to_vec();
+    with_diff.extend_from_slice(&["--diff", "HEAD~1..HEAD"]);
+    let y = e.consult(&with_diff, &[]);
+    let ty = text(&y);
+    assert_eq!(y.status.code(), Some(0), "{ty}");
+    assert!(!ty.contains("the brief names the git range"), "{ty}");
+    let patch_rel = ".collab/t/handoffs/01-claude-review.patch";
+    let patch = std::fs::read(e.repo.join(patch_rel)).expect("the patch was written");
+    let ptext = String::from_utf8_lossy(&patch);
+    assert!(
+        ptext.contains("diff --git a/new.txt b/new.txt") && ptext.contains("+brand new"),
+        "{ptext}"
+    );
+    assert!(!ptext.contains(".collab"), "{ptext}");
+    let stdin = e.turns()[0]["stdin"].as_str().unwrap_or("").to_string();
+    assert!(
+        stdin.contains(&format!(
+            "The change under review is the patch at `{patch_rel}` (`git diff HEAD~1..HEAD`"
+        )),
+        "{stdin}"
+    );
+    let l = e.last();
+    assert_eq!(l["diff"]["range"], "HEAD~1..HEAD", "{l}");
+    assert_eq!(l["diff"]["patch"], patch_rel);
+    assert_eq!(l["diff"]["sha256"], c3_core::sha256_hex(&patch).as_str());
+    assert_eq!(l["diff"]["files"], 2);
+
+    // a range git does not know is refused before anything starts
+    let mut bad = base.to_vec();
+    bad.extend_from_slice(&["--diff", "nope..HEAD"]);
+    let z = e.consult(&bad, &[]);
+    let tz = text(&z);
+    assert_eq!(z.status.code(), Some(1), "{tz}");
+    assert!(
+        tz.contains("-Diff 'nope..HEAD': 'nope' is not a commit git knows"),
+        "{tz}"
+    );
 }
