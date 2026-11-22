@@ -76,6 +76,10 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 
 ### Changed
 
+- **OpenAI's GPT-6.2 models are known to telemetry.** The `openai` class's closed model list now
+  also holds `gpt-6.1-sol`, `gpt-6.2-astra` and `gpt-6.2-sol` (released 2026-11, listed for
+  ChatGPT accounts by Codex). Before this a judge record naming them was sent as `other`. The
+  docs now name `openai :: gpt-6.2-sol` as the codex worker.
 - **A new Claude model id is accepted without a C3 release.** The closed `CLAUDE_MODELS` table is
   kept (it documents the known ids and the plugin parity), but a roster / `--model` of a `claude`
   entry (auth subscription or api-key) and the telemetry class `anthropic` now also accept any id of

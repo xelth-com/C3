@@ -113,7 +113,7 @@ apply to it: a worker is expected to change the tree, so you may write under the
 directory (and hold your writing workers) while one runs. Pick the engine by the work:
 `muse` (`meta :: muse-spark-1.3-contributor`) is near-free — use it for simple, low-stakes
 work; the `claude` endpoint workers (GLM/DeepSeek on cheap API plans) for ordinary coding; and
-`codex` (`openai :: gpt-6.1-sol`) for complex programs.
+`codex` (`openai :: gpt-6.2-sol`) for complex programs.
 
 **Cross-model tests (`c3 work --role tests`).** The coordinator authors the code; a worker of
 another family writes the tests. `--role tests` inlines the change (the working tree against HEAD,

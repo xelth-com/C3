@@ -58,7 +58,14 @@ pub(crate) static VENDORS: [Vendor; 11] = [
         hosts: &["openai.com", "chatgpt.com"],
         engine: "",
         builtin: "openai",
-        models: &["gpt-5.1", "gpt-6-astra", "o4-mini"],
+        models: &[
+            "gpt-5.1",
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6.2-astra",
+            "gpt-6.2-sol",
+            "o4-mini",
+        ],
     },
     Vendor {
         class: "zai",

@@ -184,7 +184,7 @@ existing `roles` key) on one of three engines:
 
 - **`claude`** — GLM-5.3, GLM-5.3-flash (z.ai), DeepSeek-4.1-flash (byteplus): the engine that
   already drives them for reviews; writes with the Claude Code tools under the `--allow` list.
-- **`codex`** — `openai :: gpt-6.1-sol`, for complex programs: `codex exec --sandbox
+- **`codex`** — `openai :: gpt-6.2-sol`, for complex programs: `codex exec --sandbox
   workspace-write`; the write mode is the sandbox, so `--allow` does not apply.
 - **`muse`** — `meta :: muse-spark-1.3-contributor`, near-free on the Muse Code subscription:
   writes and runs the shell headlessly (`--approval-mode never --trust-workspace
