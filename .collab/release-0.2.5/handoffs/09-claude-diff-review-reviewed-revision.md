@@ -1,6 +1,6 @@
 # Handoff 09 - Claude: diff-review of 0.2.5, part 5 of 5 - every reviewer reads the revision under review
 
-Date: 2026-11-22. Range: `08ae5d5..B1_COMMIT` (base `08ae5d5`, head `B1_COMMIT`; one commit).
+Date: 2026-11-22. Range: `08ae5d5..e4f42a8` (base `08ae5d5`, head `e4f42a8`; one commit).
 
 You run in a throwaway checkout of the head commit of this range; the change itself is the patch
 file named in your prompt (`.collab/` and `.eck/` left out). You may have no shell: read the patch
@@ -19,7 +19,7 @@ A first panel reviewed `v0.2.4..ba43ff6` and returned 36 findings. This range ho
 for them, and (b) one tech-debt item (a reviewer in a throwaway worktree was failed by a change of
 the live tree). No model has read this change. One piece:
 
-- **B1. Reviewed revision** (`B1_COMMIT`; new `crates/c3/src/consult/reviewed.rs` and
+- **B1. Reviewed revision** (`e4f42a8`; new `crates/c3/src/consult/reviewed.rs` and
   `crates/c3/src/engines/worktree.rs`; changed `crates/c3/src/engines/{kimi,mod}.rs`,
   `crates/c3/src/consult/{args,mod,detach,dryrun,prompt}.rs`,
   `crates/c3/src/consult/orchestrate/{mod,engine,ledger,member,render,secondary,tree}.rs`,

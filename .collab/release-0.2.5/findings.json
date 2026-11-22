@@ -3,7 +3,7 @@
     "findings":  [
                      {
                          "id":  "F02-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -56,15 +56,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:38+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Model repair still checks metadata and later writes by path in place.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -109,15 +133,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:38+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The direct writes still truncate in place and do not compare the current file with the bytes read.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -166,15 +214,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:39+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The pin detector tests the raw alias spelling, while family matching strips the context suffix and accepts the family prefix.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -219,15 +291,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:40+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The repair still receives a flat list of all active model IDs, including on-request entries.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-5",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -280,15 +376,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:41+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The probe uses its own cleared environment, and detached Windows maintenance still inherits the parent\u0027s environment.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-6",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -341,15 +461,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:42+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Repository root discovery and branch scans remain synchronous Git subprocess calls.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-7",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -411,15 +555,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:47+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Descriptions still lose terminal whitespace and use an unlocked read-modify-write.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-8",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -473,15 +641,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:48+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The branch scan still runs `git status` without disabling optional locks. The new Kimi status command is a separate path.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-9",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -530,15 +722,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:49+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The current-branch fallback remains, and failed ancestry discovery still becomes an empty unmerged set.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-10",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -588,15 +804,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:50+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Content detection is still based on `git cherry`, which can match a historical patch subsequently reverted.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-11",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -645,15 +885,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:51+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The worktree exclusion still matches the basename prefix alone.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-12",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -702,15 +966,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:57+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Catalog fetches still share the Kimi redirect exception and compare hostname without port or userinfo validation.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-13",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -759,15 +1047,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:58+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The redirect loop and 8 MiB transport read cap remain.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-14",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -816,15 +1128,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:59+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The date gate still returns on the first qualifying source and has no upper timestamp bound.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-15",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -873,15 +1209,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:00+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Authenticated model lists are still deduplicated and reused by hostname.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-16",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -943,15 +1303,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:01+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The smoke still passes a provider label and proposed model rather than the exact reviewed roster entry.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-17",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1004,15 +1388,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:03+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The writer still selects a sole literal match regardless of its JSON object and validates only whether the edited roster loads.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-18",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -1061,15 +1469,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:04+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Explicit `--models` still promotes Off to Announce before collection.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-19",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -1131,15 +1563,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:09+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P4 (telemetry, kimi worktree removal), commit 08ae5d5",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Source validation permits keyless internal HTTPS URLs, and telemetry trusts IDs published by any configured source.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-20",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1192,15 +1648,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:10+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P4 (telemetry, kimi worktree removal), commit 08ae5d5",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Anthropic-class telemetry still treats a numeric Claude-shaped string as sufficient evidence of publication.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F02-21",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -1262,15 +1742,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:11+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P4 (telemetry, kimi worktree removal), commit 08ae5d5",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The unlink pass still swallows errors and is followed unconditionally by forced removal.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F03-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "blocker",
                          "locations":  [
                                            {
@@ -1325,15 +1829,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:43+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "At this revision, actual Claude reviewer and worker launches use `run_turn`, which adds the marker after clearing and rebuilding the environment. Auth probes remain covered by F02-5.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F03-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1383,15 +1911,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:12+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P4 (telemetry, kimi worktree removal), commit 08ae5d5",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Cleanup still opens queued paths by name and retains the forced removal and recursive fallback. Windows reparse behavior was not exercised.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F03-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1441,15 +1993,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:52+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "A read-only Git lookup confirmed a dotted subsection works. The malformed `c3: ` description still loses its first line.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F03-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -1499,15 +2075,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:44+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Detection still requires literal `model:`, and repair substitutes the entire matched line.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F03-5",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -1548,15 +2148,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:13+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P4 (telemetry, kimi worktree removal), commit 08ae5d5",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "fixed",
+                                                     "note":  "At this revision telemetry lowercases before stripping `[1m]`, so `opus[1M]` matches the Anthropic table entry.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F03-6",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "note",
                          "locations":  [
                                            {
@@ -1606,15 +2230,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:53+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The branch scan still runs ordinary status and performs per-branch cherry and rev-list calls.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-1",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -1678,15 +2326,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:54+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The dirty check still uses ordinary `git status --porcelain` without optional-lock suppression.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-2",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1741,15 +2413,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:05+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Own-source candidates still start in the eligible set before the public date gate.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-3",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1795,15 +2491,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:07+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P3 (c3 maintain), commit 8e6fd3e",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Catalog timestamps remain sufficient release-order evidence, and the smoke checks usability rather than release order.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-4",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1853,15 +2573,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:45+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "`doctor --fix` still calls repair directly without the hook\u0027s child check.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-5",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "major",
                          "locations":  [
                                            {
@@ -1921,15 +2665,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:14+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P4 (telemetry, kimi worktree removal), commit 08ae5d5",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The Kimi removal implementation in this range still proceeds after ignored unlink errors.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-6",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -1984,15 +2752,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:46+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P1 (repository repair, C3_CHILD), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The Claude probe and detached Windows maintenance paths still bypass the normal marker injection.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-7",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -2042,15 +2834,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:55+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The scanner still prefers local `main` over a custom default and ignores worktrees by basename prefix.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-8",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -2109,15 +2925,39 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:41:14+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "fetch part: wave P3, commit 8e6fd3e; Claude-shape part: wave P4, commit 08ae5d5",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [
-
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "The telemetry shape exception, shared redirect exception, and 8 MiB transport cap all remain.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
                                              ]
                      },
                      {
                          "id":  "F04-9",
-                         "status":  "proposed",
+                         "status":  "implemented",
                          "severity":  "minor",
                          "locations":  [
                                            {
@@ -2167,6 +3007,1233 @@
                                              "evidence":  "",
                                              "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
                                              "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         },
+                                         {
+                                             "when":  "2026-11-22T23:40:56+01:00",
+                                             "status":  "implemented",
+                                             "by":  "coordinator",
+                                             "note":  "wave P2 (c3 branches), commit 23b1455",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+                                                 {
+                                                     "consult":  4,
+                                                     "when":  "2026-11-22T23:54:11+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Out of this range (fixes: none); untouched by this patch.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 },
+                                                 {
+                                                     "consult":  5,
+                                                     "when":  "2026-11-22T23:59:35+01:00",
+                                                     "status":  "still-open",
+                                                     "note":  "Any `c3: ` prefix still counts as a record, and `--set` still treats a failed description read as empty.",
+                                                     "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                                     "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                                 }
+                                             ]
+                     },
+                     {
+                         "id":  "F10-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  201
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  219
+                                           }
+                                       ],
+                         "claim":  "The agy step classifier misses real writes whose parameter keys lack the nine marker fragments: only top-level keys are tested, nested objects are ignored, and a command carried in a value (or a writer with fixed-path parameters such as action/destination/text) is judged a reader, so a real write with a tree change becomes a \u0027reply kept\u0027 warning instead of a failure.",
+                         "trigger":  "An agy tool step with parameters like {\"action\": \"rm -rf x\"}, {\"config\": {\"path\": \"a.rs\"}}, or a fixed-target writer taking only text/content.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/tree_check.rs:201-232",
+                                              "observation":  "agy_tool_step_is_writing returns non-writing when parameters are an object with no top-level key containing a marker; markers are only path/file/dir/folder/cwd/command/cmd/target/uri and only obj.keys() are tested."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/tree.rs:271-301",
+                                              "observation":  "engine_tree_outcome fails only on non-empty agy.writing; otherwise a complete reply warns, so a missed write directly flips fail to warned."
+                                          }
+                                      ],
+                         "verification":  "Unit-test agy_tool_step_is_writing with nested-path params and a command-in-value step and assert both count as writing.",
+                         "remedy":  "Also inspect nested parameter objects and well-known value shapes, or treat unknown tool names with object parameters as writing unless the name is an allow-listed reader; add fixtures with nested-path and value-embedded-command steps.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/10-muse-reply-meta.md",
+                                        "thread":  "01a20570-ced9-7403-abeb-cbdb47a1e0b7",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:54:11+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/agy.rs",
+                                               "line":  470
+                                           }
+                                       ],
+                         "claim":  "The ACTIVE/DONE merge keeps the first logged parameters object per (index, name) and an unnamed or parameter-less ACTIVE step counts as writing, so a read-only step whose DONE event carries the parameters (or a renamed/re-indexed continuation) fails a run that actually only read, discarding a complete reply.",
+                         "trigger":  "Agy logs a read_file ACTIVE event without tool_info.parameters and the DONE event with them, or logs the same logical step under a different name or without step_index.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/agy.rs:470-486",
+                                              "observation":  "Steps merge only on matching index and name and keep the first parameters seen; a step whose parameters were not logged is writing, and an unnamed step is kept with an empty name that the classifier counts as writing."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/agy.rs:512-519",
+                                              "observation":  "Writing steps are collected from merged steps and any non-empty writing list fails the run even when the monitored compare is clean."
+                                          }
+                                      ],
+                         "verification":  "Feed a two-event read step (parameter-less ACTIVE, parameterized DONE) to read_agy_events and assert writing_tool_names stays empty.",
+                         "remedy":  "Merge parameters across all events of a step (prefer any object seen, not the first), and treat a parameter-less ACTIVE event as unknown only until its DONE/ERROR event is seen.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/10-muse-reply-meta.md",
+                                        "thread":  "01a20570-ced9-7403-abeb-cbdb47a1e0b7",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:54:11+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  297
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  386
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  508
+                                           }
+                                       ],
+                         "claim":  "A brief committed at HEAD but unreadable in the live tree passes the preflight yet fails later at staging as a capability ProviderFailure, which the panel does not re-seat; meanwhile the isolation paragraph unconditionally claims the brief was copied whenever the ref is stageable.",
+                         "trigger":  "Brief committed at HEAD whose live file is deleted, locked, or unreadable; or staging fails (read-only worktree parent, disk error) while the prompt still says it was copied in.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:297-341",
+                                              "observation":  "isolated_brief_refusal returns None when cat-file HEAD:ref succeeds even if the live source cannot be opened, so the seat launches."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:508-538",
+                                              "observation":  "Staging copies the live brief.src and on error returns a capability ProviderFailure, not a preflight refusal; the prompt line appends the copied-in sentence for every stageable ref without checking staging."
+                                          }
+                                      ],
+                         "verification":  "Delete the live brief while it stays committed at HEAD, launch a kimi seat, and check whether the panel re-seats it and what the prompt claims.",
+                         "remedy":  "Refuse at preflight only when the seat can actually proceed (fall back to materializing the brief from HEAD), or make the staging failure a preflight-class refusal; gate the copied-in sentence on staging success.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/10-muse-reply-meta.md",
+                                        "thread":  "01a20570-ced9-7403-abeb-cbdb47a1e0b7",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:54:11+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  4391
+                                           }
+                                       ],
+                         "claim":  "The pre-panel snapshot narrows finding ids but still reads every finding\u0027s live status, so a sibling that changes a shown finding\u0027s status mid-panel changes the member\u0027s verdict; concurrent findings-store writes from two members or two c3 processes can also last-writer-win.",
+                         "trigger":  "A sibling transitions F02-1 proposed-\u003efixed while a member judged against the pre-panel snapshot is still running, or two members commit findings concurrently.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:4386-4408",
+                                              "observation":  "run_open_priors filters by listed ids but takes status from the store as it stands (fresh status), per its own doc comment."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  ".collab/release-0.2.5/handoffs/05-claude-diff-review-reliability.patch",
+                                              "observation":  "No locking or merge of the findings store is introduced by this patch; the snapshot is an id list, not a status/version snapshot."
+                                          }
+                                      ],
+                         "verification":  "Flip a listed finding\u0027s status mid-panel in a fixture and assert the running member\u0027s prior-blocker disposition still uses the shown status.",
+                         "remedy":  "Snapshot (id, status) pairs per member at panel start and judge against those; serialize findings-store updates with file locking or read-modify-write retries.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/10-muse-reply-meta.md",
+                                        "thread":  "01a20570-ced9-7403-abeb-cbdb47a1e0b7",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:54:11+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  877
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  350
+                                           }
+                                       ],
+                         "claim":  "The smoke can pass while a sub-agent surface exists: tools under any mcp__ namespace are exempt even when named exactly like multi-agent tools, an opted-in seat passes without exercising the switch, and a future CLI using a new namespace or new session_meta field names yields \u0027unproven\u0027 failure on sound updates but any new tool name inside the collaboration namespace is the only future-proofed case.",
+                         "trigger":  "A CLI serving spawn_agent through an mcp__ namespace, or a smoke roster whose codex entries all set codex_config to allow sub-agents.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/quota.rs:877-883",
+                                              "observation":  "is_multi_agent_tool returns false for any namespace starting with mcp__, so collaboration tools wrapped as MCP are neither offered nor called."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/smoke.rs:350-393",
+                                              "observation":  "Consults with subagents_allowed true are skipped, and all-opted-in yields Pass with only a stderr note."
+                                          }
+                                      ],
+                         "verification":  "Craft a rollout offering collaboration.spawn_agent under namespace mcp__srv and assert subagent_switch_check fails.",
+                         "remedy":  "Count exact multi-agent tool names regardless of namespace, fail (not pass) when every consult opted in, and pin the tested CLI version\u0027s rollout shape in the failure message.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/10-muse-reply-meta.md",
+                                        "thread":  "01a20570-ced9-7403-abeb-cbdb47a1e0b7",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:54:11+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-6",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  194
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/engine.rs",
+                                               "line":  442
+                                           }
+                                       ],
+                         "claim":  "Every codex review turn now unconditionally passes two new -c keys on the claim that an older CLI ignores unknown keys, with no version gate or fallback; if any supported older CLI rejects unknown -c keys, all codex reviews fail.",
+                         "trigger":  "Run a codex review turn on an older codex-cli that errors on unknown -c keys.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:194-212",
+                                              "observation":  "bridge_config_for appends REVIEW_ISOLATION for every codex review turn minus only user-named keys; no CLI-version check exists."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/engine.rs:442-455",
+                                              "observation":  "The ignorability claim for older CLIs lives only in a comment on REVIEW_ISOLATION; no test exercises an older CLI."
+                                          }
+                                      ],
+                         "verification":  "Run bridge_config_for against the oldest supported codex-cli and confirm the turn starts.",
+                         "remedy":  "Probe the CLI\u0027s supported keys once per version (or retry a rejected turn without the new keys) and document the oldest CLI actually tested.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/10-muse-reply-meta.md",
+                                        "thread":  "01a20570-ced9-7403-abeb-cbdb47a1e0b7",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:54:11+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F10-7",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  6050
+                                           }
+                                       ],
+                         "claim":  "The death-record fallback covers only single detached runs: panel members never note their stream, and a reader of a dead run passes noted: None, so a panel member that dies in a read-insist re-ask still gets empty events_file/last_event/events_mtime/partial_hint.",
+                         "trigger":  "A detached panel whose member dies in its read-insist re-ask after the commit removed the pending record.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/consult/orchestrate/mod.rs:6050-6075",
+                                              "observation":  "note_engine_stream is called only when detach is active and panel_member is none; the reader path passes noted: None."
+                                          }
+                                      ],
+                         "verification":  "Kill a panel member in its read-insist turn and inspect the reader-written death record\u0027s events fields.",
+                         "remedy":  "Note the stream for panel members as well (keyed by member) or have the reader fall back to the newest matching events file for the dead turn.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  4,
+                                        "reply":  "handoffs/10-muse-reply-meta.md",
+                                        "thread":  "01a20570-ced9-7403-abeb-cbdb47a1e0b7",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:54:11+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-1",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/agy.rs",
+                                               "line":  463
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/agy.rs",
+                                               "line":  514
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/tree_check.rs",
+                                               "line":  206
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  142
+                                           },
+                                           {
+                                               "path":  "crates/c3-cli/tests/compat_wave2b.rs",
+                                               "line":  663
+                                           },
+                                           {
+                                               "path":  "crates/c3-cli/tests/compat_wave2b.rs",
+                                               "line":  917
+                                           }
+                                       ],
+                         "claim":  "Agy can record a genuine write as a usable warning, while unfamiliar readers can be classified as writers and lose a complete review.",
+                         "trigger":  "A write step logs an empty object before the populated update, nests its command under an unrecognized key, shares an index with a finish event, or is omitted from the tool log. A read-only tool outside the allowlist can fail when its argument is named `path`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "agy.rs:463–515 and tree_check.rs:201–213",
+                                              "observation":  "The parser keeps the first object, the handover exemption uses the index alone, and the classifier examines only top-level parameter names."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "compat_wave2b.rs:663,917 and orchestrate/tree.rs:142",
+                                              "observation":  "The fake engine writes inside its own launcher without a tool event. The test expects success, and the warning asserts the change was someone else\u0027s."
+                                          }
+                                      ],
+                         "verification":  "Add a fake write step with an empty ACTIVE object and a populated DONE command, then verify the unchanged classifier reports the run as usable.",
+                         "remedy":  "Classify recognized tools by capability and use the full step evidence. Restrict the handover exemption to a verified finish call and describe unexplained changes as unattributed.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  5110
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  5120
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  203
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/tree.rs",
+                                               "line":  310
+                                           }
+                                       ],
+                         "claim":  "Agy can commit a schema-valid verdict as usable after the bound brief or an artifact changed while it was reading.",
+                         "trigger":  "An editor or another process changes a bound input during the run, and agy returns a structured answer with no detected write.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "orchestrate/mod.rs:5110–5129 and orchestrate/tree.rs:203–216,310",
+                                              "observation":  "Bound-input drift is fed into the same warning branch as ambient drift. Completeness is derived from the outcome and the parsed structure."
+                                          }
+                                      ],
+                         "verification":  "Have fake agy wait while a second process replaces a bound artifact, then return a valid verdict and inspect the ledger outcome.",
+                         "remedy":  "Bind the review to immutable input bytes or classify bound-input drift separately and withhold the verdict until a consistent input was reviewed.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-3",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  279
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  313
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  511
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  516
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  2355
+                                           }
+                                       ],
+                         "claim":  "The Kimi staging path can overwrite a file outside the throwaway worktree before the reviewer starts.",
+                         "trigger":  "HEAD checks out a symlink at the brief destination, or a linked ancestor, and the live checkout supplies a readable regular brief at the corresponding lexical path.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "orchestrate/mod.rs:2336–2361 and kimi.rs:279–285,508–516",
+                                              "observation":  "The brief reference is derived lexically. The destination is joined and passed to `create_dir_all` and `fs::copy` without rejecting linked components."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "kimi.rs:516",
+                                              "observation":  "A platform that checks out the symlink and follows it when opening the copy destination can truncate the link target."
+                                          }
+                                      ],
+                         "verification":  "Use RC1 on a symlink-capable filesystem.",
+                         "remedy":  "Stage into a bridge-owned directory with a new file, or open the destination beneath an anchored worktree directory while rejecting links and reparse points at every component.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/paths.rs",
+                                               "line":  11
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  303
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  315
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  520
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  2071
+                                           }
+                                       ],
+                         "claim":  "Kimi\u0027s availability check can reject a reachable brief or admit one that later fails staging without a reserve re-seat.",
+                         "trigger":  "The operator uses an in-repo path containing `..`, the HEAD destination conflicts with the live layout, or the live source becomes unreadable between validation and copy.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "paths.rs:11–29 and kimi.rs:279–324,520–535",
+                                              "observation":  "The check uses a lexical path, opens only the source, and uses `cat-file -e` without establishing a regular staged file. A copy failure is returned as a provider capability failure."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "panel/run.rs:1249–1254,2071–2084",
+                                              "observation":  "Re-seat requires a reserved optional slot and recognized refusal wording."
+                                          }
+                                      ],
+                         "verification":  "In a disposable panel, test an in-repo `sub/../brief.md`, then test a readable live brief whose HEAD destination is a directory. Check whether the launcher starts or a reserve is drawn.",
+                         "remedy":  "Resolve a contained source and stage the exact bytes before committing the seat to launch. Route safe staging failures through a typed pre-start refusal.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  351
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  390
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  2592
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/prompt.rs",
+                                               "line":  245
+                                           }
+                                       ],
+                         "claim":  "The Kimi prompt discloses live-only names from across the checkout, including names outside the requested review and filenames with embedded line breaks.",
+                         "trigger":  "A tracked change or untracked file has a sensitive name and sorts into the first twenty status entries, or a filename contains Markdown delimiters or newlines.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "kimi.rs:351–377,386–408 and prompt.rs:245",
+                                              "observation":  "Repository-wide status includes untracked paths. Paths are interpolated verbatim between backticks and included in the outbound review prompt."
+                                          }
+                                      ],
+                         "verification":  "Capture the fake Kimi prompt with a synthetic confidential untracked filename outside the reviewed path.",
+                         "remedy":  "Default to a count or an explicitly scoped path list. Encode displayed paths as data before inserting them into the prompt.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-6",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/panel/run.rs",
+                                               "line":  942
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  2474
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  4398
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  5345
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  5369
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  5397
+                                           }
+                                       ],
+                         "claim":  "Panel acceptance is not evaluated against the blocker records each member was shown.",
+                         "trigger":  "A listed finding changes status or severity between prompt creation and finish, or a member reports a sibling\u0027s newly created ID after that sibling commits.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "panel/run.rs:942–956 and orchestrate/mod.rs:2474–2477,5345–5413",
+                                              "observation":  "Only IDs are frozen. Subsequent reads supply the current status, severity, text, and existence check. The ledger and reviewer-check delta accept a prior report before the filtered semantics are applied."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "store.rs:1053–1095",
+                                              "observation":  "The commit lock serializes merges against the current disk store. It does not freeze what reviewers saw."
+                                          }
+                                      ],
+                         "verification":  "Use RC3 and repeat with a prior report naming a newly committed sibling finding.",
+                         "remedy":  "Carry immutable prompt records in the member spec and use them for prompt rendering, semantics, and prior-report validation. Merge allowed checks separately into the current store.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-7",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  328
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  366
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  382
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1009
+                                           },
+                                           {
+                                               "path":  "CHANGELOG.md",
+                                               "line":  76
+                                           }
+                                       ],
+                         "claim":  "Automatic maintenance can treat an unexercised Codex sub-agent switch as a passing smoke and skip rollback.",
+                         "trigger":  "The available smoke seat opts into sub-agents, or one successful consult leaves no thread ID while the other leaves a clean rollout.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "smoke.rs:297–330,364–415 and maintain/mod.rs:1009",
+                                              "observation":  "Two subprocess successes are required, but blank thread IDs are skipped and all opted-in threads explicitly return `Pass`. The update attempts rollback only for `Fail`."
+                                          }
+                                      ],
+                         "verification":  "Run the real smoke entry points with one clean thread and one successful blank-thread result, then repeat on an opted-in seat and inspect the update result.",
+                         "remedy":  "Require provenance for each expected turn and at least one designated guard-off smoke seat. Represent unexercised evidence as a hold or failure for automatic updates.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-8",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  346
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  586
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  922
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  938
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  401
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  2369
+                                           }
+                                       ],
+                         "claim":  "The rollout parser can treat incomplete or unrelated evidence as proof, and the parent smoke can fail to locate a sound child rollout under a relative home.",
+                         "trigger":  "The selected file has a clean prefix with an incomplete later record, an `additional_tools` event with a non-array or moved `tools` field, a mismatched metadata ID, or a relative `CODEX_HOME` interpreted from the smoke repository.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "quota.rs:341–373,578–600,916–958",
+                                              "observation":  "Lookup selects by filename and mtime. Reading snapshots the length, skips malformed lines, and increments evidence for `additional_tools` before validating the tools array. No terminal event or session ID is checked."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "smoke.rs:328–330,426–441 and providers.rs:2369–2372",
+                                              "observation":  "The consult subprocess runs from the scratch directory while the parent looks up rollouts using the home string without converting it to an absolute path."
+                                          }
+                                      ],
+                         "verification":  "Test a clean prefix with a split later enabled record, an alternate tool-list shape, and a filename/metadata ID mismatch on LF and CRLF files. Then run the smoke with a relative home.",
+                         "remedy":  "Resolve the home once for parent and children, verify rollout and turn identity, require a complete terminal record and validated recognized evidence, and bound retries for transient reads.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-9",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/subprocess.rs",
+                                               "line":  633
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/subprocess.rs",
+                                               "line":  730
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/subprocess.rs",
+                                               "line":  750
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  628
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/quota.rs",
+                                               "line":  771
+                                           }
+                                       ],
+                         "claim":  "The launch timestamp improves parent-call attribution but does not prevent fast escaped spawns or stale child-rollout stops.",
+                         "trigger":  "A turn makes a spawn call then exits before the next poll, or a resumed parent has an older child rollout modified within the five-second slack window.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "subprocess.rs:628–635,728–790 and quota.rs:628–643,766–774",
+                                              "observation":  "An exited child breaks before guard inspection. Child rollout attribution uses a backdated mtime and parent ID rather than a current-turn marker."
+                                          }
+                                      ],
+                         "verification":  "Use a fake Codex turn that logs a current spawn and exits before the first poll, then resume a separate thread with a recently modified old child rollout and no current spawn.",
+                         "remedy":  "Inspect evidence before accepting normal exit, watch for current spawn events during execution, and bind child attribution to a turn or rollout creation boundary.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-10",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/prompt.rs",
+                                               "line":  253
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  30
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  42
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  480
+                                           },
+                                           {
+                                               "path":  "CHANGELOG.md",
+                                               "line":  124
+                                           }
+                                       ],
+                         "claim":  "Secondary review turns can receive a prompt without the reviewer role constraint while global instructions remain available.",
+                         "trigger":  "A timeout continuation, format repair, or same-thread read-insist turn is sent.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "prompt.rs:253,289 and secondary.rs:30–54,480–505,1428–1434",
+                                              "observation":  "The shared primary assembler adds the sentence. Separate follow-up prompt builders omit it. A fresh read-insist that embeds the original prompt retains it."
+                                          }
+                                      ],
+                         "verification":  "Capture stdin or the prompt file for a fake timeout continuation and a same-thread Kimi read-insist turn.",
+                         "remedy":  "Use the shared role constraint in every review prompt builder and describe it as an instruction rather than enforced capability isolation.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-11",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  6040
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/secondary.rs",
+                                               "line":  539
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/detach.rs",
+                                               "line":  1241
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/detach.rs",
+                                               "line":  1271
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/detach.rs",
+                                               "line":  1428
+                                           }
+                                       ],
+                         "claim":  "A detached death record can point at an earlier turn or another consultation, and the terminal stream survives only in memory until the supervisor records death.",
+                         "trigger":  "A timeout continuation ends the run, a sibling pending record remains, or the bridge is killed before its terminal status is written.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "orchestrate/mod.rs:6039–6059 and secondary.rs:539",
+                                              "observation":  "The newly noted stream selects a dead read-insist stream or the primary, even when a continuation has its own stream."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "detach.rs:1241–1277,1423–1429",
+                                              "observation":  "Any task pending record can provide the first path before the run\u0027s own note. A reader of a dead process receives no note."
+                                          }
+                                      ],
+                         "verification":  "Run a detached fake primary timeout followed by a failed continuation while an unrelated pending fixture exists. Check which stream the death record identifies.",
+                         "remedy":  "Persist the run ID and current stream on each turn transition and use only matching evidence when constructing its death record.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F11-12",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  2689
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  5157
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  5609
+                                           },
+                                           {
+                                               "path":  "CHANGELOG.md",
+                                               "line":  162
+                                           }
+                                       ],
+                         "claim":  "The providers breakdown measures the presence of a JSON sidecar reference rather than whether a failed run preserved a reply.",
+                         "trigger":  "A failed run preserves only a Markdown partial, or its ledger points to a JSON sidecar that has since been removed.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "providers.rs:2685–2709 and orchestrate/mod.rs:5157–5161,5605–5609",
+                                              "observation":  "The counter uses only a nonempty `reply_json` string. Markdown partials are stored separately and raw runs do not create that sidecar."
+                                          }
+                                      ],
+                         "verification":  "Preserve a raw timeout partial and inspect the reviewer\u0027s `reply_outcomes` in `c3 providers --json`.",
+                         "remedy":  "Record the preserved reply kind explicitly and use it for the count, or label the metric as JSON-sidecar presence.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  5,
+                                        "reply":  "handoffs/11-codex-reply-openai.md",
+                                        "thread":  "01a2056e-9576-7bf0-8f36-aab915bacf2c",
+                                        "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                        "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T23:59:35+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "e4f42a8da3b138e4061a9f8f76d977b1117ecadf",
+                                             "tree_sha256":  "ca80d2a65896fd99f41dda59f82a3db72fceae761c0edbfda0f0b8d00823b9dd"
                                          }
                                      ],
                          "reviewer_checks":  [

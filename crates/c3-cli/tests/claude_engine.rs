@@ -1402,9 +1402,11 @@ fn an_acceptance_review_reads_a_frozen_worktree_of_head_with_the_staged_brief() 
     let ty = text(&y);
     assert_eq!(y.status.code(), Some(0), "{ty}");
     let fr = e.turns();
+    // compared canonical: a CI runner's TEMP is an 8.3 short path (`RUNNER~1`), while the launcher
+    // reports its working directory in the long form
     assert_eq!(
-        Path::new(fr[0]["cwd"].as_str().unwrap_or("")),
-        e.repo.as_path(),
+        std::fs::canonicalize(Path::new(fr[0]["cwd"].as_str().unwrap_or(""))).ok(),
+        std::fs::canonicalize(&e.repo).ok(),
         "{:?}",
         fr[0]
     );

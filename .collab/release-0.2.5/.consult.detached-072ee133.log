@@ -1,0 +1,2 @@
+codex-consult: detached run 072ee133 (detach id 072ee133-8c7b-4f63-be68-4ab64189a4ab) - pid 13992 on LAPTOP-9SGIHQ03, started 2026-11-22T23:41:57+01:00; status file C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.detached-072ee133.status.json
+codex-consult: another consultation or status update for task 'release-0.2.5' is running: C:\Users\Dmytro\C3\.collab\release-0.2.5\.consult.lock is held open by pid 14168 on LAPTOP-9SGIHQ03 since 2026-11-22T22:42:01.678174100+00:00 (review panel 936125ba). Wait for it to finish; the lock is released when that process exits.

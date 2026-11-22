@@ -231,3 +231,16 @@ swap -> xelth.com/C3 page after the tag.
   2 Grok + GLM-5.3; 3 kimi-claude k3.1-pro + Muse contributor; 4 Grok + DeepSeek; 5 Grok + Muse
   contributor + GLM-5.3. Scratch rosters in the scratchpad `rosters/roster-p1..p5.json`. To launch
   with the new binary: `--rev <head of the range> --diff <range> --panel --panel-all`.
+- 2026-11-22 23:38: B1 committed as e4f42a8 and pushed; CI run 45078884744 watched (it carries the 14
+  c3-cli binaries not run locally). The 36 findings of the first panel set to `implemented` with
+  their wave and commit (P1/P2 23b1455, P3 8e6fd3e, P4 08ae5d5).
+- 2026-11-22 23:50: the five-part diff-review started with the NEW debug binary
+  (`target/debug/c3.exe`, built from the tree that became e4f42a8; it reports `08ae5d5-dirty`) -
+  the first live run of `--rev` / `--diff`. Launch line per part: `CODEX_CONSULT_ROSTER=<scratch
+  roster> target/debug/c3.exe consult --task release-0.2.5 --purpose diff-review --mode new --brief
+  <brief> --rev <head> --diff <range> --panel --panel-all --detach`.
+  - part 1 (brief 05, ba43ff6..a115422, Sol + Muse contributor): detach id `58fdcafb`
+  - part 2 (brief 06, a115422..23b1455, Grok + GLM-5.3): detach id `072ee133`
+  - parts 3, 4 after these two; part 5 last (Grok and Muse are in several parts).
+  Come back: `c3 consult --task release-0.2.5 --status --id <id>`. No writes under the tree or
+  `.collab` until both are done (Muse member).
