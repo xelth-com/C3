@@ -419,6 +419,38 @@ fn a_structured_run_records_the_engines_evidence_and_the_child_gets_the_allow_li
     assert!(md.contains("Engine turns: 1 (claude -p, auth subscription; model claude-sonnet-5-5; init tools Glob, Grep, Read, StructuredOutput; permission denials 0)."), "{md}");
 }
 
+// (0.2.5, F03-1 / F02-5 / F04-6) Every claude child C3 starts carries C3_CHILD=1 - the sign-in
+// probe (`auth status`), the `--version` probe and the reviewer turn - although the coordinator's
+// own environment has no such variable; the turn's ledger lists the mark among the allowed names.
+#[test]
+fn every_claude_child_is_marked_c3_child() {
+    let e = setup("c3child");
+    let x = e.consult(
+        &[
+            "--engine",
+            "claude",
+            "--model",
+            "sonnet",
+            "--reply-name",
+            "mark",
+        ],
+        &[("C3_CHILD", "")],
+    );
+    let t = text(&x);
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    let starts = e.starts();
+    for kind in ["auth", "version", "turn"] {
+        let of_kind: Vec<&Value> = starts.iter().filter(|s| s["kind"] == kind).collect();
+        assert!(!of_kind.is_empty(), "no {kind} start: {starts:?}");
+        for s in of_kind {
+            assert_eq!(s["c3_child"], "1", "{kind} start not marked: {s}");
+            assert!(has_name(s, "C3_CHILD"), "{kind}: {s}");
+        }
+    }
+    let allowed = strs(&e.last()["engine_run"]["child_env_allowed"]);
+    assert!(allowed.contains(&"C3_CHILD".to_string()), "{allowed:?}");
+}
+
 // ------------------------------------------------------------------ RESUME + FORK (D4)
 
 #[test]

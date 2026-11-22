@@ -1123,6 +1123,100 @@ fn status_exit_codes_for_quota_states() {
     assert!(t.contains("exhausted"), "{t}");
 }
 
+// ------------------------------------------------------------------ THE C3_CHILD MARK
+
+/// (0.2.5, F03-1 / F02-5) A launcher that first writes the `C3_CHILD` it sees into `dump` (outside
+/// the repository, so the worker's diff is not touched by it), then emits `stream` (one JSON event
+/// per line) and exits 0.
+fn write_env_dump_launcher(work: &Path, name: &str, dump: &Path, stream: &[&str]) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let p = work.join(format!("{name}.cmd"));
+        let mut body = format!(
+            "@echo off\r\n>\"{}\" echo C3_CHILD=[%C3_CHILD%]\r\n",
+            dump.display()
+        );
+        for l in stream {
+            body.push_str(&format!("@echo {l}\r\n"));
+        }
+        body.push_str("@exit /b 0\r\n");
+        std::fs::write(&p, body).unwrap();
+        p
+    }
+    #[cfg(unix)]
+    {
+        let p = work.join(format!("{name}.sh"));
+        let mut body = format!(
+            "#!/bin/sh\ncat >/dev/null\necho \"C3_CHILD=[$C3_CHILD]\" > '{}'\n",
+            dump.display()
+        );
+        for l in stream {
+            body.push_str(&format!("echo '{l}'\n"));
+        }
+        body.push_str("exit 0\n");
+        std::fs::write(&p, body).unwrap();
+        set_executable(&p);
+        p
+    }
+}
+
+/// (0.2.5, F03-1 / F02-5) A worker child is marked `C3_CHILD=1` on both launch paths, although the
+/// coordinator's environment has no such variable: the claude engine's allow-listed environment
+/// (the endpoint route replaces the inherited environment) and the codex engine's inherited one.
+#[test]
+fn every_worker_child_is_marked_c3_child() {
+    let e = setup("c3child");
+    let claude_dump = e.work.join("claude-child.txt");
+    let claude = write_env_dump_launcher(
+        &e.work,
+        "dump-claude",
+        &claude_dump,
+        &[
+            r#"{"type":"system","subtype":"init","session_id":"99999999-9999-9999-9999-999999999999","model":"glm-5.3"}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"done."}"#,
+        ],
+    );
+    let claude_p = claude.to_string_lossy().to_string();
+    let out = e.work(
+        "ZAI-claude",
+        &[],
+        &[
+            ("CODEX_CONSULT_CLAUDE_EXE", claude_p.as_str()),
+            ("C3_CHILD", ""),
+        ],
+    );
+    let t = text(&out);
+    assert_eq!(
+        read(&claude_dump).trim(),
+        "C3_CHILD=[1]",
+        "claude worker: {t}"
+    );
+
+    let codex_dump = e.work.join("codex-child.txt");
+    let codex = write_env_dump_launcher(
+        &e.work,
+        "dump-codex",
+        &codex_dump,
+        &[
+            r#"{"type":"thread.started","thread_id":"bbbbbbbb-1111-4111-8111-111111111111"}"#,
+            r#"{"type":"item.completed","item":{"id":"a1","type":"agent_message","text":"done."}}"#,
+            r#"{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"#,
+        ],
+    );
+    let codex_p = codex.to_string_lossy().to_string();
+    let out = e.work(
+        "openai",
+        &[],
+        &[("CODEX_CONSULT_EXE", codex_p.as_str()), ("C3_CHILD", "")],
+    );
+    let t = text(&out);
+    assert_eq!(
+        read(&codex_dump).trim(),
+        "C3_CHILD=[1]",
+        "codex worker: {t}"
+    );
+}
+
 // ------------------------------------------------------------------ CODEX / MUSE ENGINES
 
 /// A work run on the CODEX engine against a fake codex launcher: the record lands, status done,

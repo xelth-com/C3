@@ -57,21 +57,75 @@ pub fn run(collab_dir: &str, explain_command: &str, source: &str) -> i32 {
     if let Some(l) = crate::maintain::hook_line(chrono::Utc::now()) {
         println!("{l}");
     }
-    // (repo model settings) C3 repairs this repository's stale agent model pins in place and lets
-    // AGENTS.md follow the roster's successor, printing one line only when it changed something.
-    // Default ON (`C3_REPO_MODELS=off` / `"repo_models": false`). Silent and harmless otherwise:
-    // every error is swallowed, nothing is written outside the repo root, no git command is run.
+    // (repo model settings) C3 repairs this repository's stale agent model pins and lets AGENTS.md
+    // follow the roster's successor, printing one line only when it changed something or could not
+    // make a repair. Default ON (`C3_REPO_MODELS=off` / `"repo_models": false`); nothing inside a C3
+    // child. No process at all is started (the root is found by walking up to `.git`), nothing is
+    // written outside the repo root, a file is replaced by rename, never written through.
     if let Some(l) = crate::setup::repo_models::hook_line() {
         println!("{l}");
     }
-    // (branches) one line when a branch or worktree has no recorded state, or the start folder is
-    // not on the default branch. Default ON (`C3_BRANCH_CHECK=off` / `"branch_check": false`).
-    // Read-only and cheap (ancestry only, no `git cherry`), every error swallowed, nothing inside
-    // a C3 child or outside a git repository.
-    if let Some(l) = crate::setup::branches::hook_line() {
+    // (branches) one line when a branch or worktree has no recorded state, the default branch is
+    // unknown, or the start folder is not on the default branch. Default ON (`C3_BRANCH_CHECK=off`
+    // / `"branch_check": false`). Read-only (git's optional locks off) and cheap (ancestry only, no
+    // `git cherry`, no `git status`), every error swallowed, nothing inside a C3 child or outside a
+    // git repository - and (0.2.5, F02-6) all of its git calls share ONE deadline: past it the line
+    // is dropped and the hook goes on.
+    if let Some(l) = branch_line_within(BRANCH_LINE_DEADLINE) {
         println!("{l}");
     }
     0
+}
+
+/// (0.2.5, F02-6) The one deadline of the branch line's git calls.
+pub const BRANCH_LINE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The branch line, or `None` when it is not ready within `deadline` (a slow or stalled git, a slow
+/// file system): the scan runs on a thread of its own, and one that misses the deadline is left
+/// behind - its result is never printed, and the process ends without waiting for it.
+fn branch_line_within(deadline: std::time::Duration) -> Option<String> {
+    line_within(deadline, crate::setup::branches::hook_line)
+}
+
+/// `f()` on a thread of its own, its result when it is ready within `deadline`, else `None`.
+fn line_within(deadline: std::time::Duration, f: fn() -> Option<String>) -> Option<String> {
+    // The git children of a scan that misses the deadline must not keep the hook's own output open
+    // (a reader that waits for end-of-stream - Claude Code collecting the hook's output - would
+    // wait for them): this process's standard handles are made non-inheritable first, as the
+    // detached maintenance pass does. A child's own stdout/stderr pipes are not affected.
+    std_handles_not_inheritable();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("c3-hook-line".to_string())
+        .spawn(move || {
+            let _ = tx.send(f());
+        })
+        .ok()?;
+    rx.recv_timeout(deadline).ok().flatten()
+}
+
+/// Make this process's standard handles non-inheritable (Windows; elsewhere a no-op): a child
+/// started later keeps only the handles it is given explicitly.
+fn std_handles_not_inheritable() {
+    #[cfg(windows)]
+    {
+        const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
+        const STD_HANDLES: [u32; 3] = [-10i32 as u32, -11i32 as u32, -12i32 as u32];
+        extern "system" {
+            fn GetStdHandle(n: u32) -> isize;
+            fn SetHandleInformation(h: isize, mask: u32, flags: u32) -> i32;
+        }
+        for n in STD_HANDLES {
+            // SAFETY: GetStdHandle takes a constant and returns a handle value (or 0 / -1); a
+            // valid handle is only re-flagged, never closed.
+            unsafe {
+                let h = GetStdHandle(n);
+                if h != 0 && h != -1 {
+                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+    }
 }
 
 /// (R30) The re-hydration line for the `compact` SessionStart source: the coordinator identity the
@@ -232,6 +286,34 @@ mod tests {
             default_explain_command("/opt/it's/c3", false),
             r"'/opt/it'\''s/c3' consult --explain coordinate"
         );
+    }
+
+    fn quick_line() -> Option<String> {
+        Some("c3: quick".to_string())
+    }
+
+    fn stalled_line() -> Option<String> {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        Some("c3: too late".to_string())
+    }
+
+    // (0.2.5, F02-6) The branch line's work shares one deadline: a ready line is printed, a stalled
+    // one is dropped when the deadline passes (the hook does not wait for it).
+    #[test]
+    fn a_hook_line_past_its_deadline_is_dropped() {
+        let d = std::time::Duration::from_millis(300);
+        assert_eq!(
+            line_within(std::time::Duration::from_secs(10), quick_line).as_deref(),
+            Some("c3: quick")
+        );
+        let start = std::time::Instant::now();
+        assert_eq!(line_within(d, stalled_line), None);
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            start.elapsed()
+        );
+        assert_eq!(BRANCH_LINE_DEADLINE, std::time::Duration::from_secs(2));
     }
 
     #[test]

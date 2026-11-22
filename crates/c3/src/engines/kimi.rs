@@ -166,8 +166,10 @@ struct KimiWorktree {
     removed: bool,
 }
 
-/// The directory-name prefix of the throwaway worktree a kimi review runs in (under the system
-/// temp directory). `setup::branches` leaves such a worktree out of its "nobody owns this" count.
+/// The directory-name prefix of the throwaway worktree a kimi review runs in (directly under the
+/// system temp directory, followed by the run's 32-hex uuid). `setup::branches` leaves such a
+/// worktree out of its "nobody owns this" count while a live run owns it, and reports it as stale
+/// once none does.
 pub const THROWAWAY_WORKTREE_PREFIX: &str = "c3-kimi-wt-";
 
 impl KimiWorktree {
@@ -178,6 +180,9 @@ impl KimiWorktree {
         let path = std::env::temp_dir().join(format!("{THROWAWAY_WORKTREE_PREFIX}{run_id}"));
         let path_s = path.to_string_lossy().to_string();
         git_capture(repo, &["worktree", "add", "--detach", &path_s, "HEAD"])?;
+        // Name this process as its owner (in the worktree's git admin directory, not its files), so
+        // `c3 branches` / `c3 doctor` can tell a crashed run's leftover from a live run's worktree.
+        crate::setup::branches::record_throwaway_owner(&path);
         Ok(KimiWorktree {
             repo: repo.to_path_buf(),
             path,
@@ -271,6 +276,21 @@ impl Drop for KimiWorktree {
     fn drop(&mut self) {
         self.remove();
     }
+}
+
+/// (`c3 doctor --fix`) Remove a throwaway worktree a crashed run left behind, with exactly the
+/// removal a live run's guard runs on drop ([`KimiWorktree::remove`]: links inside are unlinked
+/// first, never followed). The caller has established that `path` is such a worktree of `repo`
+/// and that no live run owns it (`setup::branches`).
+pub(crate) fn remove_throwaway_worktree(repo: &Path, path: &Path) {
+    let mut wt = KimiWorktree {
+        repo: repo.to_path_buf(),
+        path: path.to_path_buf(),
+        head: String::new(),
+        main_dirty: false,
+        removed: false,
+    };
+    wt.remove();
 }
 
 /// (R7 / A1) Whether a brief reference can be staged into the throwaway worktree at the SAME path:

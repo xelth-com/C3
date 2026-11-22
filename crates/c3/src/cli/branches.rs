@@ -1,7 +1,7 @@
 //! `c3 branches` — every local branch and worktree with its recorded state, and the start folder.
 //! The scan and the record format live in [`crate::setup::branches`]. The listing is a report and
-//! always exits 0; `--set` / `--clear` write a branch description and exit 1 on a refusal. Nothing
-//! is ever deleted or merged.
+//! always exits 0; `--set` / `--clear` / `--default` write one config value and exit 1 on a
+//! refusal. Nothing is ever deleted or merged.
 
 use std::path::{Path, PathBuf};
 
@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 
 use crate::providers;
 use crate::setup::branches::{
-    self, BranchInfo, BranchReport, BranchState, ClearOutcome, ScanOpts, StartFolder, WorktreeInfo,
-    SET_HINT,
+    self, BranchInfo, BranchReport, BranchState, ClearOutcome, ScanOpts, StaleWorktree,
+    StartFolder, WorktreeInfo, PATCH_CHECK_CAP, SET_HINT,
 };
 
 /// Arguments of `c3 branches`.
@@ -35,6 +35,10 @@ pub struct BranchesArgs {
     /// Remove C3's recorded state from this branch (a foreign description is never touched).
     #[arg(long, value_name = "BRANCH")]
     pub clear: Option<String>,
+    /// Name the repository's default branch (stored as `c3.defaultBranch` in the local git config;
+    /// it wins over origin/HEAD, init.defaultBranch, main and master).
+    #[arg(long = "default", value_name = "BRANCH", conflicts_with_all = ["set", "clear"])]
+    pub default_branch: Option<String>,
 }
 
 /// Run `c3 branches`. Returns the process exit code.
@@ -48,6 +52,9 @@ pub fn run(args: BranchesArgs) -> i32 {
     if let Some(branch) = &args.clear {
         return run_clear(&repo_root, branch, args.json);
     }
+    if let Some(branch) = &args.default_branch {
+        return run_default(&repo_root, branch, args.json);
+    }
 
     let Some(report) = branches::scan(
         &repo_root,
@@ -59,10 +66,10 @@ pub fn run(args: BranchesArgs) -> i32 {
         if args.json {
             println!(
                 "{}",
-                json!({ "error": "not a git repository or no default branch" })
+                json!({ "error": "not a git repository, or no local branch" })
             );
         } else {
-            println!("c3 branches: not a git repository, or no default branch resolves");
+            println!("c3 branches: not a git repository, or no local branch");
         }
         return 0;
     };
@@ -123,7 +130,28 @@ fn run_clear(repo_root: &Path, branch: &str, json_out: bool) -> i32 {
     }
 }
 
-/// The JSON of one branch.
+fn run_default(repo_root: &Path, branch: &str, json_out: bool) -> i32 {
+    match branches::set_default_branch(repo_root, branch) {
+        Ok(()) => {
+            if json_out {
+                println!("{}", json!({ "default_branch": branch }));
+            } else {
+                println!(
+                    "c3 branches: default branch set to {branch} ({})",
+                    branches::DEFAULT_BRANCH_KEY
+                );
+            }
+            0
+        }
+        Err(e) => {
+            eprintln!("c3 branches: {e}");
+            1
+        }
+    }
+}
+
+/// The JSON of one branch. `merged` is null when the ancestry is not known; `patches_on_default` is
+/// `git cherry`'s historical patch equivalence (null when not checked).
 pub fn branch_json(b: &BranchInfo) -> Value {
     json!({
         "name": b.name,
@@ -133,7 +161,8 @@ pub fn branch_json(b: &BranchInfo) -> Value {
         "note": b.record.as_ref().map(|r| r.text.clone()),
         "foreign_description": b.foreign_note,
         "merged": b.merged,
-        "content_on_default": b.content_on_default,
+        "patches_on_default": b.patches_on_default,
+        "patches_checked": b.patches_checked,
         "ahead": b.ahead,
         "last_commit": b.last_commit,
         "worktree": b.worktree,
@@ -151,6 +180,11 @@ pub fn worktree_json(w: &WorktreeInfo) -> Value {
     })
 }
 
+/// The JSON of one stale throwaway worktree.
+pub fn stale_json(s: &StaleWorktree) -> Value {
+    json!({ "path": s.path, "why": s.why })
+}
+
 /// The JSON of the start folder.
 pub fn start_json(s: &StartFolder) -> Value {
     json!({
@@ -166,24 +200,35 @@ pub fn start_json(s: &StartFolder) -> Value {
 fn report_json(r: &BranchReport) -> Value {
     json!({
         "default_branch": r.default_branch,
+        "default_branch_error": r.default_unknown_text(),
+        "ancestry_failed": r.ancestry_failed,
         "start_folder": r.start.as_ref().map(start_json),
         "branches": r.branches.iter().map(branch_json).collect::<Vec<_>>(),
         "worktrees": r.worktrees.iter().map(worktree_json).collect::<Vec<_>>(),
-        "merged": r.branches.iter().filter(|b| b.merged).count(),
+        "stale_worktrees": r.stale_worktrees.iter().map(stale_json).collect::<Vec<_>>(),
+        "merged": r.branches.iter().filter(|b| b.merged == Some(true)).count(),
         "unknown": r.unknown_branches().len(),
         "unknown_worktrees": r.unrecorded_worktrees().len(),
+        "patches_not_checked": r.patches_unchecked,
     })
 }
 
 fn print_report(r: &BranchReport) {
-    let d = &r.default_branch;
-    println!("default branch: {d}");
+    let d = r.default_label();
+    match r.default_unknown_text() {
+        Some(why) => println!("[!] {why}"),
+        None => println!("default branch: {d}"),
+    }
+    if r.ancestry_failed {
+        println!("[!] the ancestry query against {d} failed: no branch counts as merged");
+    }
 
     if let Some(s) = &r.start {
         let branch = s.branch.as_deref().unwrap_or("detached HEAD");
-        let behind = match s.behind {
-            Some(n) => format!("{n} behind {}", s.behind_of),
-            None => format!("behind {} unknown", s.behind_of),
+        let behind = match (s.behind, s.behind_of.is_empty()) {
+            (_, true) => "behind unknown".to_string(),
+            (Some(n), false) => format!("{n} behind {}", s.behind_of),
+            (None, false) => format!("behind {} unknown", s.behind_of),
         };
         let dirty = match s.dirty {
             Some(0) => "clean".to_string(),
@@ -198,7 +243,7 @@ fn print_report(r: &BranchReport) {
         println!(
             "{mark} start folder {}: on {branch}{}, {behind}, {dirty}",
             s.path,
-            if s.on_default {
+            if s.on_default || r.default_branch.is_none() {
                 String::new()
             } else {
                 format!(" (not {d})")
@@ -222,8 +267,11 @@ fn print_report(r: &BranchReport) {
                 b.name,
                 branches::merge_words(b, d)
             );
+            if b.merged == Some(false) && !b.patches_checked {
+                line.push_str("; patches not checked");
+            }
             if let Some(n) = b.ahead {
-                if !b.merged {
+                if b.merged != Some(true) {
                     line.push_str(&format!("; {n} ahead"));
                 }
             }
@@ -237,6 +285,12 @@ fn print_report(r: &BranchReport) {
                 line.push_str("; UNKNOWN");
             }
             println!("{line}");
+        }
+        if r.patches_unchecked > 0 {
+            println!(
+                "patch check (git cherry, two git calls per branch) capped at {PATCH_CHECK_CAP} unmerged branches: {} more not checked",
+                r.patches_unchecked
+            );
         }
     }
 
@@ -253,16 +307,30 @@ fn print_report(r: &BranchReport) {
         }
     }
 
+    if !r.stale_worktrees.is_empty() {
+        println!("stale c3 worktrees (a kimi review's throwaway no live run owns; c3 doctor --fix removes them):");
+        for s in &r.stale_worktrees {
+            println!("[!] {}: {}", s.path, s.why);
+        }
+    }
+
     let unknown = r.unknown_branches().len();
     let unrec = r.unrecorded_worktrees().len();
-    println!(
+    let mut summary = format!(
         "branches: {} listed, {} merged, {} unknown; worktrees: {}, {} without a recorded state",
         r.branches.len(),
-        r.branches.iter().filter(|b| b.merged).count(),
+        r.branches.iter().filter(|b| b.merged == Some(true)).count(),
         unknown,
         r.worktrees.len(),
         unrec
     );
+    if !r.stale_worktrees.is_empty() {
+        summary.push_str(&format!(
+            "; {} stale c3 worktree(s)",
+            r.stale_worktrees.len()
+        ));
+    }
+    println!("{summary}");
     if unknown > 0 || unrec > 0 {
         println!("record a state: {SET_HINT}; or integrate (merge, not cherry-pick) and delete it");
     }

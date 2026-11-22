@@ -4,8 +4,9 @@
 //! `.mcp.json`; eck leftovers (an `eck-core` server in `.mcp.json` / `.codex/config.toml` /
 //! `opencode.json`, and any `.claude/rules/*.md` that still names an `eck_*` tool); any
 //! `.claude/agents/*.md` whose frontmatter pins a concrete model id instead of a floating
-//! alias; branches not merged and without a recorded state, and worktrees without one
-//! ([`crate::setup::branches`]); and the size and file count of `.eck/snapshots/`. Exit 0 when
+//! alias; branches not merged and without a recorded state, worktrees without one, an unknown
+//! default branch and a kimi review's stale throwaway worktree ([`crate::setup::branches`]); and
+//! the size and file count of `.eck/snapshots/`. Exit 0 when
 //! there is nothing to fix, 1 otherwise. The snapshot-folder size and the start folder's branch /
 //! uncommitted changes are diagnostic context only and never force exit 1.
 
@@ -13,7 +14,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use c3_core::claude::{model_family, CLAUDE_MODEL_ALIASES};
+use c3_core::claude::{
+    is_published_claude_shape, model_family, CLAUDE_MODELS, CLAUDE_MODEL_ALIASES,
+};
 
 use crate::setup::branches::{self, BranchReport};
 
@@ -68,44 +71,165 @@ impl DoctorReport {
             && self.eck_core_in.is_empty()
             && self.eck_rule_files.is_empty()
             && self.pinned_agents.is_empty()
-            && self.branches.as_ref().is_none_or(BranchReport::is_clean)
+            && self
+                .branches
+                .as_ref()
+                .is_none_or(|b| b.is_clean() && b.stale_worktrees.is_empty())
     }
 }
 
-/// Extract the top-level `model:` value from a `.claude/agents/*.md` YAML frontmatter (the
-/// leading `---`-delimited block). Returns the value (trimmed, unquoted) when a `model:` key
-/// is present, else `None`. Only un-indented keys of the frontmatter are considered, so a
-/// `model:` inside an indented block scalar (e.g. the `description`) is not mistaken for one.
-pub fn agent_model(content: &str) -> Option<String> {
-    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
-    let mut lines = content.lines();
-    if lines.next().map(str::trim) != Some("---") {
-        return None;
-    }
-    for line in lines {
+/// The top-level `model` key of a YAML frontmatter, as both `c3 doctor` and the repair
+/// ([`crate::setup::repo_models`]) read it - ONE rule for both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelLine {
+    /// The value: unquoted, without a trailing `# comment`, trailing white space trimmed.
+    pub value: String,
+    /// The byte range of the value in the content - inside the quotes of a quoted value, so a
+    /// replacement of exactly this range keeps the quotes, the key spelling and a comment.
+    pub span: std::ops::Range<usize>,
+}
+
+/// Find the top-level `model` key of the leading `---`-delimited YAML frontmatter (a BOM before
+/// it is fine). The key is an UN-indented `model`, optionally followed by spaces or tabs before
+/// the `:` (`model:` and `model :` are the same YAML key), and the `:` is followed by white space
+/// or the end of the line (`model:x` is a plain scalar, not a key). An indented `model:` (inside a
+/// block scalar such as the `description`, or a nested map) is not the key. The value is a single-
+/// or double-quoted string (its inside), or a plain scalar up to a ` #` comment or the end of the
+/// line. An unterminated quote is no value (`None`), as is a frontmatter without the key.
+pub fn frontmatter_model(content: &str) -> Option<ModelLine> {
+    let mut idx = 0usize;
+    let mut first = true;
+    while idx < content.len() {
+        let rest = &content[idx..];
+        let (line_end, next) = match rest.find('\n') {
+            Some(p) => {
+                let mut end = idx + p;
+                if end > idx && content.as_bytes()[end - 1] == b'\r' {
+                    end -= 1;
+                }
+                (end, idx + p + 1)
+            }
+            None => (content.len(), content.len()),
+        };
+        let mut start = idx;
+        if first && content[start..line_end].starts_with('\u{feff}') {
+            start += '\u{feff}'.len_utf8();
+        }
+        let line = &content[start..line_end];
+        if first {
+            if line.trim() != "---" {
+                return None; // no frontmatter at the top
+            }
+            first = false;
+            idx = next;
+            continue;
+        }
         if line.trim() == "---" {
-            break;
+            return None; // the frontmatter closed without the key
         }
-        if let Some(rest) = line.strip_prefix("model:") {
-            let v = rest.trim().trim_matches('"').trim_matches('\'').trim();
-            return Some(v.to_string());
+        if let Some(after_key) = line.strip_prefix("model") {
+            let after_ws = after_key.trim_start_matches([' ', '\t']);
+            if let Some(after_colon) = after_ws.strip_prefix(':') {
+                if after_colon.is_empty() || after_colon.starts_with([' ', '\t']) {
+                    let vstart = line_end - after_colon.trim_start_matches([' ', '\t']).len();
+                    return model_value(content, vstart, line_end);
+                }
+            }
         }
+        idx = next;
     }
     None
 }
 
-/// Classify an agent file's model pin. A missing `model:` line, `inherit`, and the floating
-/// aliases (`opus` / `sonnet` / `haiku` / `fable`) are fine and return `None`. Any other value
-/// is a concrete pin that should be an alias: returns `Some((pinned_id, suggested_alias))`,
-/// where the alias is derived from the id's family (`claude-opus-4-8` -> `opus`) or empty when
-/// the id names no known family.
+/// The value of a `model` key that starts at byte `vstart` of `content` and whose line ends at
+/// `line_end` (see [`frontmatter_model`]).
+fn model_value(content: &str, vstart: usize, line_end: usize) -> Option<ModelLine> {
+    let raw = &content[vstart..line_end];
+    if let Some(q) = raw.chars().next().filter(|c| *c == '"' || *c == '\'') {
+        let inner = &raw[1..];
+        let close = inner.find(q)?;
+        let span = vstart + 1..vstart + 1 + close;
+        return Some(ModelLine {
+            value: content[span.clone()].to_string(),
+            span,
+        });
+    }
+    // A plain scalar ends at a comment (`#` at its start or after white space) or the line end.
+    let mut end = raw.len();
+    let mut prev_ws = true;
+    for (i, c) in raw.char_indices() {
+        if c == '#' && prev_ws {
+            end = i;
+            break;
+        }
+        prev_ws = c == ' ' || c == '\t';
+    }
+    let value = raw[..end].trim_end_matches([' ', '\t']);
+    let span = vstart..vstart + value.len();
+    Some(ModelLine {
+        value: value.to_string(),
+        span,
+    })
+}
+
+/// Extract the top-level `model:` value from a `.claude/agents/*.md` YAML frontmatter (the
+/// leading `---`-delimited block): [`frontmatter_model`]'s value (unquoted, without a comment), or
+/// `None` without the key.
+pub fn agent_model(content: &str) -> Option<String> {
+    frontmatter_model(content).map(|m| m.value)
+}
+
+/// Split a trailing 1M-context modifier `[1m]` (any case) off a model value: `(base, modifier as
+/// spelled)`; the modifier is `""` without one.
+pub fn split_context_modifier(model: &str) -> (&str, &str) {
+    if let Some(s) = model.len().checked_sub(4) {
+        if let Some(tail) = model.get(s..) {
+            if tail.eq_ignore_ascii_case("[1m]") {
+                return (&model[..s], tail);
+            }
+        }
+    }
+    (model, "")
+}
+
+/// The alias a validated CONCRETE Claude id floats to, its context modifier kept
+/// (`claude-opus-4-8` -> `opus`, `claude-opus-4-8[1m]` -> `opus[1m]`). Only an id of the claude
+/// engine's model table or of the published shape `claude-(fable|opus|sonnet|haiku)-<digits>
+/// [-<digits>]` qualifies, case-sensitive like the table lookup; a custom `claude-opus-foo`, an older
+/// naming (`claude-3-opus-20240229`), an upper-case spelling, an alias (`opus`, `opus[1m]`) or any
+/// other value gives `None`.
+pub fn concrete_claude_alias(model: &str) -> Option<String> {
+    let (base, modifier) = split_context_modifier(model.trim());
+    if CLAUDE_MODEL_ALIASES.contains(&base) {
+        return None;
+    }
+    if !CLAUDE_MODELS.contains(&base) && !is_published_claude_shape(base) {
+        return None;
+    }
+    let family = model_family(base);
+    if family.is_empty() {
+        return None;
+    }
+    Some(format!("{family}{modifier}"))
+}
+
+/// Classify an agent file's model pin. A missing `model:` line, an empty value, `inherit`, and the
+/// floating aliases (`opus` / `sonnet` / `haiku` / `fable`, also with a `[1m]` modifier) are fine
+/// and return `None`. Any other value is a concrete pin that should be an alias: returns
+/// `Some((pinned_id, suggested_alias))`, where the alias is [`concrete_claude_alias`]
+/// (`claude-opus-4-8` -> `opus`, `claude-opus-4-8[1m]` -> `opus[1m]`) or empty when the value is
+/// not a validated concrete Claude id - such a pin is reported, never rewritten.
 pub fn pinned_agent_model(content: &str) -> Option<(String, String)> {
     let model = agent_model(content)?;
     let m = model.trim();
-    if m.is_empty() || m == "inherit" || CLAUDE_MODEL_ALIASES.contains(&m) {
+    if m.is_empty() || m == "inherit" {
         return None;
     }
-    Some((model.clone(), model_family(m)))
+    let (base, _) = split_context_modifier(m);
+    if CLAUDE_MODEL_ALIASES.contains(&base) {
+        return None;
+    }
+    Some((model.clone(), concrete_claude_alias(m).unwrap_or_default()))
 }
 
 /// Whether a `.eck/*.md` body still carries a stub marker: a LINE that starts with `[STUB:` (the
@@ -405,6 +529,96 @@ mod tests {
         assert_eq!(
             pinned_agent_model("---\nmodel: claude-3-opus-20240229\n---\n"),
             Some(("claude-3-opus-20240229".into(), String::new()))
+        );
+    }
+
+    // (0.2.5, F02-3 / F03-4) Only a validated CONCRETE Claude id gets an alias (and so a repair); an
+    // alias with a modifier is floating already; a supported modifier stays on the alias.
+    #[test]
+    fn only_a_validated_concrete_claude_id_gets_an_alias() {
+        // floating already: an alias with the 1M-context modifier
+        assert_eq!(pinned_agent_model("---\nmodel: opus[1m]\n---\n"), None);
+        assert_eq!(pinned_agent_model("---\nmodel: sonnet[1M]\n---\n"), None);
+        // a concrete id with the modifier keeps it on the alias
+        assert_eq!(
+            pinned_agent_model("---\nmodel: claude-opus-4-8[1m]\n---\n"),
+            Some(("claude-opus-4-8[1m]".into(), "opus[1m]".into()))
+        );
+        // the published shape of a model newer than the table
+        assert_eq!(
+            pinned_agent_model("---\nmodel: claude-haiku-6-1\n---\n"),
+            Some(("claude-haiku-6-1".into(), "haiku".into()))
+        );
+        // custom or unvalidated values: reported as a pin, never given an alias
+        for v in [
+            "claude-opus-foo",
+            "claude-opus-4-8-custom",
+            "CLAUDE-OPUS-4-8",
+            "Opus",
+            "glm-5.3",
+            "claude-opus-4-8[2m]",
+        ] {
+            assert_eq!(
+                pinned_agent_model(&format!("---\nmodel: {v}\n---\n")),
+                Some((v.to_string(), String::new())),
+                "{v}"
+            );
+        }
+        assert_eq!(concrete_claude_alias("opus"), None);
+        assert_eq!(
+            concrete_claude_alias("claude-sonnet-5-5"),
+            Some("sonnet".into())
+        );
+    }
+
+    // (0.2.5, F03-4) Doctor and repair read the key by ONE rule: `model :` counts, an indented key
+    // does not, `model:x` is no key; the value span excludes the quotes and a trailing comment.
+    #[test]
+    fn the_frontmatter_model_key_and_value_span() {
+        let m = |s: &str| frontmatter_model(s).map(|l| (l.value.clone(), s[l.span].to_string()));
+        assert_eq!(
+            m("---\nmodel : claude-opus-4-8\n---\n"),
+            Some(("claude-opus-4-8".into(), "claude-opus-4-8".into()))
+        );
+        assert_eq!(
+            m("---\nmodel:\tclaude-opus-4-8   # pinned on purpose\n---\n"),
+            Some(("claude-opus-4-8".into(), "claude-opus-4-8".into()))
+        );
+        assert_eq!(
+            m("---\nmodel: \"claude-opus-4-8\" # q\n---\n"),
+            Some(("claude-opus-4-8".into(), "claude-opus-4-8".into()))
+        );
+        assert_eq!(
+            m("---\nmodel: 'claude-opus-4-8'\n---\n"),
+            Some(("claude-opus-4-8".into(), "claude-opus-4-8".into()))
+        );
+        assert_eq!(
+            m("---\nmodel:\n---\n"),
+            Some((String::new(), String::new()))
+        );
+        assert_eq!(
+            m("---\nmodel: # only a comment\n---\n"),
+            Some((String::new(), String::new()))
+        );
+        // not the key
+        assert_eq!(m("---\n  model: claude-opus-4-8\n---\n"), None);
+        assert_eq!(m("---\nmodel:claude-opus-4-8\n---\n"), None);
+        assert_eq!(m("---\nmodels: x\n---\n"), None);
+        assert_eq!(m("---\nmodel: \"unterminated\n---\n"), None);
+        assert_eq!(m("---\nname: x\n---\nmodel: claude-opus-4-8\n"), None);
+        // a `#` inside a plain scalar (not after white space) is part of it
+        assert_eq!(
+            m("---\nmodel: a#b\n---\n"),
+            Some(("a#b".into(), "a#b".into()))
+        );
+        // the doctor's report reads the same key
+        assert_eq!(
+            pinned_agent_model("---\nmodel : claude-opus-4-8 # c\n---\n"),
+            Some(("claude-opus-4-8".into(), "opus".into()))
+        );
+        assert_eq!(
+            pinned_agent_model("---\nmodel:claude-opus-4-8\n---\n"),
+            None
         );
     }
 }

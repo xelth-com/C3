@@ -56,7 +56,9 @@ fn run_c3(repo: &Path, args: &[&str]) -> (i32, String, String) {
 
 fn run_c3_env(repo: &Path, args: &[&str], envs: &[(&str, &str)]) -> (i32, String, String) {
     let mut cmd = Command::new(c3_bin());
-    cmd.current_dir(repo).args(args);
+    // a test run inside a C3 child (a worker running the suite) must not inherit the mark: the
+    // tests that need it set it explicitly
+    cmd.current_dir(repo).args(args).env_remove("C3_CHILD");
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -335,6 +337,72 @@ fn hook_refreshes_repo_models_once_and_honours_the_off_switch() {
         "a C3 child's hook rewrote the file: {body}"
     );
     let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, F04-4) `c3 doctor --fix` inside a child C3 started repairs nothing and says so; the
+// report itself still runs.
+#[test]
+fn doctor_fix_does_nothing_inside_a_c3_child() {
+    let repo = scratch_repo("doctor-fix-child");
+    std::fs::create_dir_all(repo.join(".claude/agents")).unwrap();
+    let agent = repo.join(".claude/agents/opus-worker.md");
+    let pinned = "---\nname: opus-worker\nmodel: claude-opus-4-8\n---\nbody\n";
+    std::fs::write(&agent, pinned).unwrap();
+    let env = &[("C3_CONFIG", "none"), ("C3_CHILD", "1")];
+    let (code, out, err) = run_c3_env(&repo, &["doctor", "--fix"], env);
+    assert_eq!(code, 1, "the pin is still there: {out}\n{err}");
+    assert!(
+        out.contains("[i] --fix skipped inside a C3 child"),
+        "skip line missing: {out}"
+    );
+    assert!(!out.contains("[fixed]"), "{out}");
+    assert!(out.contains("model pinned to claude-opus-4-8"), "{out}");
+    assert_eq!(std::fs::read_to_string(&agent).unwrap(), pinned);
+    let (_c, json, _e) = run_c3_env(&repo, &["doctor", "--fix", "--json"], env);
+    let v: serde_json::Value = serde_json::from_str(json.trim()).unwrap();
+    assert_eq!(v["fix_skipped"], "skipped inside a C3 child", "{v}");
+    assert_eq!(v["fixed"].as_array().map(Vec::len), Some(0), "{v}");
+    assert_eq!(std::fs::read_to_string(&agent).unwrap(), pinned);
+    let _ = std::fs::remove_dir_all(&repo);
+}
+
+// (0.2.5, F02-1) The real hook never writes through a hard link: an agent file hard-linked to a
+// file outside the repository is left alone (both names keep their bytes) and the hook line says
+// why; `c3 doctor --fix` reports it as a finding.
+#[test]
+fn the_hook_never_edits_a_hard_linked_agent_file() {
+    let base = scratch_dir("hook-hardlink");
+    let repo = base.join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    std::fs::create_dir_all(repo.join(".claude/agents")).unwrap();
+    let pinned = "---\nname: opus-worker\nmodel: claude-opus-4-8\n---\nbody\n";
+    let outside = base.join("sentinel.md");
+    std::fs::write(&outside, pinned).unwrap();
+    let agent = repo.join(".claude/agents/opus-worker.md");
+    std::fs::hard_link(&outside, &agent).unwrap();
+    let envs = &[
+        ("C3_CONFIG", "none"),
+        ("C3_MAINTAIN", "off"),
+        ("C3_UPDATE_CHECK", "off"),
+        ("C3_BRANCH_CHECK", "off"),
+    ];
+    let (code, out, err) = run_c3_env(&repo, &["hook"], envs);
+    assert_eq!(code, 0, "hook must exit 0: {out}\n{err}");
+    assert!(
+        out.contains("c3: model settings NOT refreshed in this repository - .claude/agents/opus-worker.md claude-opus-4-8 -> opus: it has 2 hard links"),
+        "{out}"
+    );
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), pinned);
+    assert_eq!(std::fs::read_to_string(&agent).unwrap(), pinned);
+    let (code, out, _e) = run_c3_env(&repo, &["doctor", "--fix"], &[("C3_CONFIG", "none")]);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        out.contains("[!] .claude/agents/opus-worker.md: model claude-opus-4-8 -> opus not repaired - it has 2 hard links"),
+        "{out}"
+    );
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), pinned);
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]

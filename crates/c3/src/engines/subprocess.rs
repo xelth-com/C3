@@ -1284,6 +1284,96 @@ fn read_text(path: &Path) -> String {
 mod tests {
     use super::*;
 
+    /// (0.2.5, F03-1 / F02-5) A fake launcher that writes the `C3_CHILD` it sees into `out` (a cmd
+    /// stub on Windows, a sh stub elsewhere).
+    fn env_dump_launcher(dir: &Path, out: &Path) -> String {
+        #[cfg(windows)]
+        {
+            let p = dir.join("dump-env.cmd");
+            std::fs::write(
+                &p,
+                format!(
+                    "@echo off\r\n>\"{}\" echo C3_CHILD=[%C3_CHILD%]\r\nexit /b 0\r\n",
+                    out.display()
+                ),
+            )
+            .unwrap();
+            p.to_string_lossy().to_string()
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let p = dir.join("dump-env.sh");
+            std::fs::write(
+                &p,
+                format!(
+                    "#!/bin/sh\ncat >/dev/null\necho \"C3_CHILD=[$C3_CHILD]\" > '{}'\nexit 0\n",
+                    out.display()
+                ),
+            )
+            .unwrap();
+            let mut perm = std::fs::metadata(&p).unwrap().permissions();
+            perm.set_mode(0o755);
+            std::fs::set_permissions(&p, perm).unwrap();
+            p.to_string_lossy().to_string()
+        }
+    }
+
+    // (0.2.5, F03-1 / F02-5) Every turn `run_turn` starts is marked `C3_CHILD=1`: a codex-style turn
+    // that inherits this process's environment (`env: None`) and a claude-style turn with an
+    // allow-listed environment that replaces it (`env: Some`, built by the claude engine's own
+    // `child_environment`).
+    #[test]
+    fn every_turn_child_is_marked_c3_child() {
+        let dir = std::env::temp_dir().join(format!(
+            "c3-turn-mark-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("seen.txt");
+        let launcher = env_dump_launcher(&dir, &out);
+        let vars: Vec<(String, String)> = std::env::vars_os()
+            .filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+            .filter(|(k, _)| !k.eq_ignore_ascii_case(crate::engines::C3_CHILD_ENV))
+            .collect();
+        let allow =
+            c3_core::claude::child_environment(&vars, "subscription", None, "", cfg!(windows), "");
+        for (label, env) in [
+            ("codex (inherited)", None),
+            ("claude (allow list)", Some(&allow.env[..])),
+        ] {
+            let _ = std::fs::remove_file(&out);
+            let argv: Vec<String> = Vec::new();
+            let req = SpawnRequest {
+                launcher: &launcher,
+                argv: &argv,
+                cwd: &dir,
+                prompt_delivery: PromptDelivery::Stdin,
+                stdin_text: "prompt",
+                events_path: &dir.join("events.jsonl"),
+                stderr_path: &dir.join("stderr.txt"),
+                timeout: Duration::from_secs(60),
+                stall_sec: 0,
+                kick_path: None,
+                tool_flight: None,
+                on_running: None,
+                on_kill: None,
+                env,
+                crt_quote: false,
+                budget: None,
+            };
+            let r = run_turn(&req);
+            assert!(r.started, "{label}: {}", r.stderr);
+            let seen = std::fs::read_to_string(&out).unwrap_or_default();
+            assert_eq!(seen.trim(), "C3_CHILD=[1]", "{label}: {}", r.stderr);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     // (wave 26b, D12 / 26c D3) the stall detection's pure helper: any byte growth is seen, and a
     // tool-call classifier keeps the in-flight count so the timer can suspend while one runs.
     #[test]

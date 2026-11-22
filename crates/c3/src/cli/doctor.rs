@@ -16,7 +16,9 @@ pub struct DoctorArgs {
     #[arg(long)]
     pub json: bool,
     /// Repair what can be repaired automatically (stale agent model pins -> the alias; AGENTS.md
-    /// -> the roster's successor), then report what is left. The edits are left uncommitted.
+    /// -> the roster's successor; a kimi review's stale throwaway worktree -> removed), then report
+    /// what is left. The edits are left uncommitted; a repair that cannot be made safely is
+    /// reported; inside a C3 child nothing is repaired or removed.
     #[arg(long)]
     pub fix: bool,
 }
@@ -31,21 +33,31 @@ fn human_bytes(n: u64) -> String {
     }
 }
 
-/// The branch/worktree lines: unknown branches and unrecorded worktrees are findings (`[!]`); the
-/// start folder off the default branch or dirty is a `[warn]` that does not change the exit code.
+/// The branch/worktree lines: an unknown default branch, unknown branches, unrecorded worktrees and
+/// stale c3 worktrees are findings (`[!]`); the start folder off the default branch or dirty is a
+/// `[warn]` that does not change the exit code.
 fn print_branch_findings(b: &BranchReport) {
+    if let Some(why) = b.default_unknown_text() {
+        println!("[!] {why} - until then no branch counts as merged");
+    }
+    if b.ancestry_failed {
+        println!(
+            "[!] the ancestry query against {} failed - no branch counts as merged",
+            b.default_label()
+        );
+    }
     let unknown = b.unknown_branches();
     if unknown.is_empty() {
         println!(
             "[ok] every branch is merged into {} or has a recorded state",
-            b.default_branch
+            b.default_label()
         );
     } else {
         let names: Vec<&str> = unknown.iter().map(|x| x.name.as_str()).collect();
         println!(
             "[!] {} branch(es) not merged into {} and without a recorded state: {} - see c3 branches; record one with {SET_HINT}",
             unknown.len(),
-            b.default_branch,
+            b.default_label(),
             branches::name_list(&names, 8)
         );
     }
@@ -55,8 +67,14 @@ fn print_branch_findings(b: &BranchReport) {
             branches::worktree_label(w)
         );
     }
+    for s in &b.stale_worktrees {
+        println!(
+            "[!] stale c3 worktree {}: {} - c3 doctor --fix removes it",
+            s.path, s.why
+        );
+    }
     if let Some(s) = &b.start {
-        if !s.on_default {
+        if !s.on_default && b.default_branch.is_some() {
             let behind = s
                 .behind
                 .filter(|n| *n > 0)
@@ -66,7 +84,7 @@ fn print_branch_findings(b: &BranchReport) {
                 "[warn] the start folder {} is on {}, not {}{behind} - see c3 branches",
                 s.path,
                 s.branch.as_deref().unwrap_or("a detached HEAD"),
-                b.default_branch
+                b.default_label()
             );
         }
         if let Some(n) = s.dirty.filter(|n| *n > 0) {
@@ -84,18 +102,29 @@ pub fn run(args: DoctorArgs) -> i32 {
     let repo_root = providers::resolve_repo_root(&cwd);
 
     // `--fix`: apply the automatic repairs first, then report what is LEFT (so the exit code and
-    // the remaining findings reflect the post-fix state).
-    let fixes = if args.fix {
+    // the remaining findings reflect the post-fix state). Inside a child C3 started (`C3_CHILD`)
+    // the repair does nothing and says so (F04-4): a reviewer is read-only, a worker's patch holds
+    // only its own change.
+    let repair = if args.fix {
         let models = providers::read_reviewer_roster()
             .map(|r| crate::setup::repo_models::roster_models(&r))
             .unwrap_or_default();
         crate::setup::repo_models::refresh_repo_models(&repo_root, &models)
     } else {
+        crate::setup::repo_models::RepairReport::default()
+    };
+    let fixes = &repair.fixes;
+    // `--fix` also removes a kimi review's throwaway worktree no live run owns (the kimi engine's
+    // own link-safe removal) - never inside a C3 child (F04-4: a reviewer is read-only).
+    let removed_worktrees = if args.fix && !crate::engines::in_c3_child() {
+        branches::remove_stale_worktrees(&repo_root)
+    } else {
         Vec::new()
     };
 
     let report = doctor::scan(&repo_root);
-    let clean = report.is_clean();
+    // a repair that could not be made is a finding of its own (an AGENTS.md one has no scan line)
+    let clean = report.is_clean() && repair.problems.is_empty();
 
     if args.json {
         let obj = serde_json::json!({
@@ -105,6 +134,15 @@ pub fn run(args: DoctorArgs) -> i32 {
                 "old": f.old,
                 "new": f.new,
             })).collect::<Vec<_>>(),
+            "fix_problems": repair.problems.iter().map(|p| serde_json::json!({
+                "file": p.file,
+                "old": p.old,
+                "new": p.new,
+                "why": p.why,
+            })).collect::<Vec<_>>(),
+            "fix_skipped": repair
+                .skipped_in_child
+                .then_some(crate::setup::repo_models::SKIPPED_IN_CHILD),
             "stub_files": report.stub_files,
             "mcp_registered": report.mcp_registered,
             "eck_core_in": report.eck_core_in,
@@ -118,15 +156,41 @@ pub fn run(args: DoctorArgs) -> i32 {
             "snapshot_bytes": report.snapshot_bytes,
             "branches": report.branches.as_ref().map(|b| serde_json::json!({
                 "default_branch": b.default_branch,
+                "default_branch_error": b.default_unknown_text(),
+                "ancestry_failed": b.ancestry_failed,
                 "unknown_branches": b.unknown_branches().iter().map(|x| x.name.clone()).collect::<Vec<_>>(),
                 "unrecorded_worktrees": b.unrecorded_worktrees().iter().map(|w| crate::cli::branches::worktree_json(w)).collect::<Vec<_>>(),
+                "stale_worktrees": b.stale_worktrees.iter().map(crate::cli::branches::stale_json).collect::<Vec<_>>(),
                 "start_folder": b.start.as_ref().map(crate::cli::branches::start_json),
             })),
+            "removed_worktrees": removed_worktrees.iter().map(|r| serde_json::json!({
+                "path": r.path,
+                "removed": r.removed,
+            })).collect::<Vec<_>>(),
         });
         println!("{obj}");
     } else {
-        for f in &fixes {
+        if repair.skipped_in_child {
+            println!(
+                "[i] --fix {}: C3_CHILD is set, nothing was repaired",
+                crate::setup::repo_models::SKIPPED_IN_CHILD
+            );
+        }
+        for f in fixes {
             println!("[fixed] {}: model {} -> {}", f.file, f.old, f.new);
+        }
+        for p in &repair.problems {
+            println!(
+                "[!] {}: model {} -> {} not repaired - {}",
+                p.file, p.old, p.new, p.why
+            );
+        }
+        for r in &removed_worktrees {
+            if r.removed {
+                println!("[fixed] removed the stale c3 worktree {}", r.path);
+            } else {
+                println!("[!] could not remove the stale c3 worktree {}", r.path);
+            }
         }
         if report.stub_files.is_empty() {
             println!("[ok] no [STUB] markers left in .eck/*.md");

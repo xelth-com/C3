@@ -1617,15 +1617,59 @@ fn spawn_detached_pass(dir: &Path) -> Result<(), String> {
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let log = dir.join("last-run.log");
-    spawn_detached(&exe, &log, dir)
+    spawn_detached(&exe, &["maintain", "--run"], &log, dir)
 }
 
-/// Start `c3 maintain --run` detached, spawning the executable DIRECTLY (not through `cmd.exe /c`):
-/// the argument vector is `maintain --run`, the log is opened by this process and handed to the
-/// child as stdout/stderr, and stdin is NUL. Because nothing the child runs is built from a command
-/// line, a `CODEX_HOME` or exe path containing a quote, `&`, `|` or `%` is inert.
+/// (0.2.5, F02-5 / F04-6) The environment of the detached pass: `vars` (this process's own) with
+/// [`crate::engines::C3_CHILD_ENV`] set to `1`, replacing any value it had (the name compared
+/// case-insensitively on Windows, where variable names are). The pass is a process C3 started, so
+/// it is marked like a reviewer or worker child even when the session that spawned it is not.
+fn detached_environment(
+    vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let mark = crate::engines::C3_CHILD_ENV;
+    let is_mark = |k: &std::ffi::OsStr| {
+        if cfg!(windows) {
+            k.to_string_lossy().eq_ignore_ascii_case(mark)
+        } else {
+            k == mark
+        }
+    };
+    let mut out: Vec<_> = vars.filter(|(k, _)| !is_mark(k)).collect();
+    out.push((mark.into(), "1".into()));
+    out
+}
+
+/// A `CreateProcessW` environment block (`CREATE_UNICODE_ENVIRONMENT`): every `NAME=VALUE` as UTF-16
+/// with its NUL, sorted by name case-insensitively as Windows requires, the block closed by one more
+/// NUL (an empty block is two NULs).
 #[cfg(windows)]
-fn spawn_detached(exe: &Path, log: &Path, cwd: &Path) -> Result<(), String> {
+fn environment_block(vars: &[(std::ffi::OsString, std::ffi::OsString)]) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    let mut sorted: Vec<&(std::ffi::OsString, std::ffi::OsString)> = vars.iter().collect();
+    sorted.sort_by_key(|(k, _)| k.to_string_lossy().to_uppercase());
+    let mut block: Vec<u16> = Vec::new();
+    for (k, v) in sorted {
+        block.extend(k.encode_wide());
+        block.push(u16::from(b'='));
+        block.extend(v.encode_wide());
+        block.push(0);
+    }
+    if block.is_empty() {
+        block.push(0);
+    }
+    block.push(0);
+    block
+}
+
+/// Start `<exe> <args>` (`c3 maintain --run`) detached, spawning the executable DIRECTLY (not
+/// through `cmd.exe /c`): the log is opened by this process and handed to the child as
+/// stdout/stderr, and stdin is NUL. Because nothing the child runs is built from a command line, a
+/// `CODEX_HOME` or exe path containing a quote, `&`, `|` or `%` is inert. `args` are fixed tokens
+/// (no white space, no quote). The child gets this process's environment plus `C3_CHILD=1`
+/// ([`detached_environment`]).
+#[cfg(windows)]
+fn spawn_detached(exe: &Path, args: &[&str], log: &Path, cwd: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
 
@@ -1633,6 +1677,7 @@ fn spawn_detached(exe: &Path, log: &Path, cwd: &Path) -> Result<(), String> {
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
     const HANDLE_FLAG_INHERIT: u32 = 0x0000_0001;
     const ERROR_ACCESS_DENIED: i32 = 5;
 
@@ -1707,10 +1752,18 @@ fn spawn_detached(exe: &Path, log: &Path, cwd: &Path) -> Result<(), String> {
     // The command line: "<exe>" maintain --run (only the exe is variable; it is quoted). The child
     // re-parses this, but the only variable token is the exe path inside quotes, so metacharacters
     // in it are inert.
-    let cmdline_src = format!("\"{}\" maintain --run", exe.to_string_lossy());
+    let mut cmdline_src = format!("\"{}\"", exe.to_string_lossy());
+    for a in args {
+        debug_assert!(!a.is_empty() && !a.contains(|c: char| c.is_whitespace() || c == '"'));
+        cmdline_src.push(' ');
+        cmdline_src.push_str(a);
+    }
+    // The child's environment: this process's, marked C3_CHILD=1 (an explicit block - a null one
+    // would only inherit, and the spawning session is usually not a C3 child itself).
+    let mut env_block = environment_block(&detached_environment(std::env::vars_os()));
 
-    // SAFETY: the two handles live until after CreateProcessW; `app`, `dir` and the per-attempt
-    // command-line buffer are local and NUL-terminated.
+    // SAFETY: the two handles live until after CreateProcessW; `app`, `dir`, the environment block
+    // and the per-attempt command-line buffer are local and NUL-terminated.
     unsafe {
         if SetHandleInformation(log_h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0
             || SetHandleInformation(nul_h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0
@@ -1738,7 +1791,7 @@ fn spawn_detached(exe: &Path, log: &Path, cwd: &Path) -> Result<(), String> {
         si.hStdInput = nul_h;
         si.hStdOutput = log_h;
         si.hStdError = log_h;
-        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
         // Attempt 0 lifts the child out of the launcher's Job (so a closing console cannot kill it);
         // on ERROR_ACCESS_DENIED (a Job forbidding breakaway) retry once without the flag.
         let attempts = [base | CREATE_BREAKAWAY_FROM_JOB, base];
@@ -1754,7 +1807,7 @@ fn spawn_detached(exe: &Path, log: &Path, cwd: &Path) -> Result<(), String> {
                 std::ptr::null_mut(),
                 1, // bInheritHandles = TRUE: the child inherits the two handles marked above
                 flags,
-                std::ptr::null_mut(),
+                env_block.as_mut_ptr().cast::<u8>(),
                 dir.as_ptr(),
                 &mut si,
                 &mut pi,
@@ -1781,13 +1834,14 @@ fn spawn_detached(exe: &Path, log: &Path, cwd: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn spawn_detached(exe: &Path, log: &Path, cwd: &Path) -> Result<(), String> {
+fn spawn_detached(exe: &Path, args: &[&str], log: &Path, cwd: &Path) -> Result<(), String> {
     use std::process::{Command, Stdio};
     let log_file = std::fs::File::create(log).map_err(|e| e.to_string())?;
     let log_err = log_file.try_clone().map_err(|e| e.to_string())?;
     let mut cmd = Command::new(exe);
-    cmd.arg("maintain")
-        .arg("--run")
+    cmd.args(args)
+        .env_clear()
+        .envs(detached_environment(std::env::vars_os()))
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log_file))
@@ -2050,6 +2104,92 @@ mod tests {
         assert_eq!(got[0].target, "1.0.80");
         clear_pending(&dir, "grok");
         assert!(read_pending(&dir).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // (0.2.5, F02-5 / F04-6) The detached pass's environment: the parent's, with C3_CHILD=1 replacing
+    // whatever the parent had (on Windows also a lower-case spelling of the name).
+    #[test]
+    fn the_detached_environment_carries_the_child_mark() {
+        use std::ffi::OsString;
+        let vars: Vec<(OsString, OsString)> = vec![
+            ("PATH".into(), "p".into()),
+            ("C3_CHILD".into(), "0".into()),
+            ("W25_KEEP".into(), "k".into()),
+        ];
+        let env = detached_environment(vars.into_iter());
+        let marks: Vec<_> = env
+            .iter()
+            .filter(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("C3_CHILD"))
+            .collect();
+        assert_eq!(marks.len(), 1, "{env:?}");
+        assert_eq!(marks[0].1, "1");
+        assert!(env.iter().any(|(k, v)| k == "W25_KEEP" && v == "k"));
+        assert!(env.iter().any(|(k, v)| k == "PATH" && v == "p"));
+        if cfg!(windows) {
+            let lower: Vec<(OsString, OsString)> = vec![("c3_child".into(), "x".into())];
+            let env = detached_environment(lower.into_iter());
+            assert_eq!(env, vec![(OsString::from("C3_CHILD"), OsString::from("1"))]);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_environment_block_is_sorted_and_double_nul_terminated() {
+        let block = environment_block(&[
+            ("b".into(), "2".into()),
+            ("C3_CHILD".into(), "1".into()),
+            ("A".into(), "1".into()),
+        ]);
+        let text = String::from_utf16(&block).unwrap();
+        assert_eq!(text, "A=1\0b=2\0C3_CHILD=1\0\0");
+        assert_eq!(environment_block(&[]), vec![0, 0]);
+    }
+
+    /// The probe the detached-spawn test starts: run as `<this test binary> --exact
+    /// maintain::tests::detached_env_probe --nocapture`, it prints its own `C3_CHILD` into the
+    /// pass's log. Run as an ordinary test it prints into the captured output and passes.
+    #[test]
+    fn detached_env_probe() {
+        println!(
+            "detached-env-probe C3_CHILD=[{}]",
+            std::env::var(crate::engines::C3_CHILD_ENV).unwrap_or_default()
+        );
+    }
+
+    // (0.2.5, F02-5 / F04-6) The real detached spawn (`CreateProcessW` with an explicit environment
+    // block on Windows, a process group elsewhere) marks the child: this test binary is the fake
+    // launcher, started detached with the probe above, and its log line names C3_CHILD=1.
+    #[test]
+    fn the_detached_spawn_marks_its_child() {
+        let dir = lock_dir("detached-env");
+        let log = dir.join("last-run.log");
+        let exe = std::env::current_exe().unwrap();
+        spawn_detached(
+            &exe,
+            &[
+                "--exact",
+                "maintain::tests::detached_env_probe",
+                "--nocapture",
+                "--test-threads=1",
+            ],
+            &log,
+            &dir,
+        )
+        .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        let mut text = String::new();
+        while std::time::Instant::now() < deadline {
+            text = std::fs::read_to_string(&log).unwrap_or_default();
+            if text.contains("test result:") {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(
+            text.contains("detached-env-probe C3_CHILD=[1]"),
+            "the detached child was not marked: {text}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

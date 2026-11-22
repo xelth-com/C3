@@ -82,8 +82,9 @@ pub fn run(args: FinishArgs) -> i32 {
 
     match finish::run_finish(&opts) {
         Ok(r) => {
-            // After the commit: name the branches and worktrees that have no recorded state (a
-            // note, never a refusal; read-only, no `git cherry`).
+            // After the commit: name the branches and worktrees that have no recorded state, and an
+            // unknown default branch (a note, never a refusal; read-only - no optional git locks -,
+            // no `git cherry`).
             let branch_report = crate::setup::branches::quick_scan(&repo_root, false);
             let branch_note = branch_report
                 .as_ref()
@@ -95,6 +96,7 @@ pub fn run(args: FinishArgs) -> i32 {
                     .map(|b| {
                         serde_json::json!({
                             "note": branch_note,
+                            "default_branch_error": b.default_unknown_text(),
                             "unknown_branches": b.unknown_branches().iter().map(|x| x.name.clone()).collect::<Vec<_>>(),
                             "unrecorded_worktrees": b.unrecorded_worktrees().iter().map(|w| crate::cli::branches::worktree_json(w)).collect::<Vec<_>>(),
                         })

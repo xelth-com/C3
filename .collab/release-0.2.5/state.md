@@ -71,6 +71,54 @@ swap -> xelth.com/C3 page after the tag.
   of every review prompt, raw too; not in `WORK_PREAMBLE`) applied on top of A1 (12 files; only
   CHANGELOG conflicted, both sides kept). Full suite on main running (log: scratchpad `suite-A.log`).
   Worktrees `agent-af4dcf348f1736d1f` (A1) and `agent-a2960789f7936b0c4` (A2) kept until the commit.
+- 2026-11-22 15:08: full suite green on main (fmt ok, clippy clean, 40 binaries, 1298 passed, 0 failed);
+  committed a115422 (c3 finish) and pushed; CI run 45031254736. A1/A2 worktrees removed (no reparse
+  points inside, reset + clean, `git worktree remove` without --force), their branches deleted. P1's
+  branch recorded `work`. P2 started from a115422.
+- 2026-11-22 ~15:55, wave P1 reported and APPLIED to main's working tree (worktree
+  `agent-aa05e0920dd1bedaa`, 15 files; CHANGELOG conflict resolved, both sides kept). All ten findings
+  fixed: F02-1/2 temp file + snapshot re-check + rename, hard-linked / linked files reported never
+  edited; F02-3/F03-4 only a concrete Claude id rewritten, `[1m]` kept, value span only (quotes, comment
+  survive), one shared frontmatter parser; F02-4 AGENTS.md follows only active unprotected entries, one
+  successor or nothing; F04-4 doctor --fix / refresh skip under C3_CHILD; F02-6 repo root by walking up
+  (no subprocess), hook branch line on a thread with a 2 s deadline; F03-1/F02-5/F04-6 C3_CHILD on the
+  claude child env, auth/version probes, detached maintain (explicit env block). Worker's runs green
+  (c3-core claude 20, c3 lib filters 41 + 87, init_doctor 14, claude_engine 16, work 2, maintain 28,
+  branches 4). Accepted decisions: stricter key / id parsing (`Opus` no longer rewritten), doctor --fix
+  exit 1 on a failed repair, link skips reported each session, `child_env_allowed` now lists C3_CHILD
+  (the pinned plugin harness may compare it - not run). Coordinator's own addition: `C3_CHILD=0` /
+  false / off / no no longer marks a child (`c3_child_value_marks`, test). Open (minor, debt):
+  `find_repo_root` ignores GIT_DIR / GIT_WORK_TREE; the 2 s hook deadline could flake the branches hook
+  test on a loaded CI runner. P3 started from a115422.
+- 2026-11-22 ~16:30: CI for a115422 green (run 45031254736). Wave P2 reported and APPLIED on top of P1
+  (worktree `agent-ad9d34f33576d0037`, 10 files). Conflicts resolved by hand: `hook/mod.rs` keeps P1's
+  2 s `branch_line_within` wrapper around P2's new `branches::hook_line`; `cli/doctor.rs` keeps both
+  P1's repair problems and P2's stale-worktree removal, and the removal is skipped inside a C3 child
+  (coordinator's addition, F04-4's rule). P2: descriptions read NUL-framed and kept byte-exact, a
+  `c3:` line is C3's only when it parses, an unreadable or concurrently changed value is never written
+  over, odd branch names validated (`git check-ref-format`); every branch git call with
+  `GIT_OPTIONAL_LOCKS=0` (index byte-identical, proven against a plain `git status` control); patch
+  checks capped at 50; default branch `c3.defaultBranch` (`c3 branches --default`) -> origin/HEAD ->
+  init.defaultBranch -> main/master -> unknown (a finding; `merged` null, never merged on a failed
+  query); `patches_on_default` relabelled as patch equivalence with qualified refs; kimi throwaway =
+  exact `c3-kimi-wt-<32 hex>` directly under temp; owner record `.git/worktrees/<name>/c3-owner`
+  (pid + start) written by `KimiWorktree::create`; stale ones reported and removed by `doctor --fix`.
+  Worker's runs: branches lib 14, kimi lib 13, branches 9, kimi_engine 11. Full suite running
+  (scratchpad `suite-P12.log`).
+- 2026-11-22 ~16:45, wave P3 reported (worktree `agent-a9e92400cb221f99e`, not applied yet - the P1+P2
+  suite is running on the tree). Fixed: public GETs own redirect policy (same host + port, no userinfo,
+  every hop re-checked, <= 3), one 15 s deadline over hops and body, streaming 4 MiB cap, the kimi host
+  pair only for the installer / marker; date gate: future (> +1 day) rejected, any source dating the
+  candidate not newer rejects it, such pairs stored (`models.older`, <= 500), own-list ids gated too;
+  endpoint lists keyed `endpoint:<scheme>://<host>:<port><path>|<key var>|<plan>`; F02-16 both smoke
+  turns through a one-entry roster (`CODEX_CONSULT_ROSTER`) holding the exact entry with the model
+  changed (test fails on the old label binding), engine-update smokes bound the same way; the writer
+  edits `reviewers[position].model` found by parsing and verifies the only delta; MODELS=off
+  authoritative for `--models`; an unresolved pending update tries a newer vendor release keeping the
+  original `previous`, no-rollback path tested with agy. Worker's runs: maintain lib 71, telemetry 30,
+  maintain 34, claude_engine 15. Accepted decisions: codex custom-provider smoke with no roster; an
+  explicit `C3_MAINTAIN_SMOKE_<ENGINE>` still by label; `ext.c3.reviewers` http entries announced only.
+  Debt (minor): smoke consult children lose `CODEX_CONSULT_TEST_*` (scrub_host_markers).
 - 2026-11-22 14:00: the weekly `c3 maintain` pass (due 15:19 today, with codex 0.169 -> 0.171 waiting)
   postponed to 2026-11-24 15:19 (`~/.codex/c3/maintain/state.json` next_due; backup
   `state.json.bak-2026-11-22`) so the Codex update is smoked by A2's sub-agent check, not before it.

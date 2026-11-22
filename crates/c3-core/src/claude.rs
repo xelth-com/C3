@@ -414,8 +414,9 @@ pub fn valid_pass_prefix(value: &str) -> String {
 #[derive(Clone, Default)]
 pub struct ChildEnv {
     pub auth: String,
-    /// name -> value, every allowed variable plus the set ones (`DISABLE_AUTOUPDATER=1`; with auth
-    /// endpoint the route's three variables). Holds a token with auth endpoint: never log it.
+    /// name -> value, every allowed variable plus the set ones (`DISABLE_AUTOUPDATER=1`,
+    /// `C3_CHILD=1`; with auth endpoint the route's three variables). Holds a token with auth
+    /// endpoint: never log it.
     pub env: Vec<(String, String)>,
     /// The names, sorted ordinally - the ledger's `engine_run.child_env_allowed` (never a value).
     pub names: Vec<String>,
@@ -450,7 +451,9 @@ impl std::fmt::Debug for ChildEnv {
 /// (`subscription` when not one of [`CLAUDE_AUTH_MODES`]) and - auth endpoint - `endpoint`, with
 /// the (already validated) test pass prefix. `case_insensitive`: Windows variable names. `token`:
 /// the endpoint's token, read by the caller from the variable `endpoint.env_key` names at the
-/// moment the environment is built (`""` when unset or blank).
+/// moment the environment is built (`""` when unset or blank). C3 adds one variable the plugin's
+/// function does not set: [`crate::host::C3_CHILD_ENV`] `=1`, the mark of a child C3 started (so
+/// [`probe_environment`], built from this, carries it too).
 pub fn child_environment(
     vars: &[(String, String)],
     auth: &str,
@@ -482,6 +485,7 @@ pub fn child_environment(
         if child_env_name_allowed(n, auth, pass_prefix) {
             env.push((n.clone(), v.clone()));
         } else if !n.eq_ignore_ascii_case("DISABLE_AUTOUPDATER")
+            && !n.eq_ignore_ascii_case(crate::host::C3_CHILD_ENV)
             && !(auth == "endpoint" && ENDPOINT_ENV_NAMES.contains(&n.to_uppercase().as_str()))
             && !removed.contains(n)
         {
@@ -493,6 +497,10 @@ pub fn child_environment(
         env.push((k.to_string(), v));
     };
     set(&mut env, "DISABLE_AUTOUPDATER", "1".to_string());
+    // (0.2.5, F03-1) the child is MARKED as one C3 started (`C3_CHILD=1`, never the parent's value):
+    // a reviewer or worker on the claude engine runs the SessionStart hook in the repository, and
+    // the hook's repair must see the mark to keep its hands off the tree.
+    set(&mut env, crate::host::C3_CHILD_ENV, "1".to_string());
     let mut problem = String::new();
     if auth == "endpoint" {
         problem = endpoint_problem(endpoint);
@@ -1030,6 +1038,50 @@ mod tests {
             "env W29B_TOKEN not set (the token of auth endpoint)"
         );
         assert!(!n.names.iter().any(|x| x == "ANTHROPIC_AUTH_TOKEN"));
+    }
+
+    /// (0.2.5, F03-1) Every claude child - a turn of each auth and the launcher probe - is marked
+    /// `C3_CHILD=1`, whatever the parent had (unset, `0`, a lower-case name); the mark is listed with
+    /// the allowed names and the parent's own spelling is never in `removed`.
+    #[test]
+    fn every_claude_child_environment_is_marked_c3_child() {
+        let value = |e: &ChildEnv, n: &str| {
+            e.env
+                .iter()
+                .filter(|(k, _)| k.eq_ignore_ascii_case(n))
+                .map(|(_, v)| v.clone())
+                .collect::<Vec<_>>()
+        };
+        let ep = endpoint_from_value(
+            &json!({"base_url":"https://api.z.ai/api/anthropic","env_key":"W25_TOKEN"}),
+            "zai",
+        )
+        .unwrap();
+        for parent in [None, Some(("C3_CHILD", "0")), Some(("c3_child", "x"))] {
+            let mut vars: Vec<(String, String)> = vec![("Path".into(), "C:\\x".into())];
+            if let Some((k, v)) = parent {
+                vars.push((k.to_string(), v.to_string()));
+            }
+            for (case_insensitive, auth) in [
+                (true, "subscription"),
+                (true, "api-key"),
+                (true, "endpoint"),
+                (false, "subscription"),
+            ] {
+                let e = child_environment(&vars, auth, Some(&ep), "", case_insensitive, "tok");
+                assert_eq!(value(&e, "C3_CHILD"), vec!["1"], "{auth} {parent:?}");
+                assert!(e.names.contains(&"C3_CHILD".to_string()), "{auth}");
+                assert!(
+                    !e.removed.iter().any(|n| n.eq_ignore_ascii_case("C3_CHILD")),
+                    "{auth} {parent:?}: {:?}",
+                    e.removed
+                );
+            }
+            let p = probe_environment(&vars, "endpoint", Some(&ep), "", true);
+            assert_eq!(value(&p, "C3_CHILD"), vec!["1"], "probe {parent:?}");
+            let p = probe_environment(&vars, "subscription", None, "", true);
+            assert_eq!(value(&p, "C3_CHILD"), vec!["1"], "probe {parent:?}");
+        }
     }
 
     /// (wave 4g, F32-1) The probe environment of auth endpoint is the turn's without its token:

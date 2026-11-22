@@ -100,6 +100,9 @@ pub fn probe(launcher: &str, args: &[&str], timeout_sec: u64, env: &ChildEnv) ->
     for (k, v) in &env.env {
         cmd.env(k, v);
     }
+    // (0.2.5, F02-5 / F04-6) a probe is a child C3 started: marked like a turn (the allow list
+    // already carries the mark; set here too, so a hand-built environment cannot drop it)
+    cmd.env(super::C3_CHILD_ENV, "1");
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {

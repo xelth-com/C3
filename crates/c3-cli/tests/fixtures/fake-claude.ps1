@@ -12,7 +12,8 @@
 #   FAKE_CLAUDE_ARGV_LOG=<path>   EVERY start appends one JSON line: {kind (turn | auth | version |
 #                                 other), argv (the parsed arguments), stdin (the prompt), stdin_len,
 #                                 cwd, env (the variable NAMES, sorted), autoupdater (the value of
-#                                 DISABLE_AUTOUPDATER), schema_ok (the --json-schema text parses)} -
+#                                 DISABLE_AUTOUPDATER), c3_child (the value of C3_CHILD - C3 only),
+#                                 schema_ok (the --json-schema text parses)} -
 #                                 the harness's GUARD counts them (a child without a line fails)
 #   `auth status`                 FAKE_CLAUDE_AUTH_STATUS=ok (default: loggedIn, claude.ai,
 #                                 firstParty) | out (loggedIn false, exit 1) | apikey (authMethod
@@ -146,7 +147,7 @@ if ($env:FAKE_CLAUDE_ARGV_LOG) {
     [Array]::Sort($names, [StringComparer]::OrdinalIgnoreCase)
     $tokenMatch = $null
     if ($env:FAKE_CLAUDE_TOKEN_EXPECT) { $tokenMatch = [bool]([string]$env:ANTHROPIC_AUTH_TOKEN -ceq [string]$env:FAKE_CLAUDE_TOKEN_EXPECT) }
-    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; stdin = $stdinText; stdin_len = $stdinText.Length; cwd = (Get-Location).Path; env = [object[]]$names; autoupdater = [string]$env:DISABLE_AUTOUPDATER; schema_ok = $schemaOk; pid = $PID; base_url = [string]$env:ANTHROPIC_BASE_URL; api_timeout_ms = [string]$env:API_TIMEOUT_MS; has_token = [bool]([string]$env:ANTHROPIC_AUTH_TOKEN); token_match = $tokenMatch }
+    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; stdin = $stdinText; stdin_len = $stdinText.Length; cwd = (Get-Location).Path; env = [object[]]$names; autoupdater = [string]$env:DISABLE_AUTOUPDATER; c3_child = [string]$env:C3_CHILD; schema_ok = $schemaOk; pid = $PID; base_url = [string]$env:ANTHROPIC_BASE_URL; api_timeout_ms = [string]$env:API_TIMEOUT_MS; has_token = [bool]([string]$env:ANTHROPIC_AUTH_TOKEN); token_match = $tokenMatch }
     $line = (J $rec) + "`n"
     Invoke-FakeWrite { [IO.File]::AppendAllText($env:FAKE_CLAUDE_ARGV_LOG, $line, $u8) }
 }

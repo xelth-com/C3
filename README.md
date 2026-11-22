@@ -637,12 +637,21 @@ one session's memory. C3 keeps the state in the repository and checks it.
   shared by every worktree and gone with `git branch -d`:
   `c3: <state> | <owner> | <YYYY-MM-DD> | <text>`. Three states: `work` (in work; the owner names the
   session or person), `waits` (finished, waits for the operator; the text is the question put to
-  him), `parked` (a WIP put aside; the text is the condition for merging it). A description that does
-  not start with `c3: ` is somebody's own note: it is kept, and the branch counts as unrecorded.
+  him), `parked` (a WIP put aside; the text is the condition for merging it). A description whose
+  first line is not such a full record (a note starting with `c3: hello` included) is somebody's own
+  note: it is kept byte for byte, and the branch counts as unrecorded. A description C3 cannot read
+  exactly, or one that changes while C3 writes, is never written over.
+- **The default branch** is found independently of the checkout: `c3.defaultBranch` in the local git
+  config (`c3 branches --default <name>`; it wins), then `origin/HEAD`, `init.defaultBranch`, `main`,
+  `master` - each only when that local branch exists. Otherwise it is reported unknown (a `c3
+  doctor` finding) and no branch counts as merged.
 - **`c3 branches`** lists every local branch but the default one, and every worktree other than the
-  default branch's: the recorded state, `merged` by ancestry or — when not — whether its content is
-  already on the default branch (`git cherry`; the cherry-pick case), commits ahead, the last commit
-  date and the worktree path. A branch is **unknown** when it is neither merged nor recorded. It also
+  default branch's: the recorded state, `merged` by ancestry or — when not — whether its patches are
+  already on the default branch (`git cherry`: patch equivalence, the cherry-pick case; a later
+  revert is not seen), commits ahead, the last commit date and the worktree path. The patch check
+  costs two git processes per unmerged branch and runs for the first 50 (those without a recorded
+  state first); the rest are listed "patches not checked". A branch is **unknown** when it is
+  neither merged nor recorded. It also
   shows the start folder (the primary worktree): its branch, how far it is behind the default
   branch's upstream as the local refs know it (no fetch) and its uncommitted-change count. `--json`
   gives the same data. `c3 branches --set <branch> --state work|waits|parked --note "<text>"
@@ -657,7 +666,12 @@ one session's memory. C3 keeps the state in the repository and checks it.
   `<codex home>/c3/config.json`, turns the hook line off (`c3 branches` and `c3 doctor` are explicit).
 - **C3's own throwaway worktree.** Before the `kimi` engine removes the worktree its reviewer ran in,
   every symlink and junction inside it is unlinked without being followed, so a forced removal can
-  never empty a checkout a link points into.
+  never empty a checkout a link points into. Such a worktree (directly in the system temp directory,
+  named exactly `c3-kimi-wt-<32 hex digits>`) is never a finding while its run lives; once the
+  owning process recorded in its git admin directory is gone (no record: older than 6 hours) it is
+  a "stale c3 worktree" in `c3 branches` and `c3 doctor`, and `c3 doctor --fix` removes it the same
+  link-safe way. Every read path runs git with `GIT_OPTIONAL_LOCKS=0`, so no check ever rewrites or
+  locks the index.
 
 ## License
 

@@ -55,14 +55,29 @@ pub fn scrub_host_markers(cmd: &mut std::process::Command) {
 }
 
 /// The variable C3 sets (to `1`) in the environment of every reviewer CLI, worker CLI and launcher
-/// probe it starts. A `c3` process that sees it is running INSIDE such a child: a reviewer is
-/// read-only and a worker's change is measured against its scope, so nothing there may edit the
-/// repository on C3's own initiative.
-pub const C3_CHILD_ENV: &str = "C3_CHILD";
+/// probe it starts - the claude engine's allow-listed environment
+/// ([`c3_core::claude::child_environment`]) and its `auth status` / `--version` probes included -
+/// and of its own detached maintenance pass. A `c3` process that sees it is running INSIDE such a
+/// child: a reviewer is read-only and a worker's change is measured against its scope, so nothing
+/// there may edit the repository on C3's own initiative.
+pub use c3_core::host::C3_CHILD_ENV;
 
-/// Whether this process runs inside a child that C3 started ([`C3_CHILD_ENV`] set and not empty).
+/// Whether this process runs inside a child that C3 started ([`C3_CHILD_ENV`] set to a value that
+/// does not switch it off - see [`c3_child_value_marks`]).
 pub fn in_c3_child() -> bool {
-    std::env::var_os(C3_CHILD_ENV).is_some_and(|v| !v.is_empty())
+    std::env::var_os(C3_CHILD_ENV).is_some_and(|v| c3_child_value_marks(&v))
+}
+
+/// Whether a [`C3_CHILD_ENV`] value marks a C3 child. Fail-safe: any non-empty value does (the mark
+/// only makes C3 read-only), except an explicit off - `0`, `false`, `off` or `no`, any case, spaces
+/// around ignored.
+pub fn c3_child_value_marks(v: &std::ffi::OsStr) -> bool {
+    let s = v.to_string_lossy();
+    let s = s.trim();
+    !s.is_empty()
+        && !["0", "false", "off", "no"]
+            .iter()
+            .any(|off| s.eq_ignore_ascii_case(off))
 }
 
 /// (wave 27c, D3) The transactional host-marker hide is fail-closed: a removal that cannot happen
@@ -87,4 +102,20 @@ pub fn host_marker_hide_failure() -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod c3_child_value_tests {
+    use super::c3_child_value_marks;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn an_explicit_off_value_is_not_a_c3_child() {
+        for v in ["1", "yes", "true", "anything"] {
+            assert!(c3_child_value_marks(OsStr::new(v)), "{v} marks a child");
+        }
+        for v in ["", "  ", "0", "false", "OFF", " no "] {
+            assert!(!c3_child_value_marks(OsStr::new(v)), "{v:?} does not");
+        }
+    }
 }

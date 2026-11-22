@@ -1,25 +1,66 @@
 //! Branch and worktree state (`c3 branches`, and the checks in `c3 doctor`, the SessionStart hook
 //! and `c3 finish`).
 //!
-//! A branch's state is ONE line stored as its git description
-//! (`git config branch.<name>.description`): `c3: <state> | <owner> | <YYYY-MM-DD> | <text>`, where
-//! `<state>` is `work` (in work; the owner names the session or person), `waits` (finished, waits
-//! for the operator; the text is the question put to him) or `parked` (a WIP put aside; the text is
-//! the condition for merging it). The description is shared by every worktree of the repository and
-//! disappears with `git branch -d`. A description that does not start with `c3: ` is somebody's own
-//! note: it is kept (a recorded state is written as the FIRST line above it, and `--clear` removes
-//! only that line) and the branch counts as having no recorded state.
+//! A branch's state is ONE line stored as its git description in the repository's own config
+//! (`git config --local branch.<name>.description`): `c3: <state> | <owner> | <YYYY-MM-DD> | <text>`,
+//! where `<state>` is `work` (in work; the owner names the session or person), `waits` (finished,
+//! waits for the operator; the text is the question put to him) or `parked` (a WIP put aside; the
+//! text is the condition for merging it). The description is shared by every worktree of the
+//! repository and disappears with `git branch -d`. A description is C3's only when its FIRST line
+//! parses as such a full record ([`BranchRecord::parse`]); anything else - a line `c3: hello`
+//! included - is somebody's own note: it is kept byte for byte (a recorded state is written as the
+//! first line above it, and `--clear` removes only that line) and the branch counts as having no
+//! recorded state. The value is read with NUL framing and never trimmed; a value C3 cannot read
+//! exactly (git fails, the value is not UTF-8, the key holds several values), or one that changed
+//! between C3's read and its write, is never written over.
+//!
+//! The default branch is found independently of the invoking checkout ([`default_branch`]):
+//! `c3.defaultBranch` in the local config (`c3 branches --default <name>`) wins, then `origin/HEAD`,
+//! `init.defaultBranch`, `main` and `master`, each only when that local branch exists. Nothing else
+//! is guessed: without one, every branch without a recorded state is unknown and the report says how
+//! to set it.
 //!
 //! A branch is **unknown** when it is not merged by ancestry into the default branch AND has no
-//! recorded state. Everything here only READS the repository, except [`set_state`] and
-//! [`clear_state`], which write the description and nothing else. Nothing is ever deleted or merged.
+//! recorded state; a failed ancestry query leaves it unknown, never merged. Everything here only
+//! READS the repository - every git call runs with `GIT_OPTIONAL_LOCKS=0`, so `git status` never
+//! refreshes or locks the index - except [`set_state`], [`clear_state`] and [`set_default_branch`],
+//! which write one config value each. Nothing is ever merged; the only thing ever deleted is a stale
+//! throwaway worktree of a kimi review, by `c3 doctor --fix` ([`remove_stale_worktrees`]).
+//!
+//! Cost: a scan is a fixed handful of git calls (independent of the number of branches), plus, in
+//! the full listing only, two per unmerged branch (`git cherry` and `git rev-list --count`) for at
+//! most [`PATCH_CHECK_CAP`] of them.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, SystemTime};
 
-/// The prefix that marks a description as C3's record.
+/// The prefix that starts C3's record line.
 pub const RECORD_PREFIX: &str = "c3: ";
+
+/// The local git config key that names the default branch (`c3 branches --default <name>`); it
+/// wins over every other source.
+pub const DEFAULT_BRANCH_KEY: &str = "c3.defaultBranch";
+
+/// What the reports say when no default branch can be named.
+pub const DEFAULT_UNKNOWN: &str =
+    "default branch unknown; set it with `c3 branches --default <name>`";
+
+/// How many unmerged branches the full listing checks with `git cherry` and `git rev-list --count`:
+/// two git processes per branch, and `git cherry` computes the patch id of every commit on both
+/// sides since the merge base, so a long-diverged branch costs a read of each of those diffs. The
+/// branches without a recorded state are checked first; the rest are listed "patches not checked".
+pub const PATCH_CHECK_CAP: usize = 50;
+
+/// A throwaway worktree of a kimi review with no owner record counts as stale after this long.
+pub const STALE_AFTER: Duration = Duration::from_secs(6 * 3600);
+
+/// The file in a kimi throwaway worktree's git admin directory (`<repo>/.git/worktrees/<name>/`)
+/// that names the process owning it: `<pid> <start time>`. It is outside the worktree's files (the
+/// reviewer's tree stays the clean HEAD) and goes with the admin directory when git removes or
+/// prunes the worktree.
+pub const THROWAWAY_OWNER_FILE: &str = "c3-owner";
 
 /// The three recorded states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,30 +163,28 @@ impl BranchRecord {
     }
 }
 
-/// Whether a description is C3's record (its first line starts with `c3: `).
+/// Whether a description is C3's: its first line parses as a full record. A foreign line that
+/// merely starts with `c3: ` is not.
 pub fn is_c3_description(description: &str) -> bool {
-    description.starts_with(RECORD_PREFIX)
+    BranchRecord::parse(description).is_some()
 }
 
-/// The description with C3's record line removed (the foreign rest, possibly empty). A description
-/// that is not C3's is returned unchanged.
-pub fn foreign_part(description: &str) -> String {
+/// The foreign part of a description, exactly as stored. For C3's description: `None` when it is the
+/// record line alone, else everything after the record line's line break (possibly empty). For a
+/// foreign description: all of it.
+pub fn foreign_part(description: &str) -> Option<&str> {
     if !is_c3_description(description) {
-        return description.to_string();
+        return Some(description);
     }
-    match description.split_once('\n') {
-        Some((_, rest)) => rest.to_string(),
-        None => String::new(),
-    }
+    description.split_once('\n').map(|(_, rest)| rest)
 }
 
-/// The new description for `--set`: the record line on top of the foreign part (kept as it was).
-pub fn description_with_record(existing: &str, record: &BranchRecord) -> String {
-    let foreign = foreign_part(existing);
-    if foreign.trim().is_empty() {
-        record.format()
-    } else {
-        format!("{}\n{}", record.format(), foreign)
+/// The new description for `--set`: the record line on top of the foreign part, which is kept byte
+/// for byte (`existing` is `None` when the branch has no description).
+pub fn description_with_record(existing: Option<&str>, record: &BranchRecord) -> String {
+    match existing.and_then(foreign_part) {
+        None => record.format(),
+        Some(foreign) => format!("{}\n{foreign}", record.format()),
     }
 }
 
@@ -153,14 +192,17 @@ pub fn description_with_record(existing: &str, record: &BranchRecord) -> String 
 // git plumbing
 // ---------------------------------------------------------------------------------------------
 
+/// A git command in `repo` that never takes an optional lock (`GIT_OPTIONAL_LOCKS=0`: `git status`
+/// does not refresh or lock the index; a config write still takes its own required lock).
+fn git_cmd(repo: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(repo).env("GIT_OPTIONAL_LOCKS", "0");
+    cmd
+}
+
 /// Run git in `repo`; stdout on success, `None` on any failure (spawn error or non-zero exit).
 fn git_out(repo: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .ok()?;
+    let out = git_cmd(repo).args(args).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -169,9 +211,7 @@ fn git_out(repo: &Path, args: &[&str]) -> Option<String> {
 
 /// Run git in `repo`; true when it exits 0.
 fn git_ok(repo: &Path, args: &[&str]) -> bool {
-    Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    git_cmd(repo)
         .args(args)
         .output()
         .map(|o| o.status.success())
@@ -194,37 +234,76 @@ pub fn branch_exists(repo: &Path, name: &str) -> bool {
     )
 }
 
-/// The repository's default branch: `origin/HEAD` (with `origin/` stripped, when that local branch
-/// exists), else `main` if it exists, else `master`, else the current branch. `None` when none of
-/// these resolves (an empty repository, a detached HEAD with no main/master).
-pub fn default_branch(repo: &Path) -> Option<String> {
+/// Refuse a name git would not accept as a branch name: empty, starting with `-`, holding a control
+/// character, or failing `git check-ref-format refs/heads/<name>` (`..`, a space, `~^:?*[\`, `@{`, a
+/// trailing `.lock`, `/` or `.`). A valid name with dots, slashes or non-ASCII characters is fine:
+/// git splits a config key at its FIRST and LAST dot, so `branch.<name>.description` addresses that
+/// branch's own subsection.
+pub fn check_branch_name(repo: &Path, name: &str) -> Result<(), String> {
+    let valid = !name.is_empty()
+        && !name.starts_with('-')
+        && !name.chars().any(char::is_control)
+        && git_ok(repo, &["check-ref-format", &format!("refs/heads/{name}")]);
+    if valid {
+        Ok(())
+    } else {
+        Err(format!(
+            "'{}' is not a valid branch name",
+            name.escape_debug()
+        ))
+    }
+}
+
+/// The repository's default branch, found independently of the checkout C3 runs in. In order, each
+/// only when that local branch exists: `c3.defaultBranch` in the local config (it wins over
+/// everything; naming a missing branch is an error, not a fallback), the branch `origin/HEAD` points
+/// to, `init.defaultBranch`, `main`, `master`. `Err` (the reason, with how to set it) when none
+/// applies: the invoking checkout's branch is never taken for the default.
+pub fn default_branch(repo: &Path) -> Result<String, String> {
+    if let Some(v) = git_out(repo, &["config", "--local", "--get", DEFAULT_BRANCH_KEY]) {
+        let v = v.trim();
+        if !v.is_empty() {
+            return if branch_exists(repo, v) {
+                Ok(v.to_string())
+            } else {
+                Err(format!(
+                    "{DEFAULT_BRANCH_KEY} names '{v}', which is not a local branch; set it with `c3 branches --default <name>`"
+                ))
+            };
+        }
+    }
     if let Some(s) = git_out(
         repo,
-        &[
-            "symbolic-ref",
-            "--quiet",
-            "--short",
-            "refs/remotes/origin/HEAD",
-        ],
+        &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
     ) {
-        let s = s.trim();
-        let name = s.strip_prefix("origin/").unwrap_or(s);
-        if branch_exists(repo, name) {
-            return Some(name.to_string());
+        if let Some(name) = s.trim().strip_prefix("refs/remotes/origin/") {
+            if branch_exists(repo, name) {
+                return Ok(name.to_string());
+            }
+        }
+    }
+    if let Some(v) = git_out(repo, &["config", "--get", "init.defaultBranch"]) {
+        let v = v.trim();
+        if branch_exists(repo, v) {
+            return Ok(v.to_string());
         }
     }
     for name in ["main", "master"] {
         if branch_exists(repo, name) {
-            return Some(name.to_string());
+            return Ok(name.to_string());
         }
     }
-    let cur = git_out(repo, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;
-    let cur = cur.trim();
-    if cur.is_empty() {
-        None
-    } else {
-        Some(cur.to_string())
+    Err(DEFAULT_UNKNOWN.to_string())
+}
+
+/// `c3 branches --default <name>`: store the default branch in the local config
+/// ([`DEFAULT_BRANCH_KEY`]). Refuses an invalid name and one that is not a local branch.
+pub fn set_default_branch(repo: &Path, name: &str) -> Result<(), String> {
+    check_branch_name(repo, name)?;
+    if !branch_exists(repo, name) {
+        return Err(format!("no local branch named '{name}'"));
     }
+    write_config(repo, DEFAULT_BRANCH_KEY, name)
 }
 
 /// Parse `git config --null --get-regexp '^branch\..*\.description$'` output (`key\nvalue\0`...)
@@ -250,12 +329,14 @@ pub fn parse_descriptions(out: &str) -> BTreeMap<String, String> {
     map
 }
 
-/// Every branch description of the repository (one `git config` call; empty on any error).
+/// Every branch description of the repository's own config (one `git config` call; empty on any
+/// error).
 fn read_descriptions(repo: &Path) -> BTreeMap<String, String> {
     git_out(
         repo,
         &[
             "config",
+            "--local",
             "--null",
             "--get-regexp",
             r"^branch\..*\.description$",
@@ -321,11 +402,17 @@ pub struct BranchInfo {
     pub record: Option<BranchRecord>,
     /// The description holds somebody's own note (kept; not a recorded state).
     pub foreign_note: bool,
-    /// Merged into the default branch by ancestry.
-    pub merged: bool,
-    /// Not merged by ancestry, but every commit's content is already on the default branch
-    /// (`git cherry` prints no `+` line: the cherry-pick case). Only computed by a full scan.
-    pub content_on_default: Option<bool>,
+    /// Merged into the default branch by ancestry; `None` when that is not known (no default
+    /// branch, or the ancestry query failed) - such a branch is never taken for merged.
+    pub merged: Option<bool>,
+    /// Not merged by ancestry, but `git cherry refs/heads/<default> refs/heads/<name>` prints no
+    /// `+` line: every commit has a patch-equivalent commit on the default branch (the cherry-pick
+    /// case). Historical patch equivalence, not a claim about the default branch's current content
+    /// (a later revert is not seen). Only computed by a full scan, for at most [`PATCH_CHECK_CAP`]
+    /// unmerged branches.
+    pub patches_on_default: Option<bool>,
+    /// The full scan ran the patch check on this branch.
+    pub patches_checked: bool,
     /// Commits ahead of the default branch. Only computed by a full scan.
     pub ahead: Option<u64>,
     /// Date of the last commit (`YYYY-MM-DD`).
@@ -335,9 +422,9 @@ pub struct BranchInfo {
 }
 
 impl BranchInfo {
-    /// Not merged by ancestry AND no recorded state.
+    /// Not known to be merged by ancestry AND no recorded state.
     pub fn is_unknown(&self) -> bool {
-        !self.merged && self.record.is_none()
+        self.merged != Some(true) && self.record.is_none()
     }
 }
 
@@ -353,16 +440,26 @@ pub struct WorktreeInfo {
     pub prunable: bool,
 }
 
+/// A throwaway worktree of a kimi review that no live run owns any more.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StaleWorktree {
+    pub path: String,
+    /// Why it counts as stale.
+    pub why: String,
+}
+
 /// The start folder: the primary worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct StartFolder {
     pub path: String,
     /// `None`: detached HEAD.
     pub branch: Option<String>,
+    /// On the default branch (false when no default branch is known).
     pub on_default: bool,
     /// Commits behind `behind_of`, as the local refs know it (no fetch).
     pub behind: Option<u64>,
-    /// The default branch's upstream (`origin/main`), else the default branch itself.
+    /// The default branch's upstream (`origin/main`), else the default branch itself; empty when no
+    /// default branch is known.
     pub behind_of: String,
     /// Uncommitted changes (a count). Only computed when asked for.
     pub dirty: Option<usize>,
@@ -371,10 +468,18 @@ pub struct StartFolder {
 /// Everything a scan found.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BranchReport {
-    pub default_branch: String,
+    /// `None` when no default branch can be named ([`default_branch`]; `default_error` says why).
+    pub default_branch: Option<String>,
+    pub default_error: Option<String>,
+    /// The ancestry query against the default branch failed: no branch counts as merged.
+    pub ancestry_failed: bool,
     pub branches: Vec<BranchInfo>,
     pub worktrees: Vec<WorktreeInfo>,
     pub start: Option<StartFolder>,
+    /// Unmerged branches the full listing did not patch-check ([`PATCH_CHECK_CAP`]).
+    pub patches_unchecked: usize,
+    /// Throwaway worktrees of kimi reviews that no live run owns ([`remove_stale_worktrees`]).
+    pub stale_worktrees: Vec<StaleWorktree>,
 }
 
 impl BranchReport {
@@ -388,28 +493,51 @@ impl BranchReport {
         self.worktrees.iter().filter(|w| !w.recorded).collect()
     }
 
-    /// Nothing unknown: every listed branch is merged or recorded, every worktree recorded.
+    /// Nothing unknown: the default branch is known, every listed branch is merged or recorded,
+    /// every worktree recorded. (Stale throwaway worktrees are counted separately.)
     pub fn is_clean(&self) -> bool {
-        self.unknown_branches().is_empty() && self.unrecorded_worktrees().is_empty()
+        self.default_branch.is_some()
+            && self.unknown_branches().is_empty()
+            && self.unrecorded_worktrees().is_empty()
+    }
+
+    /// The default branch's name for messages (`the default branch` when it is unknown).
+    pub fn default_label(&self) -> &str {
+        self.default_branch
+            .as_deref()
+            .unwrap_or("the default branch")
+    }
+
+    /// Why no default branch is known (`None` when one is).
+    pub fn default_unknown_text(&self) -> Option<&str> {
+        if self.default_branch.is_some() {
+            return None;
+        }
+        Some(self.default_error.as_deref().unwrap_or(DEFAULT_UNKNOWN))
     }
 }
 
 /// How much a scan computes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScanOpts {
-    /// Per unmerged branch: `git cherry` (content on default) and the ahead count. The full
-    /// listing only; the hook never does this.
+    /// Per unmerged branch (at most [`PATCH_CHECK_CAP`]): `git cherry` (patches on default) and the
+    /// ahead count. The full listing only; the hook never does this.
     pub content: bool,
     /// The start folder's uncommitted-change count (`git status --porcelain`).
     pub dirty: bool,
 }
 
-/// Scan the repository at `repo`. `None` outside a git repository or when no default branch
-/// resolves; every other git error degrades to missing data, never to a failure.
-pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
-    let default = default_branch(repo)?;
+/// Whether a branch is merged by ancestry, given the `--no-merged` set (`None`: the query failed
+/// or there is no default branch - then it is not known, never merged).
+pub fn merged_state(no_merged: Option<&BTreeSet<String>>, name: &str) -> Option<bool> {
+    no_merged.map(|set| !set.contains(name))
+}
 
-    // Every local branch with its last commit date (one call), and the unmerged ones (one call).
+/// Scan the repository at `repo`. `None` outside a git repository or in one without any local
+/// branch (nothing to report); every other git error degrades to missing data (an unknown default
+/// branch, an unknown ancestry), never to a failure.
+pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
+    // Every local branch with its last commit date (one call).
     let all = git_out(
         repo,
         &[
@@ -418,19 +546,41 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
             "refs/heads",
         ],
     )?;
-    let no_merged: BTreeSet<String> = git_out(
-        repo,
-        &[
-            "for-each-ref",
-            &format!("--no-merged=refs/heads/{default}"),
-            "--format=%(refname)",
-            "refs/heads",
-        ],
-    )
-    .unwrap_or_default()
-    .lines()
-    .filter_map(|l| l.trim().strip_prefix("refs/heads/").map(str::to_string))
-    .collect();
+    let refs: Vec<(String, String)> = all
+        .lines()
+        .filter_map(|line| {
+            let (refname, date) = line.split_once('\t').unwrap_or((line, ""));
+            let name = refname.trim().strip_prefix("refs/heads/")?;
+            Some((name.to_string(), date.trim().to_string()))
+        })
+        .collect();
+    if refs.is_empty() {
+        return None;
+    }
+
+    let (default, default_error) = match default_branch(repo) {
+        Ok(d) => (Some(d), None),
+        Err(e) => (None, Some(e)),
+    };
+    // The unmerged branches (one call); `None` when it failed or there is no default branch.
+    let no_merged: Option<BTreeSet<String>> = default.as_deref().and_then(|d| {
+        git_out(
+            repo,
+            &[
+                "for-each-ref",
+                &format!("--no-merged=refs/heads/{d}"),
+                "--format=%(refname)",
+                "refs/heads",
+            ],
+        )
+        .map(|o| {
+            o.lines()
+                .filter_map(|l| l.trim().strip_prefix("refs/heads/").map(str::to_string))
+                .collect()
+        })
+    });
+    let ancestry_failed = default.is_some() && no_merged.is_none();
+    let is_default = |name: &str| default.as_deref() == Some(name);
 
     let descriptions = read_descriptions(repo);
     let worktrees = git_out(repo, &["worktree", "list", "--porcelain"])
@@ -449,60 +599,69 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
     let record_of = |name: &str| descriptions.get(name).and_then(|d| BranchRecord::parse(d));
 
     let mut branches = Vec::new();
-    for line in all.lines() {
-        let (refname, date) = line.split_once('\t').unwrap_or((line, ""));
-        let Some(name) = refname.trim().strip_prefix("refs/heads/") else {
-            continue;
-        };
-        if name == default {
+    for (name, date) in &refs {
+        if is_default(name) {
             continue;
         }
         let desc = descriptions.get(name);
         let record = desc.and_then(|d| BranchRecord::parse(d));
-        let foreign_note = desc.is_some_and(|d| !foreign_part(d).trim().is_empty());
-        let merged = !no_merged.contains(name);
-        let (content_on_default, ahead) = if opts.content {
-            if merged {
-                (None, Some(0))
-            } else {
-                let cherry = git_out(repo, &["cherry", &default, name]);
-                let content = cherry.map(|c| !c.lines().any(|l| l.trim_start().starts_with('+')));
-                let ahead = git_out(
-                    repo,
-                    &[
-                        "rev-list",
-                        "--count",
-                        &format!("{default}..refs/heads/{name}"),
-                    ],
-                )
-                .and_then(|s| s.trim().parse::<u64>().ok());
-                (content, ahead)
-            }
-        } else {
-            (None, None)
-        };
+        let foreign_note =
+            desc.is_some_and(|d| foreign_part(d).is_some_and(|f| !f.trim().is_empty()));
+        let merged = merged_state(no_merged.as_ref(), name);
         branches.push(BranchInfo {
-            name: name.to_string(),
+            name: name.clone(),
             record,
             foreign_note,
             merged,
-            content_on_default,
-            ahead,
-            last_commit: date.trim().to_string(),
+            patches_on_default: None,
+            patches_checked: false,
+            ahead: (opts.content && merged == Some(true)).then_some(0),
+            last_commit: date.clone(),
             worktree: branch_worktree.get(name).cloned(),
         });
     }
     branches.sort_by(|a, b| a.name.cmp(&b.name));
 
-    // Worktrees: all but the primary and the default branch's one; bare entries skipped.
+    // The patch check: the unmerged branches without a recorded state first, then the recorded
+    // ones, name order within each, at most PATCH_CHECK_CAP of them (two git calls each).
+    let mut patches_unchecked = 0;
+    if let (true, Some(d)) = (opts.content, default.as_deref()) {
+        let mut order: Vec<usize> = (0..branches.len())
+            .filter(|&i| branches[i].merged == Some(false))
+            .collect();
+        order.sort_by(|&a, &b| {
+            let (x, y) = (&branches[a], &branches[b]);
+            (x.record.is_some(), &x.name).cmp(&(y.record.is_some(), &y.name))
+        });
+        patches_unchecked = order.len().saturating_sub(PATCH_CHECK_CAP);
+        let base = format!("refs/heads/{d}");
+        for &i in order.iter().take(PATCH_CHECK_CAP) {
+            let b = &mut branches[i];
+            let head = format!("refs/heads/{}", b.name);
+            b.patches_on_default = git_out(repo, &["cherry", &base, &head])
+                .map(|c| !c.lines().any(|l| l.trim_start().starts_with('+')));
+            b.ahead = git_out(repo, &["rev-list", "--count", &format!("{base}..{head}")])
+                .and_then(|s| s.trim().parse::<u64>().ok());
+            b.patches_checked = true;
+        }
+    }
+
+    // Worktrees: all but the primary and the default branch's one; bare entries skipped. C3's own
+    // throwaway worktree of a kimi review is never a finding while a live run owns it; one no live
+    // run owns is reported as stale.
     let mut wts = Vec::new();
+    let mut stale_worktrees = Vec::new();
     for w in worktrees.iter().skip(1) {
-        if w.bare || w.branch.as_deref() == Some(default.as_str()) {
+        if w.bare || w.branch.as_deref().is_some_and(is_default) {
             continue;
         }
-        // C3's own throwaway worktree of a running kimi review is owned by that run and removed by
-        // it; counting it would make every kimi review a finding here.
         if is_c3_throwaway_worktree(&w.path) {
+            if let Some(why) = throwaway_stale_reason(Path::new(&w.path), SystemTime::now()) {
+                stale_worktrees.push(StaleWorktree {
+                    path: w.path.clone(),
+                    why,
+                });
+            }
             continue;
         }
         let recorded = w.branch.as_deref().and_then(record_of).is_some();
@@ -516,26 +675,32 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
 
     // The start folder (the primary worktree).
     let start = worktrees.first().filter(|w| !w.bare).map(|w| {
-        let behind_of = git_out(
-            repo,
-            &[
-                "rev-parse",
-                "--abbrev-ref",
-                "--symbolic-full-name",
-                &format!("{default}@{{upstream}}"),
-            ],
-        )
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| default.clone());
-        let behind = if w.head.is_empty() {
-            None
-        } else {
-            git_out(
-                repo,
-                &["rev-list", "--count", &format!("{}..{behind_of}", w.head)],
-            )
-            .and_then(|s| s.trim().parse::<u64>().ok())
+        let (behind_of, behind) = match default.as_deref() {
+            Some(d) => {
+                let behind_of = git_out(
+                    repo,
+                    &[
+                        "rev-parse",
+                        "--abbrev-ref",
+                        "--symbolic-full-name",
+                        &format!("{d}@{{upstream}}"),
+                    ],
+                )
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| d.to_string());
+                let behind = if w.head.is_empty() {
+                    None
+                } else {
+                    git_out(
+                        repo,
+                        &["rev-list", "--count", &format!("{}..{behind_of}", w.head)],
+                    )
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                };
+                (behind_of, behind)
+            }
+            None => (String::new(), None),
         };
         // Tracked files only: a C3-managed repository always holds untracked never-commit files
         // (raw event streams, detached status files), and a warning that is always on is not read.
@@ -551,7 +716,7 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
         StartFolder {
             path: w.path.clone(),
             branch: w.branch.clone(),
-            on_default: w.branch.as_deref() == Some(default.as_str()),
+            on_default: w.branch.as_deref().is_some_and(is_default),
             behind,
             behind_of,
             dirty,
@@ -560,10 +725,143 @@ pub fn scan(repo: &Path, opts: ScanOpts) -> Option<BranchReport> {
 
     Some(BranchReport {
         default_branch: default,
+        default_error,
+        ancestry_failed,
         branches,
         worktrees: wts,
         start,
+        patches_unchecked,
+        stale_worktrees,
     })
+}
+
+// ---------------------------------------------------------------------------------------------
+// C3's throwaway worktrees (the kimi engine)
+// ---------------------------------------------------------------------------------------------
+
+/// Whether a directory name is exactly the one the kimi engine gives its throwaway worktree:
+/// [`crate::engines::kimi::THROWAWAY_WORKTREE_PREFIX`] followed by the run's uuid (32 lower-case hex
+/// digits).
+pub fn is_throwaway_name(name: &str) -> bool {
+    name.strip_prefix(crate::engines::kimi::THROWAWAY_WORKTREE_PREFIX)
+        .is_some_and(|id| {
+            id.len() == 32
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+}
+
+/// Whether a worktree path is one C3 itself made for a kimi review: directly under the system temp
+/// directory AND named exactly as [`is_throwaway_name`] says. A user's worktree that merely starts
+/// with the prefix, or lives elsewhere, is an ordinary worktree.
+fn is_c3_throwaway_worktree(path: &str) -> bool {
+    let p = Path::new(path);
+    let named = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(is_throwaway_name);
+    named
+        && p.parent()
+            .is_some_and(|d| same_dir(d, &std::env::temp_dir()))
+}
+
+/// A worktree's git admin directory, read from its `.git` file (`gitdir: <path>`).
+fn worktree_admin_dir(worktree: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(worktree.join(".git")).ok()?;
+    let dir = text.lines().next()?.strip_prefix("gitdir:")?.trim();
+    if dir.is_empty() {
+        return None;
+    }
+    let p = PathBuf::from(dir);
+    Some(if p.is_absolute() { p } else { worktree.join(p) })
+}
+
+/// Parse an owner record (`<pid> <start time>`; the start time may be empty).
+pub fn parse_owner_record(text: &str) -> Option<(u32, String)> {
+    let t = text.trim();
+    let (pid, start) = t.split_once(char::is_whitespace).unwrap_or((t, ""));
+    let pid = pid.parse::<u32>().ok().filter(|p| *p > 0)?;
+    Some((pid, start.trim().to_string()))
+}
+
+/// (kimi engine) Record THIS process as the owner of a fresh throwaway worktree
+/// ([`THROWAWAY_OWNER_FILE`] in its git admin directory). Best effort: without the record the
+/// worktree counts as stale only once it is older than [`STALE_AFTER`].
+pub(crate) fn record_throwaway_owner(worktree: &Path) {
+    let Some(admin) = worktree_admin_dir(worktree) else {
+        return;
+    };
+    let pid = std::process::id();
+    let start = crate::liveness::proc::process_start_iso(pid).unwrap_or_default();
+    let _ = std::fs::write(admin.join(THROWAWAY_OWNER_FILE), format!("{pid} {start}\n"));
+}
+
+/// The stale verdict, from what was found: `None` while a live run may own the worktree. Its
+/// directory gone -> stale. An owner record -> stale exactly when that process (pid + start time)
+/// is gone. No record -> stale once the directory is older than [`STALE_AFTER`].
+pub fn stale_verdict(
+    dir_exists: bool,
+    owner: Option<(u32, String)>,
+    owner_alive: impl Fn(u32, &str) -> bool,
+    age: Option<Duration>,
+) -> Option<String> {
+    if !dir_exists {
+        return Some("its directory is gone".to_string());
+    }
+    match owner {
+        Some((pid, start)) => {
+            (!owner_alive(pid, &start)).then(|| format!("the run that made it (pid {pid}) is gone"))
+        }
+        None => age
+            .filter(|a| *a > STALE_AFTER)
+            .map(|a| format!("no owner record and {} h old", a.as_secs() / 3600)),
+    }
+}
+
+/// Why a throwaway worktree is stale (`None` while a live run may own it). The age is that of the
+/// newer of the directory's creation and modification times.
+fn throwaway_stale_reason(path: &Path, now: SystemTime) -> Option<String> {
+    let meta = std::fs::metadata(path).ok();
+    let owner = worktree_admin_dir(path)
+        .and_then(|a| std::fs::read_to_string(a.join(THROWAWAY_OWNER_FILE)).ok())
+        .and_then(|t| parse_owner_record(&t));
+    let age = meta.as_ref().and_then(|m| {
+        let newest = [m.created().ok(), m.modified().ok()]
+            .into_iter()
+            .flatten()
+            .max()?;
+        Some(now.duration_since(newest).unwrap_or_default())
+    });
+    stale_verdict(meta.is_some(), owner, crate::liveness::proc::pid_alive, age)
+}
+
+/// One stale worktree `c3 doctor --fix` tried to remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleRemoval {
+    pub path: String,
+    /// The directory is gone afterwards.
+    pub removed: bool,
+}
+
+/// `c3 doctor --fix`: remove every stale throwaway worktree of a kimi review with the kimi engine's
+/// own link-safe removal (links inside are unlinked first, never followed).
+pub fn remove_stale_worktrees(repo_root: &Path) -> Vec<StaleRemoval> {
+    let Some(report) = quick_scan(repo_root, false) else {
+        return Vec::new();
+    };
+    report
+        .stale_worktrees
+        .iter()
+        .map(|s| {
+            let p = Path::new(&s.path);
+            crate::engines::kimi::remove_throwaway_worktree(repo_root, p);
+            StaleRemoval {
+                path: s.path.clone(),
+                removed: !p.exists(),
+            }
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -587,15 +885,6 @@ pub fn name_list(names: &[&str], max: usize) -> String {
     s
 }
 
-/// Whether a worktree path is one C3 itself made for a kimi review (`engines::kimi`): its directory
-/// name carries [`crate::engines::kimi::THROWAWAY_WORKTREE_PREFIX`].
-fn is_c3_throwaway_worktree(path: &str) -> bool {
-    Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.starts_with(crate::engines::kimi::THROWAWAY_WORKTREE_PREFIX))
-}
-
 /// The worktree's label: `<path> (<branch>)`, `<path> (detached)`, with `, prunable` when so.
 pub fn worktree_label(w: &WorktreeInfo) -> String {
     let b = w.branch.as_deref().unwrap_or("detached");
@@ -608,15 +897,15 @@ pub fn worktree_label(w: &WorktreeInfo) -> String {
 
 /// The merge column of the listing.
 pub fn merge_words(b: &BranchInfo, default: &str) -> String {
-    if b.merged {
-        "merged".to_string()
-    } else {
-        match b.content_on_default {
+    match b.merged {
+        Some(true) => "merged".to_string(),
+        None => "merge state unknown".to_string(),
+        Some(false) => match b.patches_on_default {
             Some(true) => format!(
-                "not merged by ancestry, content on {default} (integrated by cherry-pick or squash)"
+                "not merged by ancestry, patches already on {default} (git cherry: patch equivalence, not the current content)"
             ),
             _ => "not merged".to_string(),
-        }
+        },
     }
 }
 
@@ -631,6 +920,9 @@ pub fn hook_line_for(report: &BranchReport, here: bool) -> Option<String> {
     let nb = report.unknown_branches().len();
     let nw = report.unrecorded_worktrees().len();
     let mut parts = Vec::new();
+    if report.default_branch.is_none() {
+        parts.push("default branch unknown - c3 branches --default <name>".to_string());
+    }
     if nb > 0 || nw > 0 {
         let mut what = Vec::new();
         if nb > 0 {
@@ -644,7 +936,7 @@ pub fn hook_line_for(report: &BranchReport, here: bool) -> Option<String> {
             what.join(" and ")
         ));
     }
-    if let Some(s) = &report.start {
+    if let (Some(s), Some(default)) = (&report.start, report.default_branch.as_deref()) {
         if !s.on_default {
             let who = if here {
                 "this checkout".to_string()
@@ -655,7 +947,7 @@ pub fn hook_line_for(report: &BranchReport, here: bool) -> Option<String> {
             if let Some(n) = s.behind.filter(|n| *n > 0) {
                 l.push_str(&format!(", {n} behind {}", s.behind_of));
             }
-            l.push_str(&format!(" (default {})", report.default_branch));
+            l.push_str(&format!(" (default {default})"));
             parts.push(l);
         }
     }
@@ -670,8 +962,9 @@ pub fn hook_line_for(report: &BranchReport, here: bool) -> Option<String> {
 pub fn finish_note_for(report: &BranchReport) -> Option<String> {
     let ub = report.unknown_branches();
     let uw = report.unrecorded_worktrees();
-    if ub.is_empty() && uw.is_empty() {
-        return None;
+    let mut notes = Vec::new();
+    if let Some(why) = report.default_unknown_text() {
+        notes.push(format!("Note: {why}."));
     }
     let mut what = Vec::new();
     if !ub.is_empty() {
@@ -691,10 +984,17 @@ pub fn finish_note_for(report: &BranchReport) -> Option<String> {
             name_list(&refs, 8)
         ));
     }
-    Some(format!(
-        "Note: {} without a recorded state - run c3 branches, then integrate and remove them or record a state ({SET_HINT}).",
-        what.join(" and ")
-    ))
+    if !what.is_empty() {
+        notes.push(format!(
+            "Note: {} without a recorded state - run c3 branches, then integrate and remove them or record a state ({SET_HINT}).",
+            what.join(" and ")
+        ));
+    }
+    if notes.is_empty() {
+        None
+    } else {
+        Some(notes.join(" "))
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -736,10 +1036,10 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     norm(a) == norm(b)
 }
 
-/// The `c3 hook` line: ONE line when a branch or worktree has no recorded state, or the start
-/// folder is not on the default branch; else `None`. Cheap (ancestry only, no `git cherry`, no
-/// `git status`), read-only, every error swallowed; nothing inside a C3 child, outside a git
-/// repository or with the check off.
+/// The `c3 hook` line: ONE line when a branch or worktree has no recorded state, the default branch
+/// is unknown, or the start folder is not on the default branch; else `None`. Cheap (ancestry only,
+/// no `git cherry`, no `git status`), read-only (no optional locks), every error swallowed; nothing
+/// inside a C3 child, outside a git repository or with the check off.
 pub fn hook_line() -> Option<String> {
     if !enabled() || crate::engines::in_c3_child() {
         return None;
@@ -788,18 +1088,101 @@ pub fn default_owner() -> String {
         .unwrap_or_default()
 }
 
-/// The description of a branch (`None` when there is none).
-fn read_description(repo: &Path, branch: &str) -> Option<String> {
-    git_out(
-        repo,
-        &["config", "--get", &format!("branch.{branch}.description")],
-    )
-    .map(|s| s.trim_end_matches(['\r', '\n']).to_string())
+/// The config key of a branch's description (the name must have passed [`check_branch_name`]).
+fn description_key(branch: &str) -> String {
+    format!("branch.{branch}.description")
 }
 
-/// Write a recorded state. Refuses an unknown branch, the default branch, and an empty note for
-/// `waits` / `parked`. A foreign description is kept below the record line. Returns the line
-/// written.
+/// The values of `git config -z --get-all` output, each followed by a NUL, exactly as stored.
+/// `None` when the output is not NUL-framed.
+pub fn nul_values(out: &str) -> Option<Vec<&str>> {
+    if out.is_empty() {
+        return Some(Vec::new());
+    }
+    Some(out.strip_suffix('\0')?.split('\0').collect())
+}
+
+/// A branch's description exactly as the repository's own config stores it (`git config --local -z
+/// --get-all`: NUL framing, nothing trimmed). `Ok(None)` when there is none; `Err` when it cannot be
+/// read exactly - git failed, the value is not UTF-8, the key holds several values - so a caller
+/// never writes over a value it could not read.
+pub fn read_description(repo: &Path, branch: &str) -> Result<Option<String>, String> {
+    let key = description_key(branch);
+    let out = git_cmd(repo)
+        .args(["config", "--local", "-z", "--get-all", &key])
+        .output()
+        .map_err(|e| format!("could not run git config to read {key}: {e}"))?;
+    match out.status.code() {
+        Some(0) => {}
+        // Exit 1 with no output: the key is not set (the name was validated, so the key is valid).
+        Some(1) if out.stdout.is_empty() => return Ok(None),
+        _ => {
+            return Err(format!(
+                "could not read {key}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+    }
+    let text = String::from_utf8(out.stdout).map_err(|_| format!("{key} is not UTF-8 text"))?;
+    let values =
+        nul_values(&text).ok_or_else(|| format!("could not read {key}: no NUL framing"))?;
+    match values.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some((*one).to_string())),
+        many => Err(format!("{key} holds {} values", many.len())),
+    }
+}
+
+/// Write one value to the repository's own config.
+fn write_config(repo: &Path, key: &str, value: &str) -> Result<(), String> {
+    let out = git_cmd(repo)
+        .args(["config", "--local", key, value])
+        .output()
+        .map_err(|e| format!("git config: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git config could not write {key}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Remove one value from the repository's own config.
+fn unset_config(repo: &Path, key: &str) -> Result<(), String> {
+    let out = git_cmd(repo)
+        .args(["config", "--local", "--unset", key])
+        .output()
+        .map_err(|e| format!("git config: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "git config could not remove {key}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+/// Re-read the description right before a write and refuse when it is no longer what was read:
+/// another writer got in between, and C3 never writes over a change it has not seen.
+fn unchanged_since(repo: &Path, branch: &str, read: &Option<String>) -> Result<(), String> {
+    // (test only) Another writer between C3's read and this re-read.
+    if let Some(v) = c3_core::test_hooks::hook("CODEX_CONSULT_TEST_BRANCH_DESC_RACE") {
+        let _ = write_config(repo, &description_key(branch), &v);
+    }
+    let now = read_description(repo, branch).map_err(|e| format!("{e}; nothing written"))?;
+    if &now != read {
+        return Err(format!(
+            "the description of '{branch}' changed while C3 was writing it; nothing written - run the command again"
+        ));
+    }
+    Ok(())
+}
+
+/// Write a recorded state. Refuses an invalid branch name, an unknown branch, the default branch,
+/// an empty note for `waits` / `parked`, a description that cannot be read exactly and one that
+/// changes while C3 writes. A foreign description is kept, byte for byte, below the record line.
+/// Returns the line written.
 pub fn set_state(
     repo: &Path,
     branch: &str,
@@ -808,10 +1191,11 @@ pub fn set_state(
     owner: &str,
     date: &str,
 ) -> Result<String, String> {
+    check_branch_name(repo, branch)?;
     if !branch_exists(repo, branch) {
         return Err(format!("no local branch named '{branch}'"));
     }
-    if default_branch(repo).as_deref() == Some(branch) {
+    if default_branch(repo).ok().as_deref() == Some(branch) {
         return Err(format!(
             "'{branch}' is the default branch; it needs no recorded state"
         ));
@@ -830,21 +1214,10 @@ pub fn set_state(
         date: date.to_string(),
         text: note.to_string(),
     };
-    let existing = read_description(repo, branch).unwrap_or_default();
-    let desc = description_with_record(&existing, &record);
-    let key = format!("branch.{branch}.description");
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["config", &key, &desc])
-        .output()
-        .map_err(|e| format!("git config: {e}"))?;
-    if !out.status.success() {
-        return Err(format!(
-            "git config failed: {}",
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
+    let existing = read_description(repo, branch).map_err(|e| format!("{e}; nothing written"))?;
+    let desc = description_with_record(existing.as_deref(), &record);
+    unchanged_since(repo, branch, &existing)?;
+    write_config(repo, &description_key(branch), &desc)?;
     Ok(record.format())
 }
 
@@ -859,29 +1232,29 @@ pub enum ClearOutcome {
     ForeignKept,
 }
 
-/// Remove C3's record line from a branch description; never touches a foreign one.
+/// Remove C3's record line from a branch description, restoring the foreign rest byte for byte;
+/// never touches a foreign description (a `c3: ` line that is not a full record included). Refuses
+/// like [`set_state`] when the description cannot be read exactly or changes meanwhile.
 pub fn clear_state(repo: &Path, branch: &str) -> Result<ClearOutcome, String> {
+    check_branch_name(repo, branch)?;
     if !branch_exists(repo, branch) {
         return Err(format!("no local branch named '{branch}'"));
     }
-    let Some(existing) = read_description(repo, branch) else {
+    let existing = read_description(repo, branch).map_err(|e| format!("{e}; nothing changed"))?;
+    let Some(desc) = existing.as_deref() else {
         return Ok(ClearOutcome::NothingRecorded);
     };
-    if !is_c3_description(&existing) {
+    if !is_c3_description(desc) {
         return Ok(ClearOutcome::ForeignKept);
     }
-    let rest = foreign_part(&existing);
-    let key = format!("branch.{branch}.description");
-    let ok = if rest.trim().is_empty() {
-        git_ok(repo, &["config", "--unset", &key])
-    } else {
-        git_ok(repo, &["config", &key, &rest])
-    };
-    if ok {
-        Ok(ClearOutcome::Cleared)
-    } else {
-        Err(format!("git config could not change {key}"))
+    let rest = foreign_part(desc).map(str::to_string);
+    unchanged_since(repo, branch, &existing)?;
+    let key = description_key(branch);
+    match rest {
+        None => unset_config(repo, &key)?,
+        Some(r) => write_config(repo, &key, &r)?,
     }
+    Ok(ClearOutcome::Cleared)
 }
 
 #[cfg(test)]
@@ -957,23 +1330,60 @@ mod tests {
         let foreign = "my own note about this branch";
         assert_eq!(BranchRecord::parse(foreign), None);
         assert!(!is_c3_description(foreign));
-        assert_eq!(foreign_part(foreign), foreign);
+        assert_eq!(foreign_part(foreign), Some(foreign));
         // Malformed c3 lines are not records either.
         assert_eq!(BranchRecord::parse("c3: bogus | a | b | c"), None);
         assert_eq!(BranchRecord::parse("c3: work | a"), None);
         // Setting a record keeps the foreign note below it; clearing restores it.
         let r = rec(BranchState::Work, "o", "t");
-        let d = description_with_record(foreign, &r);
+        let d = description_with_record(Some(foreign), &r);
         assert_eq!(d, format!("{}\n{foreign}", r.format()));
         assert_eq!(BranchRecord::parse(&d), Some(r.clone()));
-        assert_eq!(foreign_part(&d), foreign);
+        assert_eq!(foreign_part(&d), Some(foreign));
         // Re-setting replaces the record line only.
         let r2 = rec(BranchState::Waits, "o", "q?");
-        let d2 = description_with_record(&d, &r2);
+        let d2 = description_with_record(Some(&d), &r2);
         assert_eq!(d2, format!("{}\n{foreign}", r2.format()));
-        // No foreign part: the record alone.
-        assert_eq!(description_with_record("", &r), r.format());
-        assert_eq!(description_with_record(&r.format(), &r2), r2.format());
+        // No description: the record alone; a record alone is replaced by the new one alone.
+        assert_eq!(description_with_record(None, &r), r.format());
+        assert_eq!(description_with_record(Some(&r.format()), &r2), r2.format());
+        assert_eq!(foreign_part(&r.format()), None);
+    }
+
+    // (F02-7, F03-3, F04-9) a `c3: ` line that is not a full record is somebody's note; the foreign
+    // part is kept byte for byte - trailing CRLFs, whitespace only, even empty.
+    #[test]
+    fn a_foreign_c3_line_and_exact_bytes_survive_set_and_clear() {
+        let r = rec(BranchState::Parked, "o", "after review");
+        for foreign in [
+            "c3: hello",
+            "c3: hello\r\nkeep me\r\n\r\n",
+            "  \n ",
+            "",
+            "-starts with a dash",
+            "note\r\n",
+        ] {
+            assert!(!is_c3_description(foreign), "{foreign:?}");
+            let d = description_with_record(Some(foreign), &r);
+            assert_eq!(BranchRecord::parse(&d), Some(r.clone()), "{foreign:?}");
+            assert_eq!(foreign_part(&d), Some(foreign), "{foreign:?}");
+            // Set again over our own record: the foreign bytes still unchanged.
+            let d2 = description_with_record(Some(&d), &r);
+            assert_eq!(d2, d, "{foreign:?}");
+        }
+        // A record line ending in CRLF is still C3's; the rest after its LF is the foreign part.
+        let d = format!("{}\r\nnote", r.format());
+        assert!(is_c3_description(&d));
+        assert_eq!(foreign_part(&d), Some("note"));
+    }
+
+    #[test]
+    fn nul_framed_values_are_exact() {
+        assert_eq!(nul_values(""), Some(vec![]));
+        assert_eq!(nul_values("\0"), Some(vec![""]));
+        assert_eq!(nul_values("a\r\n\r\n\0"), Some(vec!["a\r\n\r\n"]));
+        assert_eq!(nul_values("a\0b\0"), Some(vec!["a", "b"]));
+        assert_eq!(nul_values("no framing"), None);
     }
 
     #[test]
@@ -998,22 +1408,94 @@ mod tests {
         assert_eq!(w[2].head, "ccc");
     }
 
+    // (F02-9) a failed ancestry query is never "merged".
+    #[test]
+    fn a_failed_ancestry_query_leaves_branches_unknown() {
+        let set: BTreeSet<String> = ["open".to_string()].into_iter().collect();
+        assert_eq!(merged_state(Some(&set), "open"), Some(false));
+        assert_eq!(merged_state(Some(&set), "done"), Some(true));
+        assert_eq!(merged_state(None, "done"), None);
+        let b = BranchInfo {
+            name: "done".into(),
+            merged: None,
+            ..Default::default()
+        };
+        assert!(b.is_unknown());
+        assert_eq!(merge_words(&b, "main"), "merge state unknown");
+    }
+
+    // (F02-11, F04-7) only the exact prefix + uuid name directly under the temp directory is C3's.
+    #[test]
+    fn only_the_exact_kimi_name_under_temp_is_a_throwaway() {
+        let id = "0123456789abcdef0123456789abcdef";
+        assert!(is_throwaway_name(&format!("c3-kimi-wt-{id}")));
+        assert!(!is_throwaway_name("c3-kimi-wt-notes"));
+        assert!(!is_throwaway_name(&format!("c3-kimi-wt-{}", &id[1..])));
+        assert!(!is_throwaway_name(&format!(
+            "c3-kimi-wt-{}",
+            id.to_uppercase()
+        )));
+        assert!(!is_throwaway_name(&format!("c3-kimi-wt-{id}0")));
+        let tmp = std::env::temp_dir();
+        assert!(is_c3_throwaway_worktree(
+            &tmp.join(format!("c3-kimi-wt-{id}")).to_string_lossy()
+        ));
+        assert!(!is_c3_throwaway_worktree(
+            &tmp.join("c3-kimi-wt-notes").to_string_lossy()
+        ));
+        assert!(!is_c3_throwaway_worktree(
+            &tmp.join("elsewhere")
+                .join(format!("c3-kimi-wt-{id}"))
+                .to_string_lossy()
+        ));
+    }
+
+    #[test]
+    fn the_stale_verdict_follows_the_owner_then_the_age() {
+        let alive = |_: u32, _: &str| true;
+        let dead = |_: u32, _: &str| false;
+        let young = Some(Duration::from_secs(60));
+        let old = Some(STALE_AFTER + Duration::from_secs(3600));
+        // Directory gone: stale whatever else.
+        assert!(stale_verdict(false, None, alive, young).is_some());
+        // An owner record decides alone: a live owner keeps even an old worktree.
+        assert_eq!(stale_verdict(true, Some((7, "s".into())), alive, old), None);
+        let v = stale_verdict(true, Some((7, "s".into())), dead, young).unwrap();
+        assert!(v.contains("pid 7"), "{v}");
+        // No record: the age decides.
+        assert_eq!(stale_verdict(true, None, dead, young), None);
+        assert_eq!(stale_verdict(true, None, dead, None), None);
+        assert!(stale_verdict(true, None, dead, old)
+            .unwrap()
+            .contains("7 h old"));
+        assert_eq!(
+            parse_owner_record("123 2026-11-22T10:00:00Z\n"),
+            Some((123, "2026-11-22T10:00:00Z".into()))
+        );
+        assert_eq!(parse_owner_record("123 \n"), Some((123, String::new())));
+        assert_eq!(parse_owner_record("0 x"), None);
+        assert_eq!(parse_owner_record("junk"), None);
+    }
+
     fn sample() -> BranchReport {
         BranchReport {
-            default_branch: "main".into(),
+            default_branch: Some("main".into()),
             branches: vec![
                 BranchInfo {
                     name: "done".into(),
-                    merged: true,
+                    merged: Some(true),
                     ..Default::default()
                 },
                 BranchInfo {
                     name: "picked".into(),
-                    content_on_default: Some(true),
+                    merged: Some(false),
+                    patches_on_default: Some(true),
+                    patches_checked: true,
                     ..Default::default()
                 },
                 BranchInfo {
                     name: "recorded".into(),
+                    merged: Some(false),
                     record: Some(rec(BranchState::Parked, "o", "after review")),
                     ..Default::default()
                 },
@@ -1040,6 +1522,7 @@ mod tests {
                 behind_of: "origin/main".into(),
                 dirty: None,
             }),
+            ..Default::default()
         }
     }
 
@@ -1056,7 +1539,7 @@ mod tests {
         assert!(!r.is_clean());
         assert_eq!(
             merge_words(&r.branches[1], "main"),
-            "not merged by ancestry, content on main (integrated by cherry-pick or squash)"
+            "not merged by ancestry, patches already on main (git cherry: patch equivalence, not the current content)"
         );
         assert_eq!(merge_words(&r.branches[0], "main"), "merged");
         assert_eq!(merge_words(&r.branches[2], "main"), "not merged");
@@ -1081,6 +1564,18 @@ mod tests {
         let note = finish_note_for(&r).unwrap();
         assert!(note.contains("1 branch(es) (picked)"), "{note}");
         assert!(note.contains("/t/wt2 (detached)"), "{note}");
+        // (F02-9) No default branch: said everywhere, never a start-folder claim against a guess.
+        let mut unknown = clean.clone();
+        unknown.default_branch = None;
+        unknown.start.as_mut().unwrap().on_default = false;
+        assert!(!unknown.is_clean());
+        assert_eq!(
+            hook_line_for(&unknown, true).unwrap(),
+            "c3: default branch unknown - c3 branches --default <name>"
+        );
+        assert!(finish_note_for(&unknown)
+            .unwrap()
+            .contains("c3 branches --default <name>"));
     }
 
     #[test]

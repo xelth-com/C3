@@ -64,6 +64,13 @@ pub const HOST_MARKER_NAMES: &[&str] = &[
 /// settings must survive).
 pub const HOST_MARKER_PREFIXES: &[&str] = &["CODEX_SANDBOX", "ZCODE_"];
 
+/// The variable C3 sets (to `1`) in the environment of every process it starts: reviewer and worker
+/// CLIs (the claude engine's allow-listed environment included), launcher probes and its own
+/// detached maintenance pass. A `c3` process that sees it runs INSIDE such a child and keeps its
+/// hands off the repository (the SessionStart hook's model repair, `c3 doctor --fix`). C3 never
+/// forwards the coordinator's value: it always writes `1`.
+pub const C3_CHILD_ENV: &str = "C3_CHILD";
+
 /// `Test-HostMarkerName`: on Windows env names are case-insensitive, so the plugin uppercases the
 /// name before an ordinal exact/prefix compare against the (uppercase) lists.
 pub fn is_host_marker(name: &str) -> bool {
