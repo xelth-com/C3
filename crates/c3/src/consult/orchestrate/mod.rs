@@ -170,16 +170,45 @@ pub(crate) fn agent_config_for(engine: EngineKind, extra_config: &[String]) -> V
     }
     c3_core::quota::SUBAGENT_OFF
         .iter()
-        .filter(|s| {
-            let key = s.split('=').next().unwrap_or("");
-            !extra_config.iter().any(|c| {
-                c.trim()
-                    .strip_prefix(key)
-                    .is_some_and(|rest| rest.trim_start().starts_with('='))
-            })
-        })
+        .filter(|s| !user_names_key(extra_config, s))
         .map(|s| s.to_string())
         .collect()
+}
+
+/// Whether one of the user's `-c` items sets the key of the bridge's `item` (`key=value`): the key
+/// exactly, then `=` (a longer key with the same prefix is another key).
+fn user_names_key(extra_config: &[String], item: &str) -> bool {
+    let key = item.split('=').next().unwrap_or("");
+    extra_config.iter().any(|c| {
+        c.trim()
+            .strip_prefix(key)
+            .is_some_and(|rest| rest.trim_start().starts_with('='))
+    })
+}
+
+/// (C3 0.2.5) The reviewer isolation of a codex REVIEW turn
+/// ([`c3_core::engine::REVIEW_ISOLATION`]: no plugins, no skill list), independent of the sub-agent
+/// opt-in; a key the user's `-CodexConfig` (or the roster entry's `codex_config`) names is not
+/// passed, so the user's own item is the one codex reads. Every other engine gets nothing. A `c3
+/// work` worker turn builds its own argv and never gets these.
+pub(crate) fn review_isolation_for(engine: EngineKind, extra_config: &[String]) -> Vec<String> {
+    if engine != EngineKind::Codex {
+        return Vec::new();
+    }
+    c3_core::engine::REVIEW_ISOLATION
+        .iter()
+        .filter(|s| !user_names_key(extra_config, s))
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// The bridge's own codex `-c` items of a review turn ([`c3_core::engine::Request::agent_config`]):
+/// the sub-agent off switches ([`agent_config_for`]), then the reviewer isolation
+/// ([`review_isolation_for`]).
+pub(crate) fn bridge_config_for(engine: EngineKind, extra_config: &[String]) -> Vec<String> {
+    let mut v = agent_config_for(engine, extra_config);
+    v.extend(review_isolation_for(engine, extra_config));
+    v
 }
 
 /// (wave 8; C3 0.2.4) The ledger's `subagents_allowed` of a codex run: the user's effective
@@ -2332,6 +2361,23 @@ fn build_context(
         .map(|b| c3_core::sha256_hex(&b))
         .unwrap_or_default();
 
+    // (A1) a reviewer in a throwaway worktree of HEAD (kimi) reads the brief at its repo-relative
+    // path IN that worktree: when the brief is neither committed at HEAD nor stageable into the
+    // worktree, the seat is refused before anything starts - a preflight-class refusal, so a panel
+    // re-seats it - instead of a paid seat answering "the brief is missing". Applies with
+    // -SkipPreflight too: this is not an availability guess, the reviewer cannot read its brief.
+    if spec.worktree_isolated && preflight_refusal.is_none() {
+        if let Some(msg) = crate::engines::kimi::isolated_brief_refusal(
+            &repo_root,
+            &engine_name,
+            &brief_ref,
+            brief_path.as_deref(),
+        ) {
+            preflight_label = format!("a real run is refused - {msg}");
+            preflight_refusal = Some((msg, 1));
+        }
+    }
+
     // (wave 26b, D16 b) a single run's explicit reviewer (-Provider / -Thread) whose context
     // window the new prompt alone would fill beyond 80% is refused before anything starts (a
     // roster walk skips it instead; a panel member is skipped at selection).
@@ -2541,6 +2587,13 @@ fn build_context(
         },
         _ => String::new(),
     };
+    // (A1) a reviewer in a throwaway worktree of HEAD (kimi) is told which paths of the live tree
+    // were uncommitted at launch and so are not (or not as they are) in its worktree.
+    let isolation_line = if spec.worktree_isolated {
+        crate::engines::kimi::isolation_prompt(&repo_root, &brief_ref)
+    } else {
+        String::new()
+    };
     let prompt_text = prompt::assemble(&PromptInputs {
         raw: r.raw,
         purpose: &o.purpose,
@@ -2554,6 +2607,7 @@ fn build_context(
         max_words: r.max_words,
         consult_id: &consult_id,
         tools_line: spec.tools_line,
+        isolation_line: &isolation_line,
         role_line: &role_line,
         context_line: &context_line,
         prev_reply_line: &prev_reply_line,
@@ -3030,7 +3084,7 @@ fn make_request(q: MakeRequest) -> Request {
         schema_path: schema_arg,
         // (wave 28b, D15) the operator's items, then the context-window items (codex only)
         extra_config: with_context_config(&r.extra_config, context_config),
-        agent_config: agent_config_for(engine, &r.extra_config),
+        agent_config: bridge_config_for(engine, &r.extra_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(last_msg_path.to_path_buf())
         } else {
@@ -3939,6 +3993,7 @@ fn run_primary_turn(
             d.tool_name = ev.tool_name;
             d.denied_action = ev.denied_action;
             d.agy_tool_names = ev.tool_names;
+            d.agy_writing_tools = ev.writing_tool_names;
             Ok((run.outcome, d))
         }
         "muse" => {
@@ -4243,7 +4298,7 @@ fn make_live_request(ctx: &Context) -> Request {
         sandbox,
         schema_path: schema_arg,
         extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
-        agent_config: agent_config_for(EngineKind::Codex, &ctx.r.extra_config),
+        agent_config: bridge_config_for(EngineKind::Codex, &ctx.r.extra_config),
         output_last_message: Some(ctx.last_msg_path.clone()),
         prompt_file: None,
         max_model_steps: None,
@@ -4301,11 +4356,15 @@ fn store_pending_path(store: &FilesStore, pending: &PendingRef) -> PathBuf {
     store.task_dir(&pending.task).join(pending.file_name())
 }
 
-/// (Muse, review-2026-10-30) Every agy tool name of the whole run: the primary turn's (already in
+/// (Muse, review-2026-10-30) Every agy tool step of the whole run: the primary turn's (already in
 /// `detail`) plus each secondary turn's event stream that exists (the denial retry, the timeout
-/// continuation, the engine format repair). Empty / non-agy runs return the primary's unchanged.
-fn aggregate_agy_tool_names(ctx: &Context, detail: &EngineDetail) -> Vec<String> {
-    let mut names = detail.agy_tool_names.clone();
+/// continuation, the engine format repair) - the names, and (A1) the steps that may have written as
+/// decided from each step's own tool-log entry. Empty / non-agy runs return the primary's unchanged.
+fn aggregate_agy_tool_log(ctx: &Context, detail: &EngineDetail) -> tree::AgyToolLog {
+    let mut log = tree::AgyToolLog {
+        names: detail.agy_tool_names.clone(),
+        writing: detail.agy_writing_tools.clone(),
+    };
     if ctx.engine == "agy" {
         for rel in [
             "denial-retry.events.jsonl",
@@ -4315,11 +4374,37 @@ fn aggregate_agy_tool_names(ctx: &Context, detail: &EngineDetail) -> Vec<String>
             let p = ctx.hpath(rel);
             if p.is_file() {
                 let text = std::fs::read_to_string(&p).unwrap_or_default();
-                names.extend(crate::engines::agy::read_agy_events(&text, true).tool_names);
+                let ev = crate::engines::agy::read_agy_events(&text, true);
+                log.names.extend(ev.tool_names);
+                log.writing.extend(ev.writing_tool_names);
             }
         }
     }
-    names
+    log
+}
+
+/// (A1) The prior findings a reply is judged against (its prior-blocker dispositions, the ACCEPT
+/// checks and the handoff's `(prior, ...)` blocker lines): every finding of the store as it stands
+/// (fresh status), narrowed for a panel member to the ids of the pre-panel snapshot it was shown
+/// (`listed`), so a sibling's finding filed during the panel is never "prior" to it. `None` for a
+/// single run keeps the whole store.
+fn run_open_priors(
+    existing: Option<&c3_core::findings::FindingsFile>,
+    listed: Option<&[String]>,
+) -> Vec<super::semantics::OpenPrior> {
+    existing
+        .map(|f| {
+            f.findings
+                .iter()
+                .filter(|fd| listed.is_none_or(|ids| ids.contains(&fd.id)))
+                .map(|fd| super::semantics::OpenPrior {
+                    id: fd.id.clone(),
+                    severity: fd.severity.clone(),
+                    status: fd.status().as_str().to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// (Muse, review-2026-10-30) What a claude run's init event proves for the tree decision, read from
@@ -4632,6 +4717,12 @@ fn finish(args: Finish) -> i32 {
                 // The adapter classified the failure from the turn's evidence (its first failure
                 // text): the correct class/code/message (verbatim reason for a quota terminal).
                 engine_pf = Some(pf);
+                // (A1) a zero-tool guard failure (grok/kimi) is a turn that RAN: its own seconds
+                // start the run's wall (a `ProviderFailure` carries none); the read-insist re-asks
+                // add theirs below, so the member wall is the total of every turn.
+                if detail.review_guard {
+                    wall_seconds = detail.primary_wall;
+                }
             } else {
                 main_provider_failure = true;
                 main_pf_exit = exit_code;
@@ -5022,8 +5113,11 @@ fn finish(args: Finish) -> i32 {
         drift.artifacts = artifact_records_last;
         drift.artifacts_changed_paths = artifacts_changed_last;
         let collab_after = crate::engines::tree_check::collab_snapshot(&ctx.collab_root);
-        let agy_all = aggregate_agy_tool_names(&ctx, &detail);
+        let agy_all = aggregate_agy_tool_log(&ctx, &detail);
         let claude_init = claude_tree_init(&ctx, &main_events_text);
+        // (A1) the reply is complete and schema-valid: a tree/collab change the reviewer's own
+        // tool log does not explain is only a warning - the reply is kept.
+        let reply_complete = usable && structured.is_some();
         let check = engine_tree_check(
             &ctx,
             &drift,
@@ -5031,6 +5125,7 @@ fn finish(args: Finish) -> i32 {
             &collab_after,
             &agy_all,
             &claude_init,
+            reply_complete,
         );
         sec.tree_check_outcome = check.outcome.clone();
         sec.tree_check_files = check.files.clone();
@@ -5252,19 +5347,12 @@ fn finish(args: Finish) -> i32 {
             .as_ref()
             .map(|f| f.findings.iter().map(|fd| fd.id.clone()).collect())
             .unwrap_or_default();
-        let open_priors: Vec<super::semantics::OpenPrior> = existing
-            .as_ref()
-            .map(|f| {
-                f.findings
-                    .iter()
-                    .map(|fd| super::semantics::OpenPrior {
-                        id: fd.id.clone(),
-                        severity: fd.severity.clone(),
-                        status: fd.status().as_str().to_string(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        // (A1) a panel member is judged against the findings it was SHOWN - the pre-panel snapshot
+        // (`listed_ids`) - never against a sibling's finding committed while it ran (xelixir panel
+        // 47cf7308: a sibling's F04-1 appeared as "(prior, not-checked)" in members that were
+        // already running when it was filed).
+        let listed = ctx.panel_member.as_ref().map(|m| m.listed_ids.as_slice());
+        let open_priors = run_open_priors(existing.as_ref(), listed);
         let now = iso_now();
         for p in &s.prior_findings {
             let status = match p.status {
@@ -5944,6 +6032,32 @@ fn finish(args: Finish) -> i32 {
     } else {
         String::new()
     };
+    // (A1) A detached single run names the stream of the turn that ended it (the dead read-insist
+    // re-ask's, else the primary's - the summary's `events file:`) and where its reply lies, so a
+    // failed run's death record carries `events_file`/`last_event`/`events_mtime`/`partial_hint`
+    // although the commit removed its `.consult.pending*` record (a re-ask writes none).
+    if super::detach::is_active() && ctx.panel_member.is_none() {
+        let events_abs = sec
+            .read_insist_dead_events
+            .clone()
+            .unwrap_or_else(|| ctx.events_path.to_string_lossy().to_string());
+        let mut hint: Vec<String> = Vec::new();
+        if !partial_abs.is_empty() {
+            hint.push(format!(
+                "the salvaged partial reply of that run is at {partial_abs}"
+            ));
+        }
+        if !reply_json_rel.is_empty() {
+            hint.push(format!(
+                "its raw reply is kept at {}",
+                ctx.reply_json_path.display()
+            ));
+        }
+        hint.push(format!(
+            "the raw event stream of the turn that ended it is at {events_abs} (it may hold a usable reply)"
+        ));
+        super::detach::note_engine_stream(&events_abs, &hint.join("; "));
+    }
     // The summary/handoff show the reviewer lineage with the engine tag (`... [agy]`); the ledger
     // `lineage` field stays bare.
     let lineage_shown = c3_core::lineage::format_reviewer_lineage(
@@ -6460,7 +6574,7 @@ mod telemetry_tests {
 
 #[cfg(test)]
 mod engine_tests {
-    use super::tree::{cut_files, engine_tree_note, engine_tree_outcome};
+    use super::tree::{cut_files, engine_tree_note, engine_tree_outcome, AgyToolLog, TreeChanges};
     use super::*;
 
     #[test]
@@ -6502,110 +6616,150 @@ mod engine_tests {
     }
 
     // (D9 / TECH_DEBT bridge-reliability) the fail/warn decision of the engine tree check. The
-    // `why`/`warn` reasons are already built; only the engine and agy's tool calls decide.
+    // `why`/`warn` reasons are already built; only the engine, agy's tool log and (A1) whether the
+    // reply is complete and schema-valid decide.
     #[test]
     fn engine_tree_outcome_decides_warn_vs_fail() {
         let why = vec!["the working tree changed during the run (1 file: a.rs)".to_string()];
         let warn = vec!["the working tree changed during the run (1 file: a.rs) - x".to_string()];
         let files = vec!["a.rs".to_string()];
+        let changes = || TreeChanges {
+            why: why.clone(),
+            warn: warn.clone(),
+            files: files.clone(),
+        };
+        let none = || TreeChanges {
+            why: Vec::new(),
+            warn: Vec::new(),
+            files: Vec::new(),
+        };
+        // The agy tool log: `tools` are the names, `writing` the steps the log marks as writing.
+        let log = |tools: &[&str], writing: &[&str]| AgyToolLog {
+            names: tools.iter().map(|s| s.to_string()).collect(),
+            writing: writing.iter().map(|s| s.to_string()).collect(),
+        };
         // write-disabled engines (muse/grok/http/claude-with-read-only-init) warn; agy is not.
-        let run = |engine: &str, tools: &[&str]| {
-            let names: Vec<String> = tools.iter().map(|s| s.to_string()).collect();
+        let run = |engine: &str, tools: &[&str], writing: &[&str], complete: bool| {
             let wd = matches!(engine, "muse" | "grok" | "http" | "claude");
-            engine_tree_outcome(
-                engine,
-                &names,
-                wd,
-                None,
-                why.clone(),
-                warn.clone(),
-                files.clone(),
-            )
+            engine_tree_outcome(engine, &log(tools, writing), wd, complete, None, changes())
         };
 
         // Nothing changed → clean, whatever the engine.
-        let clean =
-            engine_tree_outcome("agy", &[], false, None, Vec::new(), Vec::new(), Vec::new());
+        let clean = engine_tree_outcome("agy", &log(&[], &[]), false, false, None, none());
         assert_eq!(clean.outcome, "clean");
 
         // (decision 1) a claude change WARNS (the reply stays usable); the warning is kept.
-        let c = run("claude", &[]);
+        let c = run("claude", &[], &[], false);
         assert_eq!(c.outcome, "warned");
         assert!(c.problem.is_empty());
         assert!(!c.warnings.is_empty());
 
         // The other write-disabled engines still WARN.
-        assert_eq!(run("muse", &[]).outcome, "warned");
-        assert_eq!(run("grok", &[]).outcome, "warned");
-        assert_eq!(run("http", &[]).outcome, "warned");
+        assert_eq!(run("muse", &[], &[], false).outcome, "warned");
+        assert_eq!(run("grok", &[], &[], false).outcome, "warned");
+        assert_eq!(run("http", &[], &[], false).outcome, "warned");
 
         // (decision 3) agy with only a read-only tool call WARNS and the reply stays usable.
-        let w = run("agy", &["view_file"]);
+        let w = run("agy", &["view_file"], &[], false);
         assert_eq!(w.outcome, "warned");
         assert!(w.problem.is_empty());
         assert!(!w.warnings.is_empty());
 
-        // (decision 3) agy with a writing/command tool call FAILS and names the tool.
-        let f = run("agy", &["view_file", "run_command"]);
+        // (A1) agy's `finish` hand-over is not a writing call: read + finish with a change WARNS.
+        let fin = run("agy", &["read_file", "view_file", "finish"], &[], true);
+        assert_eq!(fin.outcome, "warned", "{}", fin.problem);
+
+        // (decision 3) agy whose log marks a writing/command call FAILS and names the tool - even
+        // when the reply is complete and schema-valid (a real write is never "reply kept").
+        let f = run("agy", &["view_file", "run_command"], &["run_command"], true);
         assert_eq!(f.outcome, "failed");
         assert!(f.problem.contains("a writing tool was called: run_command"));
         assert!(f.warnings.is_empty());
 
-        // (decision 3) agy whose stream named NO tool call stays FAILED and reports that.
-        let n = run("agy", &[]);
+        // (decision 3) agy whose stream named NO tool call and whose reply is NOT complete stays
+        // FAILED and reports that.
+        let n = run("agy", &[], &[], false);
         assert_eq!(n.outcome, "failed");
         assert!(n.problem.contains("its event stream named no tool call"));
+
+        // (A1) the same change with a complete, schema-valid reply is a WARNING: the reply is kept
+        // (a failure is "no usable reply", never a change somebody else made).
+        let k = run("agy", &[], &[], true);
+        assert_eq!(k.outcome, "warned", "{}", k.problem);
+        assert!(k.problem.is_empty());
 
         // (BLOCKER, review-2026-10-30) agy that called a WRITING tool FAILS even when NOTHING
         // monitored changed (a write into an ignored path must not pass the clean early return).
         let b = engine_tree_outcome(
             "agy",
-            &["view_file".into(), "write_file".into()],
+            &log(&["view_file", "write_file"], &["write_file"]),
             false,
+            true,
             None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
+            none(),
         );
         assert_eq!(b.outcome, "failed");
         assert!(b.problem.contains("a writing tool was called: write_file"));
         assert!(b.warnings.is_empty());
         // A read-only-only agy stream with nothing changed is still clean (no false positive).
-        let ok = engine_tree_outcome(
-            "agy",
-            &["view_file".into()],
-            false,
-            None,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        );
+        let ok = engine_tree_outcome("agy", &log(&["view_file"], &[]), false, false, None, none());
         assert_eq!(ok.outcome, "clean");
+        // A writing name in another engine's (empty) log is ignored: only agy reads it.
+        let other = engine_tree_outcome("muse", &log(&[], &["x"]), true, false, None, none());
+        assert_eq!(other.outcome, "clean");
 
         // (Muse, review-2026-10-30) claude whose init listed a write-capable tool is NOT
-        // write-disabled: a tree change FAILS (with the caller's note), not warns.
+        // write-disabled: a tree change FAILS (with the caller's note), not warns - a complete
+        // reply does not change that (only agy's tool log can clear a change).
         let cf = engine_tree_outcome(
             "claude",
-            &[],
+            &log(&[], &[]),
             false,
+            true,
             Some("claude's init event listed tool(s) outside Read,Grep,Glob: Bash - ..."),
-            why.clone(),
-            warn.clone(),
-            files.clone(),
+            changes(),
         );
         assert_eq!(cf.outcome, "failed");
         assert!(cf.problem.contains("Bash"));
         // claude with a read-only init (write_disabled) still WARNS on a change.
-        let cw = engine_tree_outcome(
-            "claude",
-            &[],
-            true,
-            None,
-            why.clone(),
-            warn.clone(),
-            files.clone(),
-        );
+        let cw = engine_tree_outcome("claude", &log(&[], &[]), true, false, None, changes());
         assert_eq!(cw.outcome, "warned");
+    }
+
+    // (A1) a panel member's priors are the pre-panel snapshot it was shown: a sibling's blocker
+    // committed while it ran is not "prior, not-checked" in its handoff; a single run keeps the
+    // whole store.
+    #[test]
+    fn a_panel_members_priors_are_its_pre_panel_snapshot() {
+        let store: c3_core::findings::FindingsFile = serde_json::from_value(serde_json::json!({
+            "task_id": "t",
+            "findings": [
+                {"id": "F02-1", "status": "proposed", "severity": "blocker"},
+                {"id": "F04-1", "status": "proposed", "severity": "blocker"}
+            ]
+        }))
+        .unwrap();
+        let reply = StructuredReply {
+            verdict: c3_core::engine::Verdict::Advise,
+            verdict_reason: "r".into(),
+            reply_markdown: "m".into(),
+            findings: vec![],
+            prior_findings: vec![],
+            unproven: vec![],
+            first_run_checklist: vec![],
+        };
+        // the member was shown only F02-1 (F04-1 is a sibling's, filed during the panel).
+        let listed = vec!["F02-1".to_string()];
+        let member = run_open_priors(Some(&store), Some(&listed));
+        let ids: Vec<String> = super::super::semantics::prior_blocker_dispositions(&reply, &member)
+            .into_iter()
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(ids, vec!["F02-1".to_string()]);
+        // a single run (no member) is judged against the whole store.
+        let single = run_open_priors(Some(&store), None);
+        assert_eq!(single.len(), 2);
+        assert!(run_open_priors(None, Some(&listed)).is_empty());
     }
 
     #[test]
@@ -6822,6 +6976,49 @@ mod parent_walk_tests {
         );
         assert!(!subagents_allowed(&[]));
         assert!(subagents_allowed(&["agents.enabled=true".into()]));
+    }
+
+    /// (C3 0.2.5) A codex review turn runs without the operator's plugins and skill list: the
+    /// bridge's items are the off switches then `features.plugins=false` and
+    /// `skills.include_instructions=false`, also when the user opts into sub-agents; a key the user
+    /// names is left to the user; every other engine gets nothing; a `c3 work` codex worker turn
+    /// never carries them.
+    #[test]
+    fn a_codex_review_turn_runs_without_the_operators_plugins_and_skills() {
+        use c3_core::engine::EngineKind;
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            bridge_config_for(EngineKind::Codex, &[]),
+            s(&[
+                "features.multi_agent=false",
+                "agents.enabled=false",
+                "features.plugins=false",
+                "skills.include_instructions=false"
+            ])
+        );
+        assert_eq!(
+            bridge_config_for(EngineKind::Codex, &["agents.enabled=true".into()]),
+            s(&[
+                "features.plugins=false",
+                "skills.include_instructions=false"
+            ]),
+            "the isolation does not depend on the sub-agent opt-in"
+        );
+        assert_eq!(
+            review_isolation_for(EngineKind::Codex, &["features.plugins = true".into()]),
+            s(&["skills.include_instructions=false"]),
+            "the user's own plugins item stands"
+        );
+        assert_eq!(
+            review_isolation_for(EngineKind::Codex, &["features.plugins_extra=1".into()]).len(),
+            2,
+            "a longer key with the same prefix is not the key"
+        );
+        assert!(bridge_config_for(EngineKind::Grok, &[]).is_empty());
+        let worker = crate::work::engines::codex_work_args("gpt-6.1-sol", None, "/r", None);
+        for item in c3_core::engine::REVIEW_ISOLATION {
+            assert!(!worker.iter().any(|a| a == item), "{worker:?}");
+        }
     }
 
     #[test]

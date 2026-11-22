@@ -255,6 +255,7 @@ impl GrokEngine {
         let exit_code = result.exit_code.unwrap_or(-1);
         let expect_thread = Self::expect_thread(turn);
         let mut t = grok_turn_outcome(&events, exit_code, &result.stderr, &expect_thread);
+        t.wall_seconds = result.wall_seconds;
         // The zero-tool-call guard: a PRIMARY turn that produced a usable reply without reading any
         // file cannot have checked anything - on a review purpose it cannot have read the code, and
         // on any other non-raw purpose it cannot have read the brief (live-tested: a no-read grok
@@ -516,6 +517,10 @@ pub struct GrokTurn {
     /// read no file, so the orchestrator re-asks (read-insist) before the failure stands.
     pub review_guard_fired: bool,
     pub warnings: Vec<String>,
+    /// (A1) The turn's own wall time in seconds (set by [`GrokEngine::run_detailed`]; `0.0` from
+    /// [`grok_turn_outcome`] alone). A guard failure's `ProviderFailure` outcome carries no wall, so
+    /// the orchestrator reads this one.
+    pub wall_seconds: f64,
 }
 
 /// The consultation purposes whose grok reply must be backed by reading the code: a zero-tool-call

@@ -117,8 +117,12 @@ pub(super) struct EngineDetail {
     pub(super) tool_name: String,
     pub(super) denied_action: String,
     /// (agy only) `tool_name` of every `step_update` tool step of the primary turn, in order. The
-    /// tree check classifies these to decide whether an agy tree change FAILS or only WARNS.
+    /// tree check names them and treats an empty list as "no tool call".
     pub(super) agy_tool_names: Vec<String>,
+    /// (A1, agy only) the primary turn's tool steps that may have written, decided from each step's
+    /// own tool-log entry ([`crate::engines::agy::AgyEvents::writing_tool_names`]). Non-empty FAILS
+    /// the run's tree check.
+    pub(super) agy_writing_tools: Vec<String>,
     /// A conversation id observed but not verified (never a thread/parent).
     pub(super) thread_candidate: String,
     /// A verified thread the turn named even on a failure (e.g. agy status ERROR).
@@ -147,6 +151,10 @@ pub(super) struct EngineDetail {
     /// (C3) the kimi engine's `Isolation:` handoff line (the throwaway worktree the turn ran in);
     /// `None` for every other engine.
     pub(super) isolation: Option<String>,
+    /// (A1, grok/kimi) the primary turn's own wall time in seconds. A guard failure comes back as a
+    /// `ProviderFailure` outcome, which carries no wall; `finish` folds this into the run's wall so
+    /// a guard-failure run reports the zero-tool primary's seconds too. `0.0` elsewhere.
+    pub(super) primary_wall: f64,
 }
 
 /// Build the request for a live primary/secondary turn of the selected engine.
@@ -182,7 +190,7 @@ pub(super) fn make_live_request_engine(ctx: &Context, mode: Mode) -> Request {
         sandbox,
         schema_path: schema_arg,
         extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
-        agent_config: agent_config_for(engine, &ctx.r.extra_config),
+        agent_config: bridge_config_for(engine, &ctx.r.extra_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(ctx.last_msg_path.clone())
         } else {
@@ -263,6 +271,7 @@ pub(super) fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         tool_name: String::new(),
         denied_action: String::new(),
         agy_tool_names: Vec::new(),
+        agy_writing_tools: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -274,6 +283,7 @@ pub(super) fn agy_detail(t: &crate::engines::agy::AgyTurn) -> EngineDetail {
         http_secondary: None,
         claude: None,
         isolation: None,
+        primary_wall: 0.0,
     }
 }
 
@@ -289,6 +299,7 @@ pub(super) fn claude_detail(r: &crate::engines::claude::ClaudeRun) -> EngineDeta
         tool_name: r.events.denied_action.clone(),
         denied_action: r.events.denied_action.clone(),
         agy_tool_names: Vec::new(),
+        agy_writing_tools: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -304,6 +315,7 @@ pub(super) fn claude_detail(r: &crate::engines::claude::ClaudeRun) -> EngineDeta
             killed: r.killed,
         }),
         isolation: None,
+        primary_wall: 0.0,
     }
 }
 
@@ -342,6 +354,7 @@ pub(super) fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         tool_name: String::new(),
         denied_action: String::new(),
         agy_tool_names: Vec::new(),
+        agy_writing_tools: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -353,6 +366,7 @@ pub(super) fn muse_detail(t: &crate::engines::muse::MuseTurn) -> EngineDetail {
         http_secondary: None,
         claude: None,
         isolation: None,
+        primary_wall: 0.0,
     }
 }
 
@@ -366,6 +380,7 @@ pub(super) fn grok_detail(t: &crate::engines::grok::GrokTurn) -> EngineDetail {
         tool_name: String::new(),
         denied_action: String::new(),
         agy_tool_names: Vec::new(),
+        agy_writing_tools: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -377,6 +392,7 @@ pub(super) fn grok_detail(t: &crate::engines::grok::GrokTurn) -> EngineDetail {
         http_secondary: None,
         claude: None,
         isolation: None,
+        primary_wall: t.wall_seconds,
     }
 }
 
@@ -390,6 +406,7 @@ pub(super) fn kimi_detail(t: &crate::engines::kimi::KimiTurn) -> EngineDetail {
         tool_name: String::new(),
         denied_action: String::new(),
         agy_tool_names: Vec::new(),
+        agy_writing_tools: Vec::new(),
         thread_candidate: t.thread_candidate.clone(),
         thread: t.thread.clone(),
         reply: t.reply.clone(),
@@ -401,6 +418,7 @@ pub(super) fn kimi_detail(t: &crate::engines::kimi::KimiTurn) -> EngineDetail {
         http_secondary: None,
         claude: None,
         isolation: None,
+        primary_wall: t.wall_seconds,
     }
 }
 

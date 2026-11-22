@@ -2074,9 +2074,11 @@ fn lost_before_start(s: &Slot) -> bool {
 
 /// The refusal text of a preflight-class refusal (`Get-PreflightVerdict`'s refusals): an
 /// unavailable provider / missing credential (`provider X is not usable: ...`), the per-model
-/// mark (`provider X does not offer the model ...`), or an unresolved identity
-/// (`availability could not be established`).
-fn is_preflight_refusal(refusal: &str) -> bool {
+/// mark (`provider X does not offer the model ...`), an unresolved identity
+/// (`availability could not be established`), or (A1) a worktree-isolated seat whose brief cannot
+/// reach its worktree (`the kimi seat is not usable: the brief ...`,
+/// `engines::kimi::isolated_brief_refusal`).
+pub(crate) fn is_preflight_refusal(refusal: &str) -> bool {
     refusal.contains(" is not usable:")
         || refusal.contains(" does not offer the model ")
         || refusal.contains("availability could not be established")

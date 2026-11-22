@@ -273,6 +273,154 @@ impl Drop for KimiWorktree {
     }
 }
 
+/// (R7 / A1) Whether a brief reference can be staged into the throwaway worktree at the SAME path:
+/// a non-empty relative path with no `..` component (it then lies inside the worktree root). An
+/// absolute reference resolves against the real tree from anywhere and needs no staging.
+pub fn stageable_brief_rel(rel: &str) -> bool {
+    let p = Path::new(rel);
+    !rel.is_empty()
+        && p.is_relative()
+        && !p
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+/// (A1) The preflight of a seat whose engine runs in a throwaway worktree of HEAD (kimi): the
+/// prompt tells the reviewer to read the brief at `brief_ref`, relative to its working directory -
+/// the worktree. That path resolves there when the brief is staged into the worktree (a stageable
+/// relative path whose source can be read) or is committed at HEAD; an absolute reference resolves
+/// against the real file. Otherwise the reviewer would answer without its brief (xelixir panel
+/// 47cf7308, 2026-11-12: "the required framing brief is missing"), so the seat is refused before
+/// anything starts. The refusal text carries " is not usable:" - the wording the panel's re-seat
+/// classifies as a preflight-class refusal (`panel::run::is_preflight_refusal`), so a panel
+/// replaces the seat from its reserve. `None` = the brief will be readable (or there is none).
+pub fn isolated_brief_refusal(
+    repo: &Path,
+    engine: &str,
+    brief_ref: &str,
+    brief_path: Option<&Path>,
+) -> Option<String> {
+    if brief_ref.is_empty() || Path::new(brief_ref).is_absolute() {
+        return None;
+    }
+    let stageable = stageable_brief_rel(brief_ref);
+    let readable = match brief_path {
+        Some(p) => std::fs::File::open(p)
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        None => Err("no brief file was resolved".to_string()),
+    };
+    if stageable && readable.is_ok() {
+        return None;
+    }
+    let in_head = stageable
+        && git_capture(
+            repo,
+            &[
+                "cat-file",
+                "-e",
+                &format!("HEAD:{}", brief_ref.replace('\\', "/")),
+            ],
+        )
+        .is_ok();
+    if in_head {
+        return None;
+    }
+    let why = if !stageable {
+        "its path leaves the repository, so it cannot be copied in at the path the prompt names"
+            .to_string()
+    } else {
+        format!(
+            "it cannot be read to be copied in ({})",
+            readable.err().unwrap_or_default()
+        )
+    };
+    Some(format!(
+        "the {engine} seat is not usable: the brief `{brief_ref}` is neither committed at HEAD nor stageable into the reviewer's throwaway worktree of HEAD - {why}; nothing was started (commit the brief, place it inside the repository, or seat a reviewer that reads the live tree)"
+    ))
+}
+
+/// (A1) How many uncommitted paths the prompt of a worktree-isolated reviewer names.
+pub const UNCOMMITTED_PATHS_SHOWN: usize = 20;
+
+/// (A1) The live tree's uncommitted paths at launch (`git status --porcelain=v1 -z`, untracked
+/// directories collapsed as git shows them, a rename by its new path), ordinal-sorted. These are
+/// what a reviewer in a throwaway worktree of HEAD does not see as the live tree has them. Empty
+/// when the tree is clean or git cannot be run.
+pub fn uncommitted_paths(repo: &Path) -> Vec<String> {
+    let out = match std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["--no-optional-locks", "status", "--porcelain=v1", "-z"])
+        .output()
+    {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return Vec::new(),
+    };
+    let text = String::from_utf8_lossy(&out);
+    let tokens: Vec<&str> = text.split('\0').collect();
+    let mut paths: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = tokens[i];
+        i += 1;
+        if tok.len() < 4 {
+            continue;
+        }
+        let xy: Vec<char> = tok[0..2].chars().collect();
+        // a rename/copy entry is followed by its ORIGINAL path: skip it, keep the new one.
+        if xy.iter().any(|c| matches!(c, 'R' | 'C')) && i < tokens.len() {
+            i += 1;
+        }
+        paths.push(tok[3..].to_string());
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+/// (A1) The prompt paragraph that tells a reviewer in a throwaway worktree of HEAD what it cannot
+/// see: the live tree's uncommitted paths at launch (at most [`UNCOMMITTED_PATHS_SHOWN`], then the
+/// count of the rest), and that the brief was copied in when it is one of them. `""` when the tree
+/// was clean (nothing is missing).
+pub fn isolation_prompt_line(head_short: &str, uncommitted: &[String], brief_ref: &str) -> String {
+    if uncommitted.is_empty() {
+        return String::new();
+    }
+    let shown: Vec<String> = uncommitted
+        .iter()
+        .take(UNCOMMITTED_PATHS_SHOWN)
+        .map(|p| format!("`{p}`"))
+        .collect();
+    let more = uncommitted.len().saturating_sub(UNCOMMITTED_PATHS_SHOWN);
+    let mut l = format!(
+        "Isolation: your working directory is a throwaway git worktree of the committed HEAD {head_short}, not the live checkout. These {} path(s) had uncommitted changes in the live checkout at launch, so your worktree holds their committed version or nothing: {}",
+        uncommitted.len(),
+        shown.join(", ")
+    );
+    if more > 0 {
+        l.push_str(&format!(" (+{more} more)"));
+    }
+    l.push('.');
+    if !brief_ref.is_empty() && stageable_brief_rel(brief_ref) {
+        l.push_str(&format!(
+            " The brief `{brief_ref}` was copied into your worktree at that path."
+        ));
+    }
+    l
+}
+
+/// (A1) [`isolation_prompt_line`] for the live tree at `repo` now (its uncommitted paths and short
+/// HEAD). `""` when the tree is clean.
+pub fn isolation_prompt(repo: &Path, brief_ref: &str) -> String {
+    let paths = uncommitted_paths(repo);
+    if paths.is_empty() {
+        return String::new();
+    }
+    let head = git_capture(repo, &["rev-parse", "--short=12", "HEAD"]).unwrap_or_default();
+    isolation_prompt_line(&head, &paths, brief_ref)
+}
+
 /// The value of the `-p` argument in a built kimi argv (the pointer prompt), for the length guard.
 fn argv_prompt_value(args: &[String]) -> Option<&str> {
     args.iter()
@@ -359,12 +507,7 @@ impl KimiEngine {
         // reference already resolves from the worktree against the real tree.
         if let Some(brief) = &self.brief {
             let rel = Path::new(&brief.rel);
-            let safe = !brief.rel.is_empty()
-                && rel.is_relative()
-                && !rel
-                    .components()
-                    .any(|c| matches!(c, std::path::Component::ParentDir));
-            if safe {
+            if stageable_brief_rel(&brief.rel) {
                 let dest = worktree.path.join(rel);
                 let staged = dest
                     .parent()
@@ -499,6 +642,7 @@ impl KimiEngine {
         let exit_code = result.exit_code.unwrap_or(-1);
         let expect_thread = Self::expect_thread(turn);
         let mut t = kimi_turn_outcome(&events, exit_code, &result.stderr, &expect_thread);
+        t.wall_seconds = result.wall_seconds;
         // The zero-tool-call review guard (primary turn, a reviewing purpose): see grok.
         if is_primary && t.ok {
             if let Some((why, class)) = kimi_review_tool_guard(&self.purpose, events.tool_calls) {
@@ -744,6 +888,10 @@ pub struct KimiTurn {
     /// usable but read no file, so the orchestrator may re-ask (read-insist) before failing.
     pub review_guard_fired: bool,
     pub warnings: Vec<String>,
+    /// (A1) The turn's own wall time in seconds (set by [`KimiEngine::run_detailed`]; `0.0` from
+    /// [`kimi_turn_outcome`] alone). A guard failure's `ProviderFailure` outcome carries no wall, so
+    /// the orchestrator reads this one.
+    pub wall_seconds: f64,
 }
 
 /// The consultation purposes whose kimi reply must be backed by reading the code: a zero-tool-call
@@ -1264,5 +1412,105 @@ mod tests {
         );
         assert_eq!(unlink_links_inside(&wt), 1);
         assert_link_gone_and_sentinel_kept(&base, &wt, &outside, &link);
+    }
+
+    /// A scratch git repo with one commit holding `committed.md` (identity set repo-locally).
+    fn brief_repo(tag: &str) -> PathBuf {
+        let base = std::env::temp_dir().join(format!(
+            "c3-kimi-brief-{tag}-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.email", "t@e.com"],
+            vec!["config", "user.name", "T"],
+        ] {
+            git_capture(&repo, &args).unwrap();
+        }
+        std::fs::write(repo.join("committed.md"), "# c\n").unwrap();
+        git_capture(&repo, &["add", "-A"]).unwrap();
+        git_capture(&repo, &["commit", "-q", "-m", "init"]).unwrap();
+        repo
+    }
+
+    // (A1) the preflight of a worktree-isolated seat: refused only when the brief can reach the
+    // worktree neither by staging nor through HEAD; the refusal is preflight-class (re-seated).
+    #[test]
+    fn the_isolated_brief_preflight_refuses_only_an_unreachable_brief() {
+        assert!(stageable_brief_rel(".collab/t/handoffs/01.md"));
+        assert!(!stageable_brief_rel("../notes/brief.md"));
+        assert!(!stageable_brief_rel(""));
+        let repo = brief_repo("pre");
+        // no brief, an absolute brief: nothing to refuse.
+        assert!(isolated_brief_refusal(&repo, "kimi", "", None).is_none());
+        let abs = repo.join("committed.md");
+        let abs_s = abs.to_string_lossy().to_string();
+        assert!(isolated_brief_refusal(&repo, "kimi", &abs_s, Some(&abs)).is_none());
+        // an UNTRACKED brief inside the repository is staged: not refused.
+        std::fs::create_dir_all(repo.join(".collab/t/handoffs")).unwrap();
+        let untracked = repo.join(".collab/t/handoffs/01-claude-framing.md");
+        std::fs::write(&untracked, "# brief\n").unwrap();
+        assert!(isolated_brief_refusal(
+            &repo,
+            "kimi",
+            ".collab/t/handoffs/01-claude-framing.md",
+            Some(&untracked)
+        )
+        .is_none());
+        // a committed brief is in HEAD even when its source cannot be opened.
+        assert!(isolated_brief_refusal(&repo, "kimi", "committed.md", None).is_none());
+        // a brief outside the repository named by a relative path: neither in HEAD nor stageable.
+        let outside = repo.parent().unwrap().join("notes");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("brief.md"), "# b\n").unwrap();
+        let r = isolated_brief_refusal(
+            &repo,
+            "kimi",
+            "../notes/brief.md",
+            Some(&outside.join("brief.md")),
+        )
+        .expect("an unreachable brief is refused");
+        assert!(r.starts_with("the kimi seat is not usable: the brief `../notes/brief.md`"));
+        assert!(r.contains("nothing was started"), "{r}");
+        assert!(crate::panel::run::is_preflight_refusal(&r), "{r}");
+        // an untracked in-repo brief that cannot be resolved (no source) and is not in HEAD.
+        let r2 = isolated_brief_refusal(&repo, "kimi", "missing.md", None).unwrap();
+        assert!(r2.contains("cannot be read"), "{r2}");
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
+    }
+
+    // (A1) the reviewer is told the uncommitted paths: at most 20 named, then the count.
+    #[test]
+    fn the_isolation_prompt_names_the_uncommitted_paths() {
+        assert_eq!(isolation_prompt_line("abc", &[], "b.md"), "");
+        let paths: Vec<String> = (0..25).map(|i| format!("src/f{i:02}.rs")).collect();
+        let l = isolation_prompt_line("abc123", &paths, ".collab/t/h/01.md");
+        assert!(l.starts_with("Isolation: your working directory is a throwaway git worktree of the committed HEAD abc123"), "{l}");
+        assert!(
+            l.contains("These 25 path(s) had uncommitted changes"),
+            "{l}"
+        );
+        assert!(
+            l.contains("`src/f19.rs`") && !l.contains("`src/f20.rs`"),
+            "{l}"
+        );
+        assert!(l.contains("(+5 more)."), "{l}");
+        assert!(l.ends_with(
+            "The brief `.collab/t/h/01.md` was copied into your worktree at that path."
+        ));
+        // from a live repo: an untracked file and a modified one are listed.
+        let repo = brief_repo("iso");
+        assert_eq!(isolation_prompt(&repo, ""), "");
+        std::fs::write(repo.join("committed.md"), "# changed\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "n\n").unwrap();
+        assert_eq!(
+            uncommitted_paths(&repo),
+            vec!["committed.md".to_string(), "new.txt".to_string()]
+        );
+        let live = isolation_prompt(&repo, "new.txt");
+        assert!(live.contains("`committed.md`, `new.txt`."), "{live}");
+        let _ = std::fs::remove_dir_all(repo.parent().unwrap());
     }
 }

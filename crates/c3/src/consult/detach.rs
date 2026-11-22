@@ -84,6 +84,18 @@ struct Sink {
     /// The last refusal / error line the run printed (the summary of a run that never reached its
     /// own summary block — a refusal after the lock, D3).
     last_line: String,
+    /// (A1) The engine stream the run named at its own end ([`note_engine_stream`]): the death
+    /// record falls back to it when no `.consult.pending*` record is left to read.
+    noted: Option<NotedStream>,
+}
+
+/// (A1) The engine evidence a single run names at its end: the raw event stream of the turn that
+/// ended it (the dead read-insist re-ask's, else the primary's - the summary's `events file:`) and a
+/// hint where its reply or salvage lies.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct NotedStream {
+    events_file: String,
+    partial_hint: String,
 }
 
 fn sink() -> &'static Mutex<Option<Sink>> {
@@ -102,6 +114,20 @@ pub fn note_line(line: &str) {
     if let Ok(mut g) = sink().lock() {
         if let Some(s) = g.as_mut() {
             s.last_line = line.to_string();
+        }
+    }
+}
+
+/// (A1) Remember the engine stream a single run named at its end, so a failed run's death record
+/// points at it even after the commit removed the run's `.consult.pending*` record (a read-insist
+/// re-ask writes none at all). No-op when the sink is inactive.
+pub fn note_engine_stream(events_file: &str, partial_hint: &str) {
+    if let Ok(mut g) = sink().lock() {
+        if let Some(s) = g.as_mut() {
+            s.noted = Some(NotedStream {
+                events_file: events_file.to_string(),
+                partial_hint: partial_hint.to_string(),
+            });
         }
     }
 }
@@ -997,6 +1023,7 @@ pub fn background(o: Options, run_flow: impl FnOnce(Options) -> i32) -> i32 {
             path: paths.status.clone(),
             record: rec.clone(),
             last_line: String::new(),
+            noted: None,
         });
     }
 
@@ -1014,6 +1041,7 @@ pub fn background(o: Options, run_flow: impl FnOnce(Options) -> i32) -> i32 {
     };
 
     // The final status (D3): the record as the run left it (in the sink), made final.
+    let mut noted: Option<NotedStream> = None;
     let mut final_rec = sink()
         .lock()
         .ok()
@@ -1022,6 +1050,7 @@ pub fn background(o: Options, run_flow: impl FnOnce(Options) -> i32) -> i32 {
             if line.is_empty() && !s.last_line.is_empty() {
                 line = s.last_line.clone();
             }
+            noted = s.noted;
             s.record
         })
         .unwrap_or(rec);
@@ -1036,6 +1065,7 @@ pub fn background(o: Options, run_flow: impl FnOnce(Options) -> i32) -> i32 {
             log_path: &paths.log,
             task_dir: &task_dir,
             bases: &bases,
+            noted: noted.as_ref(),
             recorded_by: "background",
             bridge_alive: true,
             child_exit: Some(code as i64),
@@ -1191,8 +1221,15 @@ fn last_event_time(path: &Path) -> String {
 }
 
 /// Read the engine evidence of a task (`bases` are the directories a recorded `events` path may be
-/// relative to: the task dir first, then the repo and collab roots).
-fn engine_evidence(task_dir: &Path, bases: &[PathBuf]) -> EngineEvidence {
+/// relative to: the task dir first, then the repo and collab roots). (A1) What no
+/// `.consult.pending*` record supplies - the commit removed the run's record, or the turn that
+/// ended the run was a read-insist re-ask, which writes none - comes from the stream the run
+/// `noted` at its end.
+fn engine_evidence(
+    task_dir: &Path,
+    bases: &[PathBuf],
+    noted: Option<&NotedStream>,
+) -> EngineEvidence {
     use crate::liveness::pending;
     let mut ev = EngineEvidence {
         partial_hint: String::new(),
@@ -1231,6 +1268,14 @@ fn engine_evidence(task_dir: &Path, bases: &[PathBuf]) -> EngineEvidence {
         }
     }
     ev.engine_alive = any.then_some(alive);
+    if let Some(n) = noted {
+        if ev.events_file.is_empty() {
+            ev.events_file = n.events_file.clone();
+        }
+        if ev.partial_hint.is_empty() {
+            ev.partial_hint = n.partial_hint.clone();
+        }
+    }
     if !ev.events_file.is_empty() {
         for base in bases {
             let cand = base.join(&ev.events_file);
@@ -1262,6 +1307,8 @@ struct RunDeathInputs<'a> {
     log_path: &'a Path,
     task_dir: &'a Path,
     bases: &'a [PathBuf],
+    /// (A1) the stream the run itself named at its end (`None` for a reader of a dead run).
+    noted: Option<&'a NotedStream>,
     recorded_by: &'a str,
     bridge_alive: bool,
     child_exit: Option<i64>,
@@ -1275,13 +1322,14 @@ fn build_run_death(input: &RunDeathInputs) -> DeathRecord {
         log_path,
         task_dir,
         bases,
+        noted,
         recorded_by,
         bridge_alive,
         child_exit,
         now,
     } = input;
     let log_text = read_log_tail(log_path, 40);
-    let ev = engine_evidence(task_dir, bases);
+    let ev = engine_evidence(task_dir, bases, noted);
     build_death_record(DeathInputs {
         recorded_by,
         now,
@@ -1377,6 +1425,7 @@ fn ensure_reader_death_record(
         log_path,
         task_dir,
         bases,
+        noted: None,
         recorded_by: "reader",
         bridge_alive,
         child_exit: fresh.exit,
@@ -2124,6 +2173,62 @@ mod tests {
         );
         assert!(parse_status_name(".consult.detached-abcd1234.log").is_none());
         assert!(parse_status_name("sessions.json").is_none());
+    }
+
+    // (A1) a run that failed in a read-insist re-ask: the commit removed its pending record and the
+    // re-ask wrote none, so the death record's engine fields come from the stream the run noted.
+    #[test]
+    fn the_death_record_falls_back_to_the_stream_the_run_noted() {
+        let dir = std::env::temp_dir().join(format!("c3-noted-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(dir.join("handoffs")).unwrap();
+        let events = dir
+            .join("handoffs")
+            .join("01-grok-reply.read-insist-1.events.jsonl");
+        std::fs::write(
+            &events,
+            "{\"type\":\"tool_call\",\"ts\":\"2026-11-15T10:00:00Z\"}\n{\"type\":\"text\",\"ts\":\"2026-11-15T10:09:58Z\"}\n",
+        )
+        .unwrap();
+        let bases = vec![dir.clone()];
+        // no pending record and nothing noted: the four fields stay empty (the old behaviour).
+        let bare = engine_evidence(&dir, &bases, None);
+        assert!(bare.events_file.is_empty() && bare.partial_hint.is_empty());
+        assert!(bare.engine_alive.is_none());
+        let noted = NotedStream {
+            events_file: events.to_string_lossy().to_string(),
+            partial_hint: "the raw event stream of the turn that ended it is at x".into(),
+        };
+        let ev = engine_evidence(&dir, &bases, Some(&noted));
+        assert_eq!(ev.events_file, noted.events_file);
+        assert_eq!(ev.last_event, "2026-11-15T10:09:58Z");
+        assert!(ev.events_mtime.is_some());
+        assert_eq!(ev.partial_hint, noted.partial_hint);
+        // the background's death record carries them.
+        let id = "abcdef12-0000-0000-0000-00000000aaaa";
+        let paths = detached_paths(&dir, id);
+        let rec = DetachedRecord {
+            id: id.into(),
+            id8: paths.id8.clone(),
+            state: "done".into(),
+            started: Some((Utc::now() - chrono::Duration::seconds(30)).to_rfc3339()),
+            ..Default::default()
+        };
+        let d = build_run_death(&RunDeathInputs {
+            record: &rec,
+            log_path: &paths.log,
+            task_dir: &dir,
+            bases: &bases,
+            noted: Some(&noted),
+            recorded_by: "background",
+            bridge_alive: true,
+            child_exit: Some(1),
+            now: Utc::now(),
+        });
+        assert_eq!(d.events_file, noted.events_file);
+        assert_eq!(d.last_event, "2026-11-15T10:09:58Z");
+        assert!(!d.events_mtime.is_empty());
+        assert_eq!(d.partial_hint, noted.partial_hint);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

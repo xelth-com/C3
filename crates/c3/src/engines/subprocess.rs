@@ -623,6 +623,15 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
     // (wave 27 / 27b) the reviewer CLI never inherits the coordinator's host markers.
     super::scrub_host_markers(&mut cmd);
 
+    // (C3 0.2.5, F13-1) The sub-agent guard's launch boundary, taken just BEFORE the spawn (whole
+    // milliseconds - a rollout stamps its lines to the millisecond): a line the child writes from its
+    // first moment on - even while a slow `on_running` still holds the watch back - is of this turn,
+    // and a line of the thread's history from before the launch is not. Kept apart from the budget
+    // watch's `turn_start`, which is backdated two seconds for the quota observation.
+    let launch = {
+        use chrono::SubsecRound;
+        chrono::Utc::now().trunc_subsecs(3)
+    };
     let mut child: Child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => return TurnResult::not_started(format!("could not start {program}: {e}")),
@@ -768,10 +777,11 @@ pub fn run_turn(req: &SpawnRequest) -> TurnResult {
                             }
                             // (C3 0.2.4) defence in depth: the same poll notices a sub-agent on a run
                             // whose sub-agents are off, and stops the turn like the budget does.
+                            // (F13-1) bounded by the launch, not by the budget's backdated start.
                             if b.guard_subagents && !budget_thread.is_empty() {
                                 if let Some(sig) = c3_core::quota::subagent_in_run(
                                     &budget_thread,
-                                    turn_start.with_timezone(&chrono::Utc),
+                                    launch,
                                     &b.codex_home,
                                 ) {
                                     subagent_hit = Some(sig);
@@ -1595,6 +1605,199 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A codex home, a thread id, its rollout path and a child that prints the codex stream's
+    /// `thread.started` line for that thread, then lives `live_secs` and exits 0 (a PowerShell
+    /// script on Windows, `sh` elsewhere) - the launcher and its argv for [`run_turn`].
+    struct GuardFixture {
+        dir: std::path::PathBuf,
+        home: String,
+        thread: String,
+        rollout: std::path::PathBuf,
+        launcher: String,
+        argv: Vec<String>,
+    }
+
+    fn guard_fixture(tag: &str, live_secs: u32) -> GuardFixture {
+        let now = chrono::Utc::now();
+        let dir = std::env::temp_dir().join(format!(
+            "c3-f13-{tag}-{}-{}",
+            std::process::id(),
+            now.timestamp_nanos_opt().unwrap_or(0)
+        ));
+        let local = now.with_timezone(&chrono::Local);
+        let day = dir
+            .join("home")
+            .join("sessions")
+            .join(local.format("%Y").to_string())
+            .join(local.format("%m").to_string())
+            .join(local.format("%d").to_string());
+        std::fs::create_dir_all(&day).unwrap();
+        let ms = format!("{:012x}", now.timestamp_millis());
+        let thread = format!(
+            "{}-{}-7{:03x}-8{:03x}-{:012x}",
+            &ms[0..8],
+            &ms[8..12],
+            std::process::id() & 0xfff,
+            tag.len() & 0xfff,
+            (now.timestamp_subsec_nanos() as u64) & 0xffff_ffff_ffff
+        );
+        let rollout = day.join(format!(
+            "rollout-{}-{thread}.jsonl",
+            local.format("%Y-%m-%dT%H-%M-%S")
+        ));
+        let line = format!(r#"{{"type":"thread.started","thread_id":"{thread}"}}"#);
+        let (launcher, argv) = if cfg!(windows) {
+            let script = dir.join("child.ps1");
+            std::fs::write(
+                &script,
+                format!(
+                    "[Console]::Out.Write('{line}' + \"`n\")\r\n[Console]::Out.Flush()\r\nStart-Sleep -Seconds {live_secs}\r\nexit 0\r\n"
+                ),
+            )
+            .unwrap();
+            (
+                "powershell".to_string(),
+                vec![
+                    "-NoProfile".to_string(),
+                    "-NonInteractive".to_string(),
+                    "-ExecutionPolicy".to_string(),
+                    "Bypass".to_string(),
+                    "-File".to_string(),
+                    script.to_string_lossy().to_string(),
+                ],
+            )
+        } else {
+            let script = dir.join("child.sh");
+            std::fs::write(
+                &script,
+                format!("printf '%s\\n' '{line}'\nsleep {live_secs}\nexit 0\n"),
+            )
+            .unwrap();
+            ("sh".to_string(), vec![script.to_string_lossy().to_string()])
+        };
+        GuardFixture {
+            home: dir.join("home").to_string_lossy().to_string(),
+            dir,
+            thread,
+            rollout,
+            launcher,
+            argv,
+        }
+    }
+
+    fn guard_line_stamp(t: chrono::DateTime<chrono::Utc>) -> String {
+        t.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+    }
+
+    fn guard_meta_line(at: chrono::DateTime<chrono::Utc>, thread: &str) -> String {
+        format!(
+            r#"{{"timestamp":"{}","type":"session_meta","payload":{{"id":"{thread}","source":"exec","multi_agent_version":"disabled"}}}}"#,
+            guard_line_stamp(at)
+        )
+    }
+
+    fn guard_spawn_line(at: chrono::DateTime<chrono::Utc>) -> String {
+        format!(
+            r#"{{"timestamp":"{}","type":"response_item","payload":{{"type":"function_call","name":"spawn_agent","namespace":"collaboration","arguments":"{{}}"}}}}"#,
+            guard_line_stamp(at)
+        )
+    }
+
+    /// Run one guarded turn of the fixture's child (guard-only watch, 100 ms polls).
+    fn guarded_turn(
+        f: &GuardFixture,
+        timeout_secs: u64,
+        on_running: Option<&dyn Fn(u32, String)>,
+    ) -> TurnResult {
+        let watch = BudgetWatch {
+            percent: 0,
+            codex_home: f.home.clone(),
+            poll_ms: 100,
+            guard_subagents: true,
+        };
+        run_turn(&SpawnRequest {
+            launcher: &f.launcher,
+            argv: &f.argv,
+            cwd: &f.dir,
+            prompt_delivery: PromptDelivery::Stdin,
+            stdin_text: "",
+            events_path: &f.dir.join("events.jsonl"),
+            stderr_path: &f.dir.join("stderr.txt"),
+            timeout: Duration::from_secs(timeout_secs),
+            stall_sec: 0,
+            kick_path: None,
+            tool_flight: None,
+            on_running,
+            on_kill: None,
+            env: None,
+            crt_quote: false,
+            budget: Some(&watch),
+        })
+    }
+
+    /// (C3 0.2.5, F13-1, handoff 13 RC1) The guard's bound is the launch, not the budget watch's
+    /// start backdated two seconds: a `spawn_agent` call of the thread's history stamped ONE second
+    /// before the launch does not stop the resumed turn (it runs to its own exit).
+    #[test]
+    fn f13_1_a_historical_call_one_second_before_launch_is_ignored() {
+        let f = guard_fixture("hist", 3);
+        let t0 = chrono::Utc::now();
+        std::fs::write(
+            &f.rollout,
+            format!(
+                "{}\n{}\n",
+                guard_meta_line(t0 - chrono::Duration::minutes(10), &f.thread),
+                guard_spawn_line(t0 - chrono::Duration::seconds(1))
+            ),
+        )
+        .unwrap();
+        let r = guarded_turn(&f, 30, None);
+        let events = read_text(&f.dir.join("events.jsonl"));
+        let _ = std::fs::remove_dir_all(&f.dir);
+        assert!(r.started, "{:?}", r.error);
+        assert!(
+            events.contains(&f.thread),
+            "the child named its thread: {events}"
+        );
+        assert_eq!(r.subagent, None, "a historical call is not of this turn");
+        assert_eq!(r.stop, TurnStop::Exited, "{r:?}");
+        assert_eq!(r.exit_code, Some(0), "{r:?}");
+    }
+
+    /// (C3 0.2.5, F13-1, handoff 13 RC1) A current `spawn_agent` call emitted while a slow
+    /// `on_running` (three seconds) still holds the watch back is caught - by the call itself, with
+    /// no child rollout - and stops the turn.
+    #[test]
+    fn f13_1_a_current_call_before_a_slow_on_running_is_caught() {
+        let f = guard_fixture("slow", 30);
+        std::fs::write(
+            &f.rollout,
+            format!(
+                "{}\n",
+                guard_meta_line(chrono::Utc::now() - chrono::Duration::seconds(5), &f.thread)
+            ),
+        )
+        .unwrap();
+        let rollout = f.rollout.clone();
+        let slow = move |_pid: u32, _start: String| {
+            // the turn's own call, made right after the spawn, before the watch starts
+            let mut text = std::fs::read_to_string(&rollout).unwrap();
+            text.push_str(&guard_spawn_line(chrono::Utc::now()));
+            text.push('\n');
+            std::fs::write(&rollout, text).unwrap();
+            std::thread::sleep(Duration::from_secs(3));
+        };
+        let r = guarded_turn(&f, 20, Some(&slow));
+        let _ = std::fs::remove_dir_all(&f.dir);
+        assert!(r.started, "{:?}", r.error);
+        assert_eq!(r.stop, TurnStop::Subagent, "{r:?}");
+        assert_eq!(
+            r.subagent,
+            Some(c3_core::quota::SubagentSignal::SpawnCall),
+            "caught by the call in the run's own rollout, not by a child rollout"
+        );
     }
 
     // (wave 28b, D12) an open tool call suspends the stall timer for at most 2 x stall without

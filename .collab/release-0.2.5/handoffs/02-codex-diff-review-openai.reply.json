@@ -1,0 +1,371 @@
+{
+  "schema_version": "1",
+  "verdict": "REJECT",
+  "verdict_reason": "Repository repair can corrupt files or modify an external hard-link target, kimi cleanup proceeds after an incomplete link scan, maintenance can smoke the wrong roster entry, and telemetry can transmit private model names.",
+  "reply_markdown": "**Release verdict: REJECT.** The destructive filesystem paths, wrong-seat smoke, and telemetry disclosure are release blockers.\n\n**Q1. Repair.** Static symlinks and junctions at the inspected components are skipped. The in-place writes still follow hard links and can race with path replacement or truncate files on failure. Valid UTF-8 retains its BOM, line endings, and other lines on successful writes. The Claude prefix check accepts arbitrary suffixes, and the `AGENTS.md` lookup ignores provider identity. SessionStart synchronously runs `git rev-parse`. Normal reviewer and worker turns get `C3_CHILD=1`, but Claude probes and detached maintenance can miss it.\n\n**Q2. Branches.** Foreign descriptions can lose bytes or concurrent edits. Listing and doctor can refresh the index. Default-branch inference can hide work on repositories using another primary branch without `origin/HEAD`. The no-upstream fallback compares against the local default. Detached secondary worktrees are counted unless the basename filter hides them. `git cherry` uses unqualified refs and historical patch equivalence, so a reverted cherry-pick can still look integrated. Full listing runs two subprocesses per unmerged branch. The hook avoids `cherry` and `status`, and finish reports after committing.\n\n**Q3. Catalog security.** The accepted ID alphabet excludes quotes, whitespace, controls, and an option-leading hyphen. HTTPS and empty caller headers are enforced, but the shared client permits the Kimi cross-host redirect, reads up to 8 MiB before the 4 MiB check, and starts a fresh timeout per hop. It sends `c3/<version>`. Configured URL queries are sent as supplied. I found no explicit cookie or provider-auth header in the public GET path.\n\n**Q4. Catalog correctness.** A future timestamp or another catalog's unanchored copy can qualify a candidate despite contrary date evidence. The own-list exemption is keyed by hostname, so it can reuse another plan's list. Protected, on-request, and dry-run guards cover the selected entry. The actual smoke can resolve to a different entry. A successful smoke can also precede editing the wrong JSON field. Dry-run skips smoke and state writes, and a sequential models-only pass preserves schedule and engine records. Explicit `--models` still fetches with `C3_MAINTAIN_MODELS=off`.\n\n**Q5. Telemetry.** Direct `endpoint:` lists are excluded. Configured pages and catalogs can still be private, and their names enter a global set after vendor stripping and case folding. Removing `[1m]` broadens the match. The Claude regex accepts unverified shaped IDs for Anthropic-class records. The effort-family check does not publish IDs. The three new OpenAI literals are finite.\n\n**Q6. Kimi.** The happy path unlinks recognized links before forced removal. Scan and unlink errors are ignored, and the root and queued directories are reopened by path. The tests exercise the helper, leaving actual Git cleanup and its error paths unproven.\n\n**Q7. Coverage.** The HTTP and smoke fixtures bypass production transport and seat selection. Existing branch and repair fixtures cover ordinary cases. I reviewed selected hunks and supporting functions, with no build or integration runs. The unread scope is listed in `unproven`.\n\n## Requested checks\n\n- **RC1** — Repository root, workspace-write, 10 minutes. In disposable fixtures, run the real hook and kimi cleanup with external sentinel files, a hard-linked agent file, and an injected unlink failure. External bytes must survive, and failed unlink must prevent forced removal.\n- **RC2** — Repository root, workspace-write, 10 minutes. Run one models-only pass against two isolated stub endpoints sharing a label. Verify that both smoke turns reach the candidate entry's endpoint and the protected endpoint receives zero calls.\n- **RC3** — Repository root, workspace-write, 10 minutes. Exercise the production client against a controlled TLS redirect chain and streamed oversized response. Record destinations, headers, bytes consumed, and elapsed time against the documented policy.",
+  "findings": [
+    {
+      "severity": "blocker",
+      "locations": [
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 149},
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 167},
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 184},
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 207}
+      ],
+      "claim": "Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.",
+      "trigger": "A repairable file has a hard link outside the checkout, or a checked file or ancestor is replaced by a link before the write.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/repo_models.rs:149,167,184,207", "observation": "The code checks path metadata and then independently opens the pathname for truncating writes. Hard links have regular-file metadata."}
+      ],
+      "verification": "Run the hook in a disposable checkout with a pinned agent hard-linked to an external sentinel and compare the sentinel bytes.",
+      "remedy": "Use a verified no-follow directory handle and replace the destination entry atomically with a new file, avoiding writes through the old inode.",
+      "supersedes": []
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 167},
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 184}
+      ],
+      "claim": "An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.",
+      "trigger": "A write fails after opening the destination, the process is interrupted, or an editor saves between the read and write.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/repo_models.rs:163–184", "observation": "Both edits use a read-modify-truncate sequence and silently ignore write errors."}
+      ],
+      "verification": "Inject a write failure after the destination is opened and compare the target with its original bytes.",
+      "remedy": "Write and validate a sibling temporary file, verify the original snapshot before replacement, and surface failures.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/setup/doctor.rs", "line": 102},
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 89},
+        {"path": "crates/c3-core/src/claude.rs", "line": 99}
+      ],
+      "claim": "Repair can replace a non-Claude model identifier or an already-floating Claude alias carrying a context modifier.",
+      "trigger": "Frontmatter contains a custom value beginning with `claude-opus-` or a floating value such as `opus[1m]`.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3-core/src/claude.rs:87–106 and crates/c3/src/setup/doctor.rs:102", "observation": "The exact alias check precedes normalization. Family detection then strips `[1m]` and accepts any value with the family prefix."}
+      ],
+      "verification": "Feed both values to `rewrite_agent_model` and inspect its returned edits.",
+      "remedy": "Require a validated concrete Claude ID, distinguish aliases after normalization, and preserve supported context modifiers.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 115},
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 214}
+      ],
+      "claim": "The `AGENTS.md` repair can select a model configured on an unrelated provider or one that is available only on request.",
+      "trigger": "Several active roster entries share an ID family, and the highest numeric version is available through a different provider or restricted entry.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/repo_models.rs:104–132,214–224", "observation": "The lookup flattens every active entry to a model string and chooses the highest matching numeric successor without provider, plan, or protection context."}
+      ],
+      "verification": "Use a fixture roster with a current-provider model and a higher cross-provider on-request match, then inspect the hook's proposed edit.",
+      "remedy": "Bind repair to a configured roster entry or to a recorded, approved successor for that entry.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/engines/claude_auth.rs", "line": 96},
+        {"path": "crates/c3/src/engines/subprocess.rs", "line": 624},
+        {"path": "crates/c3/src/maintain/mod.rs", "line": 1757},
+        {"path": "crates/c3/src/maintain/mod.rs", "line": 1788}
+      ],
+      "claim": "The child marker is missing on Claude auth probes and detached maintenance launched by an unmarked parent.",
+      "trigger": "C3 starts either process from an ordinary coordinator session, and that process or a launcher wrapper invokes a C3 hook.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/engines/claude_auth.rs:91–103, crates/c3/src/engines/subprocess.rs:616–626, crates/c3/src/maintain/mod.rs:1750–1758,1788–1800", "observation": "Normal turns add the marker after configuring their environment. Probes clear the environment and omit that step. Windows detached maintenance inherits the parent environment, and the non-Windows spawn adds no marker."}
+      ],
+      "verification": "Capture `C3_CHILD` at fake Claude probe entry and at detached maintenance entry from an unmarked parent.",
+      "remedy": "Set the marker after configuring each spawn environment, including the Windows detached environment block.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/setup/repo_models.rs", "line": 255},
+        {"path": "crates/c3/src/providers.rs", "line": 2445},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 157},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 752}
+      ],
+      "claim": "The previously claimed no-Git repair hook executes Git, and both new hook actions can wait indefinitely on synchronous work.",
+      "trigger": "Git is slow or stalled, or the checkout is on a slow filesystem.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/repo_models.rs:250–263, crates/c3/src/providers.rs:2445–2450, crates/c3/src/setup/branches.rs:157–177,743–755", "observation": "Root resolution waits on `git rev-parse`. The branch scan waits on additional `.output()` calls without a deadline. The repair path also reads and writes files synchronously."}
+      ],
+      "verification": "Time SessionStart in a disposable checkout with a harmless Git shim that delays root resolution.",
+      "remedy": "Resolve the repair root without a subprocess and put a bounded deadline on hook-time branch scanning.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/setup/branches.rs", "line": 126},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 145},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 797},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 834},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 875}
+      ],
+      "claim": "Branch state updates can lose foreign description contents.",
+      "trigger": "A description has trailing blank lines, consists of whitespace, starts with a malformed `c3: ` line, or is edited concurrently.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/branches.rs:126–150,792–797,834–841,863–879", "observation": "Prefix matching treats malformed records as owned, whitespace is discarded, and the description is read and overwritten in separate Git invocations."},
+        {"kind": "ran-command", "reference": "git config --file - --null --get branch.topic.description", "observation": "An in-memory config fixture retained its two stored trailing line breaks before the NUL delimiter, which the current non-NUL read and trim cannot distinguish from Git framing."}
+      ],
+      "verification": "Round-trip a description containing trailing CRLF and a malformed `c3: ` first line through `--set` and `--clear`, comparing NUL-delimited values.",
+      "remedy": "Preserve the exact local value with NUL framing, recognize only valid owned records or use a dedicated key, and serialize or detect concurrent changes.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/setup/branches.rs", "line": 545},
+        {"path": "crates/c3/src/setup/doctor.rs", "line": 279},
+        {"path": "crates/c3/src/cli/branches.rs", "line": 55}
+      ],
+      "claim": "The read-only listing and doctor paths can refresh and lock Git's index.",
+      "trigger": "Tracked file stat entries require refresh during the primary worktree's status scan.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/branches.rs:543–547", "observation": "The scan invokes `git status` without suppressing optional locks."},
+        {"kind": "ran-command", "reference": "Git for Windows 2.52 local git-status.html, lines 1060–1068", "observation": "Git documents that status writes the refreshed index by default and can contend for its lock."}
+      ],
+      "verification": "In a scratch checkout with stale index stat information, use Git tracing to check for index lock or write activity during `c3 branches` and `c3 doctor`.",
+      "remedy": "Run the status subprocess with `GIT_OPTIONAL_LOCKS=0` or Git's equivalent global option.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3/src/setup/branches.rs", "line": 200},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 221},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 429}
+      ],
+      "claim": "Branch reporting can hide unknown work when default-branch or ancestry discovery fails.",
+      "trigger": "A repository has a custom primary branch, no `origin/HEAD`, `main`, or `master`, and the command runs from a topic or detached checkout. A failed ancestry query also affects the result.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/branches.rs:200–227,421–433,458–463", "observation": "Default detection falls back to the invoking HEAD. An ancestry command failure becomes an empty unmerged set, which labels every listed branch merged."}
+      ],
+      "verification": "Run the report from a topic and then a detached checkout in a scratch repository whose configured primary branch is `trunk`.",
+      "remedy": "Allow an explicit primary branch or discover it independently of the invoking checkout, and preserve unknown ancestry on Git failure.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3/src/setup/branches.rs", "line": 468},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 610}
+      ],
+      "claim": "The reported `content_on_default` value can claim content is present after the corresponding changes were reverted.",
+      "trigger": "A branch commit was cherry-picked into the default branch and subsequently reverted.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/branches.rs:468–476,610–620", "observation": "Zero `+` lines are treated as current content equivalence. The Git arguments also use short branch names."},
+        {"kind": "ran-command", "reference": "Git for Windows 2.52 local git-cherry.html, lines 464–474", "observation": "Git describes a historical commit-diff equivalence test rather than comparison of tip trees."}
+      ],
+      "verification": "In a scratch repository, cherry-pick and revert a topic commit and compare the reported value with the default tip's contents.",
+      "remedy": "Label the signal as historical patch equivalence and qualify both refs. Use a separate tree-level test for any claim about current contents.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "crates/c3/src/setup/branches.rs", "line": 496},
+        {"path": "crates/c3/src/setup/branches.rs", "line": 592},
+        {"path": "crates/c3/src/engines/kimi.rs", "line": 178}
+      ],
+      "claim": "An ordinary user worktree can disappear from branch and leftover reporting.",
+      "trigger": "The basename of a user-created worktree begins with `c3-kimi-wt-`.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/setup/branches.rs:491–507,592–597", "observation": "The exclusion checks only the basename prefix, regardless of location, detached state, or ownership."}
+      ],
+      "verification": "Create a user-owned detached worktree with that prefix outside the system temp directory and inspect `c3 branches --json`.",
+      "remedy": "Exclude only worktrees identified by an active kimi run's recorded path and identity.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/maintain/web.rs", "line": 190},
+        {"path": "crates/c3/src/maintain/env.rs", "line": 263},
+        {"path": "crates/c3/src/maintain/env.rs", "line": 277}
+      ],
+      "claim": "Public catalog requests reuse the installer's redirect exceptions and do not enforce the same-host public-source policy.",
+      "trigger": "A configured catalog or page starts at `code.kimi.ai` and redirects to `cdn.kimi.ai`, or a redirect supplies new URL userinfo or a different port.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/maintain/web.rs:189–193 and crates/c3/src/maintain/env.rs:263–293", "observation": "The public caller requests shared redirect handling. The validator permits the Kimi host pair and checks neither redirect userinfo nor port."}
+      ],
+      "verification": "Exercise the public redirect policy with a Kimi host-pair fixture and same-host destinations carrying userinfo or a different port.",
+      "remedy": "Give public sources a distinct redirect policy and reapply URL validation at every hop, including userinfo and origin checks.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/maintain/env.rs", "line": 169},
+        {"path": "crates/c3/src/maintain/env.rs", "line": 197},
+        {"path": "crates/c3/src/maintain/web.rs", "line": 190}
+      ],
+      "claim": "The catalog's 15-second and 4 MiB limits are not transport-level limits for a complete fetch.",
+      "trigger": "A catalog serves slow redirect hops or streams a response between 4 and 8 MiB.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/maintain/env.rs:169–198,207–213 and crates/c3/src/maintain/web.rs:189–193", "observation": "Each hop is a new request with the original timeout. The shared reader buffers under an 8 MiB cap before the caller applies 4 MiB."}
+      ],
+      "verification": "Measure total elapsed time and bytes consumed using a controlled TLS redirect chain followed by a streamed body over 4 MiB.",
+      "remedy": "Apply one absolute fetch deadline across hops and pass the public-source byte cap to the bounded body reader.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/maintain/models.rs", "line": 260},
+        {"path": "crates/c3/src/maintain/models.rs", "line": 311},
+        {"path": "crates/c3/src/maintain/models.rs", "line": 320}
+      ],
+      "claim": "Catalog date validation can qualify a future-dated candidate or one another catalog shows is older than the seated model.",
+      "trigger": "A matching candidate uses a future timestamp, or a second catalog supplies a recent candidate without listing the seated ID while the first has both dates and shows a downgrade.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/maintain/models.rs:260–289,311–327", "observation": "The match strips vendor names and accepts the first qualifying occurrence. It has no future bound, and an unanchored match can override a dated rejection."}
+      ],
+      "verification": "Add swap-plan fixtures for a future timestamp and two contradictory catalog records and assert neither produces a swap candidate.",
+      "remedy": "Use provider-bound provenance, reject implausible dates, and preserve authoritative negative date evidence across sources.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/maintain/models.rs", "line": 65},
+        {"path": "crates/c3/src/maintain/models.rs", "line": 79},
+        {"path": "crates/c3/src/maintain/models.rs", "line": 365}
+      ],
+      "claim": "Different endpoints on the same hostname share one authenticated list, allowing a candidate private to one endpoint to be proposed and sent to another endpoint without the public date gate.",
+      "trigger": "Two active entries on the same host use different endpoint paths or credentials and have overlapping model families.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/maintain/models.rs:53–100,365–377", "observation": "The first authenticated response wins under `endpoint:<hostname>`. All entries with that source key use its IDs as their own undated candidates."}
+      ],
+      "verification": "Use two isolated endpoint paths on one stub host, expose a private successor on only the first, and check whether the second is offered or sent that ID.",
+      "remedy": "Key authenticated lists by canonical endpoint and roster credential or plan identity, keeping private IDs scoped to their source.",
+      "supersedes": []
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {"path": "crates/c3/src/maintain/mod.rs", "line": 1324},
+        {"path": "crates/c3/src/maintain/mod.rs", "line": 1340},
+        {"path": "crates/c3/src/maintain/smoke.rs", "line": 283},
+        {"path": "crates/c3/src/providers.rs", "line": 2917},
+        {"path": "crates/c3/src/consult/orchestrate/mod.rs", "line": 1813}
+      ],
+      "claim": "A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.",
+      "trigger": "Several entries share a provider label, and the proposed model is absent from that label or belongs to another entry.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/maintain/mod.rs:1321–1355 and crates/c3/src/maintain/smoke.rs:282–292", "observation": "Maintenance gates the old entry, then consults using only the provider label and proposed model."},
+        {"kind": "read-code", "reference": "crates/c3/src/providers.rs:2901–2922 and crates/c3/src/consult/orchestrate/mod.rs:1803–1817,2118–2129", "observation": "Resolution chooses an exact model match or the first label match and uses that entry's auth. The reserve gate holds only when the entry has reached its reserve threshold."}
+      ],
+      "verification": "Run a real-path smoke with two same-label stub endpoints, place an on-request entry first, and watch which endpoint receives both turns.",
+      "remedy": "Bind both smoke turns and the eventual swap to the exact original roster entry, using a model override without re-resolving the entry.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3/src/maintain/models.rs", "line": 576},
+        {"path": "crates/c3/src/maintain/models.rs", "line": 628},
+        {"path": "crates/c3/src/maintain/models.rs", "line": 688},
+        {"path": "crates/c3-core/src/roster.rs", "line": 647}
+      ],
+      "claim": "The roster writer can update an extension field while reporting that a reviewer model was seated.",
+      "trigger": "A reviewer's actual model is JSON-escaped and an extension object contains the same decoded ID as an unescaped `model` field.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/maintain/models.rs:576–588,628–652,658–689 and crates/c3-core/src/roster.rs:640–651", "observation": "The byte search compares raw values and accepts a sole match anywhere. The reparse checks validity without verifying the selected reviewer's new model."}
+      ],
+      "verification": "Pass `apply_swap` a valid roster containing an escaped top-level reviewer model and a matching literal in `ext.model`, then compare the parsed reviewer and extension before and after.",
+      "remedy": "Select the parsed `reviewers` array position and its actual model string span, then validate the exact semantic delta.",
+      "supersedes": []
+    },
+    {
+      "severity": "minor",
+      "locations": [
+        {"path": "CHANGELOG.md", "line": 65},
+        {"path": "crates/c3/src/maintain/mod.rs", "line": 1208},
+        {"path": "crates/c3/src/maintain/mod.rs", "line": 1222}
+      ],
+      "claim": "Explicit `--models` can make outbound catalog and endpoint requests with `C3_MAINTAIN_MODELS=off` despite the documented no-fetch behavior.",
+      "trigger": "`C3_MAINTAIN_MODELS=off` is set and an operator runs `c3 maintain --models`, including with `--dry-run`.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/maintain/mod.rs:1207–1232", "observation": "An explicit models pass converts Off to Announce before collecting endpoint and public lists."}
+      ],
+      "verification": "Use the existing HTTP test log with explicit `--models --dry-run` and `C3_MAINTAIN_MODELS=off` and check for requests.",
+      "remedy": "Keep Off authoritative for collection, or document and explicitly opt into the network override.",
+      "supersedes": []
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {"path": "crates/c3/src/c3config.rs", "line": 329},
+        {"path": "crates/c3/src/maintain/web.rs", "line": 96},
+        {"path": "crates/c3/src/maintain/models.rs", "line": 519},
+        {"path": "crates/c3/src/telemetry/classes.rs", "line": 320},
+        {"path": "crates/c3/src/telemetry/event.rs", "line": 106}
+      ],
+      "claim": "Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.",
+      "trigger": "A keyless internal HTTPS catalog or page lists a private model, and a later consultation or rating uses that model.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/c3config.rs:329–335, crates/c3/src/maintain/web.rs:96–97, crates/c3/src/maintain/models.rs:519–540, crates/c3/src/telemetry/classes.rs:311–325", "observation": "Configuration checks HTTPS and userinfo. Source prefixes confer public status, and the global normalized set can override a closed-list rejection even for unknown vendors."},
+        {"kind": "read-code", "reference": "crates/c3/src/telemetry/event.rs:106,294", "observation": "Consultation and rating events both use the affected reviewer classifier."}
+      ],
+      "verification": "Seed a test-only state from a local TLS catalog containing a synthetic private ID, use it on an unknown endpoint, and inspect serialized events without sending them.",
+      "remedy": "Separate source configuration from telemetry trust and use an explicitly trusted, vendor-bound publication list before emitting any unfamiliar ID.",
+      "supersedes": []
+    },
+    {
+      "severity": "major",
+      "locations": [
+        {"path": "crates/c3-core/src/claude.rs", "line": 164},
+        {"path": "crates/c3-core/src/claude.rs", "line": 177},
+        {"path": "crates/c3/src/telemetry/classes.rs", "line": 349},
+        {"path": "crates/c3/src/telemetry/classes.rs", "line": 364}
+      ],
+      "claim": "An Anthropic-class telemetry record can disclose an unpublished model string solely because it matches a numeric Claude naming pattern.",
+      "trigger": "An Anthropic-class reviewer record contains a user-supplied unpublished Claude-shaped model, including a normalized case or `[1m]` variant.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/telemetry/classes.rs:329–350,358–369,1151–1162", "observation": "The regex alone authorizes emission for the Anthropic class, and unit tests expect unfamiliar matching IDs to be emitted. A normally attributed private endpoint uses host classification instead."}
+      ],
+      "verification": "Serialize a consultation event with a synthetic unpublished shaped ID on an Anthropic-class failure record and inspect the reviewer model field.",
+      "remedy": "Keep shape-based input admission separate from telemetry disclosure and require verified publication for outbound names.",
+      "supersedes": []
+    },
+    {
+      "severity": "blocker",
+      "locations": [
+        {"path": "crates/c3/src/engines/kimi.rs", "line": 210},
+        {"path": "crates/c3/src/engines/kimi.rs", "line": 215},
+        {"path": "crates/c3/src/engines/kimi.rs", "line": 229},
+        {"path": "crates/c3/src/engines/kimi.rs", "line": 241},
+        {"path": "crates/c3/src/engines/kimi.rs", "line": 1236}
+      ],
+      "claim": "Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.",
+      "trigger": "Directory enumeration, metadata, or link removal fails, or the worktree root or a queued directory becomes a directory link before it is opened.",
+      "evidence": [
+        {"kind": "read-code", "reference": "crates/c3/src/engines/kimi.rs:206–261", "observation": "Cleanup marks itself removed before checking anything. The walker swallows all errors, reopens directory pathnames without checking the opened object, and returns a count the caller ignores."},
+        {"kind": "read-code", "reference": "crates/c3/src/engines/kimi.rs:1216–1266", "observation": "Tests exercise successful helper unlink and then use Rust directory removal. They do not run the production Git removal path."}
+      ],
+      "verification": "In a disposable Windows fixture inject an unlink failure with a Git recorder and verify whether `worktree remove --force` is still attempted.",
+      "remedy": "Anchor traversal to verified directory handles, reject root substitution, and abort destructive cleanup and pruning if a link cannot safely be detached.",
+      "supersedes": []
+    }
+  ],
+  "prior_findings": [],
+  "unproven": [
+    "No build, smoke, CI run, or write-capable reproduction was executed during this read-only review.",
+    "The handoff and changelog were read, with selected README hunks and implementation excerpts. The packaged patch was identified but its body was skipped in favor of the committed diff. The full template and plugin documentation hunks, every test hunk, all launch variants, and the full telemetry transport and receiver code were not read.",
+    "Actual production TLS redirect, streamed body, proxy, and cookie behavior was not exercised. The observation about public GET headers is limited to the inspected C3 call path.",
+    "Windows production cleanup with denied unlink, multiple reparse-point types, a replaced root, or a concurrent path substitution has not been reproduced.",
+    "End-to-end same-label plan binding and telemetry serialization against a private configured source have not been exercised with isolated stubs.",
+    "Unverified Git cases include large history performance, ref-name collisions, unusual worktree path encoding, config scope and concurrent writes. The branch listing test covers the ordinary foreign-note case.",
+    "Branch scan latency at scale, disk-full repair, concurrent state reporting, and a live cross-major `AGENTS.md` repair remain unmeasured."
+  ],
+  "first_run_checklist": []
+}

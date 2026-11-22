@@ -396,10 +396,26 @@ pub struct AgyEvents {
     /// `tool_name` of the LAST `step_update` with `step_type` `"tool"`.
     pub tool_name: String,
     /// `tool_name` of EVERY `step_update` with `step_type` `"tool"`, in order (the orchestrator's
-    /// tree check classifies these to decide whether an agy tree change FAILS or only WARNS).
+    /// tree check names these in its messages and treats an empty list as "no tool call").
     pub tool_names: Vec<String>,
+    /// (A1) The name of every tool STEP (one per `step_index`, its ACTIVE/DONE/ERROR events merged)
+    /// that may have written, as decided from the step's own tool-log entry by
+    /// [`super::tree_check::agy_tool_step_is_writing`]: its name, the `tool_info.parameters` agy
+    /// logged for it, and whether it is the run's hand-over step (the step whose index the stream's
+    /// `step_type: "finish"` event closes - agy's `finish` tool, the reply hand-over). Empty when
+    /// every tool step was read-only or touched no file.
+    pub writing_tool_names: Vec<String>,
     /// The first `result.denied_actions[].display_name` (else `.action`).
     pub denied_action: String,
+}
+
+/// (A1) One agy tool step as its event log recorded it: the `step_index` (when the stream names
+/// one), the tool name and the logged `tool_info.parameters` (the first object any event of the
+/// step carried).
+struct AgyToolStep {
+    index: Option<i64>,
+    name: String,
+    parameters: Option<Value>,
 }
 
 /// Parse one agy event stream tolerantly. `allow_partial_last` lets the LAST non-empty line be a
@@ -409,6 +425,9 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
     let lines: Vec<&str> = events_text.split(['\r', '\n']).collect();
     let last_idx = lines.iter().rposition(|l| !l.trim().is_empty());
     let mut result: Option<Value> = None;
+    // (A1) the tool steps (merged by step index) and the index of every `finish` step.
+    let mut steps: Vec<AgyToolStep> = Vec::new();
+    let mut finish_steps: std::collections::HashSet<i64> = std::collections::HashSet::new();
     for (i, raw) in lines.iter().enumerate() {
         let t = raw.trim();
         if t.is_empty() {
@@ -433,14 +452,42 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
             }
             "step_update" => {
                 if let Some(su) = obj.get("step_update") {
-                    if su.get("step_type").and_then(|v| v.as_str()) == Some("tool") {
+                    let step_type = su.get("step_type").and_then(|v| v.as_str());
+                    let index = su.get("step_index").and_then(|v| v.as_i64());
+                    if step_type == Some("tool") {
                         let tn = str_field(su, "tool_name");
                         if !tn.is_empty() {
                             r.tool_name = tn.clone();
                         }
                         // an unnamed tool step is kept too: the classifier counts an empty
                         // name as writing (Grok, review-2026-10-30)
-                        r.tool_names.push(tn);
+                        r.tool_names.push(tn.clone());
+                        let parameters = su
+                            .get("tool_info")
+                            .and_then(|ti| ti.get("parameters"))
+                            .filter(|p| p.is_object())
+                            .cloned();
+                        let known = index.and_then(|ix| {
+                            steps
+                                .iter_mut()
+                                .find(|s| s.index == Some(ix) && s.name == tn)
+                        });
+                        match known {
+                            Some(s) => {
+                                if s.parameters.is_none() {
+                                    s.parameters = parameters;
+                                }
+                            }
+                            None => steps.push(AgyToolStep {
+                                index,
+                                name: tn,
+                                parameters,
+                            }),
+                        }
+                    } else if step_type == Some("finish") {
+                        if let Some(ix) = index {
+                            finish_steps.insert(ix);
+                        }
                     }
                 }
             }
@@ -462,6 +509,14 @@ pub fn read_agy_events(events_text: &str, allow_partial_last: bool) -> AgyEvents
     if r.result_count > 1 && r.malformed.is_empty() {
         r.malformed = format!("{} result events (exactly one expected)", r.result_count);
     }
+    r.writing_tool_names = steps
+        .iter()
+        .filter(|s| {
+            let handover = s.index.is_some_and(|ix| finish_steps.contains(&ix));
+            super::tree_check::agy_tool_step_is_writing(&s.name, s.parameters.as_ref(), handover)
+        })
+        .map(|s| s.name.clone())
+        .collect();
     if let Some(res) = result {
         r.has_result = true;
         r.thread = str_field(&res, "conversation_id");
@@ -936,6 +991,42 @@ mod tests {
             .tool_names
             .iter()
             .any(|t| crate::engines::tree_check::agy_tool_is_writing(t)));
+        // (A1) the unnamed step logged no parameters: its nature is unknown, so it is writing.
+        assert_eq!(e.writing_tool_names, vec![String::new()]);
+    }
+
+    /// (A1) The live agy shape of 2026-11-07: read_file/view_file steps, then the `finish` tool step
+    /// whose index the `step_type: "finish"` event closes. Nothing here writes - the hand-over is
+    /// not a writing call. A `run_command` step (ACTIVE + DONE of one index) counts once.
+    #[test]
+    fn the_finish_hand_over_is_not_a_writing_step_but_a_command_is() {
+        let s = concat!(
+            r#"{"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE","step_type":"tool","tool_name":"read_file","tool_info":{"name":"read_file","parameters":{"Path":"C:\\r\\a.md"}}}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"step_index":2,"state":"DONE","step_type":"tool","tool_name":"read_file","tool_info":{"name":"read_file","parameters":{"Path":"C:\\r\\a.md"},"output":"5 lines"}}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"step_index":3,"state":"ACTIVE","step_type":"tool","tool_name":"view_file","tool_info":{"name":"view_file","parameters":{"AbsolutePath":"C:\\r\\b.rs"}}}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"step_index":9,"state":"ACTIVE","step_type":"tool","tool_name":"finish","tool_info":{"name":"finish","parameters":{"findings":[],"verdict":"HOLD","verdict_reason":"r","reply_markdown":"m","schema_version":"1","prior_findings":[],"unproven":[],"first_run_checklist":[]}}}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"step_index":9,"state":"DONE","step_type":"finish","duration_seconds":0.8}}"#,
+            "\n"
+        );
+        let e = read_agy_events(s, true);
+        assert_eq!(e.tool_names.len(), 4);
+        assert!(
+            e.writing_tool_names.is_empty(),
+            "{:?}",
+            e.writing_tool_names
+        );
+        let w = concat!(
+            r#"{"event":"step_update","step_update":{"step_index":4,"state":"ACTIVE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"del x","Cwd":"C:\\r"}}}}"#,
+            "\n",
+            r#"{"event":"step_update","step_update":{"step_index":4,"state":"DONE","step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"del x","Cwd":"C:\\r"},"output":""}}}"#,
+            "\n"
+        );
+        let e = read_agy_events(w, true);
+        assert_eq!(e.writing_tool_names, vec!["run_command".to_string()]);
     }
     const DENIED_STDERR: &str = include_str!("fixtures/agy_denied.stderr.txt");
 

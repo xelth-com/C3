@@ -1,0 +1,2248 @@
+{
+    "task_id":  "release-0.2.5",
+    "findings":  [
+                     {
+                         "id":  "F02-1",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  149
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  167
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  184
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  207
+                                           }
+                                       ],
+                         "claim":  "Model repair can rewrite an external file through a hard link or through replacement of a checked path component between check and write.",
+                         "trigger":  "A repairable file has a hard link outside the checkout, or a checked file or ancestor is replaced by a link before the write.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/repo_models.rs:149,167,184,207",
+                                              "observation":  "The code checks path metadata and then independently opens the pathname for truncating writes. Hard links have regular-file metadata."
+                                          }
+                                      ],
+                         "verification":  "Run the hook in a disposable checkout with a pinned agent hard-linked to an external sentinel and compare the sentinel bytes.",
+                         "remedy":  "Use a verified no-follow directory handle and replace the destination entry atomically with a new file, avoiding writes through the old inode.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-2",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  167
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  184
+                                           }
+                                       ],
+                         "claim":  "An interrupted or failed repair can leave a truncated Markdown file, and an ordinary concurrent edit can be overwritten.",
+                         "trigger":  "A write fails after opening the destination, the process is interrupted, or an editor saves between the read and write.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/repo_models.rs:163–184",
+                                              "observation":  "Both edits use a read-modify-truncate sequence and silently ignore write errors."
+                                          }
+                                      ],
+                         "verification":  "Inject a write failure after the destination is opened and compare the target with its original bytes.",
+                         "remedy":  "Write and validate a sibling temporary file, verify the original snapshot before replacement, and surface failures.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/doctor.rs",
+                                               "line":  102
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  89
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/claude.rs",
+                                               "line":  99
+                                           }
+                                       ],
+                         "claim":  "Repair can replace a non-Claude model identifier or an already-floating Claude alias carrying a context modifier.",
+                         "trigger":  "Frontmatter contains a custom value beginning with `claude-opus-` or a floating value such as `opus[1m]`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/claude.rs:87–106 and crates/c3/src/setup/doctor.rs:102",
+                                              "observation":  "The exact alias check precedes normalization. Family detection then strips `[1m]` and accepts any value with the family prefix."
+                                          }
+                                      ],
+                         "verification":  "Feed both values to `rewrite_agent_model` and inspect its returned edits.",
+                         "remedy":  "Require a validated concrete Claude ID, distinguish aliases after normalization, and preserve supported context modifiers.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  115
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  214
+                                           }
+                                       ],
+                         "claim":  "The `AGENTS.md` repair can select a model configured on an unrelated provider or one that is available only on request.",
+                         "trigger":  "Several active roster entries share an ID family, and the highest numeric version is available through a different provider or restricted entry.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/repo_models.rs:104–132,214–224",
+                                              "observation":  "The lookup flattens every active entry to a model string and chooses the highest matching numeric successor without provider, plan, or protection context."
+                                          }
+                                      ],
+                         "verification":  "Use a fixture roster with a current-provider model and a higher cross-provider on-request match, then inspect the hook\u0027s proposed edit.",
+                         "remedy":  "Bind repair to a configured roster entry or to a recorded, approved successor for that entry.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/claude_auth.rs",
+                                               "line":  96
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/subprocess.rs",
+                                               "line":  624
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1757
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1788
+                                           }
+                                       ],
+                         "claim":  "The child marker is missing on Claude auth probes and detached maintenance launched by an unmarked parent.",
+                         "trigger":  "C3 starts either process from an ordinary coordinator session, and that process or a launcher wrapper invokes a C3 hook.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/claude_auth.rs:91–103, crates/c3/src/engines/subprocess.rs:616–626, crates/c3/src/maintain/mod.rs:1750–1758,1788–1800",
+                                              "observation":  "Normal turns add the marker after configuring their environment. Probes clear the environment and omit that step. Windows detached maintenance inherits the parent environment, and the non-Windows spawn adds no marker."
+                                          }
+                                      ],
+                         "verification":  "Capture `C3_CHILD` at fake Claude probe entry and at detached maintenance entry from an unmarked parent.",
+                         "remedy":  "Set the marker after configuring each spawn environment, including the Windows detached environment block.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-6",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  255
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  2445
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  157
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  752
+                                           }
+                                       ],
+                         "claim":  "The previously claimed no-Git repair hook executes Git, and both new hook actions can wait indefinitely on synchronous work.",
+                         "trigger":  "Git is slow or stalled, or the checkout is on a slow filesystem.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/repo_models.rs:250–263, crates/c3/src/providers.rs:2445–2450, crates/c3/src/setup/branches.rs:157–177,743–755",
+                                              "observation":  "Root resolution waits on `git rev-parse`. The branch scan waits on additional `.output()` calls without a deadline. The repair path also reads and writes files synchronously."
+                                          }
+                                      ],
+                         "verification":  "Time SessionStart in a disposable checkout with a harmless Git shim that delays root resolution.",
+                         "remedy":  "Resolve the repair root without a subprocess and put a bounded deadline on hook-time branch scanning.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-7",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  126
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  145
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  797
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  834
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  875
+                                           }
+                                       ],
+                         "claim":  "Branch state updates can lose foreign description contents.",
+                         "trigger":  "A description has trailing blank lines, consists of whitespace, starts with a malformed `c3: ` line, or is edited concurrently.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:126–150,792–797,834–841,863–879",
+                                              "observation":  "Prefix matching treats malformed records as owned, whitespace is discarded, and the description is read and overwritten in separate Git invocations."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "git config --file - --null --get branch.topic.description",
+                                              "observation":  "An in-memory config fixture retained its two stored trailing line breaks before the NUL delimiter, which the current non-NUL read and trim cannot distinguish from Git framing."
+                                          }
+                                      ],
+                         "verification":  "Round-trip a description containing trailing CRLF and a malformed `c3: ` first line through `--set` and `--clear`, comparing NUL-delimited values.",
+                         "remedy":  "Preserve the exact local value with NUL framing, recognize only valid owned records or use a dedicated key, and serialize or detect concurrent changes.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-8",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  545
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/doctor.rs",
+                                               "line":  279
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/cli/branches.rs",
+                                               "line":  55
+                                           }
+                                       ],
+                         "claim":  "The read-only listing and doctor paths can refresh and lock Git\u0027s index.",
+                         "trigger":  "Tracked file stat entries require refresh during the primary worktree\u0027s status scan.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:543–547",
+                                              "observation":  "The scan invokes `git status` without suppressing optional locks."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Git for Windows 2.52 local git-status.html, lines 1060–1068",
+                                              "observation":  "Git documents that status writes the refreshed index by default and can contend for its lock."
+                                          }
+                                      ],
+                         "verification":  "In a scratch checkout with stale index stat information, use Git tracing to check for index lock or write activity during `c3 branches` and `c3 doctor`.",
+                         "remedy":  "Run the status subprocess with `GIT_OPTIONAL_LOCKS=0` or Git\u0027s equivalent global option.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-9",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  200
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  221
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  429
+                                           }
+                                       ],
+                         "claim":  "Branch reporting can hide unknown work when default-branch or ancestry discovery fails.",
+                         "trigger":  "A repository has a custom primary branch, no `origin/HEAD`, `main`, or `master`, and the command runs from a topic or detached checkout. A failed ancestry query also affects the result.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:200–227,421–433,458–463",
+                                              "observation":  "Default detection falls back to the invoking HEAD. An ancestry command failure becomes an empty unmerged set, which labels every listed branch merged."
+                                          }
+                                      ],
+                         "verification":  "Run the report from a topic and then a detached checkout in a scratch repository whose configured primary branch is `trunk`.",
+                         "remedy":  "Allow an explicit primary branch or discover it independently of the invoking checkout, and preserve unknown ancestry on Git failure.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-10",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  468
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  610
+                                           }
+                                       ],
+                         "claim":  "The reported `content_on_default` value can claim content is present after the corresponding changes were reverted.",
+                         "trigger":  "A branch commit was cherry-picked into the default branch and subsequently reverted.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:468–476,610–620",
+                                              "observation":  "Zero `+` lines are treated as current content equivalence. The Git arguments also use short branch names."
+                                          },
+                                          {
+                                              "kind":  "ran-command",
+                                              "reference":  "Git for Windows 2.52 local git-cherry.html, lines 464–474",
+                                              "observation":  "Git describes a historical commit-diff equivalence test rather than comparison of tip trees."
+                                          }
+                                      ],
+                         "verification":  "In a scratch repository, cherry-pick and revert a topic commit and compare the reported value with the default tip\u0027s contents.",
+                         "remedy":  "Label the signal as historical patch equivalence and qualify both refs. Use a separate tree-level test for any claim about current contents.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-11",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  496
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  592
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  178
+                                           }
+                                       ],
+                         "claim":  "An ordinary user worktree can disappear from branch and leftover reporting.",
+                         "trigger":  "The basename of a user-created worktree begins with `c3-kimi-wt-`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:491–507,592–597",
+                                              "observation":  "The exclusion checks only the basename prefix, regardless of location, detached state, or ownership."
+                                          }
+                                      ],
+                         "verification":  "Create a user-owned detached worktree with that prefix outside the system temp directory and inspect `c3 branches --json`.",
+                         "remedy":  "Exclude only worktrees identified by an active kimi run\u0027s recorded path and identity.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-12",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/web.rs",
+                                               "line":  190
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  263
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  277
+                                           }
+                                       ],
+                         "claim":  "Public catalog requests reuse the installer\u0027s redirect exceptions and do not enforce the same-host public-source policy.",
+                         "trigger":  "A configured catalog or page starts at `code.kimi.ai` and redirects to `cdn.kimi.ai`, or a redirect supplies new URL userinfo or a different port.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/web.rs:189–193 and crates/c3/src/maintain/env.rs:263–293",
+                                              "observation":  "The public caller requests shared redirect handling. The validator permits the Kimi host pair and checks neither redirect userinfo nor port."
+                                          }
+                                      ],
+                         "verification":  "Exercise the public redirect policy with a Kimi host-pair fixture and same-host destinations carrying userinfo or a different port.",
+                         "remedy":  "Give public sources a distinct redirect policy and reapply URL validation at every hop, including userinfo and origin checks.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-13",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  169
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  197
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/web.rs",
+                                               "line":  190
+                                           }
+                                       ],
+                         "claim":  "The catalog\u0027s 15-second and 4 MiB limits are not transport-level limits for a complete fetch.",
+                         "trigger":  "A catalog serves slow redirect hops or streams a response between 4 and 8 MiB.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:169–198,207–213 and crates/c3/src/maintain/web.rs:189–193",
+                                              "observation":  "Each hop is a new request with the original timeout. The shared reader buffers under an 8 MiB cap before the caller applies 4 MiB."
+                                          }
+                                      ],
+                         "verification":  "Measure total elapsed time and bytes consumed using a controlled TLS redirect chain followed by a streamed body over 4 MiB.",
+                         "remedy":  "Apply one absolute fetch deadline across hops and pass the public-source byte cap to the bounded body reader.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-14",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  260
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  311
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  320
+                                           }
+                                       ],
+                         "claim":  "Catalog date validation can qualify a future-dated candidate or one another catalog shows is older than the seated model.",
+                         "trigger":  "A matching candidate uses a future timestamp, or a second catalog supplies a recent candidate without listing the seated ID while the first has both dates and shows a downgrade.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:260–289,311–327",
+                                              "observation":  "The match strips vendor names and accepts the first qualifying occurrence. It has no future bound, and an unanchored match can override a dated rejection."
+                                          }
+                                      ],
+                         "verification":  "Add swap-plan fixtures for a future timestamp and two contradictory catalog records and assert neither produces a swap candidate.",
+                         "remedy":  "Use provider-bound provenance, reject implausible dates, and preserve authoritative negative date evidence across sources.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-15",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  65
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  79
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  365
+                                           }
+                                       ],
+                         "claim":  "Different endpoints on the same hostname share one authenticated list, allowing a candidate private to one endpoint to be proposed and sent to another endpoint without the public date gate.",
+                         "trigger":  "Two active entries on the same host use different endpoint paths or credentials and have overlapping model families.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:53–100,365–377",
+                                              "observation":  "The first authenticated response wins under `endpoint:\u003chostname\u003e`. All entries with that source key use its IDs as their own undated candidates."
+                                          }
+                                      ],
+                         "verification":  "Use two isolated endpoint paths on one stub host, expose a private successor on only the first, and check whether the second is offered or sent that ID.",
+                         "remedy":  "Key authenticated lists by canonical endpoint and roster credential or plan identity, keeping private IDs scoped to their source.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-16",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1324
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1340
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/smoke.rs",
+                                               "line":  283
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/providers.rs",
+                                               "line":  2917
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/consult/orchestrate/mod.rs",
+                                               "line":  1813
+                                           }
+                                       ],
+                         "claim":  "A smoke can use a different roster entry, endpoint, and quota policy from the entry being edited.",
+                         "trigger":  "Several entries share a provider label, and the proposed model is absent from that label or belongs to another entry.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:1321–1355 and crates/c3/src/maintain/smoke.rs:282–292",
+                                              "observation":  "Maintenance gates the old entry, then consults using only the provider label and proposed model."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/providers.rs:2901–2922 and crates/c3/src/consult/orchestrate/mod.rs:1803–1817,2118–2129",
+                                              "observation":  "Resolution chooses an exact model match or the first label match and uses that entry\u0027s auth. The reserve gate holds only when the entry has reached its reserve threshold."
+                                          }
+                                      ],
+                         "verification":  "Run a real-path smoke with two same-label stub endpoints, place an on-request entry first, and watch which endpoint receives both turns.",
+                         "remedy":  "Bind both smoke turns and the eventual swap to the exact original roster entry, using a model override without re-resolving the entry.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-17",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  576
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  628
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  688
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/roster.rs",
+                                               "line":  647
+                                           }
+                                       ],
+                         "claim":  "The roster writer can update an extension field while reporting that a reviewer model was seated.",
+                         "trigger":  "A reviewer\u0027s actual model is JSON-escaped and an extension object contains the same decoded ID as an unescaped `model` field.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:576–588,628–652,658–689 and crates/c3-core/src/roster.rs:640–651",
+                                              "observation":  "The byte search compares raw values and accepts a sole match anywhere. The reparse checks validity without verifying the selected reviewer\u0027s new model."
+                                          }
+                                      ],
+                         "verification":  "Pass `apply_swap` a valid roster containing an escaped top-level reviewer model and a matching literal in `ext.model`, then compare the parsed reviewer and extension before and after.",
+                         "remedy":  "Select the parsed `reviewers` array position and its actual model string span, then validate the exact semantic delta.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-18",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "CHANGELOG.md",
+                                               "line":  65
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1208
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1222
+                                           }
+                                       ],
+                         "claim":  "Explicit `--models` can make outbound catalog and endpoint requests with `C3_MAINTAIN_MODELS=off` despite the documented no-fetch behavior.",
+                         "trigger":  "`C3_MAINTAIN_MODELS=off` is set and an operator runs `c3 maintain --models`, including with `--dry-run`.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:1207–1232",
+                                              "observation":  "An explicit models pass converts Off to Announce before collecting endpoint and public lists."
+                                          }
+                                      ],
+                         "verification":  "Use the existing HTTP test log with explicit `--models --dry-run` and `C3_MAINTAIN_MODELS=off` and check for requests.",
+                         "remedy":  "Keep Off authoritative for collection, or document and explicitly opt into the network override.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-19",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/c3config.rs",
+                                               "line":  329
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/web.rs",
+                                               "line":  96
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  519
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/classes.rs",
+                                               "line":  320
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/event.rs",
+                                               "line":  106
+                                           }
+                                       ],
+                         "claim":  "Telemetry can disclose a private endpoint model name when a private configured catalog or page supplies that same name.",
+                         "trigger":  "A keyless internal HTTPS catalog or page lists a private model, and a later consultation or rating uses that model.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/c3config.rs:329–335, crates/c3/src/maintain/web.rs:96–97, crates/c3/src/maintain/models.rs:519–540, crates/c3/src/telemetry/classes.rs:311–325",
+                                              "observation":  "Configuration checks HTTPS and userinfo. Source prefixes confer public status, and the global normalized set can override a closed-list rejection even for unknown vendors."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/event.rs:106,294",
+                                              "observation":  "Consultation and rating events both use the affected reviewer classifier."
+                                          }
+                                      ],
+                         "verification":  "Seed a test-only state from a local TLS catalog containing a synthetic private ID, use it on an unknown endpoint, and inspect serialized events without sending them.",
+                         "remedy":  "Separate source configuration from telemetry trust and use an explicitly trusted, vendor-bound publication list before emitting any unfamiliar ID.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-20",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/claude.rs",
+                                               "line":  164
+                                           },
+                                           {
+                                               "path":  "crates/c3-core/src/claude.rs",
+                                               "line":  177
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/classes.rs",
+                                               "line":  349
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/telemetry/classes.rs",
+                                               "line":  364
+                                           }
+                                       ],
+                         "claim":  "An Anthropic-class telemetry record can disclose an unpublished model string solely because it matches a numeric Claude naming pattern.",
+                         "trigger":  "An Anthropic-class reviewer record contains a user-supplied unpublished Claude-shaped model, including a normalized case or `[1m]` variant.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/classes.rs:329–350,358–369,1151–1162",
+                                              "observation":  "The regex alone authorizes emission for the Anthropic class, and unit tests expect unfamiliar matching IDs to be emitted. A normally attributed private endpoint uses host classification instead."
+                                          }
+                                      ],
+                         "verification":  "Serialize a consultation event with a synthetic unpublished shaped ID on an Anthropic-class failure record and inspect the reviewer model field.",
+                         "remedy":  "Keep shape-based input admission separate from telemetry disclosure and require verified publication for outbound names.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F02-21",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  210
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  215
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  229
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  241
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  1236
+                                           }
+                                       ],
+                         "claim":  "Kimi invokes forced removal after an incomplete unlink pass, and the unlink walker can traverse outside through a substituted root or queued directory.",
+                         "trigger":  "Directory enumeration, metadata, or link removal fails, or the worktree root or a queued directory becomes a directory link before it is opened.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:206–261",
+                                              "observation":  "Cleanup marks itself removed before checking anything. The walker swallows all errors, reopens directory pathnames without checking the opened object, and returns a count the caller ignores."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:1216–1266",
+                                              "observation":  "Tests exercise successful helper unlink and then use Rust directory removal. They do not run the production Git removal path."
+                                          }
+                                      ],
+                         "verification":  "In a disposable Windows fixture inject an unlink failure with a Git recorder and verify whether `worktree remove --force` is still attempted.",
+                         "remedy":  "Anchor traversal to verified directory handles, reject root substitution, and abort destructive cleanup and pruning if a link cannot safely be detached.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  1,
+                                        "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                        "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:47:27+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-1",
+                         "status":  "proposed",
+                         "severity":  "blocker",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3-core/src/claude.rs",
+                                               "line":  313
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/mod.rs",
+                                               "line":  61
+                                           }
+                                       ],
+                         "claim":  "The claude engine\u0027s allow-listed child environment drops C3_CHILD, so a reviewer/worker on the claude engine does not see C3_CHILD=1 and the hook repair is not suppressed there.",
+                         "trigger":  "A review or worker turn runs on the claude engine (SessionStart hook fires inside the repository under review); the hook then rewrites .claude/agents pins or AGENTS.md in a tree that must stay read-only, or pollutes a worker patch.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/claude.rs:313",
+                                              "observation":  "CHILD_ENV_NAMES allow-list (SystemRoot, PATH, TEMP, CLAUDE_CONFIG_DIR, proxies, etc.) contains no C3_CHILD and no prefix matching it; child_environment() only forwards allowed names and puts the rest in removed."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3-core/src/claude.rs:461",
+                                              "observation":  "child_environment() builds the env from the allow-list plus DISABLE_AUTOUPDATER and endpoint vars only; C3_CHILD set by scrub_host_markers never passes through."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/mod.rs:46",
+                                              "observation":  "scrub_host_markers() sets C3_CHILD=1 on generic subprocess children, and hook_line() relies on in_c3_child() to stay read-only inside reviewers/workers."
+                                          }
+                                      ],
+                         "verification":  "Unit-test child_environment() with C3_CHILD=1 in vars and assert it survives; then run a claude-engine child and check the hook does nothing.",
+                         "remedy":  "Add C3_CHILD to the claude child environment explicitly (set C3_CHILD=1 alongside DISABLE_AUTOUPDATER=1 in child_environment/probe paths, or allow-list it), and add a test asserting a claude reviewer child sees it.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a20343-8bce-73a2-9b82-40ac3fdc9cd6",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:41:04+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  227
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  206
+                                           }
+                                       ],
+                         "claim":  "unlink_links_inside() can descend into a reparse point that reports as a directory rather than a symlink, and the remove path has a TOCTOU plus a remove_dir_all fallback that can act outside the worktree.",
+                         "trigger":  "A kimi worktree contains a junction or directory symlink into the main checkout (e.g. node_modules) that does not report is_symlink, or a new link appears after the sweep; forced removal then empties content outside the worktree.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:227",
+                                              "observation":  "Walk uses symlink_metadata; only ft.is_symlink() is unlinked, ft.is_dir() is pushed and descended. Correctness for junctions depends on them reporting is_symlink, which is platform/behavior dependent."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:206",
+                                              "observation":  "remove() unlinks first, then runs git worktree remove --force, then unconditionally falls back to std::fs::remove_dir_all(\u0026path); a link created between the sweep and the removes, or a descended target, is removed with force."
+                                          }
+                                      ],
+                         "verification":  "In a fixture worktree with a junction and a dir symlink, run the removal and confirm targets outside survive and nothing is descended.",
+                         "remedy":  "Treat directory reparse points/mount points as links (do not descend without a link check that covers junctions), re-sweep or open handles safely, drop or bound the remove_dir_all fallback, and add a junction/dir-symlink test on Windows.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a20343-8bce-73a2-9b82-40ac3fdc9cd6",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:41:04+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  835
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  126
+                                           }
+                                       ],
+                         "claim":  "c3 branches --set/--clear interpolates the branch name into a git config key, so names with dots or unusual characters can address the wrong subsection or fail; a foreign note starting with \u0027c3: \u0027 is misclassified as C3\u0027s record.",
+                         "trigger":  "--set on a branch named e.g. foo.bar or a name needing quoting, or a branch whose foreign description happens to start with \u0027c3: \u0027.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:835",
+                                              "observation":  "set_state/clear_state build key branch.{branch}.description by string interpolation and pass it to git config; parse_descriptions strips branch./.description symmetrically, which breaks down for dotted/odd names."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:126",
+                                              "observation":  "is_c3_description is a plain starts_with(\u0027c3: \u0027) on the first line, so a user\u0027s note beginning with \u0027c3: \u0027 is treated as a record and --set discards its first line."
+                                          }
+                                      ],
+                         "verification":  "Try --set/--clear on dotted and odd branch names and on a foreign note starting with \u0027c3: \u0027, then inspect git config and the preserved text.",
+                         "remedy":  "Quote/escape the config subsection (or use git config --fixed-value / branch.\u003cname\u003e via lower-level ref handling with validation), refuse or delimit ambiguous names, and require a full record parse before treating a first line as C3\u0027s.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a20343-8bce-73a2-9b82-40ac3fdc9cd6",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:41:04+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-4",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  72
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/doctor.rs",
+                                               "line":  89
+                                           }
+                                       ],
+                         "claim":  "The repair normalizes more than the model value (drops quotes and trailing comments) and misses \u0027model :\u0027 with a space before the colon in both detection and repair.",
+                         "trigger":  "An agent file with model: claude-opus-4-8 # comment, quoted ids, or \u0027model :\u0027 spacing.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/repo_models.rs:72",
+                                              "observation":  "agent_model trims and strips quotes; replace_frontmatter_model_value matches line.strip_prefix(\u0027model:\u0027) at column 0 and rewrites the whole line as \u0027model: \u003calias\u003e\u0027, discarding an inline comment."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/doctor.rs:89",
+                                              "observation":  "agent_model uses line.strip_prefix(\u0027model:\u0027) as well, so an indented or spaced key is never detected as a pin."
+                                          }
+                                      ],
+                         "verification":  "Run doctor and --fix on such files and diff byte-for-byte beyond the value.",
+                         "remedy":  "Preserve the original quoting/comment (replace only the value span) or document the normalization; also handle the spaced/odd-key forms consistently between doctor and repair.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a20343-8bce-73a2-9b82-40ac3fdc9cd6",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:41:04+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-5",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/classes.rs",
+                                               "line":  329
+                                           }
+                                       ],
+                         "claim":  "Telemetry lowercases then strips only lowercase \u0027[1m]\u0027, so an uppercase suffix such as \u0027opus[1M]\u0027 misses the closed list and is sent as \u0027other\u0027.",
+                         "trigger":  "A roster or event model spelled \u0027opus[1M]\u0027 or \u0027CLAUDE-...\u0027 variants.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/classes.rs:329",
+                                              "observation":  "model_token_closed lowercases the model but strips strip_suffix(\u0027[1m]\u0027) case-sensitively, while the claude table lookup treats the suffix case-insensitively elsewhere."
+                                          }
+                                      ],
+                         "verification":  "Call the token function with opus[1M] and check the result is the table spelling, not other.",
+                         "remedy":  "Strip the suffix case-insensitively (or compare case-insensitively) to match the roster rule.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a20343-8bce-73a2-9b82-40ac3fdc9cd6",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:41:04+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F03-6",
+                         "status":  "proposed",
+                         "severity":  "note",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  468
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  543
+                                           }
+                                       ],
+                         "claim":  "The \u0027read-only\u0027 branch paths still touch the repository (index refresh, lock files), and the full listing cost is one git cherry plus one rev-list per unmerged branch with no cap.",
+                         "trigger":  "A repository with many unmerged branches, or a caller that assumes zero writes from a read path.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:468",
+                                              "observation":  "Full scan runs git cherry and rev-list --count per unmerged branch when opts.content is set; hook uses content:false but the listing pays it."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:543",
+                                              "observation":  "Dirty count runs git status --porcelain, which refreshes the index stat info; config/worktree reads take locks."
+                                          }
+                                      ],
+                         "verification":  "Time c3 branches on a many-branch fixture and watch index mtime/lock files during read commands.",
+                         "remedy":  "Document the index/lock side effects instead of claiming read-only, and cap or parallelize the per-branch cherry work or warn on large repos.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  2,
+                                        "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                        "thread":  "01a20343-8bce-73a2-9b82-40ac3fdc9cd6",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:41:04+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-1",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  542
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/cli/branches.rs",
+                                               "line":  52
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/doctor.rs",
+                                               "line":  279
+                                           }
+                                       ],
+                         "claim":  "The c3 branches listing and c3 doctor, both described as read-only, run git status --porcelain in the primary worktree. Git refreshes the index and can create index.lock unless optional locks are disabled. The hook and c3 finish do not run status.",
+                         "trigger":  "c3 branches with no --set/--clear, or c3 doctor, in a repository whose index stat cache is stale or whose index is locked by another git process.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/cli/branches.rs:52",
+                                              "observation":  "The listing scan sets ScanOpts { content: true, dirty: true }."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:542",
+                                              "observation":  "dirty runs git status --porcelain --untracked-files=no with -C set to the primary worktree path. No --no-optional-locks."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/doctor.rs:279",
+                                              "observation":  "doctor::scan calls quick_scan(repo_root, true), so the same status runs."
+                                          },
+                                          {
+                                              "kind":  "inferred",
+                                              "reference":  "git status index refresh",
+                                              "observation":  "status updates the index stat cache and takes index.lock unless GIT_OPTIONAL_LOCKS=0 or --no-optional-locks is set. That flag is not passed."
+                                          }
+                                      ],
+                         "verification":  "In a scratch repo, compare .git/index mtime before and after c3 doctor and c3 branches.",
+                         "remedy":  "Pass --no-optional-locks (or GIT_OPTIONAL_LOCKS=0) on every status, cherry, and rev-list used by the listing, doctor, hook, and finish.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-2",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  372
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1346
+                                           }
+                                       ],
+                         "claim":  "Successors taken from the entry\u0027s own grok, agy, or endpoint model list skip the catalog date gate. A numerically higher id that is an older product (grok-4.20 versus grok-4.7) is smoked and, if the plan still answers, seated.",
+                         "trigger":  "The engine or endpoint list contains both the seated id and an older same-prefix same-suffix id with a higher version, and C3_MAINTAIN_MODELS swaps.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:372",
+                                              "observation":  "own ids are copied into cands unconditionally. public_verdict filters only the public ids in others."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:1296",
+                                              "observation":  "A candidate that is not protected, on-request, announce-only, or dry-run is smoked and apply_swap runs on Smoke::Pass. The smoke checks that the plan answered, not that the id is newer."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  ".collab/release-0.2.5/handoffs/01-claude-diff-review.md:74",
+                                              "observation":  "The live dry-run rejected grok-4.20 by catalog date, so that id was not on the own list in that run. The own-list path is still in the code."
+                                          }
+                                      ],
+                         "verification":  "Unit-test swap_plan with source grok containing grok-4.7 and grok-4.20 and a catalog created stamp that marks 4.20 older; assert it is not a SwapCandidate.",
+                         "remedy":  "Apply public_verdict to an own-list id as well when any public source has created stamps for both ids, and do not smoke it when the catalog says it is older.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-3",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/maintain/models.rs",
+                                               "line":  320
+                                           }
+                                       ],
+                         "claim":  "public_verdict treats the catalog created integer as proof the candidate is newer. A hostile or compromised catalog body can stamp an older same-family id with a later created value, pass the gate, and be seated after a smoke that only checks that the plan still serves it.",
+                         "trigger":  "A catalog JSON object whose id matches the successor rule and whose created value is greater than the seated id\u0027s created value, while the plan still answers for that older id.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/models.rs:316",
+                                              "observation":  "A catalog hit with created c and seated date cs returns Ok when c \u003e cs. The value is serde_json as_i64 from the body, with no other clock."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/version.rs:90",
+                                              "observation":  "The id itself must match valid_model_id, so this cannot break roster JSON or the smoke argv. It can still replace the model string."
+                                          }
+                                      ],
+                         "verification":  "Feed a fixture catalog where grok-4.20 has a created stamp later than grok-4.7 and a scripted smoke pass; assert the roster model does not change.",
+                         "remedy":  "Do not seat a public id on date order alone when the version pair is the known older-higher pattern, or require the smoke to observe a model identity the old id cannot produce. At minimum, refuse a candidate whose version is higher but whose id is already recorded as older in a previous state.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-4",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/cli/doctor.rs",
+                                               "line":  88
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/repo_models.rs",
+                                               "line":  251
+                                           }
+                                       ],
+                         "claim":  "c3 doctor --fix rewrites agent pins and AGENTS.md even when C3_CHILD=1. The child guard exists only in hook_line, so a reviewer or worker that runs doctor --fix edits the repository under review and the edit lands in its diff.",
+                         "trigger":  "A C3-started claude reviewer or worker, with C3_CHILD=1, runs c3 doctor --fix in the repository.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/cli/doctor.rs:88",
+                                              "observation":  "args.fix calls refresh_repo_models with the roster models and no in_c3_child check."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/repo_models.rs:250",
+                                              "observation":  "in_c3_child is consulted only at the start of hook_line."
+                                          }
+                                      ],
+                         "verification":  "With C3_CHILD=1, run c3 doctor --fix on a repo whose .claude/agents file pins claude-opus-4-8 and assert the file is unchanged.",
+                         "remedy":  "Return before refresh_repo_models when engines::in_c3_child() is true, in doctor --fix and inside refresh_repo_models itself.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-5",
+                         "status":  "proposed",
+                         "severity":  "major",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  215
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/engines/kimi.rs",
+                                               "line":  240
+                                           }
+                                       ],
+                         "claim":  "Kimi worktree removal ignores unlink failures. After unlink_links_inside, remove() always runs git worktree remove --force and remove_dir_all. A junction or directory symlink that was not classified as is_symlink, or that remove_link could not delete, is left for those deleters. The invariant requires nothing outside the worktree to be removed on any error path.",
+                         "trigger":  "A reviewer leaves a junction inside the throwaway worktree (for example node_modules pointing at the main checkout) and unlink fails or does not see it.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:215",
+                                              "observation":  "unlink_links_inside\u0027s result is discarded. git worktree remove --force and remove_dir_all always follow."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:240",
+                                              "observation":  "Only FileType::is_symlink is unlinked. Other directory entries are pushed on the walk stack."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/kimi.rs:1236",
+                                              "observation":  "The Windows test asserts a successful unlink of one junction. It does not run remove() after a failed unlink."
+                                          },
+                                          {
+                                              "kind":  "assumed",
+                                              "reference":  "git worktree remove --force on Windows",
+                                              "observation":  "This review did not establish whether Git follows a junction that is still present."
+                                          }
+                                      ],
+                         "verification":  "On Windows, hold a junction open so remove_dir fails, call the remove path, and check that a sentinel outside the worktree still exists.",
+                         "remedy":  "If unlink_links_inside did not remove every reparse point (use the same FILE_ATTRIBUTE_REPARSE_POINT test as panel/roles.rs), skip git worktree remove and remove_dir_all and leave the directory for a later prune. Do not delete when any link remains.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-6",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/engines/claude_auth.rs",
+                                               "line":  96
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/mod.rs",
+                                               "line":  1750
+                                           }
+                                       ],
+                         "claim":  "Not every process C3 starts gets C3_CHILD=1. The claude auth-status and --version probe clears the environment and does not set it. The detached maintain process is CreateProcessW with a null environment block, so it only inherits a parent that already has the variable.",
+                         "trigger":  "A launcher probe or a maintain pass spawned from a user session that does not already have C3_CHILD.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/claude_auth.rs:96",
+                                              "observation":  "probe() calls env_clear and then only the probe env pairs. scrub_host_markers is not called. Callers pass auth status and --version."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/mod.rs:1750",
+                                              "observation":  "CreateProcessW is called with lpEnvironment null. The command line is the maintain --run pass, not a Claude session."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/engines/subprocess.rs:624",
+                                              "observation":  "Reviewer and worker turns do call scrub_host_markers after env_clear, so those CLIs get C3_CHILD=1."
+                                          }
+                                      ],
+                         "verification":  "Log the environment of claude auth status as started by sign_in, and of the detached maintain pid, and check for C3_CHILD.",
+                         "remedy":  "Set C3_CHILD=1 on the probe command and in the detached maintain environment block. Document that Claude subagents must inherit it.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-7",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  216
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  592
+                                           }
+                                       ],
+                         "claim":  "Branch classification is wrong in two ordinary layouts. If origin/HEAD is unset and both main and develop exist, main is the default even when the repo\u0027s real default is develop, so merged and unknown are computed against the wrong branch. A worktree whose directory name starts with c3-kimi-wt- is dropped from the leftover count even when it is the user\u0027s.",
+                         "trigger":  "A repository with no origin/HEAD, a local main, and develop as the real default; or a worktree directory named c3-kimi-wt-notes.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:200",
+                                              "observation":  "default_branch uses origin/HEAD when that local branch exists, otherwise the first of main and master that exists, otherwise the current branch."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:592",
+                                              "observation":  "is_c3_throwaway_worktree is true when the path\u0027s file name starts with c3-kimi-wt-. The scan skips those worktrees."
+                                          }
+                                      ],
+                         "verification":  "In a repo with branches main and develop, no origin/HEAD, and develop checked out, run c3 branches and read default_branch. Add a worktree whose folder name starts with c3-kimi-wt- and confirm it is absent.",
+                         "remedy":  "Prefer init.defaultBranch and the branch HEAD is born from over a hard-coded main. Treat a worktree as throwaway only when its path is under the temp directory and the name matches the prefix plus the uuid pattern.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-8",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/telemetry/classes.rs",
+                                               "line":  344
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  213
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/maintain/env.rs",
+                                               "line":  263
+                                           }
+                                       ],
+                         "claim":  "Two privacy and fetch bounds are wider than the stated invariants. For vendor class anthropic, any id of the shape claude-(fable|opus|sonnet|haiku)-\u003cdigits\u003e[-\u003cdigits\u003e] is sent by name even when it is not in the closed list or the published set. Catalog reads stop at HTTP_BODY_CAP (8 MiB), not the 4 MiB BODY_CAP, and the redirect allow-list permits code.kimi.ai to cdn.kimi.ai for every keyless GET, not only the installer.",
+                         "trigger":  "A reviewer classified as anthropic (engine claude with no private base_url, or a host under anthropic.com) whose model is a custom id of that shape; or a catalog that redirects or sends a 5 to 8 MiB body.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/telemetry/classes.rs:344",
+                                              "observation":  "After the closed list misses, class anthropic returns the lowercased id when is_published_claude_shape matches. published_ids is not consulted."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:213",
+                                              "observation":  "HTTP_BODY_CAP is 8 * 1024 * 1024. read_capped uses that cap. web.rs BODY_CAP is 4 MiB and is applied only after a successful read."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/maintain/env.rs:263",
+                                              "observation":  "redirect_target allows REDIRECT_HOSTS (code.kimi.ai, cdn.kimi.ai) for every follow_redirects GET, including web::keyless_get."
+                                          }
+                                      ],
+                         "verification":  "Emit a telemetry model token for engine claude and model claude-opus-9-9 with an empty published set. Fetch a catalog through a 302 from code.kimi.ai to cdn.kimi.ai and confirm it is followed.",
+                         "remedy":  "Send a Claude-shaped id only when it is in CLAUDE_MODELS or the published set. Cap the keyless read at BODY_CAP inside http_get when the caller is the catalog fetch. Restrict the kimi CDN pair to the installer URLs.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     },
+                     {
+                         "id":  "F04-9",
+                         "status":  "proposed",
+                         "severity":  "minor",
+                         "locations":  [
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  126
+                                           },
+                                           {
+                                               "path":  "crates/c3/src/setup/branches.rs",
+                                               "line":  833
+                                           }
+                                       ],
+                         "claim":  "--clear deletes the first line of any description that starts with c3: , including a human note that does not parse as a record. --set, if git config --get fails, treats the description as empty and overwrites it, dropping a foreign note it could not read.",
+                         "trigger":  "A branch description whose first line is c3: hello, or a git config --get that exits non-zero while a description is present.",
+                         "evidence":  [
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:126",
+                                              "observation":  "is_c3_description is starts_with(\"c3: \"). clear_state removes that first line whenever this is true, without BranchRecord::parse."
+                                          },
+                                          {
+                                              "kind":  "read-code",
+                                              "reference":  "crates/c3/src/setup/branches.rs:833",
+                                              "observation":  "read_description(...).unwrap_or_default() turns a failed read into an empty string, then git config writes the new record over the key."
+                                          }
+                                      ],
+                         "verification":  "Set a description to c3: not a record\\nkeep me and run c3 branches --clear. Separately, make git config --get fail and run --set; check whether the previous value remains.",
+                         "remedy":  "Treat a c3: line as C3\u0027s only when BranchRecord::parse succeeds; otherwise leave it. If the read fails, abort --set instead of writing.",
+                         "supersedes":  [
+
+                                        ],
+                         "superseded_by":  [
+
+                                           ],
+                         "source":  {
+                                        "consult":  3,
+                                        "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                        "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                        "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                        "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                    },
+                         "history":  [
+                                         {
+                                             "when":  "2026-11-22T13:53:29+01:00",
+                                             "status":  "proposed",
+                                             "by":  "codex-consult",
+                                             "note":  "",
+                                             "evidence":  "",
+                                             "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                             "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8"
+                                         }
+                                     ],
+                         "reviewer_checks":  [
+
+                                             ]
+                     }
+                 ],
+    "ratings":  [
+                    {
+                        "n":  1,
+                        "consult_id":  "250658d8-b7e4-419f-a061-efda8db537e5",
+                        "lineage":  "openai :: gpt-6.2-sol",
+                        "provider":  "openai",
+                        "model":  "gpt-6.2-sol",
+                        "engine":  "codex",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-22T13:37:39+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-22T13:54:29+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795352069
+                    },
+                    {
+                        "n":  2,
+                        "consult_id":  "b879cabc-52f2-474f-ba41-75ce041a5250",
+                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                        "provider":  "meta",
+                        "model":  "muse-spark-1.3-contributor",
+                        "engine":  "muse",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-22T13:38:06+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-22T13:54:29+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795352069
+                    },
+                    {
+                        "n":  3,
+                        "consult_id":  "d124a38e-da48-4b35-9af9-7293cafd4520",
+                        "lineage":  "grok :: grok-4.7 [grok]",
+                        "provider":  "grok",
+                        "model":  "grok-4.7",
+                        "engine":  "grok",
+                        "purpose":  "diff-review",
+                        "topics":  [
+
+                                   ],
+                        "consult_when":  "2026-11-22T13:38:06+01:00",
+                        "useful":  "yes",
+                        "note":  "",
+                        "when":  "2026-11-22T13:54:29+01:00",
+                        "rating_rev":  1,
+                        "judge":  {
+                                      "provider":  "anthropic",
+                                      "model":  "other",
+                                      "source":  "consult_coordinator"
+                                  },
+                        "telemetry_sent":  1795352069
+                    }
+                ]
+}

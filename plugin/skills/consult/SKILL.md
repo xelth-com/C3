@@ -56,7 +56,8 @@ stops its main turn at `--budget` (default 90 % of the 5-hour window, env `CODEX
 `0` = off) and keeps the partial; it turns the reviewer's sub-agents OFF (`-c features.multi_agent=false`
 and, for codex-cli 0.169.0's multi-agent v2, `-c agents.enabled=false`), and a guard stops any run that
 spawns one anyway; `--codex-config features.multi_agent=true` (or `agents.enabled=true`) allows them
-instead; a `--mode fork` or
+instead; it also runs the reviewer without your Codex plugins and skill list (`-c features.plugins=false
+-c skills.include_instructions=false`); a `--mode fork` or
 `resume` whose parent rollout is over `CODEX_CONSULT_FORK_MAX_KB` (512) is refused - start a NEW
 thread (`--mode new`) and point the brief at the earlier reply instead of forking a large thread. The
 ledger's `quota` and `tokens` say what each run spent (`docs/port/wave8-quota.md`).

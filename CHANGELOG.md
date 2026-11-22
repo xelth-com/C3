@@ -73,6 +73,15 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   public lists, the announcements and the swaps per mode - no CLI checked or updated, `next_due`
   and the engine records untouched. `--dry-run` collects and says what it would announce and swap,
   with no smoke, no roster edit and no state written.
+- **The codex smoke proves the sub-agent switch.** A Codex CLI update can silently break the
+  bridge's off switches (codex-cli 0.169.0 did, and two runs spent 14 % of a ChatGPT week in five
+  minutes), and `c3 maintain` would have installed it: its smoke only checked that a reply came
+  back. The codex smoke now reads the rollout of every thread its two turns recorded and fails when a
+  thread shows a `multi_agent_version` other than `disabled`, offers or calls a multi-agent tool
+  (`spawn_agent`, `send_message`, `wait_agent`, `list_agents`, `close_agent`, `interrupt_agent`, or
+  anything in the `collaboration` namespace), so a post-update smoke rolls the update back. A
+  missing rollout, or one naming neither a version nor a tool list, fails too: the switch is then
+  unproven and the budget watch's sub-agent guard reads the same rollouts.
 
 ### Changed
 
@@ -103,6 +112,18 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
   version not lower (`qwen4-max` beside `qwen3.8-max`, `glm-6` beside `glm-5.3`,
   `muse-spark-2.0` beside `muse-spark-1.3`) is now accepted with the host's vocabulary, so a
   successor `c3 maintain` found can be smoked; any other unlisted id is still refused.
+- **A codex reviewer no longer inherits the operator's plugins and skills.** `codex exec` loaded the
+  plugins enabled in `~/.codex/config.toml` and listed their skills - the coordinator skills
+  `c3:coordinate` and `codex-consult:coordinate` among them - to the reviewer, which once read one
+  and acted as a coordinator. Every codex review turn now also passes `-c features.plugins=false -c
+  skills.include_instructions=false` (whatever the sub-agent opt-in; a key the operator's
+  `--codex-config` names is left to them); agent roles were already off with
+  `agents.enabled=false`. Checked on codex-cli 0.169.0 (ZAI): 30 skills listed before, 14 with
+  plugins off, none with both. `c3 work` worker turns are unchanged. The global
+  `~/.codex/AGENTS.md` still reaches a codex reviewer (switching project docs off would also drop
+  the reviewed repository's own AGENTS.md), so every review prompt, on every engine, now ends its
+  Constraints paragraph with: the reviewer is not a coordinator and ignores instructions it finds
+  about delegating, spawning workers or sub-agents, or finishing or committing tasks.
 
 ### Fixed
 
@@ -130,6 +151,47 @@ plugin's own waves. Each wave's details are in `docs/port/wave*.md`.
 - **`claude-fable-5-2` (the current Fable) was missing from the closed Claude model table**, so a
   roster entry naming it was refused. It is added to the table in `c3-core` and the telemetry class
   list, and to the model lists in `README.md` and the setup-providers skill.
+- **agy's (Gemini's) reply is no longer thrown away by the tree check.** Every agy panel seat of
+  2026-11-07 was marked FAILED although its reply was complete: agy's `finish` call - its normal
+  reply hand-over - was taken for a writing tool, and files that workers and the coordinator edited
+  meanwhile failed the post-check. A tool step is now judged from agy's own tool log: it is a write
+  only when it names a path, file, directory or command and is not a known reader, or when its
+  parameters were not logged; the `finish` hand-over and a tool given no path or command are not.
+  When the reply file and `reply.json` are complete and schema-valid, a tree or collab change the
+  log does not explain is a warning (`... - reply kept`) and the ledger entry and scoreboard mark
+  are written; a real writing call still fails the run. `c3 providers` now prints, per reviewer over
+  its 14-day ledger window, `usable / failed with a reply / failed without a reply`, and `--json`
+  carries it as `reply_outcomes` (per row, and per entry with `--short`).
+- **A kimi seat no longer answers without its brief, and a panel member no longer sees a sibling's
+  finding as "prior".** kimi reviews a throwaway worktree of HEAD; since 0.2.4 the brief is copied
+  in at its repo-relative path. A brief that is neither committed at HEAD nor copyable (a relative
+  path leaving the repository) now refuses the seat before the child starts, worded as a
+  preflight-class refusal so a panel re-seats it. The kimi prompt names the paths that were
+  uncommitted in the live tree at launch (at most 20, then a count), not only the handoff header.
+  A panel member's prior-blocker lines, ACCEPT checks and `unchecked_prior_blockers` are judged
+  against the pre-panel snapshot it was shown, not the findings store at render time - a sibling's
+  new blocker no longer shows up as `(prior, not-checked)` in members that were already running.
+  A reply that only says it cannot read the brief is NOT reclassified: kimi's stream carries no
+  error flag on a tool result, so no robust signal exists.
+- **A detached run that died in a read-insist re-ask gets a complete death record.** The death
+  record's `events_file` / `last_event` / `events_mtime` / `partial_hint` were read only from
+  `.consult.pending*` records, which the commit removes and a re-ask never writes, so they stayed
+  empty; the run now names the stream of the turn that ended it (the summary's `events file:`) and
+  where its reply lies, and the death record falls back to that. A zero-tool guard failure's own
+  wall is folded into the run's wall (it was 0 s with no re-ask). The consult reference now states
+  that grok's read-only tools can read outside the repository (a sibling worktree,
+  `~/.cargo/registry`) - documented, not restricted.
+- **The sub-agent guard is bounded by the turn's launch (F13-1).** It counted a `spawn_agent` call
+  from the time the budget watch starts, taken after the spawn, a slow `on_running` and the stdin
+  write and set two seconds back: a historical call from the last two seconds before a resumed turn
+  still stopped it, and a current call made before a slow `on_running` returned was not counted. The
+  guard now takes its own boundary just before the spawn; the budget watch keeps its backdated one.
+- **The sub-agent guard on a forked thread.** Observed on codex-cli 0.169.0: a `codex exec ... fork`
+  rollout holds only the fork's own lines (its `session_meta` references the parent's history through
+  `history_base`), so the time bound holds. A history copied into a rollout - as in multi-agent v2's
+  inline-forked sub-agent rollouts - is re-stamped with the fork's time, so for a fork without
+  `history_base` the guard now also starts its scan at the rollout's last `task_started` line, the
+  current turn's first line: a copied call no longer stops it.
 
 ## [0.2.4] - 2026-11-18
 

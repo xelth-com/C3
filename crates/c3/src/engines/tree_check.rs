@@ -171,8 +171,8 @@ fn task_owned_ignores(task: &str) -> Vec<String> {
     ]
 }
 
-/// Whether an `agy` tool name is a writing/command-running tool. agy enforces no read-only sandbox,
-/// so the tree check must decide read-only vs writing from the tool name alone — and it does so with
+/// Whether an `agy` tool name is a writing/command-running tool BY NAME ALONE (the first test of
+/// [`agy_tool_step_is_writing`], which also reads the step's logged parameters). The name test uses
 /// an EXACT allow-list, never a substring match (a substring match let writing tools pass: `ls`
 /// matched `tools`/`calls`, `find` matched `find_and_replace`, `read` matched `find_and_replace`'s
 /// neighbours). Only a name on [`AGY_READ_ONLY_TOOLS`] is read-only; EVERYTHING else — an unknown
@@ -183,6 +183,53 @@ pub fn agy_tool_is_writing(tool: &str) -> bool {
     let t = tool.trim().to_ascii_lowercase();
     !AGY_READ_ONLY_TOOLS.contains(&t.as_str())
 }
+
+/// (A1) Whether ONE agy tool step may have written, decided from the step's own tool-log entry
+/// rather than from a list of write-tool names (a list misses every new tool: agy's `finish` - its
+/// normal reply hand-over - was taken for a write on every panel seat of 2026-11-07). A step is NOT
+/// writing when:
+///   * its name is on [`AGY_READ_ONLY_TOOLS`] (a known read-only file tool); or
+///   * it is the run's hand-over step (`handover`: the stream closed its `step_index` with a
+///     `step_type: "finish"` event - agy's `finish` tool, whose parameters ARE the reply); or
+///   * agy logged its `tool_info.parameters` as an object and no top-level parameter names a
+///     filesystem location or a command ([`agy_param_names_fs_target`]) - a tool that is given no
+///     path, file, directory or command cannot touch the filesystem.
+///
+/// Everything else is writing - in particular a step whose parameters were not logged (the nature
+/// of the tool is unknown) and every tool that names a path or a command and is not a known reader
+/// (fail-safe: a writing call FAILS the run even when the monitored compare is clean).
+pub fn agy_tool_step_is_writing(
+    name: &str,
+    parameters: Option<&serde_json::Value>,
+    handover: bool,
+) -> bool {
+    if !agy_tool_is_writing(name) || handover {
+        return false;
+    }
+    match parameters.and_then(|p| p.as_object()) {
+        Some(obj) => obj.keys().any(|k| agy_param_names_fs_target(k)),
+        None => true,
+    }
+}
+
+/// (A1) Whether an agy tool parameter NAME names a filesystem location or a command: the name,
+/// lowercased with every non-alphanumeric dropped (`TargetFile`, `AbsolutePath`, `CommandLine`,
+/// `Cwd`, `dir_path`), contains one of [`AGY_FS_PARAM_MARKERS`]. A false positive only makes a
+/// non-writing tool count as writing (fail-safe).
+pub fn agy_param_names_fs_target(key: &str) -> bool {
+    let k: String = key
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    AGY_FS_PARAM_MARKERS.iter().any(|m| k.contains(m))
+}
+
+/// (A1) The parameter-name fragments that mark an agy tool as touching the filesystem (a path, a
+/// file, a directory, a working directory, a command line, a write target, a file URI).
+pub const AGY_FS_PARAM_MARKERS: &[&str] = &[
+    "path", "file", "dir", "folder", "cwd", "command", "cmd", "target", "uri",
+];
 
 /// agy's known read-only tool names. Only `read_file` and `view_file` are CONFIRMED by the agy
 /// fixtures (`crates/c3/src/engines/agy.rs`, `crates/c3-cli/tests/compat_wave2b.rs` — where
@@ -353,6 +400,63 @@ mod tests {
         assert!(agy_tool_is_writing("find"));
         // An unknown/empty name is treated as writing.
         assert!(agy_tool_is_writing(""));
+    }
+
+    // (A1) the step classifier reads the tool's nature from its own log entry, not a name list.
+    #[test]
+    fn agy_tool_step_classifier_reads_the_tool_log() {
+        use serde_json::json;
+        // agy's `finish` is the reply hand-over: not writing, as the hand-over step AND by its
+        // parameters (the reply's fields name no path or command) - the live 2026-11-07 shape.
+        let finish = json!({"findings": [{"locations": [{"path": "a.rs", "line": 1}]}],
+            "first_run_checklist": [], "prior_findings": [], "reply_markdown": "m",
+            "schema_version": "1", "unproven": [], "verdict": "HOLD", "verdict_reason": "r"});
+        assert!(!agy_tool_step_is_writing("finish", Some(&finish), true));
+        assert!(!agy_tool_step_is_writing("finish", Some(&finish), false));
+        // the hand-over step is not writing whatever its parameters say.
+        assert!(!agy_tool_step_is_writing("finish", None, true));
+        // a NEW tool that is given no path, file, directory or command touches no file.
+        assert!(!agy_tool_step_is_writing(
+            "search_web",
+            Some(&json!({"query": "rust tokio"})),
+            false
+        ));
+        assert!(!agy_tool_step_is_writing("noop", Some(&json!({})), false));
+        // known readers stay read-only even though they name a path.
+        assert!(!agy_tool_step_is_writing(
+            "read_file",
+            Some(&json!({"Path": "C:/r/a.rs", "StartLine": 1})),
+            false
+        ));
+        assert!(!agy_tool_step_is_writing(
+            "view_file",
+            Some(&json!({"AbsolutePath": "C:/r/a.rs"})),
+            false
+        ));
+        // writing tools name a target file, a command line or a working directory.
+        assert!(agy_tool_step_is_writing(
+            "write_to_file",
+            Some(&json!({"TargetFile": "a.rs", "CodeContent": "x"})),
+            false
+        ));
+        assert!(agy_tool_step_is_writing(
+            "run_command",
+            Some(&json!({"CommandLine": "rm -rf x", "Cwd": "."})),
+            false
+        ));
+        assert!(agy_tool_step_is_writing(
+            "replace_file_content",
+            Some(&json!({"target_file": "a.rs"})),
+            false
+        ));
+        // an unknown tool whose parameters were not logged is writing (fail-safe), as is an
+        // unnamed one.
+        assert!(agy_tool_step_is_writing("run_command", None, false));
+        assert!(agy_tool_step_is_writing("", None, false));
+        // the parameter-name test folds case and separators.
+        assert!(agy_param_names_fs_target("dir_path"));
+        assert!(agy_param_names_fs_target("AbsolutePath"));
+        assert!(!agy_param_names_fs_target("verdict_reason"));
     }
 
     #[test]

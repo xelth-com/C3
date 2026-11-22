@@ -100,6 +100,11 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   with `--resume`; files `handoffs/<NN>-grok-<slug>.*`. The tree check only WARNS. `XAI_API_KEY` /
   `GROK_CODE_XAI_API_KEY` are stripped from the child (they would bill the API per token) unless
   `C3_GROK_ALLOW_API_KEY=1`; `c3 providers` names the billing route. Reviewer use only (no `c3 work`).
+  **Read scope:** the read-only tools are NOT confined to the repository - grok can read any path
+  its user account can, e.g. a sibling worktree (`../<repo>-wt-<branch>`) or `~/.cargo/registry`
+  (observed live, 2026-11-15). That is by design: no restriction is applied, a review may follow a
+  dependency or a branch checked out next door. Do not brief grok with anything outside the
+  repository you would not show it, and do not take "it read only the repository" for granted.
   The reply schema travels in the prompt (`prompt-only`, the default since 0.2.4;
   `--schema-transport native` passes `--json-schema` for one run): with the native flag Grok's
   opening remark came out as a schema-shaped placeholder answer that ended the turn before any file
@@ -136,7 +141,12 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
   (`--yolo`/`--auto`/`--plan` all refuse to combine with `--prompt`) and CAN write, so every kimi
   turn runs with its cwd set to a throwaway detached git worktree of HEAD (removed after the run; the
   handoff header's `Isolation:` line records the path and HEAD sha, and notes when the main tree was
-  dirty at launch). The strict tree check on the MAIN tree stays as the second guard: any
+  dirty at launch). The brief is copied into that worktree at its repo-relative path (an untracked
+  brief of a new task too); a brief that is neither committed at HEAD nor copyable (a relative path
+  that leaves the repository) refuses the seat BEFORE launch with `the kimi seat is not usable: the
+  brief ...` - a preflight-class refusal, so a panel re-seats it from its reserve. When the live tree
+  is dirty, the prompt itself names the uncommitted paths (at most 20, then `(+N more)`) the reviewer
+  cannot see as they are. The strict tree check on the MAIN tree stays as the second guard: any
   working-tree or collab change there FAILS the run (stricter than grok/muse, which only warn). The
   same zero-tool-call review guard as grok applies on the reviewing purposes, including the
   read-insist re-ask (`CODEX_CONSULT_READ_INSIST`) before the guard fails. Reviewer use only (no
@@ -149,7 +159,14 @@ a non-codex launcher (env `CODEX_CONSULT_AGY_EXE` / `CODEX_CONSULT_MUSE_EXE`).
 **Live-member / read-only-by-evidence rule.** An `agy` or `muse` run FAILS (agy) or WARNS
 (muse) if the working tree or the collab directory changed during it — do not edit the
 repository or run another consultation here while one runs. `http` is write-disabled and only
-warns. This binds workers too (see the `coordinate` skill).
+warns. This binds workers too (see the `coordinate` skill). agy fails only on evidence from its
+own tool log: a tool step that names a path, file, directory or command and is not a known
+reader (`read_file`, `view_file`, ...), or one whose parameters were not logged. Its `finish` step
+(the reply hand-over) and a tool given no path or command are not writes. When agy's reply is
+complete and schema-valid, a change its log does not explain is a WARNING (`... - reply kept`):
+the ledger entry and the scoreboard mark are written. `c3 providers` shows, per reviewer over 14
+days, `usable / failed with a reply / failed without a reply` (`--json`: `reply_outcomes`), so a
+reviewer whose "failures" kept a reply is visible before it is dropped from the roster.
 
 A reviewer killed on its timeout gets ONE continuation turn on its own thread
 (`--continue-sec`); its salvaged partial is `handoffs/<NN>-<engine>-<slug>.partial.md` and the

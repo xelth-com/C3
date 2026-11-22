@@ -582,6 +582,117 @@ fn read_insist_disabled_fails_on_the_first_turn() {
     assert_eq!(e.turns().len(), 1, "only the primary turn: {:?}", e.turns());
 }
 
+#[test]
+fn a_guard_failure_run_reports_the_zero_tool_primarys_wall() {
+    // (A1) the zero-tool guard turns the primary into a `ProviderFailure`, which carries no wall:
+    // the primary's own seconds must still be the run's wall (before: `wall_seconds` 0 for a guard
+    // failure with no re-ask, and only the re-asks' seconds with them).
+    let e = setup("guard-wall");
+    let _o = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "acceptance",
+        ],
+        &[("CODEX_CONSULT_READ_INSIST", "0")],
+    );
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .contains("(0 tool calls)"),
+        "{last}"
+    );
+    assert!(
+        last["wall_seconds"].as_f64().unwrap_or(0.0) > 0.0,
+        "a guard-failure run reports its primary turn's wall: {last}"
+    );
+}
+
+#[test]
+fn a_detached_run_that_died_in_a_read_insist_turn_names_its_stream_in_the_death_record() {
+    // (A1) a detached diff-review: the zero-tool primary is re-asked, the re-ask reads and then
+    // crashes (no end event, exit 1). The run commits a failure, so the background writes a death
+    // record - and since the commit removed the run's pending record (and a re-ask writes none),
+    // its events_file / events_mtime / partial_hint now come from the stream the run named itself.
+    let e = setup("detach-insist-death");
+    let placeholder = e.work.join("placeholder.json");
+    std::fs::write(
+        &placeholder,
+        r#"{"schema_version":"1","verdict":"HOLD","verdict_reason":"PLACEHOLDER","reply_markdown":"PLACEHOLDER","findings":[],"prior_findings":[],"unproven":[],"first_run_checklist":[]}"#,
+    )
+    .unwrap();
+    let interim = e.work.join("interim.txt");
+    std::fs::write(&interim, "INTERIM-REVIEW-TEXT before it died").unwrap();
+    let fg = e.consult(
+        &[
+            "--engine",
+            "grok",
+            "--model",
+            "grok-4.7",
+            "--purpose",
+            "diff-review",
+            "--detach",
+        ],
+        &[
+            ("FAKE_GROK_REPLY", &placeholder.to_string_lossy()),
+            ("FAKE_GROK_RESUME_REPLY", &interim.to_string_lossy()),
+            ("FAKE_GROK_RESUME_TOOL_CALLS", "2"),
+            ("FAKE_GROK_RESUME_NO_END", "1"),
+        ],
+    );
+    assert_eq!(fg.status.code(), Some(0), "{}", text(&fg));
+    let task_dir = e.repo.join(".collab").join("t");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    let status: Value = loop {
+        let found = std::fs::read_dir(&task_dir).ok().and_then(|rd| {
+            rd.flatten().map(|x| x.path()).find(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with(".consult.detached-") && n.ends_with(".status.json"))
+                    .unwrap_or(false)
+            })
+        });
+        if let Some(p) = found {
+            let v: Value = std::fs::read_to_string(&p)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or(Value::Null);
+            if v["state"] == "done" {
+                break v;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the detached run never finished"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    };
+    assert_ne!(status["exit"], 0, "the run failed: {status}");
+    let death = &status["death"];
+    assert_eq!(death["recorded_by"], "background", "{status}");
+    let events_file = death["events_file"].as_str().unwrap_or("");
+    assert!(
+        events_file.ends_with("read-insist-1.events.jsonl"),
+        "the death record names the dead re-ask's stream: {death}"
+    );
+    assert!(
+        !death["events_mtime"].as_str().unwrap_or("").is_empty(),
+        "{death}"
+    );
+    assert!(
+        death["partial_hint"]
+            .as_str()
+            .unwrap_or("")
+            .contains("read-insist-1.events.jsonl"),
+        "{death}"
+    );
+}
+
 // ------------------------------ the hard guard on a non-review grok purpose (brief by reference)
 
 #[test]

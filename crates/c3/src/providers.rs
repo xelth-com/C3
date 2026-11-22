@@ -140,6 +140,9 @@ struct Prepared {
     /// (roster balance) The concentration warning line when one reviewer carried more than half of
     /// this repository's recent consultations; `None` otherwise.
     concentration: Option<String>,
+    /// (A1) Per reviewer, this repository's reply outcomes over the concentration window: usable /
+    /// failed with a reply / failed without a reply.
+    reply_outcomes: Vec<ReplyOutcomes>,
 }
 
 fn prepare(opts: &Options) -> Result<Prepared, String> {
@@ -310,6 +313,9 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
         utc_now,
     )
     .map(|c| c.line());
+    // (A1) the same ledger window, per reviewer: how many replies were usable, how many failed with
+    // a reply preserved (a bridge false negative is visible here) and how many produced none.
+    let reply_outcomes = reply_outcomes(&ctx.consults[..repo_consult_count], utc_now);
 
     Ok(Prepared {
         ctx,
@@ -321,6 +327,7 @@ fn prepare(opts: &Options) -> Result<Prepared, String> {
         availability_records,
         availability_line,
         concentration,
+        reply_outcomes,
     })
 }
 
@@ -335,6 +342,7 @@ fn run_inner(opts: &Options) -> Result<i32, String> {
                 &p.health_source,
                 &p.availability_records,
                 &p.ctx.roster,
+                &p.reply_outcomes,
             );
         } else {
             println!("{}", p.availability_line);
@@ -346,7 +354,7 @@ fn run_inner(opts: &Options) -> Result<i32, String> {
     }
 
     if opts.json {
-        print_rows_json(&p.rows);
+        print_rows_json(&p.rows, &p.reply_outcomes);
     } else {
         print_table(
             &p.ctx,
@@ -359,6 +367,10 @@ fn run_inner(opts: &Options) -> Result<i32, String> {
         );
         if let Some(c) = &p.concentration {
             println!("{c}");
+        }
+        // (A1) the per-reviewer reply outcomes of the ledger window (one provider's with -Provider).
+        for l in reply_outcome_lines(&p.reply_outcomes, &opts.provider) {
+            println!("{l}");
         }
     }
 
@@ -2018,10 +2030,16 @@ fn effort_column(row: &Row) -> String {
     }
 }
 
-fn print_rows_json(rows: &[Row]) {
+fn print_rows_json(rows: &[Row], outcomes: &[ReplyOutcomes]) {
     let arr: Vec<Value> = rows
         .iter()
         .map(|r| {
+            // (A1) the reviewers of this row's provider, with their reply outcomes in the window.
+            let reply_outcomes: Vec<Value> = outcomes
+                .iter()
+                .filter(|o| o.provider == r.name)
+                .map(|o| o.json())
+                .collect();
             json!({
                 "name": r.name,
                 "engine": r.engine,
@@ -2041,6 +2059,7 @@ fn print_rows_json(rows: &[Row]) {
                 "verdict": r.verdict,
                 "health_source": r.health_source,
                 "quota": r.quota.clone().unwrap_or(Value::Null),
+                "reply_outcomes": reply_outcomes,
             })
         })
         .collect();
@@ -2293,10 +2312,17 @@ fn print_short_json(
     health_source: &str,
     records: &[AvailabilityRecord],
     roster: &Roster,
+    outcomes: &[ReplyOutcomes],
 ) {
     let entries: Vec<Value> = records
         .iter()
         .map(|r| {
+            // (A1) this entry's reply outcomes in the ledger window (`null` when it has none).
+            let ro = outcomes
+                .iter()
+                .find(|o| o.provider == r.provider && o.model == r.model)
+                .map(|o| o.json())
+                .unwrap_or(Value::Null);
             json!({
                 "position": r.position,
                 "provider": r.provider,
@@ -2310,6 +2336,7 @@ fn print_short_json(
                 "short": r.short,
                 "hit": r.hit.map(|h| Value::String(format_offset_iso(h))).unwrap_or(Value::Null),
                 "until": r.until.map(|u| Value::String(format_offset_iso(u))).unwrap_or(Value::Null),
+                "reply_outcomes": ro,
             })
         })
         .collect();
@@ -2587,6 +2614,127 @@ fn concentration_warning(
     } else {
         None
     }
+}
+
+// ---- per-reviewer reply outcomes (A1)
+
+/// (A1) One reviewer's reply outcomes over this repository's ledger window
+/// ([`CONCENTRATION_WINDOW_DAYS`]): a usable reply, a failed run whose reply was preserved
+/// (`reply_json` names it - the bridge failed a reply that exists, e.g. a tree post-check), and a
+/// failed run with no reply at all. Lets an operator see that a reviewer's "failures" are bridge
+/// false negatives before dropping it from the roster.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ReplyOutcomes {
+    pub provider: String,
+    pub model: String,
+    pub usable: usize,
+    pub failed_with_reply: usize,
+    pub failed_no_reply: usize,
+}
+
+impl ReplyOutcomes {
+    /// `provider :: model`.
+    pub fn reviewer(&self) -> String {
+        c3_core::lineage::format_lineage(&self.provider, &self.model)
+    }
+
+    /// The `--json` object.
+    fn json(&self) -> Value {
+        json!({
+            "reviewer": self.reviewer(),
+            "provider": self.provider,
+            "model": self.model,
+            "usable": self.usable,
+            "failed_with_reply": self.failed_with_reply,
+            "failed_no_reply": self.failed_no_reply,
+        })
+    }
+}
+
+/// (A1) Count each reviewer's reply outcomes from the recorded consultations whose `when` lies in
+/// `[now - CONCENTRATION_WINDOW_DAYS, now]`: a usable `bridge_outcome` ([`c3_core::health::
+/// is_usable_outcome`]) is usable; a `failed...` one is "with a reply" when its `reply_json` names
+/// a preserved reply, else "without a reply"; anything else (no outcome) is not counted. Sorted by
+/// reviewer. Pure: no clock, no I/O.
+fn reply_outcomes(consults: &[Value], now: DateTime<Utc>) -> Vec<ReplyOutcomes> {
+    let cutoff = now - chrono::Duration::days(CONCENTRATION_WINDOW_DAYS);
+    let mut by: std::collections::BTreeMap<(String, String), ReplyOutcomes> =
+        std::collections::BTreeMap::new();
+    for c in consults {
+        let rev = c.get("reviewer");
+        let field = |k: &str| {
+            rev.and_then(|r| r.get(k))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        let (provider, model) = (field("provider"), field("model"));
+        if provider.is_empty() && model.is_empty() {
+            continue;
+        }
+        let when = c.get("when").and_then(|v| v.as_str()).unwrap_or("");
+        let in_window = DateTime::parse_from_rfc3339(when)
+            .map(|d| {
+                let w = d.with_timezone(&Utc);
+                w >= cutoff && w <= now
+            })
+            .unwrap_or(false);
+        if !in_window {
+            continue;
+        }
+        let outcome = c
+            .get("bridge_outcome")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let has_reply = c
+            .get("reply_json")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty());
+        let usable = c3_core::health::is_usable_outcome(outcome);
+        if !usable && !outcome.starts_with("failed") {
+            continue;
+        }
+        let e = by
+            .entry((provider.clone(), model.clone()))
+            .or_insert_with(|| ReplyOutcomes {
+                provider,
+                model,
+                ..Default::default()
+            });
+        if usable {
+            e.usable += 1;
+        } else if has_reply {
+            e.failed_with_reply += 1;
+        } else {
+            e.failed_no_reply += 1;
+        }
+    }
+    by.into_values().collect()
+}
+
+/// (A1) The long view's reply-outcome block: a header and one line per reviewer (only `provider`'s
+/// reviewers when it is non-empty); nothing when the window holds no consultation.
+fn reply_outcome_lines(outcomes: &[ReplyOutcomes], provider: &str) -> Vec<String> {
+    let shown: Vec<&ReplyOutcomes> = outcomes
+        .iter()
+        .filter(|o| provider.is_empty() || o.provider == provider)
+        .collect();
+    if shown.is_empty() {
+        return Vec::new();
+    }
+    let mut out = vec![format!(
+        "reply outcomes in {CONCENTRATION_WINDOW_DAYS} days (usable / failed with a reply / failed without a reply):"
+    )];
+    for o in shown {
+        out.push(format!(
+            "  {}: {} / {} / {}",
+            o.reviewer(),
+            o.usable,
+            o.failed_with_reply,
+            o.failed_no_reply
+        ));
+    }
+    out
 }
 
 fn count_task_ledgers(collab_root: &Path) -> usize {
@@ -3593,6 +3741,71 @@ mod concentration_tests {
         let got = concentration_pairs(&[good, no_rev, bad_time]);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].0, "openai :: gpt-6-astra");
+    }
+
+    // (A1) the per-reviewer reply outcomes over the same ledger window.
+    #[test]
+    fn reply_outcomes_split_usable_failed_with_and_without_a_reply() {
+        let now = Utc::now();
+        let at = |days: i64| (now - chrono::Duration::days(days)).to_rfc3339();
+        let c = |p: &str, m: &str, days: i64, outcome: &str, reply_json: &str| {
+            json!({"reviewer": {"provider": p, "model": m}, "when": at(days),
+                   "bridge_outcome": outcome, "reply_json": reply_json})
+        };
+        let consults = vec![
+            c("gemini", "g", 1, "usable reply", "h/04.reply.json"),
+            c(
+                "gemini",
+                "g",
+                1,
+                "failed: the working tree changed during the run",
+                "h/05.reply.json",
+            ),
+            c(
+                "gemini",
+                "g",
+                2,
+                "failed: the working tree changed during the run",
+                "h/06.reply.json",
+            ),
+            c("gemini", "g", 3, "failed: agy exit 1 - quota", ""),
+            // outside the window: not counted
+            c("gemini", "g", 30, "failed: x", "h/01.reply.json"),
+            c(
+                "openai",
+                "a",
+                1,
+                "usable reply (after a timeout continuation)",
+                "h/07.reply.json",
+            ),
+            // no outcome at all: not counted (no row is made for it)
+            c("meta", "m", 1, "", ""),
+            // no reviewer: skipped
+            json!({"when": at(1), "bridge_outcome": "usable reply"}),
+        ];
+        let got = reply_outcomes(&consults, now);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(
+            got[0],
+            ReplyOutcomes {
+                provider: "gemini".into(),
+                model: "g".into(),
+                usable: 1,
+                failed_with_reply: 2,
+                failed_no_reply: 1,
+            }
+        );
+        assert_eq!(got[1].reviewer(), "openai :: a");
+        assert_eq!(got[1].usable, 1);
+        let lines = reply_outcome_lines(&got, "");
+        assert_eq!(
+            lines[0],
+            "reply outcomes in 14 days (usable / failed with a reply / failed without a reply):"
+        );
+        assert_eq!(lines[1], "  gemini :: g: 1 / 2 / 1");
+        assert_eq!(reply_outcome_lines(&got, "openai").len(), 2);
+        assert!(reply_outcome_lines(&got, "nobody").is_empty());
+        assert_eq!(got[0].json()["failed_with_reply"], 2);
     }
 }
 

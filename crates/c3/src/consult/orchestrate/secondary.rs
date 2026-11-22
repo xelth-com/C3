@@ -135,7 +135,7 @@ fn run_codex_secondary(
         sandbox: sandbox.to_string(),
         schema_path: schema_arg,
         extra_config: with_context_config(&ctx.r.extra_config, &ctx.context_config),
-        agent_config: agent_config_for(engine, &ctx.r.extra_config),
+        agent_config: bridge_config_for(engine, &ctx.r.extra_config),
         output_last_message: if engine == EngineKind::Codex {
             Some(last_path.to_path_buf())
         } else {

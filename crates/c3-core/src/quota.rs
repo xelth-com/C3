@@ -691,17 +691,31 @@ impl SubagentSignal {
 /// (seen on codex-cli 0.169.0: every line carries its own `timestamp`). An OLD `spawn_agent` call
 /// therefore carries its original timestamp from before this turn launched; without the `since`
 /// bound a resumed thread whose history holds a spawn call would be killed as a sub-agent although
-/// the current turn spawned nothing. A FORK was not observed on 0.169.0 (no forked rollout was left
-/// on the machine to read): the bound holds for it only if the copied history keeps its original
-/// timestamps - a fork that re-stamps them would be stopped by an old call again. A `spawn_agent`
-/// line we cannot date is NOT counted - the guard cannot prove it belongs to this turn, a false stop
-/// would kill a valid review, and a child rollout created since `since` is still caught separately.
+/// the current turn spawned nothing. A `spawn_agent` line we cannot date is NOT counted - the guard
+/// cannot prove it belongs to this turn, a false stop would kill a valid review, and a child rollout
+/// created since `since` is still caught separately. `since` is the turn's launch boundary, taken
+/// just before the spawn (F13-1).
+///
+/// (C3 0.2.5) A fork, observed on codex-cli 0.169.0 (2026-11-22, `codex exec ... fork <thread>` on
+/// the ZAI provider): the fork's rollout holds ONLY its own lines - its `session_meta` names
+/// `forked_from_id` and a `history_base` (the parent's thread, `end_ordinal_exclusive`,
+/// `end_byte_offset`) that REFERENCES the parent's rollout instead of copying it - so the time bound
+/// holds for it. A history COPIED into a rollout (seen in the inline-forked rollouts of multi-agent
+/// v2 sub-agents: `forked_from_id`, no `history_base`) is RE-STAMPED with the fork's time, so the
+/// time bound alone would count a copied call. For such a rollout the scan also starts at its last
+/// `task_started` line - the current turn's first line ([`copied_fork_head`], [`last_turn_start`]).
 fn rollout_spawn_agent_since(path: &Path, since: DateTime<Utc>) -> bool {
     let text = read_rollout_text(path, 0);
     if !text.contains("spawn_agent") {
         return false;
     }
-    for line in text.lines() {
+    let lines: Vec<&str> = text.lines().collect();
+    let from = if copied_fork_head(&read_rollout_head(path)) {
+        last_turn_start(&lines)
+    } else {
+        0
+    };
+    for line in &lines[from..] {
         let v: Value = match serde_json::from_str(line) {
             Ok(v) => v,
             Err(_) => continue,
@@ -758,6 +772,190 @@ pub fn subagent_in_run(
     subs.first().map(|p| SubagentSignal::ChildRollout {
         thread: rollout_thread_of(p),
     })
+}
+
+/// (C3 0.2.5) Whether a rollout's head (`session_meta`) is a fork whose parent's history was COPIED
+/// into the rollout: it names a `forked_from_id` but no `history_base` object (a fork that references
+/// its parent's rollout names one). Read by pattern, so a head cut at the 64 KiB head limit still
+/// tells (a cut before `history_base` reads as copied - the turn bound then still holds).
+fn copied_fork_head(head: &str) -> bool {
+    static FORKED: OnceLock<regex::Regex> = OnceLock::new();
+    static BASE: OnceLock<regex::Regex> = OnceLock::new();
+    let forked = FORKED
+        .get_or_init(|| regex::Regex::new(r#""forked_from_id"\s*:\s*"[0-9a-fA-F-]{36}""#).unwrap());
+    let base = BASE.get_or_init(|| regex::Regex::new(r#""history_base"\s*:\s*\{"#).unwrap());
+    forked.is_match(head) && !base.is_match(head)
+}
+
+/// (C3 0.2.5) The index of a rollout's last `task_started` line (`type:event_msg`,
+/// `payload.type:task_started`) - the first line of the turn now running, as one `codex exec` runs
+/// one turn - or `0` when there is none.
+fn last_turn_start(lines: &[&str]) -> usize {
+    for (i, line) in lines.iter().enumerate().rev() {
+        if !line.contains("task_started") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|t| t.as_str()) == Some("event_msg")
+            && v.pointer("/payload/type").and_then(|t| t.as_str()) == Some("task_started")
+        {
+            return i;
+        }
+    }
+    0
+}
+
+/// (C3 0.2.5) The multi-agent tools a thread whose sub-agents are OFF must not be offered: codex-cli
+/// 0.169.0's multi-agent v2 surface (`spawn_agent`, `send_message`, `wait_agent`, `list_agents`,
+/// `interrupt_agent`, all in the [`MULTI_AGENT_NAMESPACE`] namespace) and `close_agent`.
+/// `send_message_to_user_async` and the code-mode `wait` are not multi-agent tools.
+pub const MULTI_AGENT_TOOLS: [&str; 6] = [
+    "spawn_agent",
+    "send_message",
+    "wait_agent",
+    "list_agents",
+    "close_agent",
+    "interrupt_agent",
+];
+/// The tool namespace codex-cli 0.169.0 offers the multi-agent v2 tools in: every tool in it counts.
+pub const MULTI_AGENT_NAMESPACE: &str = "collaboration";
+
+/// (C3 0.2.5) What one rollout says about a thread's sub-agent surface ([`rollout_subagent_surface`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubagentSurface {
+    /// The rollout was read.
+    pub found: bool,
+    /// Every `multi_agent_version` its `session_meta` and `turn_context` lines name (deduplicated,
+    /// first seen first). `disabled` is the only value of a thread whose sub-agents are off.
+    pub versions: Vec<String>,
+    /// How many tool lists (`response_item` / `additional_tools`) it holds.
+    pub tool_lists: usize,
+    /// The multi-agent tools those lists offer (deduplicated).
+    pub offered: Vec<String>,
+    /// The multi-agent tools the thread called (deduplicated).
+    pub called: Vec<String>,
+}
+
+impl SubagentSurface {
+    /// Whether the rollout tells anything about the switch: a `multi_agent_version` or a tool list.
+    pub fn has_evidence(&self) -> bool {
+        !self.versions.is_empty() || self.tool_lists > 0
+    }
+
+    /// Why the thread had a sub-agent surface (`None` when it had none): a `multi_agent_version`
+    /// other than `disabled`, a multi-agent tool offered, or one called.
+    pub fn breach(&self) -> Option<String> {
+        let mut why: Vec<String> = Vec::new();
+        let on: Vec<&str> = self
+            .versions
+            .iter()
+            .map(|v| v.as_str())
+            .filter(|v| *v != "disabled")
+            .collect();
+        if !on.is_empty() {
+            why.push(format!("multi_agent_version {}", on.join(", ")));
+        }
+        if !self.offered.is_empty() {
+            why.push(format!("offers {}", self.offered.join(", ")));
+        }
+        if !self.called.is_empty() {
+            why.push(format!("called {}", self.called.join(", ")));
+        }
+        (!why.is_empty()).then(|| why.join("; "))
+    }
+}
+
+fn push_unique(out: &mut Vec<String>, s: &str) {
+    if !out.iter().any(|x| x == s) {
+        out.push(s.to_string());
+    }
+}
+
+/// A multi-agent tool: any tool of the [`MULTI_AGENT_NAMESPACE`] namespace, or one named in
+/// [`MULTI_AGENT_TOOLS`] outside an MCP server's namespace (`mcp__*` - a server may name a tool
+/// `list_agents` of its own).
+fn is_multi_agent_tool(namespace: &str, name: &str) -> bool {
+    !name.is_empty()
+        && !namespace.starts_with("mcp__")
+        && (namespace == MULTI_AGENT_NAMESPACE || MULTI_AGENT_TOOLS.contains(&name))
+}
+
+/// Walk one `additional_tools` entry (`{type:namespace, name, tools:[...]}` nests; a tool is
+/// `{type, name}` or the chat form `{type:function, function:{name}}`).
+fn collect_multi_agent_tools(node: &Value, namespace: &str, out: &mut Vec<String>) {
+    let name = node
+        .get("name")
+        .or_else(|| node.pointer("/function/name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or("");
+    if node.get("type").and_then(|t| t.as_str()) == Some("namespace") {
+        for t in node
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .into_iter()
+            .flatten()
+        {
+            collect_multi_agent_tools(t, name, out);
+        }
+        return;
+    }
+    if is_multi_agent_tool(namespace, name) {
+        push_unique(out, name);
+    }
+}
+
+/// (C3 0.2.5) Read a rollout's sub-agent surface: the `multi_agent_version` of its `session_meta` and
+/// `turn_context` lines (the `session_meta` of a resumed or forked thread may omit it, its
+/// `turn_context` names it), the multi-agent tools its `additional_tools` lists offer, and the
+/// multi-agent tools it called. The shape is codex-cli 0.169.0's (2026-11-22: `gpt-6.2-astra` with
+/// the bridge's off switches - `"multi_agent_version":"disabled"`, no `collaboration` namespace;
+/// 2026-11-15: a forced-v2 model - `v2` and `collaboration.spawn_agent` ...). A missing file reads
+/// `found: false`.
+pub fn rollout_subagent_surface(path: &Path) -> SubagentSurface {
+    let mut s = SubagentSurface::default();
+    if path.as_os_str().is_empty() || !path.is_file() {
+        return s;
+    }
+    s.found = true;
+    for line in read_rollout_text(path, 0).lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let ty = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let Some(p) = v.get("payload") else {
+            continue;
+        };
+        if ty == "session_meta" || ty == "turn_context" {
+            if let Some(mav) = p.get("multi_agent_version").and_then(|m| m.as_str()) {
+                push_unique(&mut s.versions, mav);
+            }
+            continue;
+        }
+        match p.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            "additional_tools" => {
+                s.tool_lists += 1;
+                for t in p
+                    .get("tools")
+                    .and_then(|t| t.as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    collect_multi_agent_tools(t, "", &mut s.offered);
+                }
+            }
+            "function_call" | "custom_tool_call" => {
+                let name = p.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                let ns = p.get("namespace").and_then(|n| n.as_str()).unwrap_or("");
+                if is_multi_agent_tool(ns, name) {
+                    push_unique(&mut s.called, name);
+                }
+            }
+            _ => {}
+        }
+    }
+    s
 }
 
 /// `Select-NewerWindow`: `true` when `b` wins over `a` - the newer one that names a window; at the
@@ -3670,6 +3868,181 @@ mod tests {
             Some(SubagentSignal::SpawnCall),
             "a new spawn call stops the run even when the history holds an old one"
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// An `event_msg` line of `kind` (`task_started`, `task_complete`, `thread_settings_applied`)
+    /// stamped `at`.
+    fn event_line(at: DateTime<Utc>, kind: &str) -> String {
+        format!(
+            "{{\"timestamp\":\"{}\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"{kind}\"}}}}",
+            stamp(at)
+        )
+    }
+
+    /// (C3 0.2.5) A fork as codex-cli 0.169.0 writes it for `codex exec ... fork <parent>` (observed
+    /// 2026-11-22 on the ZAI provider): its `session_meta` names `forked_from_id` and a
+    /// `history_base` referencing the parent's rollout, and the file holds only the fork's own lines
+    /// (16 of them there, none stamped before its `session_meta`). The parent's old `spawn_agent` call
+    /// stays in the PARENT's rollout, so the guard of the fork's run does not see it; a call the fork
+    /// itself makes stops it.
+    #[test]
+    fn the_subagent_guard_on_a_fork_that_references_its_parent() {
+        let home = scratch("subguard-fork");
+        let h = home.to_string_lossy().to_string();
+        let now = Utc::now();
+        let old = now - Duration::minutes(30);
+        let parent = v7(old, 21);
+        let fork = v7(now, 22);
+        write_rollout(
+            &home,
+            &parent,
+            &[meta_line(old, &parent, ""), spawn_line(old)],
+            old,
+        );
+        let fork_meta = format!(
+            "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{fork}\",\"forked_from_id\":\"{parent}\",\"forked_from_ordinal_exclusive\":2,\"source\":\"exec\",\"model_provider\":\"ZAI\",\"history_mode\":\"paginated\",\"history_base\":{{\"thread_id\":\"{parent}\",\"end_ordinal_exclusive\":2,\"end_byte_offset\":400}},\"multi_agent_version\":\"disabled\"}}}}",
+            stamp(now)
+        );
+        let own = vec![
+            fork_meta,
+            event_line(now, "thread_settings_applied"),
+            event_line(now, "task_started"),
+        ];
+        let path = write_rollout(&home, &fork, &own, now);
+        let since = now - Duration::seconds(1);
+        assert_eq!(
+            subagent_in_run(&fork, since, &h),
+            None,
+            "the parent's history is referenced, not copied: nothing to count in the fork"
+        );
+        let mut with_call = own.clone();
+        with_call.push(spawn_line(now + Duration::milliseconds(500)));
+        std::fs::write(&path, format!("{}\n", with_call.join("\n"))).unwrap();
+        assert_eq!(
+            subagent_in_run(&fork, since, &h),
+            Some(SubagentSignal::SpawnCall),
+            "a spawn call of the fork's own turn stops it"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// (C3 0.2.5) A fork whose parent's history is COPIED into its rollout and RE-STAMPED with the
+    /// fork's time - the shape of the inline-forked sub-agent rollouts of multi-agent v2 (observed
+    /// 2026-11-15: `forked_from_id`, no `history_base`, the parent's `session_meta`, user message and
+    /// two `spawn_agent` calls all stamped within 8 ms of the fork, the fork's own `task_started` 0.8 s
+    /// later). The time bound alone would count the copied call; the scan starts at the last
+    /// `task_started`, so only the fork's own turn counts.
+    #[test]
+    fn the_subagent_guard_on_a_fork_with_a_copied_history() {
+        let home = scratch("subguard-copied");
+        let h = home.to_string_lossy().to_string();
+        let now = Utc::now();
+        let parent = v7(now - Duration::minutes(5), 23);
+        let fork = v7(now, 24);
+        let fork_meta = format!(
+            "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{fork}\",\"forked_from_id\":\"{parent}\",\"source\":\"exec\",\"model_provider\":\"ZAI\",\"history_mode\":\"paginated\",\"multi_agent_version\":\"disabled\"}}}}",
+            stamp(now)
+        );
+        let copied_at = now + Duration::milliseconds(1);
+        let own_turn = now + Duration::milliseconds(800);
+        let lines = vec![
+            fork_meta,
+            // the parent's history, re-stamped with the fork's time
+            meta_line(copied_at, &parent, ""),
+            event_line(copied_at, "task_started"),
+            spawn_line(copied_at),
+            event_line(copied_at, "task_complete"),
+            // the fork's own turn
+            event_line(own_turn, "thread_settings_applied"),
+            event_line(own_turn, "task_started"),
+        ];
+        let path = write_rollout(&home, &fork, &lines, now);
+        let since = now - Duration::seconds(1);
+        assert_eq!(
+            subagent_in_run(&fork, since, &h),
+            None,
+            "a copied, re-stamped spawn call of the parent's history must not stop the fork"
+        );
+        let mut with_call = lines.clone();
+        with_call.push(spawn_line(own_turn + Duration::milliseconds(200)));
+        std::fs::write(&path, format!("{}\n", with_call.join("\n"))).unwrap();
+        assert_eq!(
+            subagent_in_run(&fork, since, &h),
+            Some(SubagentSignal::SpawnCall),
+            "a spawn call of the fork's own turn still stops it"
+        );
+        assert!(copied_fork_head(&lines[0]));
+        assert!(!copied_fork_head(&meta_line(now, &fork, "")));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// (C3 0.2.5) The sub-agent surface of a rollout: `multi_agent_version` from `session_meta` and
+    /// `turn_context`, the multi-agent tools of the `additional_tools` lists (the whole
+    /// `collaboration` namespace; a listed name outside an `mcp__*` namespace), the calls; the
+    /// code-mode `wait` and `send_message_to_user_async` are not multi-agent tools.
+    #[test]
+    fn the_subagent_surface_of_a_rollout() {
+        let home = scratch("surface");
+        let now = Utc::now();
+        let id = v7(now, 25);
+        let tools = |collab: &str| {
+            format!(
+                "{{\"timestamp\":\"{}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"additional_tools\",\"role\":\"developer\",\"tools\":[{{\"type\":\"namespace\",\"name\":\"functions\",\"tools\":[{{\"type\":\"custom\",\"name\":\"exec\"}},{{\"type\":\"function\",\"name\":\"wait\"}},{{\"type\":\"function\",\"name\":\"send_message_to_user_async\"}}]}},{{\"type\":\"namespace\",\"name\":\"mcp__srv\",\"tools\":[{{\"type\":\"function\",\"name\":\"list_agents\"}}]}}{collab}]}}}}",
+                stamp(now)
+            )
+        };
+        let tc = |mav: &str| {
+            format!(
+                "{{\"timestamp\":\"{}\",\"type\":\"turn_context\",\"payload\":{{\"turn_id\":\"t1\",\"multi_agent_version\":\"{mav}\"}}}}",
+                stamp(now)
+            )
+        };
+        let meta = |mav: &str| {
+            format!(
+                "{{\"timestamp\":\"{}\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"source\":\"exec\",\"multi_agent_version\":\"{mav}\"}}}}",
+                stamp(now)
+            )
+        };
+        let p = write_rollout(
+            &home,
+            &id,
+            &[meta("disabled"), tools(""), tc("disabled")],
+            now,
+        );
+        let s = rollout_subagent_surface(&p);
+        assert!(s.found && s.has_evidence(), "{s:?}");
+        assert_eq!(s.versions, vec!["disabled".to_string()]);
+        assert_eq!(s.tool_lists, 1);
+        assert_eq!(s.breach(), None, "{s:?}");
+
+        let collab = ",{\"type\":\"namespace\",\"name\":\"collaboration\",\"tools\":[{\"type\":\"function\",\"name\":\"spawn_agent\"},{\"type\":\"function\",\"name\":\"followup_task\"}]}";
+        std::fs::write(
+            &p,
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                meta("disabled"),
+                tools(collab),
+                tc("v2"),
+                spawn_line(now)
+            ),
+        )
+        .unwrap();
+        let s = rollout_subagent_surface(&p);
+        assert_eq!(
+            s.breach().as_deref(),
+            Some("multi_agent_version v2; offers spawn_agent, followup_task; called spawn_agent"),
+            "{s:?}"
+        );
+
+        // a rollout without a version or a tool list tells nothing; a missing one is not found
+        std::fs::write(&p, format!("{}\n", event_line(now, "task_started"))).unwrap();
+        let s = rollout_subagent_surface(&p);
+        assert!(
+            s.found && !s.has_evidence() && s.breach().is_none(),
+            "{s:?}"
+        );
+        assert!(!rollout_subagent_surface(&home.join("none.jsonl")).found);
         let _ = std::fs::remove_dir_all(&home);
     }
 

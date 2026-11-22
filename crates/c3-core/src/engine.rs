@@ -227,6 +227,20 @@ pub struct AttemptId(pub String);
 pub struct ConversationId(pub String);
 
 /// A request for one attempt. Some fields are engine-specific (documented per field).
+/// (C3 0.2.5) The codex `-c` items that keep a REVIEWER apart from the operator's own Codex setup:
+/// `features.plugins=false` loads none of the plugins enabled in `config.toml` (their skills - the
+/// coordinator skills `c3:coordinate` and `codex-consult:coordinate` among them -, MCP servers and
+/// apps), and `skills.include_instructions=false` leaves the skill list out of the reviewer's
+/// instructions (the operator's own `~/.agents/skills` too). Agent roles are already off with
+/// `agents.enabled=false` ([`crate::quota::SUBAGENT_OFF`]). Passed on review turns only, never on a
+/// `c3 work` worker turn; an older CLI ignores a key it does not know. Proven on codex-cli 0.169.0
+/// (2026-11-22, ZAI `glm-5.3-flash`, both off switches): 30 skills with both coordinate skills, 14
+/// with plugins off, no skill block at all with both items.
+pub const REVIEW_ISOLATION: [&str; 2] = [
+    "features.plugins=false",
+    "skills.include_instructions=false",
+];
+
 #[derive(Debug, Clone)]
 pub struct Request {
     /// The full prompt text (its last line is `Consultation id: <id>`).
@@ -252,7 +266,8 @@ pub struct Request {
     /// `-m`, before the identity pins and the user's items: the sub-agent off switches
     /// ([`crate::quota::SUBAGENT_OFF`] - `features.multi_agent=false` AND `agents.enabled=false`)
     /// unless the user's `-CodexConfig` names `features.multi_agent` or `agents.enabled` (theirs
-    /// wins). Empty for every other engine.
+    /// wins); (C3 0.2.5) then the reviewer isolation ([`REVIEW_ISOLATION`]) minus a key the user
+    /// names. Empty for every other engine.
     pub agent_config: Vec<String>,
     /// codex `-o <path>`: where the last agent message is written.
     pub output_last_message: Option<PathBuf>,

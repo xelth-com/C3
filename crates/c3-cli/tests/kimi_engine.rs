@@ -577,6 +577,103 @@ fn the_uncommitted_brief_reaches_the_read_insist_worktree_too() {
     }
 }
 
+// ------------------------------------------------------------------ (A1) an untracked brief: staged, named, or refused
+
+#[test]
+fn an_untracked_brief_is_staged_and_the_prompt_names_the_uncommitted_paths() {
+    // (A1, xelixir panel 47cf7308) a NEW task's brief is untracked: kimi reviews a throwaway
+    // worktree of HEAD, so the bridge stages the brief there (R7) AND tells the reviewer which live
+    // paths were uncommitted at launch - not only the handoff header.
+    let e = setup("untracked-named");
+    let brief_rel = ".collab/t/handoffs/01-claude-framing.md";
+    std::fs::write(e.repo.join(brief_rel), "# Brief\n\n1. Is app.txt fine?\n").unwrap();
+    // an uncommitted source change too: the reviewer's worktree holds the committed version.
+    std::fs::write(e.repo.join("app.txt"), "two\n").unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            brief_rel,
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let turns = e.turns();
+    assert_eq!(turns.len(), 1, "{:?}", turns);
+    assert_eq!(
+        turns[0]["op_brief_exists"], true,
+        "the untracked brief is staged into the worktree: {:?}",
+        turns[0]
+    );
+    let body = turns[0]["prompt_body"].as_str().unwrap_or("");
+    assert!(
+        body.contains(
+            "Isolation: your working directory is a throwaway git worktree of the committed HEAD"
+        ),
+        "the prompt carries the isolation paragraph: {body}"
+    );
+    assert!(
+        body.contains("`app.txt`") && body.contains("`.collab/`"),
+        "the uncommitted paths are named (untracked directories collapsed): {body}"
+    );
+    assert!(
+        body.contains(&format!(
+            "The brief `{brief_rel}` was copied into your worktree at that path."
+        )),
+        "{body}"
+    );
+    let last = e.last();
+    assert!(
+        last["bridge_outcome"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("usable"),
+        "{last}"
+    );
+}
+
+#[test]
+fn an_untracked_brief_outside_the_repository_refuses_the_seat_before_launch() {
+    // (A1) a brief that is neither committed at HEAD nor stageable (a relative path that leaves the
+    // repository) cannot be read in the throwaway worktree: the seat is refused before the child
+    // starts, with the preflight-class wording a panel re-seats on - no paid seat answers "the brief
+    // is missing".
+    let e = setup("untracked-outside");
+    std::fs::write(e.work.join("outside-brief.md"), "# Brief\n\n1. Anything?\n").unwrap();
+    let o = e.consult(
+        &[
+            "--engine",
+            "kimi",
+            "--model",
+            "kimi-code/k3",
+            "--brief",
+            "../outside-brief.md",
+            "--purpose",
+            "framing",
+        ],
+        &[],
+    );
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(1), "{t}");
+    assert!(
+        t.contains("the kimi seat is not usable: the brief `../outside-brief.md` is neither committed at HEAD nor stageable"),
+        "{t}"
+    );
+    assert!(t.contains("nothing was started"), "{t}");
+    assert!(
+        e.turns().is_empty(),
+        "no kimi turn was started: {:?}",
+        e.turns()
+    );
+    assert!(e.ledger().is_empty(), "nothing reached the ledger");
+}
+
 // ------------------------------------------------------------------ the resume path
 
 #[test]

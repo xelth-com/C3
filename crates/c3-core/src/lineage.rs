@@ -90,6 +90,11 @@ pub struct EngineSpec {
     /// (grok only): a grok `--json-schema` turn can answer in one model call without ever
     /// calling `read_file`, and then invents the brief from its question numbers.
     pub inline_brief: bool,
+    /// (A1) The reviewer runs in a throwaway git worktree of HEAD, not in the live checkout (kimi):
+    /// what is uncommitted in the live tree is not there. The bridge stages the brief into the
+    /// worktree, refuses the seat before launch when the brief is neither committed nor stageable,
+    /// and tells the reviewer which paths were uncommitted at launch.
+    pub worktree_isolated: bool,
 }
 
 /// The engine's launcher basenames to look up on PATH, in order (platform-aware).
@@ -197,6 +202,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: false,
             inline_brief: false,
+            worktree_isolated: false,
         }),
         "agy" => Some(EngineSpec {
             name: "agy",
@@ -230,6 +236,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: false,
             inline_brief: false,
+            worktree_isolated: false,
         }),
         "muse" => Some(EngineSpec {
             name: "muse",
@@ -263,6 +270,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: false,
             inline_brief: false,
+            worktree_isolated: false,
         }),
         // (0.6.0, wave 29) Claude Code headless (`claude -p`): the subscription, an API key or a
         // third-party Anthropic-compatible endpoint (wave 29b). Its replies are
@@ -299,6 +307,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: true,
             crt_quote: true,
             inline_brief: false,
+            worktree_isolated: false,
         }),
         // (C3) Grok Build CLI headless (`grok --prompt-file ... --output-format streaming-json`):
         // read-only reviewer turns billed to the SuperGrok subscription (grok.com oauth), the reply
@@ -335,6 +344,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: true,
             inline_brief: true,
+            worktree_isolated: false,
         }),
         // (C3) Moonshot Kimi CLI headless (`kimi -p <prompt> --output-format stream-json`): a
         // reviewer turn billed to the Kimi Code plan (managed oauth). The prompt rides in argv
@@ -381,6 +391,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: true,
             inline_brief: false,
+            worktree_isolated: true,
         }),
         // The `http` engine has a lineage row but no launcher: it sends an
         // OpenAI-compatible request (M7), so `command`/`exe_env` are empty and it never
@@ -419,6 +430,7 @@ pub fn engine_spec(name: &str) -> Option<EngineSpec> {
             add_dirs: false,
             crt_quote: false,
             inline_brief: false,
+            worktree_isolated: false,
         }),
         _ => None,
     }
@@ -949,6 +961,15 @@ mod tests {
         for name in ALL_ENGINE_NAMES {
             let spec = engine_spec(name).unwrap();
             assert_eq!(spec.inline_brief, *name == "grok", "engine {name}");
+        }
+    }
+
+    // (A1) only the kimi engine reviews a throwaway worktree of HEAD.
+    #[test]
+    fn worktree_isolated_is_kimi_only() {
+        for name in ALL_ENGINE_NAMES {
+            let spec = engine_spec(name).unwrap();
+            assert_eq!(spec.worktree_isolated, *name == "kimi", "engine {name}");
         }
     }
 }

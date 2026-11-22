@@ -1,0 +1,1566 @@
+{
+    "task_id":  "release-0.2.5",
+    "cwd":  "C:\\Users\\Dmytro\\C3",
+    "codex":  {
+                  "tool":  "codex-cli 0.169.0",
+                  "consults":  [
+                                   {
+                                       "n":  1,
+                                       "when":  "2026-11-22T13:37:39+01:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "250658d8-b7e4-419f-a061-efda8db537e5",
+                                       "consult_ref":  "d6749410-afaa-42bf-90f0-08bec2f93072",
+                                       "reviewer":  {
+                                                        "provider":  "openai",
+                                                        "provider_source":  "roster",
+                                                        "model":  "gpt-6.2-sol",
+                                                        "model_source":  "roster",
+                                                        "engine":  "codex",
+                                                        "harness":  "codex-cli 0.169.0",
+                                                        "provider_fingerprint":  "56d97b6ece36e75295a290d931ca6bbe2dd0b1f0807454b21a63a6fd17b32d7c",
+                                                        "provider_config":  {
+                                                                                "builtin":  "openai"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "openai :: gpt-6.2-sol",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: Logged in using ChatGPT",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\.codex\\codex-consult-roster.json",
+                                                      "position":  2,
+                                                      "skipped":  [
+                                                                      {
+                                                                          "provider":  "openai",
+                                                                          "model":  "gpt-6.2-astra",
+                                                                          "engine":  "codex",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "ZAI-claude",
+                                                                          "model":  "glm-5.3-flash",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "mimo-claude",
+                                                                          "model":  "mimo-v2.6-pro",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "gemini",
+                                                                          "model":  "gemini-3.8-flash-high",
+                                                                          "engine":  "agy",
+                                                                          "reason":  "usage limit until 2026-11-28T14:06:24+01:00"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "kimi",
+                                                                          "model":  "kimi-code/kimi-for-coding",
+                                                                          "engine":  "kimi",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "alibaba-claude",
+                                                                          "model":  "qwen4-max",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "meta",
+                                                                          "model":  "muse-wonder-1.0",
+                                                                          "engine":  "muse",
+                                                                          "reason":  "on request only"
+                                                                      }
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  {
+                                                     "id":  "83d7280f-3976-45f6-a3c8-e93b5dfc5f3c",
+                                                     "position":  1,
+                                                     "of":  3,
+                                                     "members":  [
+                                                                     {
+                                                                         "provider":  "openai",
+                                                                         "model":  "gpt-6.2-astra",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "openai",
+                                                                         "model":  "gpt-6.2-sol",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "ZAI-claude",
+                                                                         "model":  "glm-5.3",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "ZAI-claude",
+                                                                         "model":  "glm-5.3-flash",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "mimo-claude",
+                                                                         "model":  "mimo-v2.6-pro",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "gemini",
+                                                                         "model":  "gemini-3.8-flash-high",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "usage limit until 2026-11-28T14:06:24+01:00"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi",
+                                                                         "model":  "kimi-code/k3.1-pro",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi",
+                                                                         "model":  "kimi-code/kimi-for-coding",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi-claude",
+                                                                         "model":  "k3.1-pro",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "alibaba-claude",
+                                                                         "model":  "qwen4-max",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-spark-1.3-contributor",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-wonder-1.0",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "on request only"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "grok",
+                                                                         "model":  "grok-4.7",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "alibaba-claude",
+                                                                         "model":  "deepseek-v4.1-flash-1017",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     }
+                                                                 ],
+                                                     "concurrency":  3,
+                                                     "limits":  {
+                                                                    "openai":  1,
+                                                                    "meta":  1,
+                                                                    "grok":  1
+                                                                },
+                                                     "asked":  3,
+                                                     "started":  3,
+                                                     "usable":  3,
+                                                     "routing":  {
+                                                                     "mode":  "routed",
+                                                                     "order":  "routed",
+                                                                     "fallback":  "",
+                                                                     "seed":  "0b5052c7b223466e7d59eae44022d0a5e6eeb03cf1edd7fcf0890f52bb3e0521",
+                                                                     "nonce":  "2026-11-22",
+                                                                     "nonce_source":  "date",
+                                                                     "size":  3,
+                                                                     "size_asked":  3,
+                                                                     "size_source":  "-PanelSize",
+                                                                     "reserve":  0,
+                                                                     "eligible":  [
+                                                                                      {
+                                                                                          "position":  2,
+                                                                                          "lineage":  "openai :: gpt-6.2-sol",
+                                                                                          "lab":  "openai",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  true,
+                                                                                          "budget_mult":  0.4956
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  3,
+                                                                                          "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                                                                                          "lab":  "zhipu",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.475,
+                                                                                          "basis":  "purpose",
+                                                                                          "ratings":  3,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  2
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  10,
+                                                                                          "lineage":  "kimi :: kimi-code/k3.1-pro [kimi]",
+                                                                                          "lab":  "moonshot",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  1.368
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  12,
+                                                                                          "lineage":  "kimi-claude :: k3.1-pro [claude]",
+                                                                                          "lab":  "moonshot",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  1.368
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  14,
+                                                                                          "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                          "lab":  "meta",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.475,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  8,
+                                                                                          "required":  true
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  16,
+                                                                                          "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab_source":  "singleton",
+                                                                                          "score":  1.3,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  8,
+                                                                                          "required":  true
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  17,
+                                                                                          "lineage":  "alibaba-claude :: deepseek-v4.1-flash-1017 [claude]",
+                                                                                          "lab":  "deepseek",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false
+                                                                                      }
+                                                                                  ],
+                                                                     "picked":  [
+                                                                                    {
+                                                                                        "slot":  1,
+                                                                                        "position":  2,
+                                                                                        "lineage":  "openai :: gpt-6.2-sol",
+                                                                                        "lab":  "openai",
+                                                                                        "rule":  "required",
+                                                                                        "budget_mult":  0.4956
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  2,
+                                                                                        "position":  14,
+                                                                                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                        "lab":  "meta",
+                                                                                        "rule":  "required"
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  3,
+                                                                                        "position":  16,
+                                                                                        "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                        "lab":  "grok :: grok-4.7 [grok]",
+                                                                                        "rule":  "required"
+                                                                                    }
+                                                                                ],
+                                                                     "explored":  [
+
+                                                                                  ],
+                                                                     "required":  [
+                                                                                      "openai :: gpt-6.2-sol",
+                                                                                      "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                      "grok :: grok-4.7 [grok]"
+                                                                                  ],
+                                                                     "ext":  {
+                                                                                 "c3":  {
+                                                                                            "router":  {
+                                                                                                           "router":  "v1",
+                                                                                                           "params":  {
+                                                                                                                          "m_min":  2,
+                                                                                                                          "kappa":  0.1,
+                                                                                                                          "m_max":  8,
+                                                                                                                          "half_life_days":  0,
+                                                                                                                          "outcome_weight":  0,
+                                                                                                                          "explore":  0.2
+                                                                                                                      },
+                                                                                                           "prior_use":  [
+                                                                                                                             {
+                                                                                                                                 "position":  2,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  3,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  10,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  12,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  14,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  16,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  17,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             }
+                                                                                                                         ],
+                                                                                                           "priors":  {
+                                                                                                                          "version":  1,
+                                                                                                                          "generated":  "2026-11-22T11:31:32Z",
+                                                                                                                          "sha256":  "d583b4411a5c6d1da0d503f56468a66d4dc156af743df43baf2bca3e48ba99aa",
+                                                                                                                          "source":  "hub",
+                                                                                                                          "key_id":  "xelth-2026-1"
+                                                                                                                      }
+                                                                                                       }
+                                                                                        }
+                                                                             }
+                                                                 },
+                                                     "roles_note":  ""
+                                                 },
+                                       "parent_thread":  "",
+                                       "thread":  "01a20343-1e14-7872-b5a2-89d677c0496e",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "codex exec --sandbox read-only --color never --json -m gpt-6.2-sol -c features.multi_agent=false -c agents.enabled=false -c model_reasoning_effort=\"high\" -c model_provider=\"openai\" -o C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-last-1cf13c7b937046b98afcd4fa198133ff.md --output-schema C:\\Users\\Dmytro\\.codex\\c3\\schemas\\consult-reply.v1.json -",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/release-0.2.5/handoffs/01-claude-diff-review.md",
+                                       "range":  null,
+                                       "prompt_chars":  4012,
+                                       "reply":  "handoffs/02-codex-diff-review-openai.md",
+                                       "reply_json":  "handoffs/02-codex-diff-review-openai.reply.json",
+                                       "events":  "handoffs/02-codex-diff-review-openai.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "gpt-6.2-sol",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "openai",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-22T13:37:39+01:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "output-schema",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                       "reviewed_revision":  "ba43ff6",
+                                       "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8",
+                                       "tree_sha256_after":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "f8d09494b40e341a10d956737bffd315900d24582f558f00c316b93a3f4a9840",
+                                       "brief_sha256_after":  "f8d09494b40e341a10d956737bffd315900d24582f558f00c316b93a3f4a9840",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (31 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  null,
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+                                                        "routing: no lab known for #16 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a \"lab\""
+                                                    ],
+                                       "verdict":  "REJECT",
+                                       "verdict_reason":  "Repository repair can corrupt files or modify an external hard-link target, kimi cleanup proceeds after an incomplete link scan, maintenance can smoke the wrong roster entry, and telemetry can transmit private model names.",
+                                       "findings":  {
+                                                        "blocker":  5,
+                                                        "major":  12,
+                                                        "minor":  4,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+                                                           "F02-1",
+                                                           "F02-2",
+                                                           "F02-3",
+                                                           "F02-4",
+                                                           "F02-5",
+                                                           "F02-6",
+                                                           "F02-7",
+                                                           "F02-8",
+                                                           "F02-9",
+                                                           "F02-10",
+                                                           "F02-11",
+                                                           "F02-12",
+                                                           "F02-13",
+                                                           "F02-14",
+                                                           "F02-15",
+                                                           "F02-16",
+                                                           "F02-17",
+                                                           "F02-18",
+                                                           "F02-19",
+                                                           "F02-20",
+                                                           "F02-21"
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  {
+                                                     "input_tokens":  1749713,
+                                                     "cached_input_tokens":  1620480,
+                                                     "output_tokens":  16485,
+                                                     "reasoning_output_tokens":  2276
+                                                 },
+                                       "compactions":  null,
+                                       "engine_run":  null,
+                                       "wall_seconds":  587.8,
+                                       "finished_at":  "2026-11-22T13:47:27+01:00",
+                                       "commit_wait_ms":  0,
+                                       "quota":  {
+                                                     "primary":  {
+                                                                     "used_percent":  81,
+                                                                     "window_minutes":  300,
+                                                                     "resets_at":  "2026-11-22T18:09:58+01:00"
+                                                                 },
+                                                     "secondary":  {
+                                                                       "used_percent":  13,
+                                                                       "window_minutes":  10080,
+                                                                       "resets_at":  "2026-11-29T13:09:58+01:00"
+                                                                   },
+                                                     "observed_at":  "2026-11-22T13:47:25+01:00",
+                                                     "primary_observed_at":  "2026-11-22T13:47:25.362+01:00",
+                                                     "secondary_observed_at":  "2026-11-22T13:47:25.362+01:00"
+                                                 },
+                                       "tokens":  {
+                                                      "input":  1749713,
+                                                      "cached":  1620480,
+                                                      "output":  16485,
+                                                      "thread_input":  1749713,
+                                                      "calls":  21,
+                                                      "max_input":  127849,
+                                                      "context_window":  475000,
+                                                      "subagents":  {
+                                                                        "count":  0,
+                                                                        "input":  0,
+                                                                        "calls":  0
+                                                                    }
+                                                  },
+                                       "subagents_allowed":  false,
+                                       "budget":  {
+                                                      "percent":  90,
+                                                      "source":  "default",
+                                                      "stopped":  false,
+                                                      "used_percent":  null,
+                                                      "resets_at":  null
+                                                  }
+                                   },
+                                   {
+                                       "n":  2,
+                                       "when":  "2026-11-22T13:38:06+01:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "b879cabc-52f2-474f-ba41-75ce041a5250",
+                                       "consult_ref":  "f2d13b30-41f6-420f-97b8-004487b04ac1",
+                                       "reviewer":  {
+                                                        "provider":  "meta",
+                                                        "provider_source":  "roster",
+                                                        "model":  "muse-spark-1.3-contributor",
+                                                        "model_source":  "roster",
+                                                        "engine":  "muse",
+                                                        "harness":  "muse-cli 1.4.25-R9361.1",
+                                                        "provider_fingerprint":  "1c6f62bb040d089b87b18a8d8aa5b3e8af92429295979dd8efea418308333179",
+                                                        "provider_config":  {
+                                                                                "engine":  "muse",
+                                                                                "launcher":  "C:\\Users\\Dmytro\\AppData\\Local\\Programs\\muse\\muse.cmd",
+                                                                                "credential_mechanism":  "oauth"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "meta :: muse-spark-1.3-contributor",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: signed in (~/.config/muse/auth.json: providers.meta, mechanism oauth)",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\.codex\\codex-consult-roster.json",
+                                                      "position":  14,
+                                                      "skipped":  [
+                                                                      {
+                                                                          "provider":  "openai",
+                                                                          "model":  "gpt-6.2-astra",
+                                                                          "engine":  "codex",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "ZAI-claude",
+                                                                          "model":  "glm-5.3-flash",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "mimo-claude",
+                                                                          "model":  "mimo-v2.6-pro",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "gemini",
+                                                                          "model":  "gemini-3.8-flash-high",
+                                                                          "engine":  "agy",
+                                                                          "reason":  "usage limit until 2026-11-28T14:06:24+01:00"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "kimi",
+                                                                          "model":  "kimi-code/kimi-for-coding",
+                                                                          "engine":  "kimi",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "alibaba-claude",
+                                                                          "model":  "qwen4-max",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "meta",
+                                                                          "model":  "muse-wonder-1.0",
+                                                                          "engine":  "muse",
+                                                                          "reason":  "on request only"
+                                                                      }
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  {
+                                                     "id":  "83d7280f-3976-45f6-a3c8-e93b5dfc5f3c",
+                                                     "position":  2,
+                                                     "of":  3,
+                                                     "members":  [
+                                                                     {
+                                                                         "provider":  "openai",
+                                                                         "model":  "gpt-6.2-astra",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "openai",
+                                                                         "model":  "gpt-6.2-sol",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "ZAI-claude",
+                                                                         "model":  "glm-5.3",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "ZAI-claude",
+                                                                         "model":  "glm-5.3-flash",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "mimo-claude",
+                                                                         "model":  "mimo-v2.6-pro",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "gemini",
+                                                                         "model":  "gemini-3.8-flash-high",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "usage limit until 2026-11-28T14:06:24+01:00"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi",
+                                                                         "model":  "kimi-code/k3.1-pro",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi",
+                                                                         "model":  "kimi-code/kimi-for-coding",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi-claude",
+                                                                         "model":  "k3.1-pro",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "alibaba-claude",
+                                                                         "model":  "qwen4-max",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-spark-1.3-contributor",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-wonder-1.0",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "on request only"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "grok",
+                                                                         "model":  "grok-4.7",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "alibaba-claude",
+                                                                         "model":  "deepseek-v4.1-flash-1017",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     }
+                                                                 ],
+                                                     "concurrency":  3,
+                                                     "limits":  {
+                                                                    "openai":  1,
+                                                                    "meta":  1,
+                                                                    "grok":  1
+                                                                },
+                                                     "asked":  3,
+                                                     "started":  3,
+                                                     "usable":  3,
+                                                     "routing":  {
+                                                                     "mode":  "routed",
+                                                                     "order":  "routed",
+                                                                     "fallback":  "",
+                                                                     "seed":  "0b5052c7b223466e7d59eae44022d0a5e6eeb03cf1edd7fcf0890f52bb3e0521",
+                                                                     "nonce":  "2026-11-22",
+                                                                     "nonce_source":  "date",
+                                                                     "size":  3,
+                                                                     "size_asked":  3,
+                                                                     "size_source":  "-PanelSize",
+                                                                     "reserve":  0,
+                                                                     "eligible":  [
+                                                                                      {
+                                                                                          "position":  2,
+                                                                                          "lineage":  "openai :: gpt-6.2-sol",
+                                                                                          "lab":  "openai",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  true,
+                                                                                          "budget_mult":  0.4956
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  3,
+                                                                                          "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                                                                                          "lab":  "zhipu",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.475,
+                                                                                          "basis":  "purpose",
+                                                                                          "ratings":  3,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  2
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  10,
+                                                                                          "lineage":  "kimi :: kimi-code/k3.1-pro [kimi]",
+                                                                                          "lab":  "moonshot",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  1.368
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  12,
+                                                                                          "lineage":  "kimi-claude :: k3.1-pro [claude]",
+                                                                                          "lab":  "moonshot",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  1.368
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  14,
+                                                                                          "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                          "lab":  "meta",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.475,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  8,
+                                                                                          "required":  true
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  16,
+                                                                                          "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab_source":  "singleton",
+                                                                                          "score":  1.3,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  8,
+                                                                                          "required":  true
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  17,
+                                                                                          "lineage":  "alibaba-claude :: deepseek-v4.1-flash-1017 [claude]",
+                                                                                          "lab":  "deepseek",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false
+                                                                                      }
+                                                                                  ],
+                                                                     "picked":  [
+                                                                                    {
+                                                                                        "slot":  1,
+                                                                                        "position":  2,
+                                                                                        "lineage":  "openai :: gpt-6.2-sol",
+                                                                                        "lab":  "openai",
+                                                                                        "rule":  "required",
+                                                                                        "budget_mult":  0.4956
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  2,
+                                                                                        "position":  14,
+                                                                                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                        "lab":  "meta",
+                                                                                        "rule":  "required"
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  3,
+                                                                                        "position":  16,
+                                                                                        "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                        "lab":  "grok :: grok-4.7 [grok]",
+                                                                                        "rule":  "required"
+                                                                                    }
+                                                                                ],
+                                                                     "explored":  [
+
+                                                                                  ],
+                                                                     "required":  [
+                                                                                      "openai :: gpt-6.2-sol",
+                                                                                      "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                      "grok :: grok-4.7 [grok]"
+                                                                                  ],
+                                                                     "ext":  {
+                                                                                 "c3":  {
+                                                                                            "router":  {
+                                                                                                           "router":  "v1",
+                                                                                                           "params":  {
+                                                                                                                          "m_min":  2,
+                                                                                                                          "kappa":  0.1,
+                                                                                                                          "m_max":  8,
+                                                                                                                          "half_life_days":  0,
+                                                                                                                          "outcome_weight":  0,
+                                                                                                                          "explore":  0.2
+                                                                                                                      },
+                                                                                                           "prior_use":  [
+                                                                                                                             {
+                                                                                                                                 "position":  2,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  3,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  10,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  12,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  14,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  16,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  17,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             }
+                                                                                                                         ],
+                                                                                                           "priors":  {
+                                                                                                                          "version":  1,
+                                                                                                                          "generated":  "2026-11-22T11:31:32Z",
+                                                                                                                          "sha256":  "d583b4411a5c6d1da0d503f56468a66d4dc156af743df43baf2bca3e48ba99aa",
+                                                                                                                          "source":  "hub",
+                                                                                                                          "key_id":  "xelth-2026-1"
+                                                                                                                      }
+                                                                                                       }
+                                                                                        }
+                                                                             }
+                                                                 },
+                                                     "roles_note":  ""
+                                                 },
+                                       "parent_thread":  "",
+                                       "thread":  "01a20343-8bce-73a2-9b82-40ac3fdc9cd6",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "muse exec --json --prompt-file C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-prompt-05a512a7c29345bdb2cd7b9e715bfb57.txt --output-schema C:\\Users\\Dmytro\\.codex\\c3\\schemas\\consult-reply.v1.json --model muse-spark-1.3-contributor --reasoning-effort high --no-foreign-personal-context --disable-web-tools --disable-write --disable-shell --approval-mode never",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/release-0.2.5/handoffs/01-claude-diff-review.md",
+                                       "range":  null,
+                                       "prompt_chars":  4310,
+                                       "reply":  "handoffs/03-muse-diff-review-meta.md",
+                                       "reply_json":  "handoffs/03-muse-diff-review-meta.reply.json",
+                                       "events":  "handoffs/03-muse-diff-review-meta.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "muse-spark-1.3-contributor",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "muse-v1",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-22T13:38:06+01:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "native",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                       "reviewed_revision":  "ba43ff6",
+                                       "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8",
+                                       "tree_sha256_after":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "f8d09494b40e341a10d956737bffd315900d24582f558f00c316b93a3f4a9840",
+                                       "brief_sha256_after":  "f8d09494b40e341a10d956737bffd315900d24582f558f00c316b93a3f4a9840",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (31 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+                                                        "routing: no lab known for #16 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a \"lab\"",
+                                                        "muse: warning: rules file at \\\\?\\C:\\Users\\Dmytro\\C3\\AGENTS.md exists, but the workspace is untrusted, so it is skipped for this session; restart with --trust-workspace to load project rules",
+                                                        "muse: warning: project MCP servers from .mcp.json, if any, are not loaded because the workspace is untrusted; restart with --trust-workspace to load them"
+                                                    ],
+                                       "verdict":  "HOLD",
+                                       "verdict_reason":  "One blocker breaks the read-only reviewer guarantee on the claude engine, plus worktree-removal and branch-record risks need hardening before 0.2.5.",
+                                       "findings":  {
+                                                        "blocker":  1,
+                                                        "major":  2,
+                                                        "minor":  2,
+                                                        "note":  1
+                                                    },
+                                       "finding_ids":  [
+                                                           "F03-1",
+                                                           "F03-2",
+                                                           "F03-3",
+                                                           "F03-4",
+                                                           "F03-5",
+                                                           "F03-6"
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  null,
+                                       "compactions":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  1
+                                                      },
+                                       "wall_seconds":  176.1,
+                                       "finished_at":  "2026-11-22T13:41:04+01:00",
+                                       "commit_wait_ms":  0
+                                   },
+                                   {
+                                       "n":  3,
+                                       "when":  "2026-11-22T13:38:06+01:00",
+                                       "purpose":  "diff-review",
+                                       "topics":  [
+
+                                                  ],
+                                       "role":  "",
+                                       "consult_id":  "d124a38e-da48-4b35-9af9-7293cafd4520",
+                                       "consult_ref":  "f70e30ef-f90f-4680-938b-10c85c6de439",
+                                       "reviewer":  {
+                                                        "provider":  "grok",
+                                                        "provider_source":  "roster",
+                                                        "model":  "grok-4.7",
+                                                        "model_source":  "roster",
+                                                        "engine":  "grok",
+                                                        "harness":  "grok-cli 1.0.77",
+                                                        "provider_fingerprint":  "8c4f8ce6de16cd9fec9b89efcf7813ca03b2d0f56e8ea351696d4778e10d692c",
+                                                        "provider_config":  {
+                                                                                "engine":  "grok",
+                                                                                "launcher":  "C:\\Users\\Dmytro\\.grok\\bin\\grok.exe",
+                                                                                "credential_mechanism":  "oauth"
+                                                                            },
+                                                        "identity_note":  ""
+                                                    },
+                                       "lineage":  "grok :: grok-4.7",
+                                       "coordinator":  {
+                                                           "provider":  null,
+                                                           "model":  null,
+                                                           "engine":  null,
+                                                           "host":  "claude-code",
+                                                           "host_by":  "markers",
+                                                           "source":  "inferred",
+                                                           "in_roster":  null,
+                                                           "unresolved":  null
+                                                       },
+                                       "preflight":  "ok: signed in (~/.grok/auth.json) - subscription (grok.com oauth)",
+                                       "preflight_warning":  "",
+                                       "roster":  {
+                                                      "path":  "C:\\Users\\Dmytro\\.codex\\codex-consult-roster.json",
+                                                      "position":  16,
+                                                      "skipped":  [
+                                                                      {
+                                                                          "provider":  "openai",
+                                                                          "model":  "gpt-6.2-astra",
+                                                                          "engine":  "codex",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "ZAI-claude",
+                                                                          "model":  "glm-5.3-flash",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "mimo-claude",
+                                                                          "model":  "mimo-v2.6-pro",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "gemini",
+                                                                          "model":  "gemini-3.8-flash-high",
+                                                                          "engine":  "agy",
+                                                                          "reason":  "usage limit until 2026-11-28T14:06:24+01:00"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "kimi",
+                                                                          "model":  "kimi-code/kimi-for-coding",
+                                                                          "engine":  "kimi",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "alibaba-claude",
+                                                                          "model":  "qwen4-max",
+                                                                          "engine":  "claude",
+                                                                          "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                      },
+                                                                      {
+                                                                          "provider":  "meta",
+                                                                          "model":  "muse-wonder-1.0",
+                                                                          "engine":  "muse",
+                                                                          "reason":  "on request only"
+                                                                      }
+                                                                  ],
+                                                      "applied":  [
+                                                                      "model"
+                                                                  ]
+                                                  },
+                                       "panel":  {
+                                                     "id":  "83d7280f-3976-45f6-a3c8-e93b5dfc5f3c",
+                                                     "position":  3,
+                                                     "of":  3,
+                                                     "members":  [
+                                                                     {
+                                                                         "provider":  "openai",
+                                                                         "model":  "gpt-6.2-astra",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "openai",
+                                                                         "model":  "gpt-6.2-sol",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "ZAI-claude",
+                                                                         "model":  "glm-5.3",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "ZAI-claude",
+                                                                         "model":  "glm-5.3-flash",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "mimo-claude",
+                                                                         "model":  "mimo-v2.6-pro",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "gemini",
+                                                                         "model":  "gemini-3.8-flash-high",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "usage limit until 2026-11-28T14:06:24+01:00"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi",
+                                                                         "model":  "kimi-code/k3.1-pro",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi",
+                                                                         "model":  "kimi-code/kimi-for-coding",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "kimi-claude",
+                                                                         "model":  "k3.1-pro",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "alibaba-claude",
+                                                                         "model":  "qwen4-max",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "weighty reviewer; purpose diff-review is light (use -PanelAll)"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-spark-1.3-contributor",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "meta",
+                                                                         "model":  "muse-wonder-1.0",
+                                                                         "state":  "skipped",
+                                                                         "reason":  "on request only"
+                                                                     },
+                                                                     {
+                                                                         "provider":  "grok",
+                                                                         "model":  "grok-4.7",
+                                                                         "state":  "run",
+                                                                         "reason":  ""
+                                                                     },
+                                                                     {
+                                                                         "provider":  "alibaba-claude",
+                                                                         "model":  "deepseek-v4.1-flash-1017",
+                                                                         "state":  "not-picked",
+                                                                         "reason":  "panel size 3"
+                                                                     }
+                                                                 ],
+                                                     "concurrency":  3,
+                                                     "limits":  {
+                                                                    "openai":  1,
+                                                                    "meta":  1,
+                                                                    "grok":  1
+                                                                },
+                                                     "asked":  3,
+                                                     "started":  3,
+                                                     "usable":  3,
+                                                     "routing":  {
+                                                                     "mode":  "routed",
+                                                                     "order":  "routed",
+                                                                     "fallback":  "",
+                                                                     "seed":  "0b5052c7b223466e7d59eae44022d0a5e6eeb03cf1edd7fcf0890f52bb3e0521",
+                                                                     "nonce":  "2026-11-22",
+                                                                     "nonce_source":  "date",
+                                                                     "size":  3,
+                                                                     "size_asked":  3,
+                                                                     "size_source":  "-PanelSize",
+                                                                     "reserve":  0,
+                                                                     "eligible":  [
+                                                                                      {
+                                                                                          "position":  2,
+                                                                                          "lineage":  "openai :: gpt-6.2-sol",
+                                                                                          "lab":  "openai",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  true,
+                                                                                          "budget_mult":  0.4956
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  3,
+                                                                                          "lineage":  "ZAI-claude :: glm-5.3 [claude]",
+                                                                                          "lab":  "zhipu",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.475,
+                                                                                          "basis":  "purpose",
+                                                                                          "ratings":  3,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  2
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  10,
+                                                                                          "lineage":  "kimi :: kimi-code/k3.1-pro [kimi]",
+                                                                                          "lab":  "moonshot",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  1.368
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  12,
+                                                                                          "lineage":  "kimi-claude :: k3.1-pro [claude]",
+                                                                                          "lab":  "moonshot",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false,
+                                                                                          "budget_mult":  1.368
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  14,
+                                                                                          "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                          "lab":  "meta",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.475,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  8,
+                                                                                          "required":  true
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  16,
+                                                                                          "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab":  "grok :: grok-4.7 [grok]",
+                                                                                          "lab_source":  "singleton",
+                                                                                          "score":  1.3,
+                                                                                          "basis":  "all-purpose",
+                                                                                          "ratings":  8,
+                                                                                          "required":  true
+                                                                                      },
+                                                                                      {
+                                                                                          "position":  17,
+                                                                                          "lineage":  "alibaba-claude :: deepseek-v4.1-flash-1017 [claude]",
+                                                                                          "lab":  "deepseek",
+                                                                                          "lab_source":  "vendor",
+                                                                                          "score":  1.125,
+                                                                                          "basis":  "neutral",
+                                                                                          "ratings":  0,
+                                                                                          "required":  false
+                                                                                      }
+                                                                                  ],
+                                                                     "picked":  [
+                                                                                    {
+                                                                                        "slot":  1,
+                                                                                        "position":  2,
+                                                                                        "lineage":  "openai :: gpt-6.2-sol",
+                                                                                        "lab":  "openai",
+                                                                                        "rule":  "required",
+                                                                                        "budget_mult":  0.4956
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  2,
+                                                                                        "position":  14,
+                                                                                        "lineage":  "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                        "lab":  "meta",
+                                                                                        "rule":  "required"
+                                                                                    },
+                                                                                    {
+                                                                                        "slot":  3,
+                                                                                        "position":  16,
+                                                                                        "lineage":  "grok :: grok-4.7 [grok]",
+                                                                                        "lab":  "grok :: grok-4.7 [grok]",
+                                                                                        "rule":  "required"
+                                                                                    }
+                                                                                ],
+                                                                     "explored":  [
+
+                                                                                  ],
+                                                                     "required":  [
+                                                                                      "openai :: gpt-6.2-sol",
+                                                                                      "meta :: muse-spark-1.3-contributor [muse]",
+                                                                                      "grok :: grok-4.7 [grok]"
+                                                                                  ],
+                                                                     "ext":  {
+                                                                                 "c3":  {
+                                                                                            "router":  {
+                                                                                                           "router":  "v1",
+                                                                                                           "params":  {
+                                                                                                                          "m_min":  2,
+                                                                                                                          "kappa":  0.1,
+                                                                                                                          "m_max":  8,
+                                                                                                                          "half_life_days":  0,
+                                                                                                                          "outcome_weight":  0,
+                                                                                                                          "explore":  0.2
+                                                                                                                      },
+                                                                                                           "prior_use":  [
+                                                                                                                             {
+                                                                                                                                 "position":  2,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  3,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  10,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  12,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  14,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  16,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             },
+                                                                                                                             {
+                                                                                                                                 "position":  17,
+                                                                                                                                 "prior_basis":  "none",
+                                                                                                                                 "mean":  0.5,
+                                                                                                                                 "support":  0,
+                                                                                                                                 "m":  2
+                                                                                                                             }
+                                                                                                                         ],
+                                                                                                           "priors":  {
+                                                                                                                          "version":  1,
+                                                                                                                          "generated":  "2026-11-22T11:31:32Z",
+                                                                                                                          "sha256":  "d583b4411a5c6d1da0d503f56468a66d4dc156af743df43baf2bca3e48ba99aa",
+                                                                                                                          "source":  "hub",
+                                                                                                                          "key_id":  "xelth-2026-1"
+                                                                                                                      }
+                                                                                                       }
+                                                                                        }
+                                                                             }
+                                                                 },
+                                                     "roles_note":  ""
+                                                 },
+                                       "parent_thread":  "",
+                                       "thread":  "01a20343-8ffd-7312-a341-142eb40ca885",
+                                       "thread_source":  "events",
+                                       "thread_candidate":  "",
+                                       "mode":  "new",
+                                       "mode_fallback":  null,
+                                       "command":  "grok --prompt-file C:\\Users\\Dmytro\\AppData\\Local\\Temp\\codex-consult-prompt-e1cb6c03597a479baff9fbe22842a0ef.txt --output-format streaming-json -m grok-4.7 --reasoning-effort high --disable-web-search --tools read_file,list_dir,grep --disallowed-tools use_tool,search_tool,write,run_terminal_command --permission-mode dontAsk --no-subagents",
+                                       "child_env_scrubbed":  [
+                                                                  "AI_AGENT",
+                                                                  "CLAUDECODE",
+                                                                  "CLAUDE_CODE_CHILD_SESSION",
+                                                                  "CLAUDE_CODE_ENTRYPOINT",
+                                                                  "CLAUDE_CODE_EXECPATH",
+                                                                  "CLAUDE_CODE_MESSAGING_SOCKET",
+                                                                  "CLAUDE_CODE_MESSAGING_TOKEN",
+                                                                  "CLAUDE_CODE_SESSION_ATTENDED",
+                                                                  "CLAUDE_CODE_SESSION_ID",
+                                                                  "CLAUDE_EFFORT",
+                                                                  "CLAUDE_PID"
+                                                              ],
+                                       "brief":  ".collab/release-0.2.5/handoffs/01-claude-diff-review.md",
+                                       "range":  null,
+                                       "prompt_chars":  7172,
+                                       "reply":  "handoffs/04-grok-diff-review-grok.md",
+                                       "reply_json":  "handoffs/04-grok-diff-review-grok.reply.json",
+                                       "events":  "handoffs/04-grok-diff-review-grok.events.jsonl",
+                                       "partial_reply":  "",
+                                       "model":  "grok-4.7",
+                                       "effort":  "high",
+                                       "effort_requested":  "high",
+                                       "effort_sent":  "high",
+                                       "effort_mapping":  "grok-v1",
+                                       "effort_caps":  "caps-v1",
+                                       "effort_confirmed":  null,
+                                       "max_words":  700,
+                                       "sandbox":  "read-only",
+                                       "timeout_sec":  2400,
+                                       "timeout_source":  "purpose",
+                                       "continue_sec":  900,
+                                       "extra_config":  [
+
+                                                        ],
+                                       "extra_config_source":  "",
+                                       "context_window":  null,
+                                       "peak":  null,
+                                       "peak_schedule":  "",
+                                       "peak_source":  "none",
+                                       "peak_evaluated_at":  "2026-11-22T13:38:06+01:00",
+                                       "structured":  true,
+                                       "schema":  "consult-reply v1",
+                                       "schema_transport":  "prompt-only",
+                                       "schema_transport_source":  "caps-v1",
+                                       "validation_error":  "",
+                                       "format_retry":  null,
+                                       "denial_retry":  null,
+                                       "timeout_continue":  null,
+                                       "stall":  null,
+                                       "kill_confirmed":  null,
+                                       "base_commit":  "ba43ff616de46a514092c1d6afa9e5d343943bed",
+                                       "reviewed_revision":  "ba43ff6",
+                                       "tree_sha256":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8",
+                                       "tree_sha256_after":  "1234329a6cc89de189fcfa7987ddb389975bb3a60a5dcd9035a707246cf04ae8",
+                                       "tree_changed_during_review":  false,
+                                       "revision_moved":  null,
+                                       "changed_files":  0,
+                                       "brief_sha256":  "f8d09494b40e341a10d956737bffd315900d24582f558f00c316b93a3f4a9840",
+                                       "brief_sha256_after":  "f8d09494b40e341a10d956737bffd315900d24582f558f00c316b93a3f4a9840",
+                                       "brief_changed_during_review":  false,
+                                       "fingerprint_note":  "collab dir \u0027.collab\u0027 excluded (31 entries); ignored files excluded; untracked file modes not recorded; submodules not recursed",
+                                       "artifacts":  [
+
+                                                     ],
+                                       "artifacts_changed_during_review":  false,
+                                       "tree_check":  {
+                                                          "outcome":  "clean",
+                                                          "files":  [
+
+                                                                    ]
+                                                      },
+                                       "bridge_outcome":  "usable reply",
+                                       "provider_failure":  null,
+                                       "warnings":  [
+                                                        "routing: no lab known for #16 grok :: grok-4.7 [grok] (its model id has no known vendor prefix) - it counts as a lab of its own; give its roster entry a \"lab\""
+                                                    ],
+                                       "verdict":  "HOLD",
+                                       "verdict_reason":  "The hook\u0027s symlink skip, the public date gate, dry-run, and engine-child C3_CHILD marking hold, but a read-only scan refreshes the index, an own-source list or a forged catalog date can seat an older model, and a failed worktree unlink still falls through to a forced delete.",
+                                       "findings":  {
+                                                        "blocker":  0,
+                                                        "major":  4,
+                                                        "minor":  5,
+                                                        "note":  0
+                                                    },
+                                       "finding_ids":  [
+                                                           "F04-1",
+                                                           "F04-2",
+                                                           "F04-3",
+                                                           "F04-4",
+                                                           "F04-5",
+                                                           "F04-6",
+                                                           "F04-7",
+                                                           "F04-8",
+                                                           "F04-9"
+                                                       ],
+                                       "prior_findings":  [
+
+                                                          ],
+                                       "unchecked_prior_blockers":  [
+
+                                                                    ],
+                                       "usage":  {
+                                                     "input_tokens":  340043,
+                                                     "cached_input_tokens":  2292096,
+                                                     "output_tokens":  58282,
+                                                     "reasoning_output_tokens":  49447,
+                                                     "total_tokens":  2690421
+                                                 },
+                                       "compactions":  null,
+                                       "engine_run":  {
+                                                          "turns":  1,
+                                                          "max_model_steps":  null,
+                                                          "msp_schema_version":  null
+                                                      },
+                                       "wall_seconds":  921.4,
+                                       "finished_at":  "2026-11-22T13:53:29+01:00",
+                                       "commit_wait_ms":  0
+                                   }
+                               ]
+              }
+}

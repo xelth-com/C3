@@ -658,6 +658,9 @@ fn fake_agy_cmd() -> String {
             r#"echo {{"event":"step_update","step_update":{{"conversation_id":"{ID}","step_index":2,"state":"DONE","step_type":"tool","tool_name":"%FAKE_AGY_TOOL_NAME%"}}}}"#
         ),
         ":result".to_string(),
+        // (A1) FAKE_AGY_TOUCH=<path>: a file appears in the tree during the run (somebody else's
+        // edit - agy's own tool log shows no writing call).
+        "if defined FAKE_AGY_TOUCH echo touched>\"%FAKE_AGY_TOUCH%\"".to_string(),
         format!(
             r#"echo {{"event":"result","result":{{"conversation_id":"{ID}","status":"SUCCESS","response":"advise","duration_seconds":1.0,"num_turns":1,"structured_output":{ADVISE},"usage":{{"input_tokens":100,"output_tokens":10,"thinking_tokens":0,"cache_read_tokens":0,"total_tokens":110}}}}}}"#
         ),
@@ -904,6 +907,49 @@ fn an_agy_writing_tool_call_fails_a_clean_run() {
     let last = e.last();
     let o = last["bridge_outcome"].as_str().unwrap_or("");
     assert!(o.contains("a writing tool was called: run_command"), "{o}");
+}
+
+// (A1, xelixir panel be3d155b) a file somebody else wrote appears in the working tree while agy
+// runs; agy's own tool log shows no writing call and its reply is complete and schema-valid: the
+// change is a WARNING ("reply kept"), the run is usable and its ledger entry is written - a
+// failure is "no usable reply", never a change the reviewer did not make.
+#[test]
+fn an_agy_tree_change_with_a_complete_reply_is_kept_as_a_warning() {
+    let e = setup("agykept");
+    let agy = e.fake_agy();
+    let path = path_without_agy();
+    let touched = e.repo.join("edited-by-a-worker.txt");
+    let touched_s = touched.to_string_lossy().to_string();
+    let x = e.consult(
+        &[
+            "--provider",
+            "gemini",
+            "--engine",
+            "agy",
+            "--model",
+            "gemini-3.8-flash-high",
+            "--engine-exe",
+            &agy,
+            "--reply-name",
+            "ak",
+            "--continue-sec",
+            "0",
+        ],
+        // no tool step at all (the reply comes in the result event), and the tree changes.
+        &[("PATH", &path), ("FAKE_AGY_TOUCH", &touched_s)],
+    );
+    let t = text(&x);
+    assert!(touched.exists(), "the fake touched the tree");
+    assert_eq!(x.status.code(), Some(0), "{t}");
+    let last = e.last();
+    assert_eq!(last["bridge_outcome"], "usable reply", "{t}");
+    assert_eq!(last["tree_check"]["outcome"], "warned", "{last}");
+    assert!(
+        t.contains("the working tree changed during the run")
+            && t.contains("agy's event stream named no tool call")
+            && t.contains("reply kept"),
+        "the warning says the reply was kept: {t}"
+    );
 }
 
 // ------------------------------------------------------------------ ROLE / TOPIC (companions D8)

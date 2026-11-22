@@ -5,7 +5,8 @@
 # an optional assistant tool-call line, the final assistant {content} line (the reply), and the ONE
 # meta {session.resume_hint, session_id}; an `error:` line on stderr + exit 1 on a start failure.
 #   FAKE_KIMI_ARGV_LOG=<path>   EVERY start appends one JSON line: {kind (turn | version | other),
-#                               argv, prompt, prompt_len, cwd, resume, env (NAMES, sorted), pid}.
+#                               argv, prompt, prompt_len, cwd, resume, env (NAMES, sorted), pid,
+#                               prompt_body (the assembled prompt the argv pointer names)}.
 #   `--version` / `-V`          "kimi 0.27.0-fake"
 #   turn (-p):
 #   FAKE_KIMI_REPLY=<file>      the reply text emitted as the final assistant content (first turn)
@@ -78,9 +79,11 @@ $briefExists = ($brief -ne '') -and (Test-Path -LiteralPath $brief -PathType Lea
 $opBrief = ''
 $opBriefExists = $false
 $opBriefBody = ''
+$promptBody = ''
 if ($briefExists) {
     try {
         $body = [IO.File]::ReadAllText($brief, $u8)
+        $promptBody = $body
         $bm = [regex]::Match($body, 'Read the brief at `([^`]+)`')
         if ($bm.Success) {
             $opBrief = $bm.Groups[1].Value
@@ -107,7 +110,7 @@ if ($env:FAKE_KIMI_ARGV_LOG) {
     $names = @([Environment]::GetEnvironmentVariables().Keys | ForEach-Object { [string]$_ } | Where-Object { $_ -ne 'FAKE_KIMI_ARGS' })
     $names = [string[]]$names
     [Array]::Sort($names, [StringComparer]::OrdinalIgnoreCase)
-    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; brief = $brief; brief_exists = $briefExists; op_brief = $opBrief; op_brief_exists = $opBriefExists; op_brief_body = $opBriefBody; git_file = $gitFile; env = [object[]]$names; pid = $PID }
+    $rec = [pscustomobject]@{ kind = $kind; argv = [object[]]$argv; prompt = $prompt; prompt_len = $prompt.Length; cwd = (Get-Location).Path; resume = [string]$resume; brief = $brief; brief_exists = $briefExists; op_brief = $opBrief; op_brief_exists = $opBriefExists; op_brief_body = $opBriefBody; prompt_body = $promptBody; git_file = $gitFile; env = [object[]]$names; pid = $PID }
     $line = (J $rec) + "`n"
     Invoke-FakeWrite { [IO.File]::AppendAllText($env:FAKE_KIMI_ARGV_LOG, $line, $u8) }
 }
